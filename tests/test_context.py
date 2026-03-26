@@ -4,6 +4,7 @@ from pydantic import BaseModel
 
 from context import PitcherContext, assemble_pitcher_context
 from data import load_pitcher_data
+from engine import HardHitRate
 
 TEST_PITCHER = 592155  # Booser, Cam
 
@@ -108,3 +109,18 @@ def test_to_prompt_no_none_literals():
     """to_prompt() output does not contain the literal string 'None'."""
     prompt = _ctx.to_prompt()
     assert "None" not in prompt, f"Found 'None' literal in prompt output:\n{prompt}"
+
+
+# ── Hard-hit rate in context ──────────────────────────────────────────
+
+
+def test_hard_hit_rate_in_context():
+    """assemble_pitcher_context has a non-None hard_hit_rate field of type HardHitRate."""
+    assert _ctx.hard_hit_rate is not None
+    assert isinstance(_ctx.hard_hit_rate, HardHitRate)
+
+
+def test_to_prompt_has_contact_quality():
+    """to_prompt() output contains 'Contact Quality' or 'Hard-hit'."""
+    prompt = _ctx.to_prompt()
+    assert "Contact Quality" in prompt or "Hard-hit" in prompt

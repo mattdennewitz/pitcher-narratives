@@ -18,6 +18,7 @@ from engine import (
     compute_execution_metrics,
     compute_workload_context,
     compute_tto_analysis,
+    compute_hard_hit_rate,
     FastballSummary,
     VelocityArc,
     PitchTypeSummary,
@@ -25,6 +26,7 @@ from engine import (
     FirstPitchWeaponry,
     ExecutionMetrics,
     WorkloadContext,
+    HardHitRate,
     TTOAnalysis,
     TTOPitchType,
     TTOPlatoonSplit,
@@ -57,6 +59,7 @@ class PitcherContext(BaseModel):
     platoon_mix: PlatoonMix
     first_pitch: FirstPitchWeaponry
     execution: list[ExecutionMetrics]
+    hard_hit_rate: HardHitRate
     workload: WorkloadContext
     tto: TTOAnalysis | None
 
@@ -86,6 +89,9 @@ class PitcherContext(BaseModel):
 
         # Execution table
         sections.append(self._render_execution_section())
+
+        # Contact quality (hard-hit rate)
+        sections.append(self._render_hard_hit_section())
 
         # Platoon shifts
         sections.append(self._render_platoon_section())
@@ -150,6 +156,18 @@ class PitcherContext(BaseModel):
         va = self.velocity_arc
         if va and va.available and va.drop_string:
             bullets.append(f"Velocity arc: {va.drop_string}")
+
+        # Hard-hit rate shift
+        hhr = self.hard_hit_rate
+        if (
+            not hhr.cold_start
+            and "Steady" not in hhr.delta
+            and abs(hhr.hard_hit_pct - hhr.season_hard_hit_pct) >= 5.0
+        ):
+            bullets.append(
+                f"Hard-hit rate: {hhr.delta} vs season "
+                f"({hhr.hard_hit_pct:.1f}%)"
+            )
 
         # Workload concern
         if wl.workload_concern:
@@ -340,6 +358,21 @@ class PitcherContext(BaseModel):
             )
         return "\n".join(lines)
 
+    def _render_hard_hit_section(self) -> str:
+        """Render contact quality section with hard-hit rate."""
+        hhr = self.hard_hit_rate
+        if hhr.n_batted_balls == 0:
+            return ""
+        lines = ["## Contact Quality"]
+        lines.append(
+            f"- Hard-hit rate: {hhr.hard_hit_pct:.1f}% "
+            f"({hhr.n_hard_hit}/{hhr.n_batted_balls} BIP) -- {hhr.delta}"
+        )
+        lines.append(f"- Season: {hhr.season_hard_hit_pct:.1f}%")
+        if hhr.small_sample:
+            lines.append(f"- *Small sample ({hhr.n_batted_balls} BIP)*")
+        return "\n".join(lines)
+
     def _render_platoon_section(self) -> str:
         lines = ["## Platoon Shifts"]
         available = [s for s in self.platoon_mix.splits if s.available]
@@ -404,6 +437,7 @@ def assemble_pitcher_context(data: PitcherData) -> PitcherContext:
     platoon_mix = compute_platoon_mix(data)
     first_pitch = compute_first_pitch_weaponry(data)
     execution = compute_execution_metrics(data)[:_MAX_PITCH_TYPES]
+    hard_hit_rate = compute_hard_hit_rate(data)
     workload = compute_workload_context(data)
     tto = compute_tto_analysis(data)
 
@@ -424,6 +458,7 @@ def assemble_pitcher_context(data: PitcherData) -> PitcherContext:
         platoon_mix=platoon_mix,
         first_pitch=first_pitch,
         execution=execution,
+        hard_hit_rate=hard_hit_rate,
         workload=workload,
         tto=tto,
     )
