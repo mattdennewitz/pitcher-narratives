@@ -26,6 +26,7 @@ from engine import (
     ExecutionMetrics,
     AppearanceWorkload,
     WorkloadContext,
+    HardHitRate,
     compute_fastball_summary,
     compute_velocity_arc,
     compute_arsenal_summary,
@@ -33,6 +34,7 @@ from engine import (
     compute_first_pitch_weaponry,
     compute_execution_metrics,
     compute_workload_context,
+    compute_hard_hit_rate,
     _velo_delta_string,
     _pplus_delta_string,
     _usage_delta_string,
@@ -715,3 +717,75 @@ def test_tto_reliever_single_pass():
     # If he has < 2 TTO groups, available should be False
     if len([s for s in tto.splits if s.pass_number >= 2]) == 0:
         assert tto.available is False
+
+
+# ── Hard-Hit Rate ────────────────────────────────────────────────────
+
+
+def test_hard_hit_rate_returns_dataclass():
+    """compute_hard_hit_rate returns a HardHitRate with hard_hit_pct between 0 and 100."""
+    data = load_pitcher_data(TEST_PITCHER, window_days=30)
+    hhr = compute_hard_hit_rate(data)
+    assert isinstance(hhr, HardHitRate)
+    assert 0.0 <= hhr.hard_hit_pct <= 100.0
+
+
+def test_hard_hit_rate_counts_batted_balls():
+    """hard_hit_pct counts only batted balls (hit_into_play) with launch_speed >= 95."""
+    data = load_pitcher_data(TEST_PITCHER, window_days=30)
+    hhr = compute_hard_hit_rate(data)
+    # n_hard_hit should be <= n_batted_balls
+    assert hhr.n_hard_hit <= hhr.n_batted_balls
+    # Verify against raw statcast
+    window_dates = data.window_appearances["game_date"].unique().to_list()
+    window_sc = data.statcast.filter(pl.col("game_date").is_in(window_dates))
+    bip = window_sc.filter(
+        (pl.col("description") == "hit_into_play")
+        & pl.col("launch_speed").is_not_null()
+    )
+    assert hhr.n_batted_balls == bip.height
+    hard = bip.filter(pl.col("launch_speed") >= 95.0)
+    assert hhr.n_hard_hit == hard.height
+
+
+def test_hard_hit_rate_positive_batted_balls():
+    """n_batted_balls is positive for test pitcher with batted ball events."""
+    data = load_pitcher_data(TEST_PITCHER, window_days=30)
+    hhr = compute_hard_hit_rate(data)
+    assert hhr.n_batted_balls > 0
+
+
+def test_hard_hit_rate_small_sample():
+    """small_sample is True when fewer than 10 batted balls in window."""
+    data = load_pitcher_data(TEST_PITCHER, window_days=1)
+    hhr = compute_hard_hit_rate(data)
+    if hhr.n_batted_balls < 10:
+        assert hhr.small_sample is True
+
+
+def test_hard_hit_rate_cold_start():
+    """cold_start is True when window covers entire season."""
+    data = load_pitcher_data(TEST_PITCHER, window_days=9999)
+    hhr = compute_hard_hit_rate(data)
+    assert hhr.cold_start is True
+
+
+def test_hard_hit_rate_season_pct():
+    """season_hard_hit_pct is computed from full season, not just window."""
+    data = load_pitcher_data(TEST_PITCHER, window_days=30)
+    hhr = compute_hard_hit_rate(data)
+    # Verify against full statcast
+    bip = data.statcast.filter(
+        (pl.col("description") == "hit_into_play")
+        & pl.col("launch_speed").is_not_null()
+    )
+    hard = bip.filter(pl.col("launch_speed") >= 95.0)
+    expected_pct = hard.height / bip.height * 100.0 if bip.height > 0 else 0.0
+    assert abs(hhr.season_hard_hit_pct - expected_pct) < 0.01
+
+
+def test_hard_hit_rate_delta_string():
+    """delta string follows existing pattern (Up/Down/Steady with pp)."""
+    data = load_pitcher_data(TEST_PITCHER, window_days=30)
+    hhr = compute_hard_hit_rate(data)
+    assert any(word in hhr.delta for word in ["Up", "Down", "Steady"])

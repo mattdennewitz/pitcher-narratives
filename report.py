@@ -273,7 +273,7 @@ _KNOWN_METRICS = frozenset({
     # Expected outcomes
     "xWhiff", "xSwing", "xGOr", "xPUr", "xBA", "xwOBA", "xSLG",
     # Batted ball / approach
-    "CSW%", "CSW", "O-Swing%", "Zone%", "Chase%",
+    "CSW%", "CSW", "O-Swing%", "Zone%", "Chase%", "HardHit%",
     # Velocity / movement
     "IVB", "HB", "pfx_x", "pfx_z",
     # Statcast standard
