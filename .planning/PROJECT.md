@@ -17,13 +17,14 @@ The report must read like a scout wrote it — surfacing *changes, adaptations, 
 - Assembles structured context from Statcast parquet + Pitching+ CSV aggregations — Phase 1
 - Computes deltas and qualitative trend strings for fastball quality & velo trends — Phase 2
 - Covers arsenal analysis (usage rate deltas, platoon mix shifts, first-pitch weaponry) — Phase 2
+- Covers execution metrics (CSW%, zone/chase rate, xWhiff/xSwing, xRV100) — Phase 3
+- Covers contextual factors (rest days, innings depth, consecutive days pitched) — Phase 3
+- Pydantic PitcherContext model assembles all outputs into prompt-ready document (~544 tokens) — Phase 3
 
 ### Active
 
 - [ ] Adapts report structure based on starter vs. reliever role
 - [ ] Generates prose paragraphs with data tables where sensible — exemplary output quality
-- [ ] Covers execution metrics (CSW%, zone rate vs. chase rate, secondary P+/S+/L+ scores)
-- [ ] Covers contextual factors (rest days for relievers, innings depth for starters)
 - [ ] Uses Claude via pydantic-ai as the LLM backend
 - [ ] Pydantic models define the schema for structured LLM input
 
@@ -105,4 +106,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-03-26 after Phase 2 completion*
+*Last updated: 2026-03-26 after Phase 3 completion*
