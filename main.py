@@ -10,6 +10,10 @@ import argparse
 import os
 import sys
 
+from dotenv import load_dotenv
+
+load_dotenv()
+
 
 def parse_args() -> argparse.Namespace:
     """Parse command-line arguments for pitcher scouting reports."""
@@ -41,7 +45,7 @@ def main() -> None:
 
     from context import assemble_pitcher_context
     from pydantic_ai.exceptions import UserError
-    from report import generate_report_streaming
+    from report import generate_report_streaming, check_hallucinated_metrics
 
     ctx = assemble_pitcher_context(pitcher_data)
 
@@ -55,7 +59,7 @@ def main() -> None:
         )
 
     try:
-        generate_report_streaming(ctx, _model_override=model_override)
+        report_text = generate_report_streaming(ctx, _model_override=model_override)
     except UserError as e:
         if "ANTHROPIC_API_KEY" in str(e):
             print(
@@ -65,6 +69,14 @@ def main() -> None:
             )
             sys.exit(1)
         raise
+
+    # Post-generation hallucination check
+    suspect = check_hallucinated_metrics(report_text)
+    if suspect:
+        print(
+            f"\n⚠ Possible hallucinated metrics: {', '.join(suspect)}",
+            file=sys.stderr,
+        )
 
 
 if __name__ == "__main__":

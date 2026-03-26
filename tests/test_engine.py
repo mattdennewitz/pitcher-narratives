@@ -18,6 +18,9 @@ from engine import (
     PlatoonMix,
     PlatoonSplit,
     FirstPitchEntry,
+    TTOSplit,
+    TTOAnalysis,
+    compute_tto_analysis,
     FirstPitchWeaponry,
     ExecutionMetrics,
     AppearanceWorkload,
@@ -624,3 +627,47 @@ def test_consecutive_days_flag():
         assert workload.workload_concern is True
     else:
         assert workload.workload_concern is False
+
+
+# ── Times Through Order ───────────────────────────────────────────────
+
+
+def test_tto_returns_analysis():
+    """compute_tto_analysis returns TTOAnalysis dataclass."""
+    data = load_pitcher_data(TEST_PITCHER, window_days=9999)
+    tto = compute_tto_analysis(data)
+    assert isinstance(tto, TTOAnalysis)
+    assert isinstance(tto.available, bool)
+    assert isinstance(tto.summary, str)
+    assert len(tto.summary) > 0
+
+
+def test_tto_splits_have_pass_numbers():
+    """Each TTOSplit has a pass_number >= 1."""
+    data = load_pitcher_data(TEST_PITCHER, window_days=9999)
+    tto = compute_tto_analysis(data)
+    for s in tto.splits:
+        assert isinstance(s, TTOSplit)
+        assert s.pass_number >= 1
+        assert s.pitches > 0
+
+
+def test_tto_starter_with_deep_outings():
+    """Starter with TTO 2+ gets available=True and multiple splits."""
+    # Kochanowicz had 3 passes in our earlier exploration
+    data = load_pitcher_data(686799, window_days=9999)
+    tto = compute_tto_analysis(data)
+    if len(tto.splits) >= 2:
+        assert tto.available is True
+        assert tto.splits[0].velo_delta == "--"  # First pass has no delta
+        assert tto.splits[1].velo_delta != "--"  # Second pass has delta
+
+
+def test_tto_reliever_single_pass():
+    """Reliever who only faces batters once gets available=False."""
+    data = load_pitcher_data(TEST_PITCHER, window_days=9999)
+    tto = compute_tto_analysis(data)
+    # Booser is mostly RP with single-inning outings
+    # If he has < 2 TTO groups, available should be False
+    if len([s for s in tto.splits if s.pass_number >= 2]) == 0:
+        assert tto.available is False

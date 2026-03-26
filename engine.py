@@ -34,6 +34,9 @@ __all__ = [
     "ExecutionMetrics",
     "AppearanceWorkload",
     "WorkloadContext",
+    "TTOSplit",
+    "TTOAnalysis",
+    "compute_tto_analysis",
 ]
 
 # ── Constants ─────────────────────────────────────────────────────────
@@ -1417,3 +1420,135 @@ def compute_workload_context(data: PitcherData) -> WorkloadContext:
         max_consecutive_days=max_consec,
         workload_concern=max_consec >= 3,
     )
+
+
+# ── Times Through Order ───────────────────────────────────────────────
+
+
+@dataclass
+class TTOSplit:
+    """Metrics for a single pass through the order."""
+
+    pass_number: int
+    """1 = first time through, 2 = second, 3 = third+."""
+    pitches: int
+    avg_velo: float | None
+    avg_p_plus: float | None
+    avg_s_plus: float | None
+    velo_delta: str
+    """Delta vs first pass (e.g., 'Down 1.8 mph')."""
+    p_plus_delta: str
+    """Delta vs first pass."""
+
+
+@dataclass
+class TTOAnalysis:
+    """Times-through-order breakdown for starters."""
+
+    splits: list[TTOSplit]
+    available: bool
+    """False if pitcher never faces TTO 2+."""
+    summary: str
+    """Qualitative summary (e.g., 'P+ drops 13 points by 3rd pass')."""
+
+
+def compute_tto_analysis(data: PitcherData) -> TTOAnalysis:
+    """Compute times-through-order P+ and velocity degradation.
+
+    Joins Statcast (has n_thruorder_pitcher) with all_pitches CSV
+    (has P+/S+) to compute per-pass metrics. Only uses window
+    appearances.
+
+    Args:
+        data: PitcherData bundle.
+
+    Returns:
+        TTOAnalysis with per-pass splits and summary.
+    """
+    statcast = data.statcast
+    all_pitches = data.agg_csvs.get("all_pitches")
+
+    if all_pitches is None or all_pitches.is_empty():
+        return TTOAnalysis(splits=[], available=False, summary="No pitch-level data")
+
+    # Filter statcast to window games only
+    window_game_pks = data.window_appearances["game_pk"].unique().to_list()
+    sc_window = statcast.filter(pl.col("game_pk").is_in(window_game_pks))
+
+    if sc_window.is_empty():
+        return TTOAnalysis(splits=[], available=False, summary="No window appearances")
+
+    # Join statcast (n_thruorder_pitcher) with all_pitches (P+, S+)
+    sc_cols = sc_window.select("pitcher", "game_pk", "pitch_number", "n_thruorder_pitcher", "release_speed")
+    ap_cols = all_pitches.select("pitcher", "game_pk", "pitch_number", "P+", "S+")
+
+    joined = sc_cols.join(ap_cols, on=["pitcher", "game_pk", "pitch_number"], how="inner")
+
+    if joined.is_empty():
+        return TTOAnalysis(splits=[], available=False, summary="No matched pitch data")
+
+    # Group by TTO pass
+    tto_groups = (
+        joined.group_by("n_thruorder_pitcher")
+        .agg(
+            pl.col("release_speed").mean().alias("avg_velo"),
+            pl.col("P+").mean().alias("avg_p_plus"),
+            pl.col("S+").mean().alias("avg_s_plus"),
+            pl.len().alias("pitches"),
+        )
+        .sort("n_thruorder_pitcher")
+    )
+
+    rows = tto_groups.to_dicts()
+    if len(rows) < 2:
+        return TTOAnalysis(
+            splits=[TTOSplit(
+                pass_number=1,
+                pitches=rows[0]["pitches"] if rows else 0,
+                avg_velo=rows[0]["avg_velo"] if rows else None,
+                avg_p_plus=rows[0]["avg_p_plus"] if rows else None,
+                avg_s_plus=rows[0]["avg_s_plus"] if rows else None,
+                velo_delta="--",
+                p_plus_delta="--",
+            )] if rows else [],
+            available=False,
+            summary="Only faced batters once per game (no TTO comparison)",
+        )
+
+    # Build splits with deltas vs first pass
+    first = rows[0]
+    splits: list[TTOSplit] = []
+    for row in rows:
+        pass_num = row["n_thruorder_pitcher"]
+        velo = row["avg_velo"]
+        p_plus = row["avg_p_plus"]
+        s_plus = row["avg_s_plus"]
+
+        if pass_num == 1:
+            vdelta = "--"
+            pdelta = "--"
+        else:
+            vdelta = _velo_delta_string(velo - first["avg_velo"]) if velo and first["avg_velo"] else "--"
+            pdelta = _pplus_delta_string(p_plus - first["avg_p_plus"]) if p_plus and first["avg_p_plus"] else "--"
+
+        splits.append(TTOSplit(
+            pass_number=pass_num,
+            pitches=row["pitches"],
+            avg_velo=velo,
+            avg_p_plus=p_plus,
+            avg_s_plus=s_plus,
+            velo_delta=vdelta,
+            p_plus_delta=pdelta,
+        ))
+
+    # Build summary
+    if first["avg_p_plus"] and rows[-1]["avg_p_plus"]:
+        drop = first["avg_p_plus"] - rows[-1]["avg_p_plus"]
+        if abs(drop) >= _PPLUS_THRESHOLD:
+            summary = f"P+ drops {drop:.0f} points by pass {rows[-1]['n_thruorder_pitcher']}"
+        else:
+            summary = f"P+ holds steady through {len(rows)} passes ({drop:+.0f} points)"
+    else:
+        summary = f"{len(rows)} passes through the order"
+
+    return TTOAnalysis(splits=splits, available=True, summary=summary)

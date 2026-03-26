@@ -17,6 +17,7 @@ from engine import (
     compute_first_pitch_weaponry,
     compute_execution_metrics,
     compute_workload_context,
+    compute_tto_analysis,
     FastballSummary,
     VelocityArc,
     PitchTypeSummary,
@@ -24,6 +25,7 @@ from engine import (
     FirstPitchWeaponry,
     ExecutionMetrics,
     WorkloadContext,
+    TTOAnalysis,
 )
 
 __all__ = ["PitcherContext", "assemble_pitcher_context"]
@@ -54,6 +56,7 @@ class PitcherContext(BaseModel):
     first_pitch: FirstPitchWeaponry
     execution: list[ExecutionMetrics]
     workload: WorkloadContext
+    tto: TTOAnalysis | None
 
     def to_prompt(self) -> str:
         """Render as prompt-ready markdown under 2,000 tokens."""
@@ -69,6 +72,9 @@ class PitcherContext(BaseModel):
 
         # Primary Fastball
         sections.append(self._render_fastball_section())
+
+        # Times through order (starters)
+        sections.append(self._render_tto_section())
 
         # Arsenal table
         sections.append(self._render_arsenal_section())
@@ -135,6 +141,27 @@ class PitcherContext(BaseModel):
 
         if fb.small_sample:
             lines.append("- *Small sample*")
+        return "\n".join(lines)
+
+    def _render_tto_section(self) -> str:
+        tto = self.tto
+        if tto is None or not tto.available:
+            return ""
+        lines = [f"## Times Through Order"]
+        lines.append(f"- {tto.summary}")
+        lines.append("| Pass | Pitches | Velo | P+ | Velo Delta | P+ Delta |")
+        lines.append("|------|---------|------|----|------------|----------|")
+        for s in tto.splits:
+            velo = f"{s.avg_velo:.1f}" if s.avg_velo else "--"
+            pp = f"{s.avg_p_plus:.0f}" if s.avg_p_plus else "--"
+            lines.append(
+                f"| {s.pass_number} "
+                f"| {s.pitches} "
+                f"| {velo} "
+                f"| {pp} "
+                f"| {s.velo_delta} "
+                f"| {s.p_plus_delta} |"
+            )
         return "\n".join(lines)
 
     def _render_arsenal_section(self) -> str:
@@ -236,6 +263,7 @@ def assemble_pitcher_context(data: PitcherData) -> PitcherContext:
     first_pitch = compute_first_pitch_weaponry(data)
     execution = compute_execution_metrics(data)[:_MAX_PITCH_TYPES]
     workload = compute_workload_context(data)
+    tto = compute_tto_analysis(data)
 
     # Determine role from most recent appearance
     most_recent = data.appearances.sort("game_date", descending=True).row(
@@ -255,4 +283,5 @@ def assemble_pitcher_context(data: PitcherData) -> PitcherContext:
         first_pitch=first_pitch,
         execution=execution,
         workload=workload,
+        tto=tto,
     )

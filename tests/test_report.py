@@ -11,6 +11,7 @@ from report import (
     _RP_GUIDANCE,
     _build_user_message,
     generate_report_streaming,
+    check_hallucinated_metrics,
 )
 
 TEST_PITCHER = 592155  # Booser, Cam
@@ -124,3 +125,31 @@ def test_generate_report_streaming_uses_test_model_output():
         _ctx, _model_override=TestModel(custom_output_text=expected)
     )
     assert result == expected
+
+
+# ── Hallucination guard ───────────────────────────────────────────────
+
+
+def test_hallucination_guard_clean():
+    """Known metrics in output produce no warnings."""
+    text = "His P+ of 112 and xWhiff of 0.35 suggest elite stuff. CSW% at 32%."
+    assert check_hallucinated_metrics(text) == []
+
+
+def test_hallucination_guard_catches_unknown():
+    """Fabricated metrics are flagged."""
+    text = "His xDominance score of 95 suggests elite stuff."
+    result = check_hallucinated_metrics(text)
+    assert "xDominance" in result
+
+
+def test_hallucination_guard_known_metrics():
+    """All standard Pitching+ metrics pass without flags."""
+    text = "S+ at 110, L+ at 105, xRV100 of -2.3, xGOr at 0.45."
+    assert check_hallucinated_metrics(text) == []
+
+
+def test_hallucination_guard_percentage_metrics():
+    """CSW%, Zone%, Chase% are all known."""
+    text = "CSW% of 32.1%, Zone% at 48%, Chase% near 30%."
+    assert check_hallucinated_metrics(text) == []

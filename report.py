@@ -11,7 +11,7 @@ from pydantic_ai.settings import ModelSettings
 
 from context import PitcherContext
 
-__all__ = ["generate_report_streaming"]
+__all__ = ["generate_report_streaming", "check_hallucinated_metrics"]
 
 
 # -- System prompt -------------------------------------------------------------
@@ -110,3 +110,59 @@ def generate_report_streaming(
         chunks.append(delta)
     print()  # Final newline
     return ''.join(chunks)
+
+
+# -- Metric hallucination guard ------------------------------------------------
+
+import re
+
+# Metrics that appear in the prompt payload and are safe to reference
+_KNOWN_METRICS = frozenset({
+    # Core Pitching+ family
+    "P+", "S+", "L+", "Pitching+", "Stuff+", "Location+",
+    "P+2080", "S+2080", "L+2080",
+    # Run value
+    "xRV100", "xRV",
+    # Expected outcomes
+    "xWhiff", "xSwing", "xGOr", "xPUr", "xBA", "xwOBA", "xSLG",
+    # Batted ball / approach
+    "CSW%", "CSW", "O-Swing%", "Zone%", "Chase%",
+    # Velocity / movement
+    "IVB", "HB", "pfx_x", "pfx_z",
+    # Statcast standard
+    "wOBA", "BABIP", "ISO",
+})
+
+_METRIC_PATTERN = re.compile(
+    r'\b('
+    # xMetric pattern (xBA, xWhiff, xRV100, etc.)
+    r'x[A-Z][A-Za-z0-9]*'
+    r'|'
+    # Acronym+% pattern (CSW%, O-Swing%, Zone%)
+    r'[A-Z][A-Za-z]*-?[A-Z]*%'
+    r'|'
+    # Pitching+ family (P+, S+2080, etc.)
+    r'[PSL]\+(?:2080)?'
+    r'|'
+    # Other named advanced metrics (IVB, HB, wOBA, BABIP, ISO, pfx_x/z)
+    r'(?:IVB|HB|pfx_[xz]|wOBA|BABIP|ISO|xRV100|Pitching\+|Stuff\+|Location\+)'
+    r')\b'
+)
+
+
+def check_hallucinated_metrics(report_text: str) -> list[str]:
+    """Find metric-like terms in report that aren't in the known set.
+
+    Scans the LLM output for patterns that look like advanced baseball
+    metrics (xMetric, Acronym%, P+/S+/L+ family) and flags any not
+    present in _KNOWN_METRICS.
+
+    Args:
+        report_text: The LLM-generated report text.
+
+    Returns:
+        List of potentially hallucinated metric names. Empty if clean.
+    """
+    found = set(_METRIC_PATTERN.findall(report_text))
+    unknown = sorted(found - _KNOWN_METRICS)
+    return unknown
