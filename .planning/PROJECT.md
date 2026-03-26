@@ -15,15 +15,13 @@ The report must read like a scout wrote it — surfacing *changes, adaptations, 
 - CLI accepts pitcher ID and optional lookback window (`-p pitcherid -w 10`) — Phase 1
 - Auto-detects starter vs. reliever per appearance — Phase 1
 - Assembles structured context from Statcast parquet + Pitching+ CSV aggregations — Phase 1
+- Computes deltas and qualitative trend strings for fastball quality & velo trends — Phase 2
+- Covers arsenal analysis (usage rate deltas, platoon mix shifts, first-pitch weaponry) — Phase 2
 
 ### Active
 
 - [ ] Adapts report structure based on starter vs. reliever role
-- [ ] Computes deltas and qualitative trend strings (not raw numbers) for LLM consumption
-- [ ] Computes deltas and qualitative trend strings (not raw numbers) for LLM consumption
 - [ ] Generates prose paragraphs with data tables where sensible — exemplary output quality
-- [ ] Covers fastball quality & velo trends (baseline vs. recent, within-game variance, shape changes)
-- [ ] Covers arsenal analysis (usage rate deltas, platoon mix shifts, first-pitch weaponry)
 - [ ] Covers execution metrics (CSW%, zone rate vs. chase rate, secondary P+/S+/L+ scores)
 - [ ] Covers contextual factors (rest days for relievers, innings depth for starters)
 - [ ] Uses Claude via pydantic-ai as the LLM backend
@@ -107,4 +105,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-03-26 after Phase 1 completion*
+*Last updated: 2026-03-26 after Phase 2 completion*
