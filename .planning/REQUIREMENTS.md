@@ -49,10 +49,10 @@ Requirements for initial release. Each maps to roadmap phases.
 
 ### Report Generation
 
-- [ ] **RPT-01**: Pydantic models define structured context schema for LLM input with pre-computed deltas and qualitative trend strings
-- [ ] **RPT-02**: Claude generates report via pydantic-ai agent with str output type
-- [ ] **RPT-03**: System prompt uses anti-recitation prompt engineering for scout-voice narrative
-- [ ] **RPT-04**: Report output contains prose paragraphs with data tables where sensible — exemplary quality
+- [x] **RPT-01**: Pydantic models define structured context schema for LLM input with pre-computed deltas and qualitative trend strings
+- [x] **RPT-02**: Claude generates report via pydantic-ai agent with str output type
+- [x] **RPT-03**: System prompt uses anti-recitation prompt engineering for scout-voice narrative
+- [x] **RPT-04**: Report output contains prose paragraphs with data tables where sensible — exemplary quality
 
 ### CLI
 
@@ -124,10 +124,10 @@ Which phases cover which requirements. Updated during roadmap creation.
 | CTX-01 | Phase 3 | Complete |
 | CTX-02 | Phase 3 | Complete |
 | CTX-03 | Phase 3 | Complete |
-| RPT-01 | Phase 4 | Pending |
-| RPT-02 | Phase 4 | Pending |
-| RPT-03 | Phase 4 | Pending |
-| RPT-04 | Phase 4 | Pending |
+| RPT-01 | Phase 4 | Complete |
+| RPT-02 | Phase 4 | Complete |
+| RPT-03 | Phase 4 | Complete |
+| RPT-04 | Phase 4 | Complete |
 
 **Coverage:**
 - v1 requirements: 28 total

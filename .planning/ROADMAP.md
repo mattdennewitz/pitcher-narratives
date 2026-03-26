@@ -77,7 +77,7 @@ Plans:
 **Plans:** 2 plans
 
 Plans:
-- [ ] 04-01-PLAN.md -- Report module: pydantic-ai Agent with claude-sonnet-4-6, scout-voice system prompt, SP/RP conditional guidance, streaming generation function, TestModel-based tests
+- [x] 04-01-PLAN.md -- Report module: pydantic-ai Agent with claude-sonnet-4-6, scout-voice system prompt, SP/RP conditional guidance, streaming generation function, TestModel-based tests
 - [ ] 04-02-PLAN.md -- CLI wiring: replace temp verification output with report generation, API key error handling, updated integration tests
 
 ## Progress
