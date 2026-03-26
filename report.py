@@ -30,7 +30,8 @@ identify facts and trends.
 
 RULES:
 - Output a structured bulleted list of the most important findings.
-- Lead with the single biggest change or most notable trend.
+- Lead with the single biggest change or most notable trend — whether \
+that is improvement or decline. Gains deserve the same weight as drops.
 - For every metric, state the baseline and the delta. Do not state a \
 number without context.
 - Flag sample size concerns explicitly (e.g., "based on 30 pitches").
@@ -39,25 +40,30 @@ Execution, Platoon, Workload, TTO (if applicable).
 - Do NOT write narrative prose. Do NOT editorialize. Just extract the \
 analytical building blocks.
 - Identify the 1-2 pitch characteristics that most explain the current \
-performance level (the "why" behind the numbers).
+performance level (the "why" behind the numbers). This could be a new \
+weapon emerging, a mechanical improvement, OR a degradation.
 - Call out anything that looks like a regression risk or unsustainable \
-trend."""
+trend — but also flag breakout indicators (new pitch gaining traction, \
+velocity gains, movement improvements that are backed by mechanical \
+change)."""
 
 _SP_SYNTH_GUIDANCE = """\
 Focus areas for this starter:
-- Velocity and P+ trajectory across the ramp-up window
+- Velocity and P+ trajectory across the ramp-up window (gains AND drops)
 - Which pitches are gaining or losing effectiveness by TTO pass
 - Pitch mix evolution: is he leaning on something new or abandoning a pitch?
-- Platoon-specific vulnerabilities (what does he throw vs LHB in later passes?)
-- Stamina signal: does velocity or P+ cliff after a certain pitch count?"""
+- Platoon-specific strengths and vulnerabilities by handedness
+- Stamina signal: does velocity or P+ hold, improve, or cliff late?
+- New weapons: any pitch showing a breakout P+ trend or usage surge?"""
 
 _RP_SYNTH_GUIDANCE = """\
 Focus areas for this reliever:
-- Rest day impact on velocity and P+ (back-to-back vs rested)
-- Primary weapon identification: what's the put-away pitch?
+- Rest day impact on velocity and P+ (back-to-back vs rested — better or worse?)
+- Primary weapon identification: what's the put-away pitch? Is it improving?
 - How efficiently does he get through the order (pitch count per batter)?
-- Platoon exposure: is there a handedness matchup that breaks him?
-- Workload accumulation: any signs of stuff degradation over the window?"""
+- Platoon exposure: strengths and vulnerabilities by handedness
+- Workload trajectory: stuff improving as he stretches out, or degrading?
+- Any pitch showing a breakout trend (new addition, shape change, usage surge)?"""
 
 synthesizer = Agent(
     'anthropic:claude-sonnet-4-6',
