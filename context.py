@@ -26,6 +26,7 @@ from engine import (
     ExecutionMetrics,
     WorkloadContext,
     TTOAnalysis,
+    TTOPitchType,
 )
 
 __all__ = ["PitcherContext", "assemble_pitcher_context"]
@@ -213,21 +214,57 @@ class PitcherContext(BaseModel):
         tto = self.tto
         if tto is None or not tto.available:
             return ""
-        lines = [f"## Times Through Order"]
+        lines = ["## Times Through Order"]
         lines.append(f"- {tto.summary}")
-        lines.append("| Pass | Pitches | Velo | P+ | Velo Delta | P+ Delta |")
-        lines.append("|------|---------|------|----|------------|----------|")
+
+        # Main table with FB/Secondary P+ split
+        lines.append("| Pass | Pitches | Velo | P+ | FB P+ | Sec P+ | Velo Delta | P+ Delta |")
+        lines.append("|------|---------|------|----|-------|--------|------------|----------|")
         for s in tto.splits:
             velo = f"{s.avg_velo:.1f}" if s.avg_velo else "--"
             pp = f"{s.avg_p_plus:.0f}" if s.avg_p_plus else "--"
+            fb = f"{s.fb_p_plus:.0f}" if s.fb_p_plus else "--"
+            sec = f"{s.sec_p_plus:.0f}" if s.sec_p_plus else "--"
+            sample = " *" if s.small_sample else ""
             lines.append(
-                f"| {s.pass_number} "
+                f"| {s.pass_number}{sample} "
                 f"| {s.pitches} "
                 f"| {velo} "
                 f"| {pp} "
+                f"| {fb} ({s.fb_p_plus_delta}) "
+                f"| {sec} ({s.sec_p_plus_delta}) "
                 f"| {s.velo_delta} "
                 f"| {s.p_plus_delta} |"
             )
+
+        # Per-pitch-type breakdown
+        lines.append("")
+        lines.append("**By pitch type across passes:**")
+        # Collect all pitch types across all passes
+        all_types: dict[str, dict[int, TTOPitchType]] = {}
+        for s in tto.splits:
+            for pt in s.pitch_types:
+                if pt.pitch_type not in all_types:
+                    all_types[pt.pitch_type] = {}
+                all_types[pt.pitch_type][s.pass_number] = pt
+
+        pass_nums = [s.pass_number for s in tto.splits]
+        header_passes = " | ".join(f"Pass {n}" for n in pass_nums)
+        lines.append(f"| Pitch | {header_passes} |")
+        sep_passes = " | ".join("---" for _ in pass_nums)
+        lines.append(f"|-------|{sep_passes}|")
+
+        for pt_name, by_pass in sorted(all_types.items()):
+            cells: list[str] = []
+            for pn in pass_nums:
+                if pn in by_pass:
+                    entry = by_pass[pn]
+                    pp = f"{entry.avg_p_plus:.0f}" if entry.avg_p_plus else "--"
+                    cells.append(f"{pp} ({entry.pitches}p, {entry.p_plus_delta})")
+                else:
+                    cells.append("--")
+            lines.append(f"| {pt_name} | {' | '.join(cells)} |")
+
         return "\n".join(lines)
 
     def _render_arsenal_section(self) -> str:

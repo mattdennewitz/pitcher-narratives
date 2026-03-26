@@ -34,6 +34,7 @@ __all__ = [
     "ExecutionMetrics",
     "AppearanceWorkload",
     "WorkloadContext",
+    "TTOPitchType",
     "TTOSplit",
     "TTOAnalysis",
     "compute_tto_analysis",
@@ -1425,6 +1426,21 @@ def compute_workload_context(data: PitcherData) -> WorkloadContext:
 # ── Times Through Order ───────────────────────────────────────────────
 
 
+_TTO_SMALL_SAMPLE = 50
+"""Pitches below which a TTO pass gets a small-sample caveat."""
+
+
+@dataclass
+class TTOPitchType:
+    """Per-pitch-type breakdown within a TTO pass."""
+
+    pitch_type: str
+    pitches: int
+    avg_p_plus: float | None
+    p_plus_delta: str
+    """Delta vs this type's pass-1 P+ (e.g., 'Down 8 points')."""
+
+
 @dataclass
 class TTOSplit:
     """Metrics for a single pass through the order."""
@@ -1435,10 +1451,22 @@ class TTOSplit:
     avg_velo: float | None
     avg_p_plus: float | None
     avg_s_plus: float | None
+    fb_p_plus: float | None
+    """Fastball-only P+ for this pass (FF/SI/FC)."""
+    sec_p_plus: float | None
+    """Secondary-only P+ for this pass (non-fastball)."""
     velo_delta: str
     """Delta vs first pass (e.g., 'Down 1.8 mph')."""
     p_plus_delta: str
     """Delta vs first pass."""
+    fb_p_plus_delta: str
+    """Fastball P+ delta vs first pass."""
+    sec_p_plus_delta: str
+    """Secondary P+ delta vs first pass."""
+    pitch_types: list[TTOPitchType]
+    """Per-pitch-type breakdown within this pass."""
+    small_sample: bool
+    """True if < _TTO_SMALL_SAMPLE pitches."""
 
 
 @dataclass
@@ -1455,15 +1483,15 @@ class TTOAnalysis:
 def compute_tto_analysis(data: PitcherData) -> TTOAnalysis:
     """Compute times-through-order P+ and velocity degradation.
 
-    Joins Statcast (has n_thruorder_pitcher) with all_pitches CSV
-    (has P+/S+) to compute per-pass metrics. Only uses window
-    appearances.
+    Joins Statcast (has n_thruorder_pitcher, pitch_type) with all_pitches
+    CSV (has P+/S+) to compute per-pass metrics with fastball/secondary
+    split and per-pitch-type breakdown. Only uses window appearances.
 
     Args:
         data: PitcherData bundle.
 
     Returns:
-        TTOAnalysis with per-pass splits and summary.
+        TTOAnalysis with per-pass splits, pitch-type breakdowns, and summary.
     """
     statcast = data.statcast
     all_pitches = data.agg_csvs.get("all_pitches")
@@ -1478,17 +1506,27 @@ def compute_tto_analysis(data: PitcherData) -> TTOAnalysis:
     if sc_window.is_empty():
         return TTOAnalysis(splits=[], available=False, summary="No window appearances")
 
-    # Join statcast (n_thruorder_pitcher) with all_pitches (P+, S+)
-    sc_cols = sc_window.select("pitcher", "game_pk", "pitch_number", "n_thruorder_pitcher", "release_speed")
+    # Join statcast (n_thruorder_pitcher, pitch_type) with all_pitches (P+, S+)
+    sc_cols = sc_window.select(
+        "pitcher", "game_pk", "pitch_number",
+        "n_thruorder_pitcher", "release_speed", "pitch_type",
+    )
     ap_cols = all_pitches.select("pitcher", "game_pk", "pitch_number", "P+", "S+")
 
     joined = sc_cols.join(ap_cols, on=["pitcher", "game_pk", "pitch_number"], how="inner")
+    # Filter out empty pitch types
+    joined = joined.filter(pl.col("pitch_type") != "")
 
     if joined.is_empty():
         return TTOAnalysis(splits=[], available=False, summary="No matched pitch data")
 
-    # Group by TTO pass
-    tto_groups = (
+    # Tag fastball vs secondary
+    joined = joined.with_columns(
+        pl.col("pitch_type").is_in(list(_FASTBALL_TYPES)).alias("is_fastball")
+    )
+
+    # ── Overall aggregation by TTO pass ──
+    tto_overall = (
         joined.group_by("n_thruorder_pitcher")
         .agg(
             pl.col("release_speed").mean().alias("avg_velo"),
@@ -1499,37 +1537,100 @@ def compute_tto_analysis(data: PitcherData) -> TTOAnalysis:
         .sort("n_thruorder_pitcher")
     )
 
-    rows = tto_groups.to_dicts()
-    if len(rows) < 2:
+    # ── Fastball / secondary split by TTO pass ──
+    fb_sec = (
+        joined.group_by(["n_thruorder_pitcher", "is_fastball"])
+        .agg(
+            pl.col("P+").mean().alias("avg_p_plus"),
+            pl.len().alias("pitches"),
+        )
+        .sort(["n_thruorder_pitcher", "is_fastball"])
+    )
+
+    # ── Per pitch-type breakdown by TTO pass ──
+    pitch_type_breakdown = (
+        joined.group_by(["n_thruorder_pitcher", "pitch_type"])
+        .agg(
+            pl.col("P+").mean().alias("avg_p_plus"),
+            pl.len().alias("pitches"),
+        )
+        .sort(["n_thruorder_pitcher", "pitch_type"])
+    )
+
+    overall_rows = tto_overall.to_dicts()
+    if len(overall_rows) < 2:
         return TTOAnalysis(
-            splits=[TTOSplit(
-                pass_number=1,
-                pitches=rows[0]["pitches"] if rows else 0,
-                avg_velo=rows[0]["avg_velo"] if rows else None,
-                avg_p_plus=rows[0]["avg_p_plus"] if rows else None,
-                avg_s_plus=rows[0]["avg_s_plus"] if rows else None,
-                velo_delta="--",
-                p_plus_delta="--",
-            )] if rows else [],
+            splits=[],
             available=False,
             summary="Only faced batters once per game (no TTO comparison)",
         )
 
-    # Build splits with deltas vs first pass
-    first = rows[0]
+    # Helper: extract fb/sec P+ for a pass
+    def _get_fb_sec(pass_num: int) -> tuple[float | None, float | None]:
+        fb_rows = fb_sec.filter(
+            (pl.col("n_thruorder_pitcher") == pass_num) & pl.col("is_fastball")
+        )
+        sec_rows = fb_sec.filter(
+            (pl.col("n_thruorder_pitcher") == pass_num) & ~pl.col("is_fastball")
+        )
+        fb_val = fb_rows["avg_p_plus"][0] if fb_rows.height > 0 else None
+        sec_val = sec_rows["avg_p_plus"][0] if sec_rows.height > 0 else None
+        return fb_val, sec_val
+
+    # Helper: extract pitch-type breakdown for a pass
+    def _get_pitch_types(pass_num: int) -> list[dict]:
+        rows = pitch_type_breakdown.filter(
+            pl.col("n_thruorder_pitcher") == pass_num
+        ).sort("pitches", descending=True)
+        return rows.to_dicts()
+
+    # Get pass-1 baselines for deltas
+    first = overall_rows[0]
+    first_fb, first_sec = _get_fb_sec(first["n_thruorder_pitcher"])
+
+    # Get pass-1 per-type P+ baselines
+    first_by_type: dict[str, float] = {}
+    for pt in _get_pitch_types(first["n_thruorder_pitcher"]):
+        if pt["avg_p_plus"] is not None:
+            first_by_type[pt["pitch_type"]] = pt["avg_p_plus"]
+
+    # Build splits
     splits: list[TTOSplit] = []
-    for row in rows:
+    for row in overall_rows:
         pass_num = row["n_thruorder_pitcher"]
         velo = row["avg_velo"]
         p_plus = row["avg_p_plus"]
         s_plus = row["avg_s_plus"]
+        fb_pp, sec_pp = _get_fb_sec(pass_num)
 
-        if pass_num == 1:
+        if pass_num == first["n_thruorder_pitcher"]:
             vdelta = "--"
             pdelta = "--"
+            fb_delta = "--"
+            sec_delta = "--"
         else:
             vdelta = _velo_delta_string(velo - first["avg_velo"]) if velo and first["avg_velo"] else "--"
             pdelta = _pplus_delta_string(p_plus - first["avg_p_plus"]) if p_plus and first["avg_p_plus"] else "--"
+            fb_delta = _pplus_delta_string(fb_pp - first_fb) if fb_pp and first_fb else "--"
+            sec_delta = _pplus_delta_string(sec_pp - first_sec) if sec_pp and first_sec else "--"
+
+        # Per-pitch-type breakdown with deltas
+        pt_entries: list[TTOPitchType] = []
+        for pt in _get_pitch_types(pass_num):
+            pt_type = pt["pitch_type"]
+            pt_pp = pt["avg_p_plus"]
+            if pass_num == first["n_thruorder_pitcher"]:
+                pt_delta = "--"
+            elif pt_type in first_by_type and pt_pp is not None:
+                pt_delta = _pplus_delta_string(pt_pp - first_by_type[pt_type])
+            else:
+                pt_delta = "New"
+            pt_entries.append(TTOPitchType(
+                pitch_type=pt_type,
+                pitches=pt["pitches"],
+                avg_p_plus=pt_pp,
+                p_plus_delta=pt_delta,
+            ))
 
         splits.append(TTOSplit(
             pass_number=pass_num,
@@ -1537,18 +1638,35 @@ def compute_tto_analysis(data: PitcherData) -> TTOAnalysis:
             avg_velo=velo,
             avg_p_plus=p_plus,
             avg_s_plus=s_plus,
+            fb_p_plus=fb_pp,
+            sec_p_plus=sec_pp,
             velo_delta=vdelta,
             p_plus_delta=pdelta,
+            fb_p_plus_delta=fb_delta,
+            sec_p_plus_delta=sec_delta,
+            pitch_types=pt_entries,
+            small_sample=row["pitches"] < _TTO_SMALL_SAMPLE,
         ))
 
-    # Build summary
-    if first["avg_p_plus"] and rows[-1]["avg_p_plus"]:
-        drop = first["avg_p_plus"] - rows[-1]["avg_p_plus"]
-        if abs(drop) >= _PPLUS_THRESHOLD:
-            summary = f"P+ drops {drop:.0f} points by pass {rows[-1]['n_thruorder_pitcher']}"
+    # Build summary — lead with fastball P+ degradation signal
+    summary_parts: list[str] = []
+    if first_fb and splits[-1].fb_p_plus:
+        fb_drop = first_fb - splits[-1].fb_p_plus
+        if abs(fb_drop) >= _PPLUS_THRESHOLD:
+            summary_parts.append(f"Fastball P+ drops {fb_drop:.0f} points by pass {splits[-1].pass_number}")
         else:
-            summary = f"P+ holds steady through {len(rows)} passes ({drop:+.0f} points)"
-    else:
-        summary = f"{len(rows)} passes through the order"
+            summary_parts.append(f"Fastball P+ holds through {len(splits)} passes ({fb_drop:+.0f})")
+
+    if first_sec and splits[-1].sec_p_plus:
+        sec_drop = first_sec - splits[-1].sec_p_plus
+        if abs(sec_drop) >= _PPLUS_THRESHOLD:
+            summary_parts.append(f"Secondary P+ drops {sec_drop:.0f} points")
+        else:
+            summary_parts.append(f"Secondary P+ holds ({sec_drop:+.0f})")
+
+    if splits[-1].small_sample:
+        summary_parts.append(f"small sample in pass {splits[-1].pass_number} ({splits[-1].pitches} pitches)")
+
+    summary = "; ".join(summary_parts) if summary_parts else f"{len(splits)} passes through the order"
 
     return TTOAnalysis(splits=splits, available=True, summary=summary)

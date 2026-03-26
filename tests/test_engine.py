@@ -18,6 +18,7 @@ from engine import (
     PlatoonMix,
     PlatoonSplit,
     FirstPitchEntry,
+    TTOPitchType,
     TTOSplit,
     TTOAnalysis,
     compute_tto_analysis,
@@ -643,17 +644,21 @@ def test_tto_returns_analysis():
 
 
 def test_tto_splits_have_pass_numbers():
-    """Each TTOSplit has a pass_number >= 1."""
+    """Each TTOSplit has a pass_number >= 1 and FB/secondary P+ fields."""
     data = load_pitcher_data(TEST_PITCHER, window_days=9999)
     tto = compute_tto_analysis(data)
     for s in tto.splits:
         assert isinstance(s, TTOSplit)
         assert s.pass_number >= 1
         assert s.pitches > 0
+        assert isinstance(s.fb_p_plus_delta, str)
+        assert isinstance(s.sec_p_plus_delta, str)
+        assert isinstance(s.pitch_types, list)
+        assert isinstance(s.small_sample, bool)
 
 
 def test_tto_starter_with_deep_outings():
-    """Starter with TTO 2+ gets available=True and multiple splits."""
+    """Starter with TTO 2+ gets available=True, FB/sec split, and pitch types."""
     # Kochanowicz had 3 passes in our earlier exploration
     data = load_pitcher_data(686799, window_days=9999)
     tto = compute_tto_analysis(data)
@@ -661,6 +666,45 @@ def test_tto_starter_with_deep_outings():
         assert tto.available is True
         assert tto.splits[0].velo_delta == "--"  # First pass has no delta
         assert tto.splits[1].velo_delta != "--"  # Second pass has delta
+        # FB/secondary split should be populated for starters
+        assert tto.splits[0].fb_p_plus is not None
+        assert tto.splits[0].sec_p_plus is not None
+        # Per-pitch-type breakdown should be present
+        assert len(tto.splits[0].pitch_types) > 0
+        for pt in tto.splits[0].pitch_types:
+            assert isinstance(pt, TTOPitchType)
+            assert pt.pitches > 0
+
+
+def test_tto_fb_sec_deltas():
+    """TTO shows fastball and secondary P+ deltas separately."""
+    data = load_pitcher_data(686799, window_days=30)
+    tto = compute_tto_analysis(data)
+    if tto.available and len(tto.splits) >= 2:
+        # First pass deltas are "--"
+        assert tto.splits[0].fb_p_plus_delta == "--"
+        assert tto.splits[0].sec_p_plus_delta == "--"
+        # Later passes have real deltas
+        assert tto.splits[1].fb_p_plus_delta != "--"
+
+
+def test_tto_summary_mentions_fb():
+    """TTO summary references fastball P+ specifically."""
+    data = load_pitcher_data(686799, window_days=30)
+    tto = compute_tto_analysis(data)
+    if tto.available:
+        assert "Fastball P+" in tto.summary or "Secondary P+" in tto.summary
+
+
+def test_tto_small_sample_flag():
+    """Passes with < 50 pitches are flagged."""
+    data = load_pitcher_data(686799, window_days=9999)
+    tto = compute_tto_analysis(data)
+    for s in tto.splits:
+        if s.pitches < 50:
+            assert s.small_sample is True
+        else:
+            assert s.small_sample is False
 
 
 def test_tto_reliever_single_pass():
