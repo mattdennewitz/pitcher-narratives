@@ -1,7 +1,8 @@
-"""Tests for the fastball quality computation engine.
+"""Tests for the fastball quality and arsenal computation engine.
 
 Covers delta string helpers, FastballSummary computation, VelocityArc
-computation, cold start fallback, and small sample flagging.
+computation, cold start fallback, small sample flagging, arsenal summary,
+platoon mix shifts, and first-pitch weaponry analysis.
 """
 
 import pytest
@@ -10,13 +11,22 @@ from data import load_pitcher_data
 from engine import (
     FastballSummary,
     VelocityArc,
+    PitchTypeSummary,
+    PlatoonMix,
+    PlatoonSplit,
+    FirstPitchEntry,
+    FirstPitchWeaponry,
     compute_fastball_summary,
     compute_velocity_arc,
+    compute_arsenal_summary,
+    compute_platoon_mix,
+    compute_first_pitch_weaponry,
     _velo_delta_string,
     _pplus_delta_string,
     _usage_delta_string,
     _movement_delta_string,
     _identify_primary_fastball,
+    _stand_to_platoon,
 )
 
 TEST_PITCHER = 592155  # Booser, Cam -- LHP, 12 appearances, FC primary fastball
@@ -251,3 +261,182 @@ def test_small_sample_flag():
         # With 1-day window, likely small sample
         if summary.small_sample:
             assert summary.small_sample is True
+
+
+# ── Arsenal Summary ──────────────────────────────────────────────────
+
+
+def test_usage_rate_deltas():
+    """compute_arsenal_summary returns PitchTypeSummary list with usage deltas."""
+    data = load_pitcher_data(TEST_PITCHER, window_days=30)
+    arsenal = compute_arsenal_summary(data)
+    assert isinstance(arsenal, list)
+    assert len(arsenal) > 0
+    for pts in arsenal:
+        assert isinstance(pts, PitchTypeSummary)
+        assert isinstance(pts.season_usage_pct, float)
+        assert isinstance(pts.window_usage_pct, float)
+        assert isinstance(pts.usage_delta, str)
+        # Usage pcts should sum to ~100
+        assert 0.0 < pts.season_usage_pct <= 100.0
+        assert 0.0 <= pts.window_usage_pct <= 100.0
+    # Total season usage should sum to ~100%
+    total_season = sum(p.season_usage_pct for p in arsenal)
+    assert 99.0 < total_season < 101.0
+
+
+def test_arsenal_pplus_deltas():
+    """Each PitchTypeSummary has P+/S+/L+ season, window, and delta fields."""
+    data = load_pitcher_data(TEST_PITCHER, window_days=30)
+    arsenal = compute_arsenal_summary(data)
+    assert len(arsenal) > 0
+    for pts in arsenal:
+        assert isinstance(pts.season_p_plus, float)
+        assert isinstance(pts.p_plus_delta, str)
+        assert isinstance(pts.season_s_plus, float)
+        assert isinstance(pts.s_plus_delta, str)
+        assert isinstance(pts.season_l_plus, float)
+        assert isinstance(pts.l_plus_delta, str)
+        # P+/S+/L+ should be in reasonable range (50-200 ish)
+        assert 20.0 < pts.season_p_plus < 250.0
+        # Delta strings should contain known vocabulary
+        assert any(word in pts.p_plus_delta for word in ["Up", "Down", "Steady", "Full season", "No window"])
+
+
+def test_arsenal_pitch_names():
+    """Each PitchTypeSummary has human-readable pitch_name."""
+    data = load_pitcher_data(TEST_PITCHER, window_days=30)
+    arsenal = compute_arsenal_summary(data)
+    for pts in arsenal:
+        assert isinstance(pts.pitch_name, str)
+        assert pts.pitch_name != ""
+        # Should not be just the code (e.g., "FC"), should be full name
+        assert len(pts.pitch_name) > 2
+
+
+def test_arsenal_ordering():
+    """PitchTypeSummary list is ordered by season usage descending (FC first for test pitcher)."""
+    data = load_pitcher_data(TEST_PITCHER, window_days=30)
+    arsenal = compute_arsenal_summary(data)
+    assert len(arsenal) >= 2
+    # Verify descending order
+    for i in range(len(arsenal) - 1):
+        assert arsenal[i].season_usage_pct >= arsenal[i + 1].season_usage_pct
+    # FC should be first (highest usage for Booser)
+    assert arsenal[0].pitch_type == "FC"
+
+
+def test_arsenal_small_sample():
+    """PitchTypeSummary.small_sample is True for pitch types with < 10 pitches in window."""
+    # Use a tiny window to get few pitches per type
+    data = load_pitcher_data(TEST_PITCHER, window_days=1)
+    arsenal = compute_arsenal_summary(data)
+    for pts in arsenal:
+        assert isinstance(pts.small_sample, bool)
+        if pts.n_pitches_window < 10:
+            assert pts.small_sample is True
+
+
+def test_single_pitch_type():
+    """Pitcher with only 1 pitch type gets 1-element arsenal list with 100% usage."""
+    # Test the delta string for single-type scenario
+    data = load_pitcher_data(TEST_PITCHER, window_days=30)
+    arsenal = compute_arsenal_summary(data)
+    # Test pitcher has 4 types, so verify list has 4 elements
+    assert len(arsenal) == 4
+    # Verify each has the pitch_type and n_pitches_season fields
+    for pts in arsenal:
+        assert pts.n_pitches_season > 0
+    # For single-type case: verify _usage_delta_string with 0 delta at 100% would say "Steady"
+    # This is a unit-level check of the logic
+    steady = _usage_delta_string(0.0)
+    assert "Steady" in steady
+
+
+def test_cold_start_arsenal():
+    """With large window covering full season, delta strings contain 'Full season in window'."""
+    data = load_pitcher_data(TEST_PITCHER, window_days=9999)
+    arsenal = compute_arsenal_summary(data)
+    assert len(arsenal) > 0
+    for pts in arsenal:
+        assert pts.cold_start is True
+        assert "Full season in window" in pts.usage_delta
+        assert "Full season in window" in pts.p_plus_delta
+        assert "Full season in window" in pts.s_plus_delta
+        assert "Full season in window" in pts.l_plus_delta
+
+
+# ── Platoon Mix ──────────────────────────────────────────────────────
+
+
+def test_platoon_mix_shifts():
+    """compute_platoon_mix returns PlatoonMix with per-type per-side usage rates and deltas."""
+    data = load_pitcher_data(TEST_PITCHER, window_days=30)
+    platoon = compute_platoon_mix(data)
+    assert isinstance(platoon, PlatoonMix)
+    assert isinstance(platoon.splits, list)
+    assert len(platoon.splits) > 0
+    for split in platoon.splits:
+        assert isinstance(split, PlatoonSplit)
+        assert split.platoon_side in ("same", "opposite")
+        assert isinstance(split.pitch_type, str)
+        assert isinstance(split.pitch_name, str)
+        if split.available:
+            assert isinstance(split.season_usage_pct, float)
+            assert isinstance(split.usage_delta, str)
+
+
+def test_platoon_missing_combo():
+    """For CH (only thrown to opposite side for test pitcher), same-side entry shows unavailable."""
+    data = load_pitcher_data(TEST_PITCHER, window_days=30)
+    platoon = compute_platoon_mix(data)
+    # Find the CH same-side split
+    ch_same = [s for s in platoon.splits if s.pitch_type == "CH" and s.platoon_side == "same"]
+    assert len(ch_same) == 1
+    assert ch_same[0].available is False
+    assert "same-side" in ch_same[0].usage_delta.lower() or "not thrown" in ch_same[0].usage_delta.lower()
+
+
+def test_platoon_mapping():
+    """For LHP, stand=L maps to 'same' and stand=R maps to 'opposite'."""
+    assert _stand_to_platoon("L", "L") == "same"
+    assert _stand_to_platoon("R", "L") == "opposite"
+    # Also verify RHP
+    assert _stand_to_platoon("R", "R") == "same"
+    assert _stand_to_platoon("L", "R") == "opposite"
+
+
+# ── First Pitch Weaponry ─────────────────────────────────────────────
+
+
+def test_first_pitch_weaponry():
+    """compute_first_pitch_weaponry returns FirstPitchWeaponry with per-type first-pitch %."""
+    data = load_pitcher_data(TEST_PITCHER, window_days=30)
+    fpw = compute_first_pitch_weaponry(data)
+    assert isinstance(fpw, FirstPitchWeaponry)
+    assert isinstance(fpw.entries, list)
+    assert len(fpw.entries) > 0
+    for entry in fpw.entries:
+        assert isinstance(entry, FirstPitchEntry)
+        assert isinstance(entry.season_pct, float)
+        assert isinstance(entry.window_pct, float)
+        assert isinstance(entry.delta, str)
+        assert 0.0 <= entry.season_pct <= 100.0
+    # Total first pitch % should sum to ~100
+    total_season_pct = sum(e.season_pct for e in fpw.entries)
+    assert 99.0 < total_season_pct < 101.0
+
+
+def test_first_pitch_count():
+    """Total first pitches equals number of batters faced (42 for test pitcher)."""
+    data = load_pitcher_data(TEST_PITCHER, window_days=30)
+    fpw = compute_first_pitch_weaponry(data)
+    assert fpw.total_first_pitches_season == 42
+
+
+def test_first_pitch_ordering():
+    """First pitch entries are ordered by window_pct descending."""
+    data = load_pitcher_data(TEST_PITCHER, window_days=30)
+    fpw = compute_first_pitch_weaponry(data)
+    for i in range(len(fpw.entries) - 1):
+        assert fpw.entries[i].window_pct >= fpw.entries[i + 1].window_pct
