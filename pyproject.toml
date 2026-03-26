@@ -1,0 +1,19 @@
+[project]
+name = "pitcher-narratives"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+    "polars>=1.39.3",
+    "pydantic-ai>=1.72.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.2",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
