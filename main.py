@@ -1,12 +1,13 @@
 """CLI entry point for pitcher scouting reports.
 
-Parses command-line arguments, loads pitcher data via the data pipeline,
-and outputs a brief verification summary.
+Parses command-line arguments, loads pitcher data, assembles context,
+and generates an LLM-powered scouting report via streaming output.
 """
 
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 
 
@@ -27,7 +28,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> None:
-    """Entry point: load pitcher data and generate report."""
+    """Entry point: load pitcher data, assemble context, generate report."""
     args = parse_args()
 
     from data import load_pitcher_data
@@ -38,15 +39,32 @@ def main() -> None:
         print(str(e), file=sys.stderr)
         sys.exit(1)
 
-    # Temporary verification output (replaced by report in Phase 4)
-    n_total = len(pitcher_data.appearances)
-    n_window = len(pitcher_data.window_appearances)
-    roles = pitcher_data.appearances["role"].unique().sort().to_list()
-    print(
-        f"{pitcher_data.pitcher_name} ({pitcher_data.throws}HP) | "
-        f"{n_total} appearances ({n_window} in {args.window}d window) | "
-        f"Roles: {', '.join(roles)}"
-    )
+    from context import assemble_pitcher_context
+    from pydantic_ai.exceptions import UserError
+    from report import generate_report_streaming
+
+    ctx = assemble_pitcher_context(pitcher_data)
+
+    # Support test mode: use TestModel when env var is set
+    model_override = None
+    if os.environ.get("PITCHER_NARRATIVES_TEST_MODEL"):
+        from pydantic_ai.models.test import TestModel
+
+        model_override = TestModel(
+            custom_output_text="[Test mode] Scouting report would appear here."
+        )
+
+    try:
+        generate_report_streaming(ctx, _model_override=model_override)
+    except UserError as e:
+        if "ANTHROPIC_API_KEY" in str(e):
+            print(
+                "Error: ANTHROPIC_API_KEY environment variable is not set.\n"
+                "Get your key from https://console.anthropic.com/",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        raise
 
 
 if __name__ == "__main__":

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 
@@ -46,15 +47,27 @@ def test_pitcher_required():
     assert exc_info.value.code == 2
 
 
+def _test_env(**extra: str) -> dict[str, str]:
+    """Build a clean subprocess environment with optional overrides.
+
+    Starts from os.environ so PATH and other essentials are preserved,
+    then removes ANTHROPIC_API_KEY (tests shouldn't hit the real API)
+    and applies any extra key-value pairs.
+    """
+    env = {k: v for k, v in os.environ.items() if k != "ANTHROPIC_API_KEY"}
+    env.update(extra)
+    return env
+
+
 def test_cli_valid_pitcher_exit_0():
-    """Integration: Valid pitcher ID exits 0 and produces output."""
+    """Integration: Valid pitcher ID with test model exits 0 and produces output."""
     result = subprocess.run(
         [sys.executable, "main.py", "-p", "592155"],
         capture_output=True, text=True, timeout=60,
+        env=_test_env(PITCHER_NARRATIVES_TEST_MODEL="1"),
     )
     assert result.returncode == 0
-    assert "Booser, Cam" in result.stdout
-    assert "appearances" in result.stdout
+    assert result.stdout.strip()  # Non-empty output
 
 
 def test_cli_invalid_pitcher_exit_1():
@@ -62,19 +75,20 @@ def test_cli_invalid_pitcher_exit_1():
     result = subprocess.run(
         [sys.executable, "main.py", "-p", "9999999"],
         capture_output=True, text=True, timeout=60,
+        env=_test_env(PITCHER_NARRATIVES_TEST_MODEL="1"),
     )
     assert result.returncode == 1
     assert "Pitcher 9999999 not found" in result.stderr
 
 
 def test_cli_custom_window():
-    """Integration: -w flag changes lookback window."""
+    """Integration: -w flag changes lookback window (pipeline completes)."""
     result = subprocess.run(
         [sys.executable, "main.py", "-p", "592155", "-w", "7"],
         capture_output=True, text=True, timeout=60,
+        env=_test_env(PITCHER_NARRATIVES_TEST_MODEL="1"),
     )
     assert result.returncode == 0
-    assert "7d window" in result.stdout
 
 
 def test_cli_no_args_shows_help():
@@ -87,14 +101,25 @@ def test_cli_no_args_shows_help():
     assert "usage:" in result.stderr.lower()
 
 
-def test_cli_output_has_role():
-    """ROLE-02: Output includes role information."""
+def test_cli_produces_report():
+    """Integration: Test model produces non-empty prose report output."""
     result = subprocess.run(
         [sys.executable, "main.py", "-p", "592155"],
         capture_output=True, text=True, timeout=60,
+        env=_test_env(PITCHER_NARRATIVES_TEST_MODEL="1"),
     )
     assert result.returncode == 0
-    assert "Roles:" in result.stdout
-    # Booser has both SP and RP
-    assert "SP" in result.stdout
-    assert "RP" in result.stdout
+    assert "[Test mode]" in result.stdout
+    assert "Scouting report" in result.stdout
+
+
+def test_cli_missing_api_key():
+    """Integration: Missing ANTHROPIC_API_KEY without test model exits 1."""
+    # Remove ANTHROPIC_API_KEY and PITCHER_NARRATIVES_TEST_MODEL from env
+    result = subprocess.run(
+        [sys.executable, "main.py", "-p", "592155"],
+        capture_output=True, text=True, timeout=60,
+        env=_test_env(),
+    )
+    assert result.returncode == 1
+    assert "ANTHROPIC_API_KEY" in result.stderr
