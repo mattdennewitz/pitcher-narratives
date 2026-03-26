@@ -9,16 +9,16 @@ Requirements for initial release. Each maps to roadmap phases.
 
 ### Data Pipeline
 
-- [ ] **DATA-01**: System can load Statcast parquet and filter pitch-level data by pitcher ID
-- [ ] **DATA-02**: System can load and join Pitching+ CSV aggregations at all grains (season, appearance, pitch type, platoon, and their combinations)
-- [ ] **DATA-03**: System can compute season-level baselines from pitcher.csv and pitcher_type.csv for a given pitcher
-- [ ] **DATA-04**: System can filter appearances to a configurable lookback window in days (via `-w` CLI arg)
+- [x] **DATA-01**: System can load Statcast parquet and filter pitch-level data by pitcher ID
+- [x] **DATA-02**: System can load and join Pitching+ CSV aggregations at all grains (season, appearance, pitch type, platoon, and their combinations)
+- [x] **DATA-03**: System can compute season-level baselines from pitcher.csv and pitcher_type.csv for a given pitcher
+- [x] **DATA-04**: System can filter appearances to a configurable lookback window in days (via `-w` CLI arg)
 
 ### Pitcher Classification
 
-- [ ] **ROLE-01**: System can auto-detect whether each appearance is a start or relief outing
+- [x] **ROLE-01**: System can auto-detect whether each appearance is a start or relief outing
 - [ ] **ROLE-02**: Report structure adapts based on detected role (starter report vs. reliever report)
-- [ ] **ROLE-03**: System correctly handles swingmen/openers who switch roles between appearances
+- [x] **ROLE-03**: System correctly handles swingmen/openers who switch roles between appearances
 
 ### Fastball Quality
 
@@ -100,13 +100,13 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| DATA-01 | Phase 1 | Pending |
-| DATA-02 | Phase 1 | Pending |
-| DATA-03 | Phase 1 | Pending |
-| DATA-04 | Phase 1 | Pending |
-| ROLE-01 | Phase 1 | Pending |
+| DATA-01 | Phase 1 | Complete |
+| DATA-02 | Phase 1 | Complete |
+| DATA-03 | Phase 1 | Complete |
+| DATA-04 | Phase 1 | Complete |
+| ROLE-01 | Phase 1 | Complete |
 | ROLE-02 | Phase 1 | Pending |
-| ROLE-03 | Phase 1 | Pending |
+| ROLE-03 | Phase 1 | Complete |
 | CLI-01 | Phase 1 | Pending |
 | CLI-02 | Phase 1 | Pending |
 | FB-01 | Phase 2 | Pending |

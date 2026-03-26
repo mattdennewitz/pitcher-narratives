@@ -31,7 +31,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 **Plans:** 2 plans
 
 Plans:
-- [ ] 01-01-PLAN.md -- Data loading pipeline: project setup, data.py with all loader/classification/baseline functions, tests
+- [x] 01-01-PLAN.md -- Data loading pipeline: project setup, data.py with all loader/classification/baseline functions, tests
 - [ ] 01-02-PLAN.md -- CLI wiring: argparse entry point, data pipeline integration, end-to-end tests
 
 ### Phase 2: Fastball & Arsenal Engine
