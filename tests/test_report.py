@@ -38,15 +38,31 @@ def test_synthesizer_output_type_is_str():
 
 
 def test_synthesizer_prompt_is_objective():
-    """Synthesizer prompt emphasizes objectivity, no editorial opinion."""
-    assert "purely objective" in _SYNTHESIZER_PROMPT
-    assert "Do NOT write narrative prose" in _SYNTHESIZER_PROMPT
+    """Synthesizer prompt emphasizes objectivity, not a story."""
+    assert "not writing a story" in _SYNTHESIZER_PROMPT
+    assert "Absolute Objectivity" in _SYNTHESIZER_PROMPT
+
+
+def test_synthesizer_prompt_has_rigid_output_format():
+    """Synthesizer prompt prescribes exact output categories."""
+    assert "## Fastball Quality & Velocity Trends" in _SYNTHESIZER_PROMPT
+    assert "## Pitch Mix & Usage Shifts" in _SYNTHESIZER_PROMPT
+    assert "## Execution & Outcomes" in _SYNTHESIZER_PROMPT
+    assert "## Platoon Splits" in _SYNTHESIZER_PROMPT
+    assert "## Workload & Stamina" in _SYNTHESIZER_PROMPT
+    assert "## Key Signal" in _SYNTHESIZER_PROMPT
 
 
 def test_synthesizer_prompt_requires_baselines():
     """Synthesizer prompt requires stating baselines and deltas."""
     assert "baseline" in _SYNTHESIZER_PROMPT.lower()
     assert "delta" in _SYNTHESIZER_PROMPT.lower()
+
+
+def test_synthesizer_prompt_balanced_gains_and_drops():
+    """Synthesizer prompt weights gains equally with drops."""
+    assert "gains AND drops" in _SYNTHESIZER_PROMPT or "Breakout Indicators" in _SYNTHESIZER_PROMPT
+    assert "Regression Risks" in _SYNTHESIZER_PROMPT
 
 
 # -- Phase 2: Editor agent tests ----------------------------------------------
