@@ -74,7 +74,11 @@ Plans:
   2. The report contains narrative paragraphs interspersed with data tables where they aid comprehension -- not a wall of stats
   3. The report references specific deltas and trends from the computed context (e.g., "His slider usage jumped 12 percentage points") without fabricating claims not present in the input data
   4. Starter reports and reliever reports have visibly different structure (starters get pitch mix depth and stamina; relievers get workload patterns and short-window focus)
-**Plans**: TBD
+**Plans:** 2 plans
+
+Plans:
+- [ ] 04-01-PLAN.md -- Report module: pydantic-ai Agent with claude-sonnet-4-6, scout-voice system prompt, SP/RP conditional guidance, streaming generation function, TestModel-based tests
+- [ ] 04-02-PLAN.md -- CLI wiring: replace temp verification output with report generation, API key error handling, updated integration tests
 
 ## Progress
 
@@ -86,4 +90,4 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4
 | 1. Data Pipeline & Classification | 0/2 | Planning complete | - |
 | 2. Fastball & Arsenal Engine | 0/2 | Planning complete | - |
 | 3. Execution & Context Engine | 0/2 | Planning complete | - |
-| 4. Report Generation | 0/0 | Not started | - |
+| 4. Report Generation | 0/2 | Planning complete | - |
