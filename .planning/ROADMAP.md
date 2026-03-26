@@ -62,7 +62,7 @@ Plans:
 **Plans:** 2 plans
 
 Plans:
-- [ ] 03-01-PLAN.md -- Execution metrics and workload context: CSW%, zone/chase rates, xWhiff/xSwing, xRV100 percentile, rest days, IP, consecutive days tracking
+- [x] 03-01-PLAN.md -- Execution metrics and workload context: CSW%, zone/chase rates, xWhiff/xSwing, xRV100 percentile, rest days, IP, consecutive days tracking
 - [ ] 03-02-PLAN.md -- PitcherContext assembly: Pydantic model assembling all engine outputs, to_prompt() markdown rendering under 2k tokens
 
 ### Phase 4: Report Generation

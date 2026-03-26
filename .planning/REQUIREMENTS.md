@@ -36,16 +36,16 @@ Requirements for initial release. Each maps to roadmap phases.
 
 ### Execution Metrics
 
-- [ ] **EXEC-01**: Report includes CSW% (called + swinging strike rate) by pitch type for recent window
-- [ ] **EXEC-02**: Report includes xWhiff and xSwing rates per pitch type
-- [ ] **EXEC-03**: Report includes zone rate vs. chase rate (O-Swing%) analysis
-- [ ] **EXEC-04**: Report includes xRV100 ranking showing how pitches grade relative to league
+- [x] **EXEC-01**: Report includes CSW% (called + swinging strike rate) by pitch type for recent window
+- [x] **EXEC-02**: Report includes xWhiff and xSwing rates per pitch type
+- [x] **EXEC-03**: Report includes zone rate vs. chase rate (O-Swing%) analysis
+- [x] **EXEC-04**: Report includes xRV100 ranking showing how pitches grade relative to league
 
 ### Workload & Context
 
-- [ ] **CTX-01**: Report includes rest days between appearances
-- [ ] **CTX-02**: Report includes innings pitched and pitch count per appearance
-- [ ] **CTX-03**: Report includes consecutive days pitched tracking for relievers
+- [x] **CTX-01**: Report includes rest days between appearances
+- [x] **CTX-02**: Report includes innings pitched and pitch count per appearance
+- [x] **CTX-03**: Report includes consecutive days pitched tracking for relievers
 
 ### Report Generation
 
@@ -117,13 +117,13 @@ Which phases cover which requirements. Updated during roadmap creation.
 | ARSL-02 | Phase 2 | Complete |
 | ARSL-03 | Phase 2 | Complete |
 | ARSL-04 | Phase 2 | Complete |
-| EXEC-01 | Phase 3 | Pending |
-| EXEC-02 | Phase 3 | Pending |
-| EXEC-03 | Phase 3 | Pending |
-| EXEC-04 | Phase 3 | Pending |
-| CTX-01 | Phase 3 | Pending |
-| CTX-02 | Phase 3 | Pending |
-| CTX-03 | Phase 3 | Pending |
+| EXEC-01 | Phase 3 | Complete |
+| EXEC-02 | Phase 3 | Complete |
+| EXEC-03 | Phase 3 | Complete |
+| EXEC-04 | Phase 3 | Complete |
+| CTX-01 | Phase 3 | Complete |
+| CTX-02 | Phase 3 | Complete |
+| CTX-03 | Phase 3 | Complete |
 | RPT-01 | Phase 4 | Pending |
 | RPT-02 | Phase 4 | Pending |
 | RPT-03 | Phase 4 | Pending |
