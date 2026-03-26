@@ -28,7 +28,11 @@ Decimal phases appear between their surrounding integers in numeric order.
   2. Running with `-w <days>` filters appearances to the specified lookback window; omitting `-w` uses a sensible default
   3. Each appearance is classified as start or relief, and a pitcher who has both start and relief outings gets correct per-appearance classification
   4. Season-level baselines (from pitcher.csv and pitcher_type.csv) are computed and accessible for the given pitcher
-**Plans**: TBD
+**Plans:** 2 plans
+
+Plans:
+- [ ] 01-01-PLAN.md -- Data loading pipeline: project setup, data.py with all loader/classification/baseline functions, tests
+- [ ] 01-02-PLAN.md -- CLI wiring: argparse entry point, data pipeline integration, end-to-end tests
 
 ### Phase 2: Fastball & Arsenal Engine
 **Goal**: The system produces pre-computed fastball quality analysis and arsenal breakdown with deltas and qualitative trend strings ready for LLM consumption
@@ -71,7 +75,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Data Pipeline & Classification | 0/0 | Not started | - |
+| 1. Data Pipeline & Classification | 0/2 | Planning complete | - |
 | 2. Fastball & Arsenal Engine | 0/0 | Not started | - |
 | 3. Execution & Context Engine | 0/0 | Not started | - |
 | 4. Report Generation | 0/0 | Not started | - |
