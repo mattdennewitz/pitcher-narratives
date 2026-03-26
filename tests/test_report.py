@@ -75,7 +75,8 @@ def test_editor_model_is_claude_sonnet():
 
 def test_editor_prompt_has_skeptical_tone():
     """Editor prompt instructs skeptical evaluation."""
-    assert "Skeptical" in _EDITOR_PROMPT or "skeptical" in _EDITOR_PROMPT
+    assert "skeptical" in _EDITOR_PROMPT.lower()
+    assert "not a cheerleader" in _EDITOR_PROMPT.lower()
 
 
 def test_editor_prompt_requires_decisive_projection():
@@ -83,24 +84,33 @@ def test_editor_prompt_requires_decisive_projection():
     assert "Take a Stance" in _EDITOR_PROMPT
 
 
-def test_editor_prompt_requires_two_paragraphs():
-    """Editor prompt enforces two-paragraph structure."""
-    assert "Two-Paragraph" in _EDITOR_PROMPT or "two paragraphs" in _EDITOR_PROMPT.lower()
+def test_editor_prompt_requires_capsule_structure():
+    """Editor prompt enforces 2-3 paragraph capsule structure."""
+    assert "2-3 Paragraph" in _EDITOR_PROMPT or "The Setup" in _EDITOR_PROMPT
+    assert "The Verdict" in _EDITOR_PROMPT
 
 
 def test_editor_prompt_requires_platoon():
     """Editor prompt requires platoon analysis."""
-    assert "Platoon Everything" in _EDITOR_PROMPT or "platoon" in _EDITOR_PROMPT.lower()
+    assert "Platoon Everything" in _EDITOR_PROMPT
 
 
-def test_editor_prompt_deemphasizes_traditional_stats():
-    """Editor prompt de-emphasizes ERA/W-L in favor of underlying metrics."""
-    assert "De-emphasize traditional" in _EDITOR_PROMPT or "traditional box score" in _EDITOR_PROMPT
+def test_editor_prompt_strict_constraints():
+    """Editor prompt has strict data-only constraints."""
+    assert "Rely entirely on the data provided" in _EDITOR_PROMPT
+    assert "Do not hallucinate" in _EDITOR_PROMPT
+
+
+def test_editor_prompt_no_fluff():
+    """Editor prompt bans introductory fluff and headers."""
+    assert "No introductory fluff" in _EDITOR_PROMPT
+    assert "Start immediately with the analysis" in _EDITOR_PROMPT
 
 
 def test_editor_prompt_no_cliches():
-    """Editor prompt bans cliches."""
-    assert "cliché" in _EDITOR_PROMPT or "bulldog mentality" in _EDITOR_PROMPT
+    """Editor prompt bans cliches with examples."""
+    assert "bulldog mentality" in _EDITOR_PROMPT
+    assert "pitches to contact" in _EDITOR_PROMPT
 
 
 # -- Role-conditional guidance tests -------------------------------------------
