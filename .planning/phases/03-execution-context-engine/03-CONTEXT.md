@@ -17,7 +17,7 @@ Build execution metrics computation, workload context tracking, and the PitcherC
 - Add execution metrics to engine.py — keeps all computation in one module
 - CSW%: count called_strike + swinging_strike descriptions in Statcast, divide by total pitches per type in window
 - Zone rate: pitches in zone 1-9 / total; Chase rate (O-Swing%): swings on pitches outside zone / pitches outside zone — uses Statcast `zone` and `description` columns
-- xRV100 ranking: percentile rank against 2026-team.csv averages for league context
+- xRV100 ranking: percentile rank against all pitchers in 2026-pitcher_type.csv (per pitch type, min 10 pitches) for league distribution; team.csv provides league-average reference
 
 ### Workload & Context
 - Rest days: days between consecutive game_dates in appearance data
