@@ -154,15 +154,19 @@ class PitcherContext(BaseModel):
 
     def _render_execution_section(self) -> str:
         lines = ["## Execution"]
-        lines.append("| Pitch | CSW% | Zone% | Chase% | xRV100 pctl |")
-        lines.append("|-------|------|-------|--------|-------------|")
+        lines.append("| Pitch | CSW% | Zone% | Chase% | xWhiff | xSwing | xRV100 pctl |")
+        lines.append("|-------|------|-------|--------|--------|--------|-------------|")
         for e in self.execution[:_MAX_PITCH_TYPES]:
             pctl = f"{e.xrv100_percentile}" if e.xrv100_percentile is not None else "--"
+            xwhiff = f"{e.xwhiff_p:.3f}" if e.xwhiff_p is not None else "--"
+            xswing = f"{e.xswing_p:.3f}" if e.xswing_p is not None else "--"
             lines.append(
                 f"| {e.pitch_name} ({e.pitch_type}) "
                 f"| {e.csw_pct:.1f} "
                 f"| {e.zone_rate:.1f} "
                 f"| {e.chase_rate:.1f} "
+                f"| {xwhiff} "
+                f"| {xswing} "
                 f"| {pctl} |"
             )
         return "\n".join(lines)
