@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-03-26)
 Phase: 04
 Plan: Not started
 Status: Phase complete — ready for verification
-Last activity: 2026-03-26
+Last activity: 2026-03-26 - Completed quick task 260326-q9s: Add hard-hit rate metric
 
 Progress: [░░░░░░░░░░] 0%
 
@@ -90,6 +90,12 @@ None yet.
 
 - [Research]: Polars 3.14 compatibility not officially confirmed -- verify `import polars` works as the FIRST task in Phase 1
 - [Research]: First-appearance cold start (no baseline to compare against) needs a fallback strategy in Phase 2
+
+### Quick Tasks Completed
+
+| # | Description | Date | Commit | Directory |
+|---|-------------|------|--------|-----------|
+| 260326-q9s | Add hard-hit rate metric (percentage of batted balls with exit velocity >= 95 mph) | 2026-03-26 | 0eb772f | [260326-q9s-add-hard-hit-rate-metric-percentage-of-b](./quick/260326-q9s-add-hard-hit-rate-metric-percentage-of-b/) |
 
 ## Session Continuity
 
