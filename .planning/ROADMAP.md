@@ -48,7 +48,7 @@ Plans:
 
 Plans:
 - [x] 02-01-PLAN.md -- Fastball quality engine: delta helpers, FastballSummary/VelocityArc dataclasses, primary fastball identification, tests
-- [ ] 02-02-PLAN.md -- Arsenal analysis engine: per-type usage/P+ deltas, platoon mix shifts, first-pitch weaponry, tests
+- [x] 02-02-PLAN.md -- Arsenal analysis engine: per-type usage/P+ deltas, platoon mix shifts, first-pitch weaponry, tests
 
 ### Phase 3: Execution & Context Engine
 **Goal**: The system produces a complete PitcherContext Pydantic model with execution metrics, workload context, and all engine outputs assembled into a prompt-ready document under 2,000 tokens

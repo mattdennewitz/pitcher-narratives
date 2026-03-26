@@ -29,10 +29,10 @@ Requirements for initial release. Each maps to roadmap phases.
 
 ### Arsenal Analysis
 
-- [ ] **ARSL-01**: Report includes usage rate per pitch type with delta vs. season baseline
-- [ ] **ARSL-02**: Report includes P+/S+/L+ per pitch type: season baseline vs. recent window with delta
-- [ ] **ARSL-03**: Report includes platoon mix shifts (usage changes by batter handedness)
-- [ ] **ARSL-04**: Report includes first-pitch strike weaponry analysis (which pitch used to get ahead recently vs. norm)
+- [x] **ARSL-01**: Report includes usage rate per pitch type with delta vs. season baseline
+- [x] **ARSL-02**: Report includes P+/S+/L+ per pitch type: season baseline vs. recent window with delta
+- [x] **ARSL-03**: Report includes platoon mix shifts (usage changes by batter handedness)
+- [x] **ARSL-04**: Report includes first-pitch strike weaponry analysis (which pitch used to get ahead recently vs. norm)
 
 ### Execution Metrics
 
@@ -113,10 +113,10 @@ Which phases cover which requirements. Updated during roadmap creation.
 | FB-02 | Phase 2 | Complete |
 | FB-03 | Phase 2 | Complete |
 | FB-04 | Phase 2 | Complete |
-| ARSL-01 | Phase 2 | Pending |
-| ARSL-02 | Phase 2 | Pending |
-| ARSL-03 | Phase 2 | Pending |
-| ARSL-04 | Phase 2 | Pending |
+| ARSL-01 | Phase 2 | Complete |
+| ARSL-02 | Phase 2 | Complete |
+| ARSL-03 | Phase 2 | Complete |
+| ARSL-04 | Phase 2 | Complete |
 | EXEC-01 | Phase 3 | Pending |
 | EXEC-02 | Phase 3 | Pending |
 | EXEC-03 | Phase 3 | Pending |
