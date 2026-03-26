@@ -67,6 +67,9 @@ class PitcherContext(BaseModel):
             f"# {self.pitcher_name} ({self.throws}HP) -- Scouting Context"
         )
 
+        # Executive summary — key changes from most recent appearance
+        sections.append(self._render_executive_summary())
+
         # Role & Workload summary
         sections.append(self._render_role_section())
 
@@ -94,6 +97,69 @@ class PitcherContext(BaseModel):
         return "\n\n".join(s for s in sections if s)
 
     # ── Private render helpers ────────────────────────────────────────
+
+    def _render_executive_summary(self) -> str:
+        """Build a bullet-point executive summary of key observations."""
+        bullets: list[str] = []
+
+        # Most recent appearance context
+        wl = self.workload
+        if wl.appearances:
+            latest = max(wl.appearances, key=lambda a: a.game_date)
+            bullets.append(
+                f"Last outing: {latest.game_date} ({latest.ip} IP, "
+                f"{latest.pitch_count} pitches, {self.role})"
+            )
+
+        # Fastball velocity trend
+        fb = self.fastball
+        if fb and fb.velo_delta and fb.velo_delta != "--":
+            bullets.append(f"Fastball velo: {fb.velo_delta} vs season")
+
+        # Overall P+ trend
+        if fb and fb.p_plus_delta and fb.p_plus_delta != "--":
+            bullets.append(f"Fastball P+: {fb.p_plus_delta} vs season")
+
+        # Biggest arsenal usage shift
+        if self.arsenal:
+            biggest_shift = max(
+                self.arsenal,
+                key=lambda p: abs(p.window_usage_pct - p.season_usage_pct)
+                if p.window_usage_pct is not None and p.season_usage_pct is not None
+                else 0,
+            )
+            if (
+                biggest_shift.window_usage_pct is not None
+                and biggest_shift.season_usage_pct is not None
+            ):
+                shift = biggest_shift.window_usage_pct - biggest_shift.season_usage_pct
+                if abs(shift) >= 5.0:
+                    bullets.append(
+                        f"Notable mix change: {biggest_shift.pitch_name} "
+                        f"usage {shift:+.1f}pp vs season"
+                    )
+
+        # TTO insight for starters
+        tto = self.tto
+        if tto and tto.available and tto.summary:
+            bullets.append(f"TTO: {tto.summary}")
+
+        # Velocity arc from last outing
+        va = self.velocity_arc
+        if va and va.available and va.drop_string:
+            bullets.append(f"Velocity arc: {va.drop_string}")
+
+        # Workload concern
+        if wl.workload_concern:
+            bullets.append("**Workload flag: 3+ consecutive days pitched**")
+
+        if not bullets:
+            return ""
+
+        lines = ["## Executive Summary"]
+        for b in bullets:
+            lines.append(f"- {b}")
+        return "\n".join(lines)
 
     def _render_role_section(self) -> str:
         lines = [f"## Role"]
