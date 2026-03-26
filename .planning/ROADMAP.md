@@ -44,7 +44,11 @@ Plans:
   3. Within-game velocity arc analysis shows early-inning vs. late-inning velo drop-off for the most recent appearance
   4. Arsenal analysis shows usage rate per pitch type with delta vs. season baseline, including platoon mix shifts by batter handedness
   5. First-pitch strike weaponry analysis shows which pitch is being used to get ahead recently vs. season norm
-**Plans**: TBD
+**Plans:** 2 plans
+
+Plans:
+- [ ] 02-01-PLAN.md -- Fastball quality engine: delta helpers, FastballSummary/VelocityArc dataclasses, primary fastball identification, tests
+- [ ] 02-02-PLAN.md -- Arsenal analysis engine: per-type usage/P+ deltas, platoon mix shifts, first-pitch weaponry, tests
 
 ### Phase 3: Execution & Context Engine
 **Goal**: The system produces a complete PitcherContext Pydantic model with execution metrics, workload context, and all engine outputs assembled into a prompt-ready document under 2,000 tokens
@@ -76,6 +80,6 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Data Pipeline & Classification | 0/2 | Planning complete | - |
-| 2. Fastball & Arsenal Engine | 0/0 | Not started | - |
+| 2. Fastball & Arsenal Engine | 0/2 | Planning complete | - |
 | 3. Execution & Context Engine | 0/0 | Not started | - |
 | 4. Report Generation | 0/0 | Not started | - |
