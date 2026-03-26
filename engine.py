@@ -35,6 +35,7 @@ __all__ = [
     "AppearanceWorkload",
     "WorkloadContext",
     "TTOPitchType",
+    "TTOPlatoonSplit",
     "TTOSplit",
     "TTOAnalysis",
     "compute_tto_analysis",
@@ -1436,9 +1437,25 @@ class TTOPitchType:
 
     pitch_type: str
     pitches: int
+    usage_pct: float
+    """Usage percentage within this pass."""
+    usage_delta: str
+    """Delta vs this type's pass-1 usage (e.g., '+12.0pp')."""
     avg_p_plus: float | None
     p_plus_delta: str
     """Delta vs this type's pass-1 P+ (e.g., 'Down 8 points')."""
+
+
+@dataclass
+class TTOPlatoonSplit:
+    """Per-pitch-type breakdown within a TTO pass for one platoon side."""
+
+    pitch_type: str
+    stand: str
+    """Batter handedness: 'L' or 'R'."""
+    pitches: int
+    usage_pct: float
+    avg_p_plus: float | None
 
 
 @dataclass
@@ -1465,6 +1482,8 @@ class TTOSplit:
     """Secondary P+ delta vs first pass."""
     pitch_types: list[TTOPitchType]
     """Per-pitch-type breakdown within this pass."""
+    platoon: list[TTOPlatoonSplit]
+    """Per-pitch-type per-platoon breakdown within this pass."""
     small_sample: bool
     """True if < _TTO_SMALL_SAMPLE pitches."""
 
@@ -1477,7 +1496,9 @@ class TTOAnalysis:
     available: bool
     """False if pitcher never faces TTO 2+."""
     summary: str
-    """Qualitative summary (e.g., 'P+ drops 13 points by 3rd pass')."""
+    """Qualitative summary (e.g., 'FB P+ drops 14 pts; CH abandoned vs RHB by pass 3')."""
+    mix_shifts: list[str]
+    """Notable pitch mix changes across passes (e.g., 'SI drops 35% → 9% by pass 3')."""
 
 
 def compute_tto_analysis(data: PitcherData) -> TTOAnalysis:
@@ -1496,29 +1517,30 @@ def compute_tto_analysis(data: PitcherData) -> TTOAnalysis:
     statcast = data.statcast
     all_pitches = data.agg_csvs.get("all_pitches")
 
+    _empty = TTOAnalysis(splits=[], available=False, summary="", mix_shifts=[])
+
     if all_pitches is None or all_pitches.is_empty():
-        return TTOAnalysis(splits=[], available=False, summary="No pitch-level data")
+        return _empty._replace_summary("No pitch-level data") if hasattr(_empty, '_replace_summary') else TTOAnalysis(splits=[], available=False, summary="No pitch-level data", mix_shifts=[])
 
     # Filter statcast to window games only
     window_game_pks = data.window_appearances["game_pk"].unique().to_list()
     sc_window = statcast.filter(pl.col("game_pk").is_in(window_game_pks))
 
     if sc_window.is_empty():
-        return TTOAnalysis(splits=[], available=False, summary="No window appearances")
+        return TTOAnalysis(splits=[], available=False, summary="No window appearances", mix_shifts=[])
 
-    # Join statcast (n_thruorder_pitcher, pitch_type) with all_pitches (P+, S+)
+    # Join statcast (n_thruorder_pitcher, pitch_type, stand) with all_pitches (P+, S+)
     sc_cols = sc_window.select(
         "pitcher", "game_pk", "pitch_number",
-        "n_thruorder_pitcher", "release_speed", "pitch_type",
+        "n_thruorder_pitcher", "release_speed", "pitch_type", "stand",
     )
     ap_cols = all_pitches.select("pitcher", "game_pk", "pitch_number", "P+", "S+")
 
     joined = sc_cols.join(ap_cols, on=["pitcher", "game_pk", "pitch_number"], how="inner")
-    # Filter out empty pitch types
     joined = joined.filter(pl.col("pitch_type") != "")
 
     if joined.is_empty():
-        return TTOAnalysis(splits=[], available=False, summary="No matched pitch data")
+        return TTOAnalysis(splits=[], available=False, summary="No matched pitch data", mix_shifts=[])
 
     # Tag fastball vs secondary
     joined = joined.with_columns(
@@ -1547,7 +1569,7 @@ def compute_tto_analysis(data: PitcherData) -> TTOAnalysis:
         .sort(["n_thruorder_pitcher", "is_fastball"])
     )
 
-    # ── Per pitch-type breakdown by TTO pass ──
+    # ── Per pitch-type breakdown by TTO pass (with counts for usage %) ──
     pitch_type_breakdown = (
         joined.group_by(["n_thruorder_pitcher", "pitch_type"])
         .agg(
@@ -1557,12 +1579,23 @@ def compute_tto_analysis(data: PitcherData) -> TTOAnalysis:
         .sort(["n_thruorder_pitcher", "pitch_type"])
     )
 
+    # ── Platoon breakdown by TTO pass ──
+    platoon_breakdown = (
+        joined.group_by(["n_thruorder_pitcher", "stand", "pitch_type"])
+        .agg(
+            pl.col("P+").mean().alias("avg_p_plus"),
+            pl.len().alias("pitches"),
+        )
+        .sort(["n_thruorder_pitcher", "stand", "pitch_type"])
+    )
+
     overall_rows = tto_overall.to_dicts()
     if len(overall_rows) < 2:
         return TTOAnalysis(
             splits=[],
             available=False,
             summary="Only faced batters once per game (no TTO comparison)",
+            mix_shifts=[],
         )
 
     # Helper: extract fb/sec P+ for a pass
@@ -1578,21 +1611,49 @@ def compute_tto_analysis(data: PitcherData) -> TTOAnalysis:
         return fb_val, sec_val
 
     # Helper: extract pitch-type breakdown for a pass
-    def _get_pitch_types(pass_num: int) -> list[dict]:
+    def _get_pitch_types(pass_num: int, total_pitches: int) -> list[dict]:
         rows = pitch_type_breakdown.filter(
             pl.col("n_thruorder_pitcher") == pass_num
         ).sort("pitches", descending=True)
-        return rows.to_dicts()
+        result = rows.to_dicts()
+        for r in result:
+            r["usage_pct"] = (r["pitches"] / total_pitches * 100) if total_pitches > 0 else 0.0
+        return result
+
+    # Helper: extract platoon splits for a pass
+    def _get_platoon(pass_num: int) -> list[TTOPlatoonSplit]:
+        rows = platoon_breakdown.filter(
+            pl.col("n_thruorder_pitcher") == pass_num
+        )
+        if rows.is_empty():
+            return []
+        # Compute per-stand totals for usage %
+        stand_totals: dict[str, int] = {}
+        for r in rows.to_dicts():
+            stand_totals[r["stand"]] = stand_totals.get(r["stand"], 0) + r["pitches"]
+        entries: list[TTOPlatoonSplit] = []
+        for r in rows.sort("pitches", descending=True).to_dicts():
+            total = stand_totals.get(r["stand"], 1)
+            entries.append(TTOPlatoonSplit(
+                pitch_type=r["pitch_type"],
+                stand=r["stand"],
+                pitches=r["pitches"],
+                usage_pct=r["pitches"] / total * 100,
+                avg_p_plus=r["avg_p_plus"],
+            ))
+        return entries
 
     # Get pass-1 baselines for deltas
     first = overall_rows[0]
     first_fb, first_sec = _get_fb_sec(first["n_thruorder_pitcher"])
 
-    # Get pass-1 per-type P+ baselines
-    first_by_type: dict[str, float] = {}
-    for pt in _get_pitch_types(first["n_thruorder_pitcher"]):
-        if pt["avg_p_plus"] is not None:
-            first_by_type[pt["pitch_type"]] = pt["avg_p_plus"]
+    # Get pass-1 per-type baselines (P+ and usage)
+    first_by_type: dict[str, dict] = {}
+    for pt in _get_pitch_types(first["n_thruorder_pitcher"], first["pitches"]):
+        first_by_type[pt["pitch_type"]] = {
+            "avg_p_plus": pt["avg_p_plus"],
+            "usage_pct": pt["usage_pct"],
+        }
 
     # Build splits
     splits: list[TTOSplit] = []
@@ -1601,6 +1662,7 @@ def compute_tto_analysis(data: PitcherData) -> TTOAnalysis:
         velo = row["avg_velo"]
         p_plus = row["avg_p_plus"]
         s_plus = row["avg_s_plus"]
+        total_pitches = row["pitches"]
         fb_pp, sec_pp = _get_fb_sec(pass_num)
 
         if pass_num == first["n_thruorder_pitcher"]:
@@ -1614,27 +1676,44 @@ def compute_tto_analysis(data: PitcherData) -> TTOAnalysis:
             fb_delta = _pplus_delta_string(fb_pp - first_fb) if fb_pp and first_fb else "--"
             sec_delta = _pplus_delta_string(sec_pp - first_sec) if sec_pp and first_sec else "--"
 
-        # Per-pitch-type breakdown with deltas
+        # Per-pitch-type breakdown with usage % and deltas
         pt_entries: list[TTOPitchType] = []
-        for pt in _get_pitch_types(pass_num):
+        for pt in _get_pitch_types(pass_num, total_pitches):
             pt_type = pt["pitch_type"]
             pt_pp = pt["avg_p_plus"]
+            pt_usage = pt["usage_pct"]
+
             if pass_num == first["n_thruorder_pitcher"]:
-                pt_delta = "--"
-            elif pt_type in first_by_type and pt_pp is not None:
-                pt_delta = _pplus_delta_string(pt_pp - first_by_type[pt_type])
+                pt_p_delta = "--"
+                pt_u_delta = "--"
             else:
-                pt_delta = "New"
+                # P+ delta
+                if pt_type in first_by_type and pt_pp is not None:
+                    pt_p_delta = _pplus_delta_string(pt_pp - first_by_type[pt_type]["avg_p_plus"])
+                else:
+                    pt_p_delta = "New"
+                # Usage delta
+                if pt_type in first_by_type:
+                    u_diff = pt_usage - first_by_type[pt_type]["usage_pct"]
+                    pt_u_delta = f"{u_diff:+.1f}pp"
+                else:
+                    pt_u_delta = "New"
+
             pt_entries.append(TTOPitchType(
                 pitch_type=pt_type,
                 pitches=pt["pitches"],
+                usage_pct=pt_usage,
+                usage_delta=pt_u_delta,
                 avg_p_plus=pt_pp,
-                p_plus_delta=pt_delta,
+                p_plus_delta=pt_p_delta,
             ))
+
+        # Platoon splits for this pass
+        platoon_entries = _get_platoon(pass_num)
 
         splits.append(TTOSplit(
             pass_number=pass_num,
-            pitches=row["pitches"],
+            pitches=total_pitches,
             avg_velo=velo,
             avg_p_plus=p_plus,
             avg_s_plus=s_plus,
@@ -1645,8 +1724,34 @@ def compute_tto_analysis(data: PitcherData) -> TTOAnalysis:
             fb_p_plus_delta=fb_delta,
             sec_p_plus_delta=sec_delta,
             pitch_types=pt_entries,
-            small_sample=row["pitches"] < _TTO_SMALL_SAMPLE,
+            platoon=platoon_entries,
+            small_sample=total_pitches < _TTO_SMALL_SAMPLE,
         ))
+
+    # ── Detect notable mix shifts ──
+    mix_shifts: list[str] = []
+    last = splits[-1]
+    for pt in last.pitch_types:
+        if pt.pitch_type in first_by_type:
+            first_usage = first_by_type[pt.pitch_type]["usage_pct"]
+            diff = pt.usage_pct - first_usage
+            if abs(diff) >= 10.0:
+                mix_shifts.append(
+                    f"{pt.pitch_type} {first_usage:.0f}% → {pt.usage_pct:.0f}% by pass {last.pass_number}"
+                )
+        else:
+            if pt.pitches >= 5:
+                mix_shifts.append(
+                    f"{pt.pitch_type} introduced in pass {last.pass_number} ({pt.usage_pct:.0f}%)"
+                )
+    # Detect pitches dropped in later passes
+    for pt_type, baseline in first_by_type.items():
+        if baseline["usage_pct"] >= 10.0:
+            found = any(p.pitch_type == pt_type for p in last.pitch_types)
+            if not found:
+                mix_shifts.append(
+                    f"{pt_type} abandoned by pass {last.pass_number} (was {baseline['usage_pct']:.0f}%)"
+                )
 
     # Build summary — lead with fastball P+ degradation signal
     summary_parts: list[str] = []
@@ -1664,9 +1769,12 @@ def compute_tto_analysis(data: PitcherData) -> TTOAnalysis:
         else:
             summary_parts.append(f"Secondary P+ holds ({sec_drop:+.0f})")
 
+    if mix_shifts:
+        summary_parts.append(f"{len(mix_shifts)} mix shift(s)")
+
     if splits[-1].small_sample:
         summary_parts.append(f"small sample in pass {splits[-1].pass_number} ({splits[-1].pitches} pitches)")
 
     summary = "; ".join(summary_parts) if summary_parts else f"{len(splits)} passes through the order"
 
-    return TTOAnalysis(splits=splits, available=True, summary=summary)
+    return TTOAnalysis(splits=splits, available=True, summary=summary, mix_shifts=mix_shifts)

@@ -27,6 +27,7 @@ from engine import (
     WorkloadContext,
     TTOAnalysis,
     TTOPitchType,
+    TTOPlatoonSplit,
 )
 
 __all__ = ["PitcherContext", "assemble_pitcher_context"]
@@ -217,7 +218,13 @@ class PitcherContext(BaseModel):
         lines = ["## Times Through Order"]
         lines.append(f"- {tto.summary}")
 
+        # Mix shift flags
+        if tto.mix_shifts:
+            for ms in tto.mix_shifts:
+                lines.append(f"- **Mix shift:** {ms}")
+
         # Main table with FB/Secondary P+ split
+        lines.append("")
         lines.append("| Pass | Pitches | Velo | P+ | FB P+ | Sec P+ | Velo Delta | P+ Delta |")
         lines.append("|------|---------|------|----|-------|--------|------------|----------|")
         for s in tto.splits:
@@ -237,10 +244,9 @@ class PitcherContext(BaseModel):
                 f"| {s.p_plus_delta} |"
             )
 
-        # Per-pitch-type breakdown
+        # Per-pitch-type breakdown with usage %
         lines.append("")
-        lines.append("**By pitch type across passes:**")
-        # Collect all pitch types across all passes
+        lines.append("**Pitch mix & P+ by pass:**")
         all_types: dict[str, dict[int, TTOPitchType]] = {}
         for s in tto.splits:
             for pt in s.pitch_types:
@@ -260,10 +266,43 @@ class PitcherContext(BaseModel):
                 if pn in by_pass:
                     entry = by_pass[pn]
                     pp = f"{entry.avg_p_plus:.0f}" if entry.avg_p_plus else "--"
-                    cells.append(f"{pp} ({entry.pitches}p, {entry.p_plus_delta})")
+                    cells.append(
+                        f"{entry.usage_pct:.0f}% P+{pp} "
+                        f"({entry.usage_delta}, {entry.p_plus_delta})"
+                    )
                 else:
-                    cells.append("--")
+                    cells.append("dropped")
             lines.append(f"| {pt_name} | {' | '.join(cells)} |")
+
+        # Platoon within TTO — only render if meaningful data exists
+        has_platoon = any(len(s.platoon) > 0 for s in tto.splits)
+        if has_platoon:
+            lines.append("")
+            lines.append("**Platoon mix by pass:**")
+            for stand_label, stand_val in [("vs LHB", "L"), ("vs RHB", "R")]:
+                # Collect per-pass data for this side
+                stand_data: dict[str, dict[int, TTOPlatoonSplit]] = {}
+                for s in tto.splits:
+                    for p in s.platoon:
+                        if p.stand == stand_val:
+                            if p.pitch_type not in stand_data:
+                                stand_data[p.pitch_type] = {}
+                            stand_data[p.pitch_type][s.pass_number] = p
+                if not stand_data:
+                    continue
+                lines.append(f"*{stand_label}:*")
+                lines.append(f"| Pitch | {header_passes} |")
+                lines.append(f"|-------|{sep_passes}|")
+                for pt_name, by_pass in sorted(stand_data.items()):
+                    cells = []
+                    for pn in pass_nums:
+                        if pn in by_pass:
+                            e = by_pass[pn]
+                            pp = f"P+{e.avg_p_plus:.0f}" if e.avg_p_plus else ""
+                            cells.append(f"{e.usage_pct:.0f}% {pp} ({e.pitches}p)")
+                        else:
+                            cells.append("--")
+                    lines.append(f"| {pt_name} | {' | '.join(cells)} |")
 
         return "\n".join(lines)
 
