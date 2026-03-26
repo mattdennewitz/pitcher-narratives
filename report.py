@@ -165,7 +165,9 @@ projection of the pitcher's value. Define their tier clearly (e.g., \
 command improves," "a high-variance, blow-up candidate"). Do not hedge.
 
 7. Voice: No clichés ("bulldog mentality," "pitches to contact," \
-"electric stuff"). Rely on metrics: K-BB%, SwStr%, CSW%, P+/S+/L+, \
+"electric stuff"). Avoid "not just X, it's Y" or "it's a X — not \
+just a Y" constructions — state what something IS, don't define it \
+by what it isn't. Rely on metrics: K-BB%, SwStr%, CSW%, P+/S+/L+, \
 xRV100. Write with authority and economy — every sentence must earn \
 its place.
 
