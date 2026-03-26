@@ -1,0 +1,254 @@
+"""PitcherContext assembly for LLM prompt generation.
+
+Assembles all engine outputs into a single Pydantic model with a
+to_prompt() method that renders prompt-ready markdown under 2,000 tokens.
+"""
+
+from __future__ import annotations
+
+from pydantic import BaseModel, ConfigDict
+
+from data import PitcherData
+from engine import (
+    compute_fastball_summary,
+    compute_velocity_arc,
+    compute_arsenal_summary,
+    compute_platoon_mix,
+    compute_first_pitch_weaponry,
+    compute_execution_metrics,
+    compute_workload_context,
+    FastballSummary,
+    VelocityArc,
+    PitchTypeSummary,
+    PlatoonMix,
+    FirstPitchWeaponry,
+    ExecutionMetrics,
+    WorkloadContext,
+)
+
+__all__ = ["PitcherContext", "assemble_pitcher_context"]
+
+_MAX_PITCH_TYPES = 4
+"""Token budget: keep top 4 pitch types only in arsenal and execution tables."""
+
+
+class PitcherContext(BaseModel):
+    """Complete context document for LLM prompt generation.
+
+    Assembles all engine outputs (fastball, arsenal, execution, workload)
+    into one Pydantic model with a to_prompt() method.
+    """
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    pitcher_name: str
+    pitcher_id: int
+    throws: str
+    role: str
+    """Most recent appearance role: 'SP' or 'RP'."""
+
+    fastball: FastballSummary | None
+    velocity_arc: VelocityArc | None
+    arsenal: list[PitchTypeSummary]
+    platoon_mix: PlatoonMix
+    first_pitch: FirstPitchWeaponry
+    execution: list[ExecutionMetrics]
+    workload: WorkloadContext
+
+    def to_prompt(self) -> str:
+        """Render as prompt-ready markdown under 2,000 tokens."""
+        sections: list[str] = []
+
+        # Title
+        sections.append(
+            f"# {self.pitcher_name} ({self.throws}HP) -- Scouting Context"
+        )
+
+        # Role & Workload summary
+        sections.append(self._render_role_section())
+
+        # Primary Fastball
+        sections.append(self._render_fastball_section())
+
+        # Arsenal table
+        sections.append(self._render_arsenal_section())
+
+        # Execution table
+        sections.append(self._render_execution_section())
+
+        # Platoon shifts
+        sections.append(self._render_platoon_section())
+
+        # First-pitch tendencies
+        sections.append(self._render_first_pitch_section())
+
+        # Recent appearances
+        sections.append(self._render_appearances_section())
+
+        return "\n\n".join(s for s in sections if s)
+
+    # ── Private render helpers ────────────────────────────────────────
+
+    def _render_role_section(self) -> str:
+        lines = [f"## Role"]
+        lines.append(f"- Most recent: {self.role}")
+        wl = self.workload
+        lines.append(f"- Appearances: {len(wl.appearances)}")
+        if wl.max_consecutive_days >= 2:
+            lines.append(
+                f"- Max consecutive days: {wl.max_consecutive_days}"
+            )
+        if wl.workload_concern:
+            lines.append("- **Workload concern: 3+ consecutive days**")
+        return "\n".join(lines)
+
+    def _render_fastball_section(self) -> str:
+        fb = self.fastball
+        if fb is None:
+            return "## Primary Fastball\n- No standard fastball identified"
+
+        lines = [f"## Primary Fastball: {fb.pitch_name} ({fb.pitch_type})"]
+        lines.append(
+            f"- Velo: {fb.season_velo:.1f} season / "
+            f"{fb.window_velo:.1f} recent -- {fb.velo_delta}"
+        )
+        if fb.window_p_plus is not None:
+            lines.append(
+                f"- Stuff+ (P+): {fb.season_p_plus:.0f} season / "
+                f"{fb.window_p_plus:.0f} recent -- {fb.p_plus_delta}"
+            )
+        else:
+            lines.append(
+                f"- Stuff+ (P+): {fb.season_p_plus:.0f} season -- "
+                f"{fb.p_plus_delta}"
+            )
+        lines.append(
+            f"- Movement: H {fb.pfx_x_delta}, V {fb.pfx_z_delta}"
+        )
+
+        # Velocity arc from last outing
+        va = self.velocity_arc
+        if va is not None and va.available:
+            lines.append(f"- Velocity arc (last outing): {va.drop_string}")
+        elif va is not None:
+            lines.append(f"- Velocity arc: {va.drop_string}")
+
+        if fb.small_sample:
+            lines.append("- *Small sample*")
+        return "\n".join(lines)
+
+    def _render_arsenal_section(self) -> str:
+        lines = ["## Arsenal"]
+        lines.append("| Pitch | Usage | Delta | P+ | Delta |")
+        lines.append("|-------|-------|-------|----|-------|")
+        for p in self.arsenal[:_MAX_PITCH_TYPES]:
+            wp = f"{p.window_p_plus:.0f}" if p.window_p_plus is not None else "--"
+            lines.append(
+                f"| {p.pitch_name} ({p.pitch_type}) "
+                f"| {p.window_usage_pct:.1f}% "
+                f"| {p.usage_delta} "
+                f"| {wp} "
+                f"| {p.p_plus_delta} |"
+            )
+        return "\n".join(lines)
+
+    def _render_execution_section(self) -> str:
+        lines = ["## Execution"]
+        lines.append("| Pitch | CSW% | Zone% | Chase% | xRV100 pctl |")
+        lines.append("|-------|------|-------|--------|-------------|")
+        for e in self.execution[:_MAX_PITCH_TYPES]:
+            pctl = f"{e.xrv100_percentile}" if e.xrv100_percentile is not None else "--"
+            lines.append(
+                f"| {e.pitch_name} ({e.pitch_type}) "
+                f"| {e.csw_pct:.1f} "
+                f"| {e.zone_rate:.1f} "
+                f"| {e.chase_rate:.1f} "
+                f"| {pctl} |"
+            )
+        return "\n".join(lines)
+
+    def _render_platoon_section(self) -> str:
+        lines = ["## Platoon Shifts"]
+        available = [s for s in self.platoon_mix.splits if s.available]
+        if not available:
+            lines.append("- No platoon data available")
+            return "\n".join(lines)
+        for s in available:
+            lines.append(
+                f"- {s.pitch_name} vs {s.platoon_side}: "
+                f"{s.season_usage_pct:.1f}% season"
+                + (f" / {s.window_usage_pct:.1f}% recent" if s.window_usage_pct is not None else "")
+                + f" -- {s.usage_delta}"
+            )
+        return "\n".join(lines)
+
+    def _render_first_pitch_section(self) -> str:
+        lines = ["## First-Pitch Tendencies"]
+        top = self.first_pitch.entries[:3]
+        if not top:
+            lines.append("- No first-pitch data")
+            return "\n".join(lines)
+        for fp in top:
+            lines.append(
+                f"- {fp.pitch_name} ({fp.pitch_type}): "
+                f"{fp.window_pct:.1f}% recent / "
+                f"{fp.season_pct:.1f}% season -- {fp.delta}"
+            )
+        return "\n".join(lines)
+
+    def _render_appearances_section(self) -> str:
+        lines = ["## Recent Appearances"]
+        lines.append("| Date | IP | Pitches | Rest |")
+        lines.append("|------|----|---------|------|")
+        # Most recent first
+        sorted_apps = sorted(
+            self.workload.appearances,
+            key=lambda a: a.game_date,
+            reverse=True,
+        )
+        for a in sorted_apps:
+            rest = f"{a.rest_days}d" if a.rest_days is not None else "--"
+            lines.append(
+                f"| {a.game_date} | {a.ip} | {a.pitch_count} | {rest} |"
+            )
+        return "\n".join(lines)
+
+
+def assemble_pitcher_context(data: PitcherData) -> PitcherContext:
+    """Orchestrate all engine compute functions into a PitcherContext.
+
+    Args:
+        data: PitcherData bundle from data.load_pitcher_data.
+
+    Returns:
+        PitcherContext with all sections populated, ready for to_prompt().
+    """
+    fastball = compute_fastball_summary(data)
+    velocity_arc = (
+        compute_velocity_arc(data, fastball.pitch_type) if fastball else None
+    )
+    arsenal = compute_arsenal_summary(data)[:_MAX_PITCH_TYPES]
+    platoon_mix = compute_platoon_mix(data)
+    first_pitch = compute_first_pitch_weaponry(data)
+    execution = compute_execution_metrics(data)[:_MAX_PITCH_TYPES]
+    workload = compute_workload_context(data)
+
+    # Determine role from most recent appearance
+    most_recent = data.appearances.sort("game_date", descending=True).row(
+        0, named=True
+    )
+    role = most_recent["role"]
+
+    return PitcherContext(
+        pitcher_name=data.pitcher_name,
+        pitcher_id=data.pitcher_id,
+        throws=data.throws,
+        role=role,
+        fastball=fastball,
+        velocity_arc=velocity_arc,
+        arsenal=arsenal,
+        platoon_mix=platoon_mix,
+        first_pitch=first_pitch,
+        execution=execution,
+        workload=workload,
+    )
