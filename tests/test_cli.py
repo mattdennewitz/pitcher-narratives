@@ -55,6 +55,8 @@ def _test_env(**extra: str) -> dict[str, str]:
     and applies any extra key-value pairs.
     """
     env = {k: v for k, v in os.environ.items() if k != "ANTHROPIC_API_KEY"}
+    # Set empty ANTHROPIC_API_KEY so load_dotenv() won't fill it from .env
+    env.setdefault("ANTHROPIC_API_KEY", "")
     env.update(extra)
     return env
 
