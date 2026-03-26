@@ -59,7 +59,11 @@ Plans:
   2. xRV100 ranking shows how each pitch grades relative to the league
   3. Workload context shows rest days between appearances, innings pitched, pitch counts, and consecutive-days-pitched tracking for relievers
   4. The assembled PitcherContext model renders via `to_prompt()` to a complete markdown document under 2,000 tokens containing all computed sections
-**Plans**: TBD
+**Plans:** 2 plans
+
+Plans:
+- [ ] 03-01-PLAN.md -- Execution metrics and workload context: CSW%, zone/chase rates, xWhiff/xSwing, xRV100 percentile, rest days, IP, consecutive days tracking
+- [ ] 03-02-PLAN.md -- PitcherContext assembly: Pydantic model assembling all engine outputs, to_prompt() markdown rendering under 2k tokens
 
 ### Phase 4: Report Generation
 **Goal**: User runs the CLI and receives a scout-voice narrative scouting report that reads like a human analyst wrote it
@@ -81,5 +85,5 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4
 |-------|----------------|--------|-----------|
 | 1. Data Pipeline & Classification | 0/2 | Planning complete | - |
 | 2. Fastball & Arsenal Engine | 0/2 | Planning complete | - |
-| 3. Execution & Context Engine | 0/0 | Not started | - |
+| 3. Execution & Context Engine | 0/2 | Planning complete | - |
 | 4. Report Generation | 0/0 | Not started | - |
