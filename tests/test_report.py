@@ -1,15 +1,18 @@
-"""Tests for report generation module (pydantic-ai Agent + streaming)."""
+"""Tests for two-phase report generation (Synthesizer → Editor)."""
 
 from pydantic_ai.models.test import TestModel
 
 from context import assemble_pitcher_context
 from data import load_pitcher_data
 from report import (
-    agent,
-    _SYSTEM_PROMPT,
-    _SP_GUIDANCE,
-    _RP_GUIDANCE,
-    _build_user_message,
+    synthesizer,
+    editor,
+    _SYNTHESIZER_PROMPT,
+    _EDITOR_PROMPT,
+    _SP_SYNTH_GUIDANCE,
+    _RP_SYNTH_GUIDANCE,
+    _build_synthesizer_message,
+    _build_editor_message,
     generate_report_streaming,
     check_hallucinated_metrics,
 )
@@ -21,96 +24,128 @@ _data = load_pitcher_data(TEST_PITCHER, window_days=30)
 _ctx = assemble_pitcher_context(_data)
 
 
-# -- Agent configuration tests ------------------------------------------------
+# -- Phase 1: Synthesizer agent tests -----------------------------------------
 
 
-def test_agent_model_is_claude_sonnet():
-    """Agent is configured with anthropic:claude-sonnet-4-6 model string."""
-    # model_name may be stored as the model attribute or a string repr
-    model = agent.model
-    # pydantic-ai stores the model as a string or Model instance
-    assert "claude-sonnet-4-6" in str(model)
+def test_synthesizer_model_is_claude_sonnet():
+    """Synthesizer agent uses claude-sonnet-4-6."""
+    assert "claude-sonnet-4-6" in str(synthesizer.model)
 
 
-def test_agent_output_type_is_str():
-    """Agent output_type is str."""
-    assert agent.output_type is str
+def test_synthesizer_output_type_is_str():
+    """Synthesizer output_type is str."""
+    assert synthesizer.output_type is str
 
 
-# -- System prompt tests -------------------------------------------------------
+def test_synthesizer_prompt_is_objective():
+    """Synthesizer prompt emphasizes objectivity, no editorial opinion."""
+    assert "purely objective" in _SYNTHESIZER_PROMPT
+    assert "Do NOT write narrative prose" in _SYNTHESIZER_PROMPT
 
 
-def test_system_prompt_has_scout_persona():
-    """System prompt contains veteran MLB pitching analyst persona."""
-    assert "veteran MLB pitching analyst" in _SYSTEM_PROMPT
+def test_synthesizer_prompt_requires_baselines():
+    """Synthesizer prompt requires stating baselines and deltas."""
+    assert "baseline" in _SYNTHESIZER_PROMPT.lower()
+    assert "delta" in _SYNTHESIZER_PROMPT.lower()
 
 
-def test_system_prompt_has_anti_recitation():
-    """System prompt contains anti-recitation language."""
-    assert "Write insight, not stat lines" in _SYSTEM_PROMPT
+# -- Phase 2: Editor agent tests ----------------------------------------------
 
 
-def test_system_prompt_references_numbers_as_support():
-    """System prompt instructs referencing numbers to support observations."""
-    # The anti-recitation guidance: "Reference numbers to support observations, don't list them"
-    assert "Reference numbers" in _SYSTEM_PROMPT or "reference numbers" in _SYSTEM_PROMPT
+def test_editor_model_is_claude_sonnet():
+    """Editor agent uses claude-sonnet-4-6."""
+    assert "claude-sonnet-4-6" in str(editor.model)
+
+
+def test_editor_prompt_has_skeptical_tone():
+    """Editor prompt instructs skeptical evaluation."""
+    assert "Skeptical" in _EDITOR_PROMPT or "skeptical" in _EDITOR_PROMPT
+
+
+def test_editor_prompt_requires_decisive_projection():
+    """Editor prompt requires a decisive tier projection."""
+    assert "Take a Stance" in _EDITOR_PROMPT
+
+
+def test_editor_prompt_requires_two_paragraphs():
+    """Editor prompt enforces two-paragraph structure."""
+    assert "Two-Paragraph" in _EDITOR_PROMPT or "two paragraphs" in _EDITOR_PROMPT.lower()
+
+
+def test_editor_prompt_requires_platoon():
+    """Editor prompt requires platoon analysis."""
+    assert "Platoon Everything" in _EDITOR_PROMPT or "platoon" in _EDITOR_PROMPT.lower()
+
+
+def test_editor_prompt_deemphasizes_traditional_stats():
+    """Editor prompt de-emphasizes ERA/W-L in favor of underlying metrics."""
+    assert "De-emphasize traditional" in _EDITOR_PROMPT or "traditional box score" in _EDITOR_PROMPT
+
+
+def test_editor_prompt_no_cliches():
+    """Editor prompt bans cliches."""
+    assert "cliché" in _EDITOR_PROMPT or "bulldog mentality" in _EDITOR_PROMPT
 
 
 # -- Role-conditional guidance tests -------------------------------------------
 
 
-def test_sp_guidance_contains_stamina():
-    """SP guidance mentions stamina indicators."""
-    assert "stamina" in _SP_GUIDANCE.lower()
+def test_sp_synth_guidance_contains_tto():
+    """SP synthesis guidance mentions TTO."""
+    assert "tto" in _SP_SYNTH_GUIDANCE.lower() or "time" in _SP_SYNTH_GUIDANCE.lower()
 
 
-def test_sp_guidance_contains_pitch_mix():
-    """SP guidance mentions pitch mix."""
-    assert "pitch mix" in _SP_GUIDANCE.lower()
+def test_sp_synth_guidance_contains_platoon():
+    """SP synthesis guidance mentions platoon."""
+    assert "platoon" in _SP_SYNTH_GUIDANCE.lower()
 
 
-def test_rp_guidance_contains_workload():
-    """RP guidance mentions workload."""
-    assert "workload" in _RP_GUIDANCE.lower()
+def test_rp_synth_guidance_contains_rest():
+    """RP synthesis guidance mentions rest days."""
+    assert "rest" in _RP_SYNTH_GUIDANCE.lower()
 
 
-def test_rp_guidance_contains_leverage():
-    """RP guidance mentions leverage."""
-    assert "leverage" in _RP_GUIDANCE.lower()
+def test_rp_synth_guidance_contains_put_away():
+    """RP synthesis guidance mentions put-away pitch."""
+    assert "put-away" in _RP_SYNTH_GUIDANCE.lower()
 
 
-# -- _build_user_message tests -------------------------------------------------
+# -- Message builder tests ----------------------------------------------------
 
 
-def test_build_user_message_includes_to_prompt():
-    """_build_user_message includes the to_prompt() output."""
-    msg = _build_user_message(_ctx)
-    prompt_output = _ctx.to_prompt()
-    assert prompt_output in msg
+def test_synthesizer_message_includes_to_prompt():
+    """Synthesizer message includes the to_prompt() output."""
+    msg = _build_synthesizer_message(_ctx)
+    assert _ctx.to_prompt() in msg
 
 
-def test_build_user_message_sp_gets_sp_guidance():
-    """_build_user_message for SP role includes SP-specific guidance."""
-    # Create a modified context with SP role
+def test_synthesizer_message_sp_gets_sp_guidance():
+    """SP context gets SP-specific synthesis focus."""
     sp_ctx = _ctx.model_copy(update={"role": "SP"})
-    msg = _build_user_message(sp_ctx)
-    assert "stamina" in msg.lower()
-    assert "pitch mix" in msg.lower()
+    msg = _build_synthesizer_message(sp_ctx)
+    assert "starter" in msg.lower()
 
 
-def test_build_user_message_rp_gets_rp_guidance():
-    """_build_user_message for RP role includes RP-specific guidance."""
+def test_synthesizer_message_rp_gets_rp_guidance():
+    """RP context gets RP-specific synthesis focus."""
     rp_ctx = _ctx.model_copy(update={"role": "RP"})
-    msg = _build_user_message(rp_ctx)
-    assert "workload" in msg.lower()
-    assert "leverage" in msg.lower()
+    msg = _build_synthesizer_message(rp_ctx)
+    assert "reliever" in msg.lower()
 
 
-# -- generate_report_streaming tests -------------------------------------------
+def test_editor_message_includes_synthesis():
+    """Editor message includes the synthesis output."""
+    synthesis = "- Fastball velo down 1.2 mph\n- Slider usage up 12pp"
+    msg = _build_editor_message(_ctx, synthesis)
+    assert synthesis in msg
+    assert _ctx.pitcher_name in msg
 
 
-def test_generate_report_streaming_returns_string():
-    """generate_report_streaming returns a non-empty string using TestModel."""
+# -- Two-phase pipeline tests -------------------------------------------------
+
+
+def test_generate_report_returns_string():
+    """Full pipeline returns a non-empty string using TestModel."""
     result = generate_report_streaming(
         _ctx, _model_override=TestModel(custom_output_text="Test report output")
     )
@@ -118,16 +153,17 @@ def test_generate_report_streaming_returns_string():
     assert len(result) > 0
 
 
-def test_generate_report_streaming_uses_test_model_output():
-    """generate_report_streaming with TestModel produces the custom_output_text."""
-    expected = "This is a custom scouting report for testing"
+def test_generate_report_uses_test_model():
+    """Pipeline with TestModel produces the custom_output_text from Phase 2."""
+    expected = "This is the final editor capsule"
     result = generate_report_streaming(
         _ctx, _model_override=TestModel(custom_output_text=expected)
     )
+    # TestModel returns same text for both phases; Phase 2 output is what we get
     assert result == expected
 
 
-# ── Hallucination guard ───────────────────────────────────────────────
+# -- Hallucination guard tests ------------------------------------------------
 
 
 def test_hallucination_guard_clean():
@@ -152,4 +188,10 @@ def test_hallucination_guard_known_metrics():
 def test_hallucination_guard_percentage_metrics():
     """CSW%, Zone%, Chase% are all known."""
     text = "CSW% of 32.1%, Zone% at 48%, Chase% near 30%."
+    assert check_hallucinated_metrics(text) == []
+
+
+def test_hallucination_guard_editorial_metrics():
+    """Metrics used in editorial voice (K-BB%, SwStr%, xFIP) are known."""
+    text = "K-BB% at 15%, SwStr% of 12%, xFIP near 3.50."
     assert check_hallucinated_metrics(text) == []

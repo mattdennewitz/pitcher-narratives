@@ -1,10 +1,15 @@
-"""Report generation module using pydantic-ai Agent with Claude.
+"""Two-phase report generation: Data Synthesizer → Editor/Analyst.
 
-Configures a pydantic-ai Agent with scout-voice system prompt and
-role-conditional guidance. Provides streaming output for CLI usage.
+Phase 1 (Synthesizer): Extracts signal from noise — structured bullet
+points of key findings, deltas, and trends. No narrative.
+
+Phase 2 (Editor): Weaves those facts into a skeptical, two-paragraph
+capsule with decisive projection. Elite sabermetric analyst voice.
 """
 
 from __future__ import annotations
+
+import re
 
 from pydantic_ai import Agent
 from pydantic_ai.settings import ModelSettings
@@ -14,96 +19,180 @@ from context import PitcherContext
 __all__ = ["generate_report_streaming", "check_hallucinated_metrics"]
 
 
-# -- System prompt -------------------------------------------------------------
+# ═══════════════════════════════════════════════════════════════════════
+# PHASE 1: THE DATA SYNTHESIZER (THE SCOUT)
+# ═══════════════════════════════════════════════════════════════════════
 
-_SYSTEM_PROMPT = """\
-You are a veteran MLB pitching analyst writing a scouting report. Your audience \
-is a front office that values insight over stat sheets.
+_SYNTHESIZER_PROMPT = """\
+You are a purely objective baseball data analyst. Your job is to extract \
+signal from noise in pitcher data. You have no editorial opinion — you \
+identify facts and trends.
 
-Write insight, not stat lines. Reference numbers to support observations, \
-don't list them. If a delta is small, say so and move on.
+RULES:
+- Output a structured bulleted list of the most important findings.
+- Lead with the single biggest change or most notable trend.
+- For every metric, state the baseline and the delta. Do not state a \
+number without context.
+- Flag sample size concerns explicitly (e.g., "based on 30 pitches").
+- Separate findings into clear categories: Fastball, Arsenal Mix, \
+Execution, Platoon, Workload, TTO (if applicable).
+- Do NOT write narrative prose. Do NOT editorialize. Just extract the \
+analytical building blocks.
+- Identify the 1-2 pitch characteristics that most explain the current \
+performance level (the "why" behind the numbers).
+- Call out anything that looks like a regression risk or unsustainable \
+trend."""
 
-Write in prose paragraphs. Use a data table only where it genuinely aids \
-comprehension -- never as a substitute for analysis. Aim for 3-6 paragraphs \
-depending on how much is genuinely noteworthy.
+_SP_SYNTH_GUIDANCE = """\
+Focus areas for this starter:
+- Velocity and P+ trajectory across the ramp-up window
+- Which pitches are gaining or losing effectiveness by TTO pass
+- Pitch mix evolution: is he leaning on something new or abandoning a pitch?
+- Platoon-specific vulnerabilities (what does he throw vs LHB in later passes?)
+- Stamina signal: does velocity or P+ cliff after a certain pitch count?"""
 
-Never fabricate trends or claims not present in the provided context data. \
-Every observation must be traceable to the pitcher data below."""
+_RP_SYNTH_GUIDANCE = """\
+Focus areas for this reliever:
+- Rest day impact on velocity and P+ (back-to-back vs rested)
+- Primary weapon identification: what's the put-away pitch?
+- How efficiently does he get through the order (pitch count per batter)?
+- Platoon exposure: is there a handedness matchup that breaks him?
+- Workload accumulation: any signs of stuff degradation over the window?"""
 
-
-# -- Role-conditional guidance -------------------------------------------------
-
-_SP_GUIDANCE = """\
-For this starter, emphasize:
-- Pitch mix depth and evolution across recent starts
-- Stamina indicators: velocity arc, late-inning command, workload trends
-- How secondary offerings play off the primary fastball
-- Times-through-order preparation and adjustment patterns"""
-
-_RP_GUIDANCE = """\
-For this reliever, emphasize:
-- Workload patterns: consecutive days pitched, rest-day impact on stuff
-- Short-window weapon deployment: what is the put-away pitch?
-- Leverage readiness and reliability signals
-- How efficiently he attacks hitters in limited exposure"""
-
-
-# -- Agent construction --------------------------------------------------------
-
-agent = Agent(
+synthesizer = Agent(
     'anthropic:claude-sonnet-4-6',
     output_type=str,
-    system_prompt=_SYSTEM_PROMPT,
-    model_settings=ModelSettings(max_tokens=4096),
+    system_prompt=_SYNTHESIZER_PROMPT,
+    model_settings=ModelSettings(max_tokens=2048),
     defer_model_check=True,
 )
 
 
-# -- User message builder ------------------------------------------------------
+# ═══════════════════════════════════════════════════════════════════════
+# PHASE 2: THE EDITOR (THE ANALYST)
+# ═══════════════════════════════════════════════════════════════════════
 
-def _build_user_message(ctx: PitcherContext) -> str:
-    """Build role-conditional user message from PitcherContext.
+_EDITOR_PROMPT = """\
+You are an elite, sabermetrically inclined baseball analyst. You write \
+for front offices and advanced fantasy players — not casual fans.
 
-    Combines role-specific analysis guidance with the rendered prompt
-    data from ctx.to_prompt().
+EDITORIAL GUIDELINES:
 
-    Args:
-        ctx: Assembled pitcher context with role, arsenal, etc.
+1. Anchor Every Metric: If you cite a pitch's velocity, shape, Pitching+ \
+score, or usage, you MUST contextualize it against the MLB average (100 \
+for P+/S+/L+) or the pitcher's prior baseline. Never state a metric in \
+isolation.
 
-    Returns:
-        Combined user message string for the Agent.
-    """
-    guidance = _SP_GUIDANCE if ctx.role == "SP" else _RP_GUIDANCE
-    return f"## Analysis Focus\n{guidance}\n\n## Pitcher Data\n{ctx.to_prompt()}"
+2. Diagnose, Do Not Just Describe: Connect outcomes to physical pitch \
+characteristics. If strikeouts are up, explain WHY — added break, \
+velocity gain, usage shift. Link the "what" to the "why."
+
+3. Be Skeptical: Do not trust small samples blindly. If a pitcher has a \
+great stretch but poor zone rates and dropping velocity, flag it as a \
+regression risk. Use phrases like "small-sample issues," "I'm not \
+convinced," "prone to blow-ups" where warranted.
+
+4. Platoon Everything: Treat the arsenal as two separate entities — how \
+it works against righties and how it works against lefties. A sweeping \
+slider's success must be framed by who is standing in the box.
+
+5. Take a Stance: End with a decisive, unsentimental projection of the \
+pitcher's value. Assign a concrete tier: "a low 4s ERA arm," "a #5 \
+starter," "a leverage reliever," "mostly a ~4.30 ERA pitcher." Do not \
+hedge with "it depends" — commit to a read.
+
+6. Voice: No clichés ("bulldog mentality," "pitches to contact"). Rely \
+on metrics: K-BB%, SwStr%, CSW%, P+/S+/L+, xRV100. Write with \
+authority and economy — every sentence must earn its place.
+
+STRUCTURE — The Two-Paragraph Punch:
+
+Paragraph 1 (The Setup): Identify the core change or current state of \
+the stuff. New pitch? Lost velocity? Usage shift? Mechanical adjustment? \
+Ground the reader in what is physically different about this pitcher \
+right now.
+
+Paragraph 2 (The Verdict): Explain how that stuff is playing in the \
+zone. Highlight the glaring weakness or the path to sustained success. \
+Deliver the final projection — where does this pitcher slot?
+
+CONSTRAINTS:
+- Exactly two paragraphs. No headers, no tables, no bullet points.
+- De-emphasize traditional box score stats (ERA, W/L) in the body. \
+Base analysis on underlying metrics.
+- Never fabricate metrics or trends not present in the provided data.
+- Do not soften your conclusions. Be direct."""
+
+editor = Agent(
+    'anthropic:claude-sonnet-4-6',
+    output_type=str,
+    system_prompt=_EDITOR_PROMPT,
+    model_settings=ModelSettings(max_tokens=2048),
+    defer_model_check=True,
+)
 
 
-# -- Streaming generation ------------------------------------------------------
+# ═══════════════════════════════════════════════════════════════════════
+# ORCHESTRATION
+# ═══════════════════════════════════════════════════════════════════════
+
+def _build_synthesizer_message(ctx: PitcherContext) -> str:
+    """Build the Phase 1 user message with role-conditional guidance."""
+    guidance = _SP_SYNTH_GUIDANCE if ctx.role == "SP" else _RP_SYNTH_GUIDANCE
+    return (
+        f"## Role-Specific Focus\n{guidance}\n\n"
+        f"## Pitcher Data\n{ctx.to_prompt()}"
+    )
+
+
+def _build_editor_message(
+    ctx: PitcherContext,
+    synthesis: str,
+) -> str:
+    """Build the Phase 2 user message with synthesis output."""
+    return (
+        f"## Pitcher\n"
+        f"{ctx.pitcher_name} ({ctx.throws}HP, {ctx.role})\n\n"
+        f"## Key Findings From Data Analysis\n{synthesis}\n\n"
+        f"Write the two-paragraph scouting capsule now."
+    )
+
 
 def generate_report_streaming(
     ctx: PitcherContext,
     *,
     _model_override=None,
 ) -> str:
-    """Generate and stream a scouting report to stdout.
+    """Generate a two-phase scouting report and stream the final output.
 
-    Builds a role-conditional user message from the PitcherContext,
-    sends it to the Agent via streaming, and prints tokens as they
-    arrive. Returns the full report text.
+    Phase 1 (Synthesizer): Extracts key findings as structured bullets.
+    Phase 2 (Editor): Writes the final two-paragraph capsule.
+
+    Only Phase 2 output is streamed to stdout. Phase 1 runs silently.
 
     Args:
         ctx: Assembled pitcher context.
         _model_override: Optional model override for testing (e.g., TestModel).
 
     Returns:
-        The complete report text as a string.
+        The complete report text (Phase 2 output) as a string.
     """
-    user_message = _build_user_message(ctx)
-
-    kwargs: dict = {"user_prompt": user_message}
+    synth_kwargs: dict = {"user_prompt": _build_synthesizer_message(ctx)}
     if _model_override is not None:
-        kwargs["model"] = _model_override
+        synth_kwargs["model"] = _model_override
 
-    stream = agent.run_stream_sync(**kwargs)
+    # Phase 1: Silent synthesis
+    synth_result = synthesizer.run_sync(**synth_kwargs)
+    synthesis = synth_result.output
+
+    # Phase 2: Streamed editorial
+    editor_kwargs: dict = {
+        "user_prompt": _build_editor_message(ctx, synthesis),
+    }
+    if _model_override is not None:
+        editor_kwargs["model"] = _model_override
+
+    stream = editor.run_stream_sync(**editor_kwargs)
     chunks: list[str] = []
     for delta in stream.stream_text(delta=True):
         print(delta, end='', flush=True)
@@ -112,9 +201,9 @@ def generate_report_streaming(
     return ''.join(chunks)
 
 
-# -- Metric hallucination guard ------------------------------------------------
-
-import re
+# ═══════════════════════════════════════════════════════════════════════
+# METRIC HALLUCINATION GUARD
+# ═══════════════════════════════════════════════════════════════════════
 
 # Metrics that appear in the prompt payload and are safe to reference
 _KNOWN_METRICS = frozenset({
@@ -131,6 +220,8 @@ _KNOWN_METRICS = frozenset({
     "IVB", "HB", "pfx_x", "pfx_z",
     # Statcast standard
     "wOBA", "BABIP", "ISO",
+    # Commonly referenced in editorial voice
+    "SwStr%", "K-BB%", "xFIP",
 })
 
 _METRIC_PATTERN = re.compile(
@@ -138,14 +229,14 @@ _METRIC_PATTERN = re.compile(
     # xMetric pattern (xBA, xWhiff, xRV100, etc.)
     r'x[A-Z][A-Za-z0-9]*'
     r'|'
-    # Acronym+% pattern (CSW%, O-Swing%, Zone%)
+    # Acronym+% pattern (CSW%, O-Swing%, Zone%, K-BB%, SwStr%)
     r'[A-Z][A-Za-z]*-?[A-Z]*%'
     r'|'
     # Pitching+ family (P+, S+2080, etc.)
     r'[PSL]\+(?:2080)?'
     r'|'
-    # Other named advanced metrics (IVB, HB, wOBA, BABIP, ISO, pfx_x/z)
-    r'(?:IVB|HB|pfx_[xz]|wOBA|BABIP|ISO|xRV100|Pitching\+|Stuff\+|Location\+)'
+    # Other named advanced metrics
+    r'(?:IVB|HB|pfx_[xz]|wOBA|BABIP|ISO|xRV100|xFIP|Pitching\+|Stuff\+|Location\+)'
     r')\b'
 )
 
