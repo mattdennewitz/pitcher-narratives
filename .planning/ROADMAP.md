@@ -63,7 +63,7 @@ Plans:
 
 Plans:
 - [x] 03-01-PLAN.md -- Execution metrics and workload context: CSW%, zone/chase rates, xWhiff/xSwing, xRV100 percentile, rest days, IP, consecutive days tracking
-- [ ] 03-02-PLAN.md -- PitcherContext assembly: Pydantic model assembling all engine outputs, to_prompt() markdown rendering under 2k tokens
+- [x] 03-02-PLAN.md -- PitcherContext assembly: Pydantic model assembling all engine outputs, to_prompt() markdown rendering under 2k tokens
 
 ### Phase 4: Report Generation
 **Goal**: User runs the CLI and receives a scout-voice narrative scouting report that reads like a human analyst wrote it
