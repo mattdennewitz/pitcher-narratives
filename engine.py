@@ -17,8 +17,16 @@ from data import PitcherData
 __all__ = [
     "compute_fastball_summary",
     "compute_velocity_arc",
+    "compute_arsenal_summary",
+    "compute_platoon_mix",
+    "compute_first_pitch_weaponry",
     "FastballSummary",
     "VelocityArc",
+    "PitchTypeSummary",
+    "PlatoonMix",
+    "PlatoonSplit",
+    "FirstPitchEntry",
+    "FirstPitchWeaponry",
 ]
 
 # ── Constants ─────────────────────────────────────────────────────────
@@ -100,11 +108,14 @@ def _usage_delta_string(delta: float, threshold: float = _USAGE_THRESHOLD) -> st
         threshold: Below this magnitude, report as 'Steady'.
 
     Returns:
-        Qualitative string like 'Up 7.0 pp' or 'Steady (+2.0 pp)'.
+        Qualitative string like 'Up sharply (+12.0 pp)', 'Up 7.0 pp',
+        or 'Steady (+2.0 pp)'.
     """
     if abs(delta) < threshold:
         return f"Steady ({delta:+.1f} pp)"
     direction = "Up" if delta > 0 else "Down"
+    if abs(delta) >= 10.0:
+        return f"{direction} sharply ({delta:+.1f} pp)"
     return f"{direction} {abs(delta):.1f} pp"
 
 
@@ -213,6 +224,93 @@ def _weighted_window_pplus(
     return result
 
 
+def _stand_to_platoon(stand: str, p_throws: str) -> str:
+    """Map batter handedness + pitcher handedness to platoon matchup label.
+
+    Args:
+        stand: Batter handedness ('L' or 'R').
+        p_throws: Pitcher handedness ('L' or 'R').
+
+    Returns:
+        'same' if stand == p_throws, else 'opposite'.
+    """
+    return "same" if stand == p_throws else "opposite"
+
+
+def _compute_platoon_baseline(pitcher_type_platoon_df: pl.DataFrame) -> pl.DataFrame:
+    """Compute n_pitches-weighted baseline per (pitch_type, platoon_matchup).
+
+    Combines game_type rows using pitch-count weighting, same pattern as
+    compute_pitch_type_baseline in data.py but grouped by platoon_matchup.
+
+    Args:
+        pitcher_type_platoon_df: The pitcher_type_platoon CSV DataFrame
+            filtered to one pitcher.
+
+    Returns:
+        DataFrame with one row per (pitch_type, platoon_matchup) and
+        weighted average metrics.
+    """
+    df = pitcher_type_platoon_df.filter(pl.col("pitch_type") != "")
+    id_cols = frozenset({
+        "season", "level", "game_type", "pitcher", "player_name",
+        "p_throws", "team_code", "n_pitches", "pitch_type", "platoon_matchup",
+    })
+    metric_cols = [c for c in df.columns if c not in id_cols]
+    weighted_exprs = [
+        (pl.col(c) * pl.col("n_pitches"))
+        .sum()
+        .truediv(pl.col("n_pitches").sum())
+        .alias(c)
+        for c in metric_cols
+    ]
+    return df.group_by(["pitcher", "pitch_type", "platoon_matchup"]).agg(
+        pl.col("n_pitches").sum(),
+        *weighted_exprs,
+    )
+
+
+def _weighted_window_platoon_pplus(
+    platoon_appearance_df: pl.DataFrame,
+    window_dates: list,
+    pitch_type: str,
+    platoon_matchup: str,
+) -> dict[str, float | int | None]:
+    """Compute n_pitches-weighted P+/S+/L+ for a pitch type + platoon in window.
+
+    Args:
+        platoon_appearance_df: The pitcher_type_platoon_appearance CSV.
+        window_dates: List of game dates in the window.
+        pitch_type: Pitch type code to filter on.
+        platoon_matchup: 'same' or 'opposite'.
+
+    Returns:
+        Dict with keys 'P+', 'S+', 'L+', 'n_pitches'.
+    """
+    window = platoon_appearance_df.filter(
+        (pl.col("game_date").is_in(window_dates))
+        & (pl.col("pitch_type") == pitch_type)
+        & (pl.col("platoon_matchup") == platoon_matchup)
+    )
+
+    if window.is_empty():
+        return {"P+": None, "S+": None, "L+": None, "n_pitches": 0}
+
+    total_pitches = window["n_pitches"].sum()
+    if total_pitches == 0:
+        return {"P+": None, "S+": None, "L+": None, "n_pitches": 0}
+
+    result: dict[str, float | int | None] = {"n_pitches": int(total_pitches)}
+    for metric in ("P+", "S+", "L+"):
+        if metric in window.columns:
+            weighted = (window[metric] * window["n_pitches"]).sum() / total_pitches
+            result[metric] = float(weighted)
+        else:
+            result[metric] = None
+
+    return result
+
+
 # ── Dataclasses ───────────────────────────────────────────────────────
 
 
@@ -276,6 +374,100 @@ class VelocityArc:
     """E.g., 'Dropped 1.3 mph' or 'Single inning -- no velocity arc available'."""
 
     innings_pitched: int
+
+
+@dataclass
+class PitchTypeSummary:
+    """Per-pitch-type arsenal breakdown ready for LLM."""
+
+    pitch_type: str
+    """Pitch type code, e.g., 'FC'."""
+
+    pitch_name: str
+    """Human-readable name, e.g., 'Cutter'."""
+
+    season_usage_pct: float
+    """Season usage as percentage, e.g., 44.5."""
+
+    window_usage_pct: float
+    """Window usage as percentage."""
+
+    usage_delta: str
+    """Qualitative usage delta, e.g., 'Up 3.2 pp'."""
+
+    season_p_plus: float
+    window_p_plus: float | None
+    p_plus_delta: str
+
+    season_s_plus: float
+    window_s_plus: float | None
+    s_plus_delta: str
+
+    season_l_plus: float
+    window_l_plus: float | None
+    l_plus_delta: str
+
+    n_pitches_season: int
+    n_pitches_window: int
+    small_sample: bool
+    """True when fewer than _MIN_PITCHES of this type in window."""
+
+    cold_start: bool
+    """True when window covers the full season."""
+
+
+@dataclass
+class PlatoonSplit:
+    """Usage breakdown for one pitch type against one platoon side."""
+
+    pitch_type: str
+    pitch_name: str
+    platoon_side: str
+    """'same' or 'opposite'."""
+
+    season_usage_pct: float
+    window_usage_pct: float | None
+    usage_delta: str
+
+    season_p_plus: float | None
+    window_p_plus: float | None
+    p_plus_delta: str
+
+    available: bool
+    """False if pitch not thrown to this side."""
+
+
+@dataclass
+class PlatoonMix:
+    """Platoon mix shift analysis ready for LLM."""
+
+    splits: list[PlatoonSplit]
+    cold_start: bool
+
+
+@dataclass
+class FirstPitchEntry:
+    """First-pitch usage for one pitch type."""
+
+    pitch_type: str
+    pitch_name: str
+    season_pct: float
+    window_pct: float
+    delta: str
+    n_first_pitches_season: int
+    n_first_pitches_window: int
+
+
+@dataclass
+class FirstPitchWeaponry:
+    """First-pitch strike weaponry analysis ready for LLM."""
+
+    entries: list[FirstPitchEntry]
+    """Ordered by window_pct descending."""
+
+    total_first_pitches_season: int
+    total_first_pitches_window: int
+    cold_start: bool
 
 
 # ── Public API ────────────────────────────────────────────────────────
@@ -463,4 +655,322 @@ def compute_velocity_arc(data: PitcherData, fastball_type: str) -> VelocityArc:
         drop=drop,
         drop_string=drop_string,
         innings_pitched=innings_pitched,
+    )
+
+
+def compute_arsenal_summary(data: PitcherData) -> list[PitchTypeSummary]:
+    """Compute per-pitch-type arsenal breakdown with usage and P+ deltas.
+
+    Builds a PitchTypeSummary for every pitch type the pitcher throws,
+    sorted by season usage descending. Each entry includes usage rates,
+    P+/S+/L+ season vs window deltas, small sample flags, and cold start
+    detection.
+
+    Args:
+        data: PitcherData bundle from data.load_pitcher_data.
+
+    Returns:
+        List of PitchTypeSummary dataclasses ordered by season_usage_pct
+        descending.
+    """
+    window_dates = _get_window_game_dates(data)
+    cold_start = _is_cold_start(data)
+
+    # Get all pitch types from baseline sorted by n_pitches descending
+    baseline = data.pitch_type_baseline.sort("n_pitches", descending=True)
+    pitch_types = baseline["pitch_type"].to_list()
+
+    # Build pitch_type -> pitch_name mapping from statcast
+    name_map: dict[str, str] = {}
+    name_df = data.statcast.select(["pitch_type", "pitch_name"]).unique()
+    for row in name_df.iter_rows(named=True):
+        name_map[row["pitch_type"]] = row["pitch_name"]
+
+    # Total pitch counts
+    total_season = len(data.statcast)
+    window_statcast = data.statcast.filter(pl.col("game_date").is_in(window_dates))
+    total_window = len(window_statcast)
+
+    single_type = len(pitch_types) == 1
+
+    results: list[PitchTypeSummary] = []
+    for pt in pitch_types:
+        # ── Usage rates ──────────────────────────────────────────
+        pt_season = data.statcast.filter(pl.col("pitch_type") == pt)
+        n_season = len(pt_season)
+        season_usage_pct = n_season / total_season * 100.0
+
+        pt_window = window_statcast.filter(pl.col("pitch_type") == pt)
+        n_window = len(pt_window)
+        window_usage_pct = n_window / total_window * 100.0 if total_window > 0 else 0.0
+
+        # ── Usage delta ──────────────────────────────────────────
+        if cold_start:
+            usage_delta = _COLD_START_STRING
+        elif single_type:
+            usage_delta = "Only pitch type"
+        else:
+            usage_delta = _usage_delta_string(window_usage_pct - season_usage_pct)
+
+        # ── P+/S+/L+ ────────────────────────────────────────────
+        pt_baseline_row = baseline.filter(pl.col("pitch_type") == pt)
+        season_p_plus = float(pt_baseline_row["P+"][0]) if not pt_baseline_row.is_empty() and "P+" in pt_baseline_row.columns else 0.0
+        season_s_plus = float(pt_baseline_row["S+"][0]) if not pt_baseline_row.is_empty() and "S+" in pt_baseline_row.columns else 0.0
+        season_l_plus = float(pt_baseline_row["L+"][0]) if not pt_baseline_row.is_empty() and "L+" in pt_baseline_row.columns else 0.0
+
+        window_pplus = _weighted_window_pplus(
+            data.agg_csvs["pitcher_type_appearance"],
+            window_dates,
+            pt,
+        )
+        window_p_plus = window_pplus["P+"]
+        window_s_plus = window_pplus["S+"]
+        window_l_plus = window_pplus["L+"]
+
+        if cold_start:
+            p_plus_delta = _COLD_START_STRING
+            s_plus_delta = _COLD_START_STRING
+            l_plus_delta = _COLD_START_STRING
+        elif window_p_plus is not None:
+            p_plus_delta = _pplus_delta_string(window_p_plus - season_p_plus)
+            s_plus_delta = _pplus_delta_string(window_s_plus - season_s_plus) if window_s_plus is not None else "No window data"
+            l_plus_delta = _pplus_delta_string(window_l_plus - season_l_plus) if window_l_plus is not None else "No window data"
+        else:
+            p_plus_delta = "No window data"
+            s_plus_delta = "No window data"
+            l_plus_delta = "No window data"
+
+        # ── Pitch name ───────────────────────────────────────────
+        pitch_name = name_map.get(pt, pt)
+
+        # ── Small sample ─────────────────────────────────────────
+        small_sample = n_window < _MIN_PITCHES
+
+        results.append(PitchTypeSummary(
+            pitch_type=pt,
+            pitch_name=pitch_name,
+            season_usage_pct=season_usage_pct,
+            window_usage_pct=window_usage_pct,
+            usage_delta=usage_delta,
+            season_p_plus=season_p_plus,
+            window_p_plus=window_p_plus,
+            p_plus_delta=p_plus_delta,
+            season_s_plus=season_s_plus,
+            window_s_plus=window_s_plus,
+            s_plus_delta=s_plus_delta,
+            season_l_plus=season_l_plus,
+            window_l_plus=window_l_plus,
+            l_plus_delta=l_plus_delta,
+            n_pitches_season=n_season,
+            n_pitches_window=n_window,
+            small_sample=small_sample,
+            cold_start=cold_start,
+        ))
+
+    # Sort by season usage descending
+    results.sort(key=lambda x: x.season_usage_pct, reverse=True)
+    return results
+
+
+def compute_platoon_mix(data: PitcherData) -> PlatoonMix:
+    """Compute platoon mix shift analysis with per-type per-side splits.
+
+    For each pitch type and each platoon side (same/opposite), computes
+    usage rates and P+ deltas. Handles missing combinations (e.g., a
+    changeup only thrown to opposite-side batters).
+
+    Args:
+        data: PitcherData bundle from data.load_pitcher_data.
+
+    Returns:
+        PlatoonMix dataclass with list of PlatoonSplit entries.
+    """
+    window_dates = _get_window_game_dates(data)
+    cold_start = _is_cold_start(data)
+
+    # Build pitch_type -> pitch_name mapping
+    name_map: dict[str, str] = {}
+    name_df = data.statcast.select(["pitch_type", "pitch_name"]).unique()
+    for row in name_df.iter_rows(named=True):
+        name_map[row["pitch_type"]] = row["pitch_name"]
+
+    # Add platoon_matchup column to statcast
+    statcast_with_platoon = data.statcast.with_columns(
+        pl.struct(["stand", "p_throws"]).map_elements(
+            lambda s: _stand_to_platoon(s["stand"], s["p_throws"]),
+            return_dtype=pl.Utf8,
+        ).alias("platoon_matchup")
+    )
+    window_sc = statcast_with_platoon.filter(pl.col("game_date").is_in(window_dates))
+
+    # Compute platoon baseline from season CSV
+    platoon_baseline = _compute_platoon_baseline(data.agg_csvs["pitcher_type_platoon"])
+
+    # Get pitch types ordered by usage
+    baseline = data.pitch_type_baseline.sort("n_pitches", descending=True)
+    pitch_types = baseline["pitch_type"].to_list()
+
+    splits: list[PlatoonSplit] = []
+
+    for pt in pitch_types:
+        for side in ("same", "opposite"):
+            # ── Season usage: % of pitches to this side that are this type ──
+            season_side = statcast_with_platoon.filter(
+                pl.col("platoon_matchup") == side
+            )
+            season_side_total = len(season_side)
+            season_side_type = season_side.filter(pl.col("pitch_type") == pt)
+            n_season_side_type = len(season_side_type)
+
+            if n_season_side_type == 0:
+                # Pitch not thrown to this side at all
+                splits.append(PlatoonSplit(
+                    pitch_type=pt,
+                    pitch_name=name_map.get(pt, pt),
+                    platoon_side=side,
+                    season_usage_pct=0.0,
+                    window_usage_pct=None,
+                    usage_delta=f"Not thrown to {side}-side batters",
+                    season_p_plus=None,
+                    window_p_plus=None,
+                    p_plus_delta=f"Not thrown to {side}-side batters",
+                    available=False,
+                ))
+                continue
+
+            season_usage_pct = n_season_side_type / season_side_total * 100.0
+
+            # ── Window usage ──
+            window_side = window_sc.filter(pl.col("platoon_matchup") == side)
+            window_side_total = len(window_side)
+            window_side_type = window_side.filter(pl.col("pitch_type") == pt)
+            n_window_side_type = len(window_side_type)
+
+            if window_side_total > 0:
+                window_usage_pct = n_window_side_type / window_side_total * 100.0
+            else:
+                window_usage_pct = None
+
+            # ── Usage delta ──
+            if cold_start:
+                usage_delta = _COLD_START_STRING
+            elif window_usage_pct is not None:
+                usage_delta = _usage_delta_string(window_usage_pct - season_usage_pct)
+            else:
+                usage_delta = "No window data"
+
+            # ── Season P+ from platoon baseline ──
+            plat_row = platoon_baseline.filter(
+                (pl.col("pitch_type") == pt)
+                & (pl.col("platoon_matchup") == side)
+            )
+            season_p_plus: float | None = None
+            if not plat_row.is_empty() and "P+" in plat_row.columns:
+                season_p_plus = float(plat_row["P+"][0])
+
+            # ── Window P+ from platoon appearance data ──
+            window_plat_pplus = _weighted_window_platoon_pplus(
+                data.agg_csvs["pitcher_type_platoon_appearance"],
+                window_dates,
+                pt,
+                side,
+            )
+            window_p_plus = window_plat_pplus["P+"]
+
+            # ── P+ delta ──
+            if cold_start:
+                p_plus_delta = _COLD_START_STRING
+            elif season_p_plus is not None and window_p_plus is not None:
+                p_plus_delta = _pplus_delta_string(window_p_plus - season_p_plus)
+            else:
+                p_plus_delta = "No window data"
+
+            splits.append(PlatoonSplit(
+                pitch_type=pt,
+                pitch_name=name_map.get(pt, pt),
+                platoon_side=side,
+                season_usage_pct=season_usage_pct,
+                window_usage_pct=window_usage_pct,
+                usage_delta=usage_delta,
+                season_p_plus=season_p_plus,
+                window_p_plus=window_p_plus,
+                p_plus_delta=p_plus_delta,
+                available=True,
+            ))
+
+    return PlatoonMix(splits=splits, cold_start=cold_start)
+
+
+def compute_first_pitch_weaponry(data: PitcherData) -> FirstPitchWeaponry:
+    """Compute first-pitch strike weaponry analysis.
+
+    Filters statcast to pitch_number == 1 (first pitch of each at-bat),
+    computes per-type distribution for season vs window, and produces
+    delta strings.
+
+    Args:
+        data: PitcherData bundle from data.load_pitcher_data.
+
+    Returns:
+        FirstPitchWeaponry dataclass with entries ordered by window_pct
+        descending.
+    """
+    window_dates = _get_window_game_dates(data)
+    cold_start = _is_cold_start(data)
+
+    # Build pitch_type -> pitch_name mapping
+    name_map: dict[str, str] = {}
+    name_df = data.statcast.select(["pitch_type", "pitch_name"]).unique()
+    for row in name_df.iter_rows(named=True):
+        name_map[row["pitch_type"]] = row["pitch_name"]
+
+    # Filter to first pitches
+    first_pitches = data.statcast.filter(pl.col("pitch_number") == 1)
+    total_season = len(first_pitches)
+
+    # Window first pitches
+    fp_window = first_pitches.filter(pl.col("game_date").is_in(window_dates))
+    total_window = len(fp_window)
+
+    # Season counts by type
+    season_counts = first_pitches["pitch_type"].value_counts().sort("pitch_type")
+
+    # Window counts by type
+    window_counts = fp_window["pitch_type"].value_counts().sort("pitch_type")
+    window_count_map: dict[str, int] = {}
+    for row in window_counts.iter_rows(named=True):
+        window_count_map[row["pitch_type"]] = row["count"]
+
+    entries: list[FirstPitchEntry] = []
+    for row in season_counts.iter_rows(named=True):
+        pt = row["pitch_type"]
+        n_season = row["count"]
+        season_pct = n_season / total_season * 100.0
+
+        n_window = window_count_map.get(pt, 0)
+        window_pct = n_window / total_window * 100.0 if total_window > 0 else 0.0
+
+        if cold_start:
+            delta = _COLD_START_STRING
+        else:
+            delta = _usage_delta_string(window_pct - season_pct)
+
+        entries.append(FirstPitchEntry(
+            pitch_type=pt,
+            pitch_name=name_map.get(pt, pt),
+            season_pct=season_pct,
+            window_pct=window_pct,
+            delta=delta,
+            n_first_pitches_season=n_season,
+            n_first_pitches_window=n_window,
+        ))
+
+    # Sort by window_pct descending
+    entries.sort(key=lambda x: x.window_pct, reverse=True)
+
+    return FirstPitchWeaponry(
+        entries=entries,
+        total_first_pitches_season=total_season,
+        total_first_pitches_window=total_window,
+        cold_start=cold_start,
     )
