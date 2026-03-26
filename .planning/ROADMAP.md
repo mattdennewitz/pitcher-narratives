@@ -32,7 +32,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 Plans:
 - [x] 01-01-PLAN.md -- Data loading pipeline: project setup, data.py with all loader/classification/baseline functions, tests
-- [ ] 01-02-PLAN.md -- CLI wiring: argparse entry point, data pipeline integration, end-to-end tests
+- [x] 01-02-PLAN.md -- CLI wiring: argparse entry point, data pipeline integration, end-to-end tests
 
 ### Phase 2: Fastball & Arsenal Engine
 **Goal**: The system produces pre-computed fastball quality analysis and arsenal breakdown with deltas and qualitative trend strings ready for LLM consumption

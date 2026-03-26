@@ -17,7 +17,7 @@ Requirements for initial release. Each maps to roadmap phases.
 ### Pitcher Classification
 
 - [x] **ROLE-01**: System can auto-detect whether each appearance is a start or relief outing
-- [ ] **ROLE-02**: Report structure adapts based on detected role (starter report vs. reliever report)
+- [x] **ROLE-02**: Report structure adapts based on detected role (starter report vs. reliever report)
 - [x] **ROLE-03**: System correctly handles swingmen/openers who switch roles between appearances
 
 ### Fastball Quality
@@ -56,8 +56,8 @@ Requirements for initial release. Each maps to roadmap phases.
 
 ### CLI
 
-- [ ] **CLI-01**: Script accepts `-p` argument for pitcher ID
-- [ ] **CLI-02**: Script accepts `-w` argument for lookback window in days (with sensible default)
+- [x] **CLI-01**: Script accepts `-p` argument for pitcher ID
+- [x] **CLI-02**: Script accepts `-w` argument for lookback window in days (with sensible default)
 
 ## v2 Requirements
 
@@ -105,10 +105,10 @@ Which phases cover which requirements. Updated during roadmap creation.
 | DATA-03 | Phase 1 | Complete |
 | DATA-04 | Phase 1 | Complete |
 | ROLE-01 | Phase 1 | Complete |
-| ROLE-02 | Phase 1 | Pending |
+| ROLE-02 | Phase 1 | Complete |
 | ROLE-03 | Phase 1 | Complete |
-| CLI-01 | Phase 1 | Pending |
-| CLI-02 | Phase 1 | Pending |
+| CLI-01 | Phase 1 | Complete |
+| CLI-02 | Phase 1 | Complete |
 | FB-01 | Phase 2 | Pending |
 | FB-02 | Phase 2 | Pending |
 | FB-03 | Phase 2 | Pending |
