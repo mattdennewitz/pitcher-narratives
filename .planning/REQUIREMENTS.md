@@ -22,10 +22,10 @@ Requirements for initial release. Each maps to roadmap phases.
 
 ### Fastball Quality
 
-- [ ] **FB-01**: Report includes average fastball velocity for season baseline vs. recent window
-- [ ] **FB-02**: Report includes P+/S+/L+ for primary fastball: season baseline vs. recent window with delta
-- [ ] **FB-03**: Report includes movement deltas (pfx_x/pfx_z) for fastball: season baseline vs. recent
-- [ ] **FB-04**: Report includes within-game velocity arc analysis (early vs. late innings drop-off)
+- [x] **FB-01**: Report includes average fastball velocity for season baseline vs. recent window
+- [x] **FB-02**: Report includes P+/S+/L+ for primary fastball: season baseline vs. recent window with delta
+- [x] **FB-03**: Report includes movement deltas (pfx_x/pfx_z) for fastball: season baseline vs. recent
+- [x] **FB-04**: Report includes within-game velocity arc analysis (early vs. late innings drop-off)
 
 ### Arsenal Analysis
 
@@ -109,10 +109,10 @@ Which phases cover which requirements. Updated during roadmap creation.
 | ROLE-03 | Phase 1 | Complete |
 | CLI-01 | Phase 1 | Complete |
 | CLI-02 | Phase 1 | Complete |
-| FB-01 | Phase 2 | Pending |
-| FB-02 | Phase 2 | Pending |
-| FB-03 | Phase 2 | Pending |
-| FB-04 | Phase 2 | Pending |
+| FB-01 | Phase 2 | Complete |
+| FB-02 | Phase 2 | Complete |
+| FB-03 | Phase 2 | Complete |
+| FB-04 | Phase 2 | Complete |
 | ARSL-01 | Phase 2 | Pending |
 | ARSL-02 | Phase 2 | Pending |
 | ARSL-03 | Phase 2 | Pending |

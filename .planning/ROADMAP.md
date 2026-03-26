@@ -47,7 +47,7 @@ Plans:
 **Plans:** 2 plans
 
 Plans:
-- [ ] 02-01-PLAN.md -- Fastball quality engine: delta helpers, FastballSummary/VelocityArc dataclasses, primary fastball identification, tests
+- [x] 02-01-PLAN.md -- Fastball quality engine: delta helpers, FastballSummary/VelocityArc dataclasses, primary fastball identification, tests
 - [ ] 02-02-PLAN.md -- Arsenal analysis engine: per-type usage/P+ deltas, platoon mix shifts, first-pitch weaponry, tests
 
 ### Phase 3: Execution & Context Engine
