@@ -2,7 +2,7 @@
 
 ## What This Is
 
-A CLI tool that generates LLM-written scouting reports for MLB pitchers. Given a pitcher ID, it assembles pitch-level Statcast data and pre-computed Pitching+ aggregations, computes deltas and trend strings across a configurable lookback window, and streams a scout-voice narrative report from Claude via pydantic-ai.
+A CLI tool that generates LLM-written scouting reports for MLB pitchers. Given a pitcher ID, it assembles pitch-level Statcast data and pre-computed Pitching+ aggregations, computes deltas and trend strings across a configurable lookback window, and runs a five-phase LLM pipeline (synthesizer → editor → anchor check → hook writer → fantasy analyst) to produce analytical narratives. Includes a standalone scout CLI that scores appearances for interestingness and optionally curates via LLM.
 
 ## Core Value
 
@@ -23,10 +23,27 @@ The report must read like a scout wrote it — surfacing *changes, adaptations, 
 - Adapts report structure based on starter vs. reliever role (SP/RP guidance in prompt) — v1.0
 - Generates scout-voice prose via Claude with anti-recitation prompting — v1.0
 - Uses Claude via pydantic-ai as the LLM backend — v1.0
+- Multi-provider support (OpenAI, Claude, Gemini) with configurable thinking levels — v1.1
+- Five-phase pipeline: synthesizer → editor → anchor check → hook writer → fantasy analyst — v1.2
+- Pragmatic/cautious voice with intent-based reasoning, plausibility filters, and 3-metric cap — v1.1
+- Capsule-driven downstream: Phases 3/4 derive from editor capsule, not raw synthesis — v1.1
+- Portfolio audit: synthesizer cross-references S+/L+ with platoon data for development opportunities — v1.1
+- Anchor check (Phase 2.5) verifies narrative fidelity to synthesis — v1.2
+- Scout CLI scores appearances across 9 signals without LLM calls — v1.2
+- LLM curator selects 3-5 most compelling stories with signal hierarchy and rejection explanations — v1.2
 
 ### Active
 
-(None — v1.0 shipped. Define next milestone requirements via `/gsd:new-milestone`.)
+## Current Milestone: v1.3 Editor-Anchor Reflection Loop
+
+**Goal:** Close the feedback loop between the editor and anchor check so the capsule self-corrects before reaching downstream phases.
+
+**Target features:**
+- Anchor check feeds warnings back to the editor for revision
+- Editor revises the capsule based on specific anchor feedback
+- Loop iterates until anchor returns CLEAN or max iteration cap is hit
+- Warnings that survive the loop are surfaced to the user
+- Track iteration count and changes per pass
 
 ### Out of Scope
 
@@ -39,13 +56,11 @@ The report must read like a scout wrote it — surfacing *changes, adaptations, 
 
 ## Context
 
-### Current State (v1.0 shipped)
+### Current State (v1.2 shipped)
 
-3,270 LOC Python across 4 modules + 4 test files. 104 tests passing.
+**Modules:** data.py (loading), engine.py (computation), context.py (assembly), report.py (5-phase LLM pipeline + hallucination guard), scout.py (appearance scoring), curator.py (LLM curation), cli.py (narrative CLI), scout_cli.py (scout CLI).
 
-**Modules:** data.py (loading/classification), engine.py (computation), context.py (Pydantic assembly), report.py (LLM generation), main.py (CLI entry point).
-
-**Tech stack:** Python 3.14, polars 1.39, pydantic-ai 1.72, Claude Sonnet 4.6.
+**Tech stack:** Python 3.14, polars 1.39, pydantic-ai 1.72, multi-provider (OpenAI gpt-5.4-mini, Claude Sonnet 4.6, Gemini 3.1 Pro).
 
 ### Data Sources
 
@@ -77,6 +92,10 @@ The report must read like a scout wrote it — surfacing *changes, adaptations, 
 | str output type (not structured) | Free-form prose; structured output constrains narrative quality | ✓ Good |
 | First inning = 1 for SP classification | Simple, accurate, handles swingmen per-appearance | ✓ Good |
 | n_pitches-weighted averaging for baselines | Correctly handles multi-game-type rows | ✓ Good |
+| Five-phase pipeline with anchor check | Separate fact-checker catches signal drift the editor misses | ✓ Good |
+| Capsule-driven downstream phases | Hook/fantasy inherit editor's plausibility filters | ✓ Good |
+| Separate scout CLI (no LLM) | Cheap triage before expensive narrative generation | ✓ Good |
+| Pragmatic voice over skeptical | Reads like a scout, not a critic or a cheerleader | ✓ Good |
 
 ## Evolution
 
@@ -96,4 +115,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-03-26 after v1.0 milestone*
+*Last updated: 2026-03-27 after v1.2 — starting v1.3 milestone*
