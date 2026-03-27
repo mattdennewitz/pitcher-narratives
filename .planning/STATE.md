@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-03-26)
 Phase: 04
 Plan: Not started
 Status: Phase complete — ready for verification
-Last activity: 2026-03-27 - Completed quick task 260326-sgh: Improve hallucination guard
+Last activity: 2026-03-27 - Completed quick task 260326-t0k: Add -v verbose switch
 
 Progress: [░░░░░░░░░░] 0%
 
@@ -97,6 +97,7 @@ None yet.
 |---|-------------|------|--------|-----------|
 | 260326-q9s | Add hard-hit rate metric (percentage of batted balls with exit velocity >= 95 mph) | 2026-03-26 | 0eb772f | [260326-q9s-add-hard-hit-rate-metric-percentage-of-b](./quick/260326-q9s-add-hard-hit-rate-metric-percentage-of-b/) |
 | 260326-sgh | Fix hallucination guard: structured return type, regex fixes, traditional stat detection | 2026-03-26 | 120cab7 | [260326-sgh-evaluate-our-hallucination-guard-for-imp](./quick/260326-sgh-evaluate-our-hallucination-guard-for-imp/) |
+| 260326-t0k | Add -v verbose switch showing pitcher name, game dates, and pitch counts | 2026-03-27 | 173d954 | [260326-t0k-add-v-switch-showing-pitcher-name-game-d](./quick/260326-t0k-add-v-switch-showing-pitcher-name-game-d/) |
 
 ## Session Continuity
 
