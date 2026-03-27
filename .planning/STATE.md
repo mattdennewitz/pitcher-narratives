@@ -98,9 +98,10 @@ None yet.
 | 260326-q9s | Add hard-hit rate metric (percentage of batted balls with exit velocity >= 95 mph) | 2026-03-26 | 0eb772f | [260326-q9s-add-hard-hit-rate-metric-percentage-of-b](./quick/260326-q9s-add-hard-hit-rate-metric-percentage-of-b/) |
 | 260326-sgh | Fix hallucination guard: structured return type, regex fixes, traditional stat detection | 2026-03-26 | 120cab7 | [260326-sgh-evaluate-our-hallucination-guard-for-imp](./quick/260326-sgh-evaluate-our-hallucination-guard-for-imp/) |
 | 260326-t0k | Add -v verbose switch showing pitcher name, game dates, and pitch counts | 2026-03-27 | 173d954 | [260326-t0k-add-v-switch-showing-pitcher-name-game-d](./quick/260326-t0k-add-v-switch-showing-pitcher-name-game-d/) |
+| 260326-vj7 | Add release point analysis (x/z/extension per pitch type) to context document | 2026-03-27 | 8106e24 | [260326-vj7-add-release-point-analysis-to-context-do](./quick/260326-vj7-add-release-point-analysis-to-context-do/) |
 
 ## Session Continuity
 
-Last session: 2026-03-27T00:37:31.001Z
-Stopped at: Completed quick-260326-sgh
+Last session: 2026-03-27T02:51:30Z
+Stopped at: Completed quick-260326-vj7
 Resume file: None
