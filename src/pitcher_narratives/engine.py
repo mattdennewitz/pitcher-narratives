@@ -13,7 +13,7 @@ from typing import Any, cast
 
 import polars as pl
 
-from data import AGGS_DIR, PitcherData
+from pitcher_narratives.data import AGGS_DIR, PitcherData
 
 
 def _float(val: Any) -> float:

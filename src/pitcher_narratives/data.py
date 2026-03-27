@@ -25,7 +25,7 @@ __all__ = [
     "load_statcast",
 ]
 
-DATA_DIR = Path(__file__).parent
+DATA_DIR = Path(__file__).resolve().parent.parent.parent
 PARQUET_PATH = DATA_DIR / "statcast_2026.parquet"
 AGGS_DIR = DATA_DIR / "aggs"
 

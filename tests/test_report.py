@@ -3,9 +3,9 @@
 import pytest
 from pydantic_ai.models.test import TestModel
 
-from context import assemble_pitcher_context
-from data import load_pitcher_data
-from report import (
+from pitcher_narratives.context import assemble_pitcher_context
+from pitcher_narratives.data import load_pitcher_data
+from pitcher_narratives.report import (
     _EDITOR_PROMPT,
     _FANTASY_PROMPT,
     _RP_SYNTH_GUIDANCE,
@@ -17,12 +17,9 @@ from report import (
     _build_fantasy_message,
     _build_hook_message,
     _build_synthesizer_message,
+    _make_agents,
     check_hallucinated_metrics,
-    editor,
-    fantasy_analyst,
     generate_report_streaming,
-    hook_writer,
-    synthesizer,
 )
 
 TEST_PITCHER = 592155  # Booser, Cam
@@ -38,14 +35,18 @@ def ctx():
 # -- Phase 1: Synthesizer agent tests -----------------------------------------
 
 
-def test_synthesizer_model_is_claude_sonnet():
-    """Synthesizer agent uses claude-sonnet-4-6."""
-    assert "claude-sonnet-4-6" in str(synthesizer.model)
+def test_synthesizer_model_matches_provider():
+    """Synthesizer agent uses the correct model for each provider."""
+    synth, _, _, _ = _make_agents(provider="claude")
+    assert "claude-sonnet-4-6" in str(synth.model)
+    synth_oai, _, _, _ = _make_agents(provider="openai")
+    assert "gpt-5.4-mini" in str(synth_oai.model)
 
 
 def test_synthesizer_output_type_is_str():
     """Synthesizer output_type is str."""
-    assert synthesizer.output_type is str
+    synth, _, _, _ = _make_agents()
+    assert synth.output_type is str
 
 
 def test_synthesizer_prompt_is_objective():
@@ -79,9 +80,10 @@ def test_synthesizer_prompt_balanced_gains_and_drops():
 # -- Phase 2: Editor agent tests ----------------------------------------------
 
 
-def test_editor_model_is_claude_sonnet():
-    """Editor agent uses claude-sonnet-4-6."""
-    assert "claude-sonnet-4-6" in str(editor.model)
+def test_editor_model_matches_provider():
+    """Editor agent uses the correct model for the provider."""
+    _, ed, _, _ = _make_agents(provider="claude")
+    assert "claude-sonnet-4-6" in str(ed.model)
 
 
 def test_editor_prompt_has_skeptical_tone():
@@ -347,14 +349,16 @@ def test_hallucination_guard_hardhit_pct_still_known():
 # -- Phase 3: Hook writer agent tests -----------------------------------------
 
 
-def test_hook_writer_model_is_claude_sonnet():
-    """Hook writer agent uses claude-sonnet-4-6."""
-    assert "claude-sonnet-4-6" in str(hook_writer.model)
+def test_hook_writer_model_matches_provider():
+    """Hook writer agent uses the correct model for the provider."""
+    _, _, hook, _ = _make_agents(provider="claude")
+    assert "claude-sonnet-4-6" in str(hook.model)
 
 
 def test_hook_writer_output_type_is_str():
     """Hook writer output_type is str."""
-    assert hook_writer.output_type is str
+    _, _, hook, _ = _make_agents()
+    assert hook.output_type is str
 
 
 def test_hook_message_includes_pitcher_name(ctx):
@@ -386,14 +390,16 @@ def test_report_result_narrative_matches_editor_output(ctx):
 # -- Phase 4: Fantasy analyst agent tests ----------------------------------------
 
 
-def test_fantasy_analyst_model_is_claude_sonnet():
-    """Fantasy analyst agent uses claude-sonnet-4-6."""
-    assert "claude-sonnet-4-6" in str(fantasy_analyst.model)
+def test_fantasy_analyst_model_matches_provider():
+    """Fantasy analyst agent uses the correct model for the provider."""
+    _, _, _, fantasy = _make_agents(provider="claude")
+    assert "claude-sonnet-4-6" in str(fantasy.model)
 
 
 def test_fantasy_analyst_output_type_is_str():
     """Fantasy analyst output_type is str."""
-    assert fantasy_analyst.output_type is str
+    _, _, _, fantasy = _make_agents()
+    assert fantasy.output_type is str
 
 
 def test_fantasy_prompt_requires_three_bullets():

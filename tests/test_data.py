@@ -1,7 +1,7 @@
 import polars as pl
 import pytest
 
-from data import (
+from pitcher_narratives.data import (
     classify_appearances,
     compute_pitch_type_baseline,
     compute_season_baseline,

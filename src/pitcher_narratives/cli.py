@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING
 from dotenv import load_dotenv
 
 if TYPE_CHECKING:
-    from data import PitcherData
+    from pitcher_narratives.data import PitcherData
 
 load_dotenv()
 
@@ -37,17 +37,16 @@ def parse_args() -> argparse.Namespace:
         help="Show pitcher name, game dates, and pitch counts before generating report",
     )
     parser.add_argument(
-        "--print-prompts", action="store_true",
-        help="Print both prompts as sent to the LLM, then exit"
+        "--print-prompts", action="store_true", help="Print both prompts as sent to the LLM, then exit"
     )
     parser.add_argument(
-        "--provider", choices=["openai", "claude"], default="openai",
-        help="LLM provider (default: openai)"
+        "--provider", choices=["openai", "claude"], default="openai", help="LLM provider (default: openai)"
     )
     parser.add_argument(
-        "--thinking", choices=["minimal", "low", "medium", "high", "xhigh"],
+        "--thinking",
+        choices=["minimal", "low", "medium", "high", "xhigh"],
         default="high",
-        help="Thinking/reasoning effort level (default: high)"
+        help="Thinking/reasoning effort level (default: high)",
     )
     return parser.parse_args()
 
@@ -78,7 +77,7 @@ def main() -> None:
     """Entry point: load pitcher data, assemble context, generate report."""
     args = parse_args()
 
-    from data import load_pitcher_data
+    from pitcher_narratives.data import load_pitcher_data
 
     try:
         pitcher_data = load_pitcher_data(args.pitcher, args.window)
@@ -89,9 +88,10 @@ def main() -> None:
     if args.verbose:
         _print_verbose_summary(pitcher_data)
 
-    from context import assemble_pitcher_context
     from pydantic_ai.exceptions import UserError
-    from report import check_hallucinated_metrics, generate_report_streaming, print_prompts
+
+    from pitcher_narratives.context import assemble_pitcher_context
+    from pitcher_narratives.report import check_hallucinated_metrics, generate_report_streaming, print_prompts
 
     ctx = assemble_pitcher_context(pitcher_data)
 

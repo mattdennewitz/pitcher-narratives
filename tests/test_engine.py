@@ -9,8 +9,8 @@ workload context (rest days, IP, pitch counts, consecutive days).
 
 import polars as pl
 
-from data import load_pitcher_data
-from engine import (
+from pitcher_narratives.data import load_pitcher_data
+from pitcher_narratives.engine import (
     _CSW_DESCRIPTIONS,
     AppearanceWorkload,
     ExecutionMetrics,

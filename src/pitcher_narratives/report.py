@@ -23,22 +23,22 @@ from pydantic import BaseModel
 from pydantic_ai import Agent
 from pydantic_ai.settings import ModelSettings, ThinkingEffort
 
-from context import PitcherContext
+from pitcher_narratives.context import PitcherContext
 
 __all__ = [
-    "HallucinationReport",
     "PROVIDERS",
-    "ReportResult",
     "THINKING_LEVELS",
+    "HallucinationReport",
+    "ReportResult",
     "check_hallucinated_metrics",
     "generate_report_streaming",
     "print_prompts",
 ]
 
-THINKING_LEVELS: list[ThinkingEffort] = ['minimal', 'low', 'medium', 'high', 'xhigh']
+THINKING_LEVELS: list[ThinkingEffort] = ["minimal", "low", "medium", "high", "xhigh"]
 PROVIDERS = {
-    'openai': 'openai:gpt-5.4-mini',
-    'claude': 'anthropic:claude-sonnet-4-6',
+    "openai": "openai:gpt-5.4-mini",
+    "claude": "anthropic:claude-sonnet-4-6",
 }
 
 
@@ -231,14 +231,14 @@ about the pitcher's stuff, not about "looking at the data."
 
 
 def _make_agents(
-    provider: str = 'openai',
-    thinking: ThinkingEffort = 'high',
+    provider: str = "openai",
+    thinking: ThinkingEffort = "high",
 ) -> tuple[Agent[None, str], Agent[None, str], Agent[None, str], Agent[None, str]]:
     """Create all four pipeline agents for the given provider and thinking level."""
     model = PROVIDERS[provider]
     # Anthropic's default max_tokens (4096) is too low when thinking is enabled
     # because thinking tokens count against the budget.
-    extra = {'max_tokens': 16384} if provider == 'claude' else {}
+    extra = {"max_tokens": 16384} if provider == "claude" else {}
     settings = ModelSettings(thinking=thinking, **extra)
     synth = Agent(
         model,
@@ -258,14 +258,14 @@ def _make_agents(
         model,
         output_type=str,
         system_prompt=_HOOK_PROMPT,
-        model_settings=ModelSettings(thinking=thinking, max_tokens=150, **extra),
+        model_settings=ModelSettings(thinking=thinking, max_tokens=max(150, extra.get("max_tokens", 0))),
         defer_model_check=True,
     )
     fantasy = Agent(
         model,
         output_type=str,
         system_prompt=_FANTASY_PROMPT,
-        model_settings=ModelSettings(thinking=thinking, max_tokens=300, **extra),
+        model_settings=ModelSettings(thinking=thinking, max_tokens=max(300, extra.get("max_tokens", 0))),
         defer_model_check=True,
     )
     return synth, ed, hook, fantasy
@@ -283,7 +283,6 @@ or signal. Be specific — name the pitch, cite the metric, state the \
 direction. No hashtags, no emojis, no hype. Write with authority, as if \
 tweeting to a front-office audience. The hook must stand alone without \
 context."""
-
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -309,7 +308,6 @@ injury/workload red flags, and category impact (Ks, ERA, WHIP, ratios).
 
 Format: exactly 3 lines, each starting with "- " (a bullet). Nothing \
 else — no intro, no summary, no headers."""
-
 
 
 class ReportResult(BaseModel):
@@ -393,8 +391,8 @@ def print_prompts(ctx: PitcherContext) -> None:
 def generate_report_streaming(
     ctx: PitcherContext,
     *,
-    provider: str = 'openai',
-    thinking: ThinkingEffort = 'high',
+    provider: str = "openai",
+    thinking: ThinkingEffort = "high",
     _model_override: Any = None,
 ) -> ReportResult:
     """Generate a four-phase scouting report and stream the editorial output.

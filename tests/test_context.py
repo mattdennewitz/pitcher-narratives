@@ -3,9 +3,9 @@
 import pytest
 from pydantic import BaseModel
 
-from context import assemble_pitcher_context
-from data import load_pitcher_data
-from engine import HardHitRate, ReleasePointMetrics
+from pitcher_narratives.context import assemble_pitcher_context
+from pitcher_narratives.data import load_pitcher_data
+from pitcher_narratives.engine import HardHitRate, ReleasePointMetrics
 
 TEST_PITCHER = 592155  # Booser, Cam
 

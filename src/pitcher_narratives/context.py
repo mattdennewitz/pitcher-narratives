@@ -8,8 +8,8 @@ from __future__ import annotations
 
 from pydantic import BaseModel, ConfigDict
 
-from data import PitcherData
-from engine import (
+from pitcher_narratives.data import PitcherData
+from pitcher_narratives.engine import (
     ExecutionMetrics,
     FastballSummary,
     FirstPitchWeaponry,
