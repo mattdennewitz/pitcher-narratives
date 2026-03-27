@@ -2,13 +2,13 @@ import polars as pl
 import pytest
 
 from data import (
-    load_statcast,
-    load_agg_csvs,
     classify_appearances,
-    compute_season_baseline,
     compute_pitch_type_baseline,
+    compute_season_baseline,
     filter_to_window,
+    load_agg_csvs,
     load_pitcher_data,
+    load_statcast,
 )
 
 TEST_PITCHER = 592155  # Booser, Cam -- 12 appearances, 1 SP + 11 RP
@@ -37,9 +37,14 @@ def test_load_agg_csvs_all_grains():
     """DATA-02: Returns dict with all expected CSV keys."""
     csvs = load_agg_csvs(TEST_PITCHER)
     expected_keys = {
-        "pitcher", "pitcher_type", "pitcher_appearance",
-        "pitcher_type_appearance", "pitcher_type_platoon",
-        "pitcher_type_platoon_appearance", "all_pitches", "team",
+        "pitcher",
+        "pitcher_type",
+        "pitcher_appearance",
+        "pitcher_type_appearance",
+        "pitcher_type_platoon",
+        "pitcher_type_platoon_appearance",
+        "all_pitches",
+        "team",
     }
     assert set(csvs.keys()) == expected_keys
 
@@ -47,8 +52,12 @@ def test_load_agg_csvs_all_grains():
 def test_csv_date_parsing():
     """DATA-02: game_date columns parsed to Date type, not String."""
     csvs = load_agg_csvs(TEST_PITCHER)
-    for key in ["pitcher_appearance", "pitcher_type_appearance",
-                "pitcher_type_platoon_appearance", "all_pitches"]:
+    for key in [
+        "pitcher_appearance",
+        "pitcher_type_appearance",
+        "pitcher_type_platoon_appearance",
+        "all_pitches",
+    ]:
         df = csvs[key]
         if not df.is_empty():
             assert df["game_date"].dtype == pl.Date, (
@@ -63,9 +72,7 @@ def test_csv_pitcher_filtered():
         if key == "team":
             continue  # team.csv has no pitcher column
         if not df.is_empty():
-            assert (df["pitcher"] == TEST_PITCHER).all(), (
-                f"{key} contains rows for other pitchers"
-            )
+            assert (df["pitcher"] == TEST_PITCHER).all(), f"{key} contains rows for other pitchers"
 
 
 def test_season_baseline_weighted():
@@ -101,10 +108,12 @@ def test_window_filter():
     appearances = classify_appearances(df)
     filtered = filter_to_window(appearances, window_days=7)
     if not filtered.is_empty():
-        max_date = appearances["game_date"].max()
-        from datetime import timedelta
+        from datetime import date, timedelta
+        from typing import cast
+
+        max_date = cast(date, appearances["game_date"].max())
         cutoff = max_date - timedelta(days=7)
-        assert filtered["game_date"].min() >= cutoff
+        assert cast(date, filtered["game_date"].min()) >= cutoff
 
 
 def test_classify_starter():

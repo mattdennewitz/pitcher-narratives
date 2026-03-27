@@ -9,36 +9,43 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+from typing import TYPE_CHECKING
 
 from dotenv import load_dotenv
+
+if TYPE_CHECKING:
+    from data import PitcherData
 
 load_dotenv()
 
 
 def parse_args() -> argparse.Namespace:
     """Parse command-line arguments for pitcher scouting reports."""
-    parser = argparse.ArgumentParser(
-        description="Generate pitcher scouting reports from Statcast data"
+    parser = argparse.ArgumentParser(description="Generate pitcher scouting reports from Statcast data")
+    parser.add_argument("-p", "--pitcher", type=int, required=True, help="MLB pitcher ID (e.g., 592155)")
+    parser.add_argument(
+        "-w",
+        "--window",
+        type=int,
+        default=30,
+        help="Lookback window in days (default: 30)",
     )
     parser.add_argument(
-        "-p", "--pitcher", type=int, required=True,
-        help="MLB pitcher ID (e.g., 592155)"
-    )
-    parser.add_argument(
-        "-w", "--window", type=int, default=30,
-        help="Lookback window in days (default: 30)"
-    )
-    parser.add_argument(
-        "-v", "--verbose", action="store_true",
-        help="Show pitcher name, game dates, and pitch counts before generating report"
+        "-v",
+        "--verbose",
+        action="store_true",
+        help="Show pitcher name, game dates, and pitch counts before generating report",
     )
     return parser.parse_args()
 
 
-def _print_verbose_summary(data) -> None:
+def _print_verbose_summary(data: PitcherData) -> None:
     """Print pitcher name, game dates, and pitch counts to stderr."""
     appearances = data.appearances.sort("game_date")
-    print(f"\n{data.pitcher_name} (ID: {data.pitcher_id}, {data.throws}HP)", file=sys.stderr)
+    print(
+        f"\n{data.pitcher_name} (ID: {data.pitcher_id}, {data.throws}HP)",
+        file=sys.stderr,
+    )
     print(f"{'Date':<12} {'Pitches':>7}  Role", file=sys.stderr)
     print(f"{'─' * 12} {'─' * 7}  {'─' * 4}", file=sys.stderr)
     for row in appearances.iter_rows(named=True):
@@ -69,9 +76,10 @@ def main() -> None:
     if args.verbose:
         _print_verbose_summary(pitcher_data)
 
-    from context import assemble_pitcher_context
     from pydantic_ai.exceptions import UserError
-    from report import generate_report_streaming, check_hallucinated_metrics
+
+    from context import assemble_pitcher_context
+    from report import check_hallucinated_metrics, generate_report_streaming
 
     ctx = assemble_pitcher_context(pitcher_data)
 
@@ -80,9 +88,7 @@ def main() -> None:
     if os.environ.get("PITCHER_NARRATIVES_TEST_MODEL"):
         from pydantic_ai.models.test import TestModel
 
-        model_override = TestModel(
-            custom_output_text="[Test mode] Scouting report would appear here."
-        )
+        model_override = TestModel(custom_output_text="[Test mode] Scouting report would appear here.")
 
     try:
         result = generate_report_streaming(ctx, _model_override=model_override)
@@ -107,8 +113,7 @@ def main() -> None:
     if not hallucination_report.is_clean:
         if hallucination_report.unknown_metrics:
             print(
-                f"\nWARNING: Unknown metrics referenced: "
-                f"{', '.join(hallucination_report.unknown_metrics)}",
+                f"\nWARNING: Unknown metrics referenced: {', '.join(hallucination_report.unknown_metrics)}",
                 file=sys.stderr,
             )
         if hallucination_report.outcome_stat_warnings:

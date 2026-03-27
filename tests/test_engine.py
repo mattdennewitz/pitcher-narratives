@@ -8,43 +8,42 @@ workload context (rest days, IP, pitch counts, consecutive days).
 """
 
 import polars as pl
-import pytest
 
 from data import load_pitcher_data
 from engine import (
+    _CSW_DESCRIPTIONS,
+    AppearanceWorkload,
+    ExecutionMetrics,
     FastballSummary,
-    VelocityArc,
+    FirstPitchEntry,
+    FirstPitchWeaponry,
+    HardHitRate,
     PitchTypeSummary,
     PlatoonMix,
     PlatoonSplit,
-    FirstPitchEntry,
+    ReleasePointMetrics,
+    ReleasePointPitchType,
+    TTOAnalysis,
     TTOPitchType,
     TTOSplit,
-    TTOAnalysis,
-    compute_tto_analysis,
-    FirstPitchWeaponry,
-    ExecutionMetrics,
-    AppearanceWorkload,
+    VelocityArc,
     WorkloadContext,
-    HardHitRate,
-    ReleasePointPitchType,
-    ReleasePointMetrics,
-    compute_fastball_summary,
-    compute_velocity_arc,
-    compute_arsenal_summary,
-    compute_platoon_mix,
-    compute_first_pitch_weaponry,
-    compute_execution_metrics,
-    compute_workload_context,
-    compute_hard_hit_rate,
-    compute_release_point_metrics,
-    _velo_delta_string,
-    _pplus_delta_string,
-    _usage_delta_string,
-    _movement_delta_string,
     _identify_primary_fastball,
+    _movement_delta_string,
+    _pplus_delta_string,
     _stand_to_platoon,
-    _CSW_DESCRIPTIONS,
+    _usage_delta_string,
+    _velo_delta_string,
+    compute_arsenal_summary,
+    compute_execution_metrics,
+    compute_fastball_summary,
+    compute_first_pitch_weaponry,
+    compute_hard_hit_rate,
+    compute_platoon_mix,
+    compute_release_point_metrics,
+    compute_tto_analysis,
+    compute_velocity_arc,
+    compute_workload_context,
 )
 
 TEST_PITCHER = 592155  # Booser, Cam -- LHP, 12 appearances, FC primary fastball
@@ -147,10 +146,12 @@ def test_identify_primary_fastball_no_fb():
     import polars as pl
 
     # Create a fake pitch_type_baseline with no fastball types
-    fake_baseline = pl.DataFrame({
-        "pitch_type": ["CH", "SL", "CU"],
-        "n_pitches": [50, 40, 30],
-    })
+    fake_baseline = pl.DataFrame(
+        {
+            "pitch_type": ["CH", "SL", "CU"],
+            "n_pitches": [50, 40, 30],
+        }
+    )
     result = _identify_primary_fastball(fake_baseline)
     assert result is None
 
@@ -479,9 +480,16 @@ def test_csw_per_type():
 
 def test_csw_descriptions_exact():
     """CSW only counts called_strike, swinging_strike, swinging_strike_blocked."""
-    assert _CSW_DESCRIPTIONS == frozenset({
-        "called_strike", "swinging_strike", "swinging_strike_blocked",
-    })
+    assert (
+        frozenset(
+            {
+                "called_strike",
+                "swinging_strike",
+                "swinging_strike_blocked",
+            }
+        )
+        == _CSW_DESCRIPTIONS
+    )
 
 
 def test_zone_rate():
@@ -579,7 +587,7 @@ def test_rest_days_consecutive():
     data = load_pitcher_data(TEST_PITCHER, window_days=9999)
     workload = compute_workload_context(data)
     # Check if any rest_days == 0 exist (consecutive days)
-    rest_values = [a.rest_days for a in workload.appearances if a.rest_days is not None]
+    _ = [a.rest_days for a in workload.appearances if a.rest_days is not None]
     # If there are consecutive day appearances, one should be 0
     # Test pitcher has appearances -- verify structure is correct
     for app in workload.appearances:
@@ -610,9 +618,7 @@ def test_pitch_count_per_appearance():
         assert isinstance(app.pitch_count, int)
         assert app.pitch_count > 0
         # Verify against statcast
-        statcast_count = data.statcast.filter(
-            pl.col("game_pk") == app.game_pk
-        ).height
+        statcast_count = data.statcast.filter(pl.col("game_pk") == app.game_pk).height
         assert app.pitch_count == statcast_count
 
 
@@ -742,10 +748,7 @@ def test_hard_hit_rate_counts_batted_balls():
     # Verify against raw statcast
     window_dates = data.window_appearances["game_date"].unique().to_list()
     window_sc = data.statcast.filter(pl.col("game_date").is_in(window_dates))
-    bip = window_sc.filter(
-        (pl.col("description") == "hit_into_play")
-        & pl.col("launch_speed").is_not_null()
-    )
+    bip = window_sc.filter((pl.col("description") == "hit_into_play") & pl.col("launch_speed").is_not_null())
     assert hhr.n_batted_balls == bip.height
     hard = bip.filter(pl.col("launch_speed") >= 95.0)
     assert hhr.n_hard_hit == hard.height
@@ -779,8 +782,7 @@ def test_hard_hit_rate_season_pct():
     hhr = compute_hard_hit_rate(data)
     # Verify against full statcast
     bip = data.statcast.filter(
-        (pl.col("description") == "hit_into_play")
-        & pl.col("launch_speed").is_not_null()
+        (pl.col("description") == "hit_into_play") & pl.col("launch_speed").is_not_null()
     )
     hard = bip.filter(pl.col("launch_speed") >= 95.0)
     expected_pct = hard.height / bip.height * 100.0 if bip.height > 0 else 0.0

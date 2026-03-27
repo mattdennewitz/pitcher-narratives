@@ -9,39 +9,46 @@ delta helpers used across all analysis facets.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any, cast
 
 import polars as pl
 
 from data import AGGS_DIR, PitcherData
 
+
+def _float(val: Any) -> float:
+    """Cast a Polars scalar to float, satisfying mypy."""
+    return float(cast(float, val))
+
+
 __all__ = [
-    "compute_fastball_summary",
-    "compute_velocity_arc",
-    "compute_arsenal_summary",
-    "compute_platoon_mix",
-    "compute_first_pitch_weaponry",
-    "compute_execution_metrics",
-    "compute_workload_context",
+    "AppearanceWorkload",
+    "ExecutionMetrics",
     "FastballSummary",
-    "VelocityArc",
+    "FirstPitchEntry",
+    "FirstPitchWeaponry",
+    "HardHitRate",
     "PitchTypeSummary",
     "PlatoonMix",
     "PlatoonSplit",
-    "FirstPitchEntry",
-    "FirstPitchWeaponry",
-    "ExecutionMetrics",
-    "AppearanceWorkload",
-    "WorkloadContext",
+    "ReleasePointMetrics",
+    "ReleasePointPitchType",
+    "TTOAnalysis",
     "TTOPitchType",
     "TTOPlatoonSplit",
     "TTOSplit",
-    "TTOAnalysis",
-    "compute_tto_analysis",
-    "HardHitRate",
+    "VelocityArc",
+    "WorkloadContext",
+    "compute_arsenal_summary",
+    "compute_execution_metrics",
+    "compute_fastball_summary",
+    "compute_first_pitch_weaponry",
     "compute_hard_hit_rate",
-    "ReleasePointPitchType",
-    "ReleasePointMetrics",
+    "compute_platoon_mix",
     "compute_release_point_metrics",
+    "compute_tto_analysis",
+    "compute_velocity_arc",
+    "compute_workload_context",
 ]
 
 # ── Constants ─────────────────────────────────────────────────────────
@@ -73,15 +80,27 @@ _MIN_PITCHES = 10
 _COLD_START_STRING = "Full season in window -- no trend comparison"
 """Delta string used when window covers entire season."""
 
-_CSW_DESCRIPTIONS = frozenset({
-    "called_strike", "swinging_strike", "swinging_strike_blocked",
-})
+_CSW_DESCRIPTIONS = frozenset(
+    {
+        "called_strike",
+        "swinging_strike",
+        "swinging_strike_blocked",
+    }
+)
 """Descriptions that count as called + swinging strikes."""
 
-_SWING_DESCRIPTIONS = frozenset({
-    "swinging_strike", "swinging_strike_blocked", "foul", "foul_tip",
-    "hit_into_play", "foul_bunt", "bunt_foul_tip", "missed_bunt",
-})
+_SWING_DESCRIPTIONS = frozenset(
+    {
+        "swinging_strike",
+        "swinging_strike_blocked",
+        "foul",
+        "foul_tip",
+        "hit_into_play",
+        "foul_bunt",
+        "bunt_foul_tip",
+        "missed_bunt",
+    }
+)
 """All descriptions that count as a swing attempt."""
 
 _ZONE_IN = list(range(1, 10))
@@ -90,17 +109,30 @@ _ZONE_IN = list(range(1, 10))
 _ZONE_OUT = [11, 12, 13, 14]
 """Outside zone (chase zone)."""
 
-_OUT_EVENTS = frozenset({
-    "strikeout", "field_out", "grounded_into_double_play",
-    "force_out", "sac_fly", "sac_bunt", "fielders_choice",
-    "double_play", "sac_fly_double_play", "strikeout_double_play",
-})
+_OUT_EVENTS = frozenset(
+    {
+        "strikeout",
+        "field_out",
+        "grounded_into_double_play",
+        "force_out",
+        "sac_fly",
+        "sac_bunt",
+        "fielders_choice",
+        "double_play",
+        "sac_fly_double_play",
+        "strikeout_double_play",
+    }
+)
 """Events that produce at least one out."""
 
-_DOUBLE_OUT_EVENTS = frozenset({
-    "grounded_into_double_play", "double_play",
-    "sac_fly_double_play", "strikeout_double_play",
-})
+_DOUBLE_OUT_EVENTS = frozenset(
+    {
+        "grounded_into_double_play",
+        "double_play",
+        "sac_fly_double_play",
+        "strikeout_double_play",
+    }
+)
 """Events that produce two outs."""
 
 
@@ -192,8 +224,12 @@ def _safe_metric(df: pl.DataFrame, col: str, default: float = 0.0) -> float:
 
 def _pplus_delta_strings(
     cold_start: bool,
-    season_p: float, season_s: float, season_l: float,
-    window_p: float | None, window_s: float | None, window_l: float | None,
+    season_p: float,
+    season_s: float,
+    season_l: float,
+    window_p: float | None,
+    window_s: float | None,
+    window_l: float | None,
 ) -> tuple[str, str, str]:
     """Compute P+/S+/L+ delta strings with cold start and None handling."""
     if cold_start:
@@ -225,15 +261,13 @@ def _identify_primary_fastball(pitch_type_baseline: pl.DataFrame) -> str | None:
     Returns:
         Pitch type code (e.g., 'FC') or None if no fastball types found.
     """
-    fb_rows = pitch_type_baseline.filter(
-        pl.col("pitch_type").is_in(list(_FASTBALL_TYPES))
-    )
+    fb_rows = pitch_type_baseline.filter(pl.col("pitch_type").is_in(list(_FASTBALL_TYPES)))
     if fb_rows.is_empty():
         return None
     return str(fb_rows.sort("n_pitches", descending=True)["pitch_type"][0])
 
 
-def _get_window_game_dates(data: PitcherData) -> list:
+def _get_window_game_dates(data: PitcherData) -> list[Any]:
     """Extract unique game_date values from window_appearances.
 
     Args:
@@ -279,7 +313,7 @@ def _weighted_window_metrics(
     """
     window = df.filter(filters)
 
-    empty = {m: None for m in metrics}
+    empty: dict[str, float | int | None] = {m: None for m in metrics}
     empty["n_pitches"] = 0
 
     if window.is_empty():
@@ -292,8 +326,8 @@ def _weighted_window_metrics(
     result: dict[str, float | int | None] = {"n_pitches": int(total_pitches)}
     for metric in metrics:
         if metric in window.columns:
-            weighted = (window[metric] * window["n_pitches"]).sum() / total_pitches
-            result[metric] = float(weighted)
+            weighted = (window[metric] * window["n_pitches"]).sum()
+            result[metric] = _float(weighted) / _float(total_pitches)
         else:
             result[metric] = None
 
@@ -328,16 +362,23 @@ def _compute_platoon_baseline(pitcher_type_platoon_df: pl.DataFrame) -> pl.DataF
         weighted average metrics.
     """
     df = pitcher_type_platoon_df.filter(pl.col("pitch_type") != "")
-    id_cols = frozenset({
-        "season", "level", "game_type", "pitcher", "player_name",
-        "p_throws", "team_code", "n_pitches", "pitch_type", "platoon_matchup",
-    })
+    id_cols = frozenset(
+        {
+            "season",
+            "level",
+            "game_type",
+            "pitcher",
+            "player_name",
+            "p_throws",
+            "team_code",
+            "n_pitches",
+            "pitch_type",
+            "platoon_matchup",
+        }
+    )
     metric_cols = [c for c in df.columns if c not in id_cols]
     weighted_exprs = [
-        (pl.col(c) * pl.col("n_pitches"))
-        .sum()
-        .truediv(pl.col("n_pitches").sum())
-        .alias(c)
+        (pl.col(c) * pl.col("n_pitches")).sum().truediv(pl.col("n_pitches").sum()).alias(c)
         for c in metric_cols
     ]
     return df.group_by(["pitcher", "pitch_type", "platoon_matchup"]).agg(
@@ -734,24 +775,19 @@ def compute_fastball_summary(data: PitcherData) -> FastballSummary | None:
     fb_statcast = data.statcast.filter(pl.col("pitch_type") == primary)
 
     # ── Velocity ──────────────────────────────────────────────────
-    season_velo = float(fb_statcast["release_speed"].mean())
+    season_velo = _float(fb_statcast["release_speed"].mean())
     window_fb = fb_statcast.filter(pl.col("game_date").is_in(window_dates))
-    window_velo = float(window_fb["release_speed"].mean())
+    window_velo = _float(window_fb["release_speed"].mean())
     velo_delta = window_velo - season_velo
 
-    if cold_start:
-        velo_delta_str = _COLD_START_STRING
-    else:
-        velo_delta_str = _velo_delta_string(velo_delta)
+    velo_delta_str = _COLD_START_STRING if cold_start else _velo_delta_string(velo_delta)
 
     # ── Small sample ──────────────────────────────────────────────
     small_sample = len(window_fb) < _MIN_PITCHES
 
     # ── P+/S+/L+ ─────────────────────────────────────────────────
     # Season values from pitch_type_baseline
-    pt_baseline = data.pitch_type_baseline.filter(
-        pl.col("pitch_type") == primary
-    )
+    pt_baseline = data.pitch_type_baseline.filter(pl.col("pitch_type") == primary)
     season_p_plus = _safe_metric(pt_baseline, "P+")
     season_s_plus = _safe_metric(pt_baseline, "S+")
     season_l_plus = _safe_metric(pt_baseline, "L+")
@@ -768,15 +804,20 @@ def compute_fastball_summary(data: PitcherData) -> FastballSummary | None:
     window_l_plus = window_pplus["L+"]
 
     p_plus_delta_str, s_plus_delta_str, l_plus_delta_str = _pplus_delta_strings(
-        cold_start, season_p_plus, season_s_plus, season_l_plus,
-        window_p_plus, window_s_plus, window_l_plus,
+        cold_start,
+        season_p_plus,
+        season_s_plus,
+        season_l_plus,
+        window_p_plus,
+        window_s_plus,
+        window_l_plus,
     )
 
     # ── Movement ──────────────────────────────────────────────────
-    season_pfx_x = float(fb_statcast["pfx_x"].mean())
-    season_pfx_z = float(fb_statcast["pfx_z"].mean())
-    window_pfx_x = float(window_fb["pfx_x"].mean())
-    window_pfx_z = float(window_fb["pfx_z"].mean())
+    season_pfx_x = _float(fb_statcast["pfx_x"].mean())
+    season_pfx_z = _float(fb_statcast["pfx_z"].mean())
+    window_pfx_x = _float(window_fb["pfx_x"].mean())
+    window_pfx_z = _float(window_fb["pfx_z"].mean())
 
     if cold_start:
         pfx_x_delta_str = _COLD_START_STRING
@@ -835,10 +876,7 @@ def compute_velocity_arc(data: PitcherData, fastball_type: str) -> VelocityArc:
     game_date = str(recent["game_date"])
 
     # Filter statcast to that game and fastball type
-    game_fb = data.statcast.filter(
-        (pl.col("game_pk") == game_pk)
-        & (pl.col("pitch_type") == fastball_type)
-    )
+    game_fb = data.statcast.filter((pl.col("game_pk") == game_pk) & (pl.col("pitch_type") == fastball_type))
 
     innings = sorted(game_fb["inning"].unique().to_list())
     innings_pitched = len(innings)
@@ -859,12 +897,8 @@ def compute_velocity_arc(data: PitcherData, fastball_type: str) -> VelocityArc:
     early_innings = innings[:2]
     late_innings = innings[-2:]
 
-    early_velo = float(
-        game_fb.filter(pl.col("inning").is_in(early_innings))["release_speed"].mean()
-    )
-    late_velo = float(
-        game_fb.filter(pl.col("inning").is_in(late_innings))["release_speed"].mean()
-    )
+    early_velo = _float(game_fb.filter(pl.col("inning").is_in(early_innings))["release_speed"].mean())
+    late_velo = _float(game_fb.filter(pl.col("inning").is_in(late_innings))["release_speed"].mean())
     drop = late_velo - early_velo
 
     if abs(drop) < 0.5:
@@ -952,8 +986,13 @@ def compute_arsenal_summary(data: PitcherData) -> list[PitchTypeSummary]:
         window_l_plus = window_pplus["L+"]
 
         p_plus_delta, s_plus_delta, l_plus_delta = _pplus_delta_strings(
-            cold_start, season_p_plus, season_s_plus, season_l_plus,
-            window_p_plus, window_s_plus, window_l_plus,
+            cold_start,
+            season_p_plus,
+            season_s_plus,
+            season_l_plus,
+            window_p_plus,
+            window_s_plus,
+            window_l_plus,
         )
 
         # ── Pitch name ───────────────────────────────────────────
@@ -962,26 +1001,28 @@ def compute_arsenal_summary(data: PitcherData) -> list[PitchTypeSummary]:
         # ── Small sample ─────────────────────────────────────────
         small_sample = n_window < _MIN_PITCHES
 
-        results.append(PitchTypeSummary(
-            pitch_type=pt,
-            pitch_name=pitch_name,
-            season_usage_pct=season_usage_pct,
-            window_usage_pct=window_usage_pct,
-            usage_delta=usage_delta,
-            season_p_plus=season_p_plus,
-            window_p_plus=window_p_plus,
-            p_plus_delta=p_plus_delta,
-            season_s_plus=season_s_plus,
-            window_s_plus=window_s_plus,
-            s_plus_delta=s_plus_delta,
-            season_l_plus=season_l_plus,
-            window_l_plus=window_l_plus,
-            l_plus_delta=l_plus_delta,
-            n_pitches_season=n_season,
-            n_pitches_window=n_window,
-            small_sample=small_sample,
-            cold_start=cold_start,
-        ))
+        results.append(
+            PitchTypeSummary(
+                pitch_type=pt,
+                pitch_name=pitch_name,
+                season_usage_pct=season_usage_pct,
+                window_usage_pct=window_usage_pct,
+                usage_delta=usage_delta,
+                season_p_plus=season_p_plus,
+                window_p_plus=window_p_plus,
+                p_plus_delta=p_plus_delta,
+                season_s_plus=season_s_plus,
+                window_s_plus=window_s_plus,
+                s_plus_delta=s_plus_delta,
+                season_l_plus=season_l_plus,
+                window_l_plus=window_l_plus,
+                l_plus_delta=l_plus_delta,
+                n_pitches_season=n_season,
+                n_pitches_window=n_window,
+                small_sample=small_sample,
+                cold_start=cold_start,
+            )
+        )
 
     # Sort by season usage descending
     results.sort(key=lambda x: x.season_usage_pct, reverse=True)
@@ -1027,27 +1068,27 @@ def compute_platoon_mix(data: PitcherData) -> PlatoonMix:
     for pt in pitch_types:
         for side in ("same", "opposite"):
             # ── Season usage: % of pitches to this side that are this type ──
-            season_side = statcast_with_platoon.filter(
-                pl.col("platoon_matchup") == side
-            )
+            season_side = statcast_with_platoon.filter(pl.col("platoon_matchup") == side)
             season_side_total = len(season_side)
             season_side_type = season_side.filter(pl.col("pitch_type") == pt)
             n_season_side_type = len(season_side_type)
 
             if n_season_side_type == 0:
                 # Pitch not thrown to this side at all
-                splits.append(PlatoonSplit(
-                    pitch_type=pt,
-                    pitch_name=name_map.get(pt, pt),
-                    platoon_side=side,
-                    season_usage_pct=0.0,
-                    window_usage_pct=None,
-                    usage_delta=f"Not thrown to {side}-side batters",
-                    season_p_plus=None,
-                    window_p_plus=None,
-                    p_plus_delta=f"Not thrown to {side}-side batters",
-                    available=False,
-                ))
+                splits.append(
+                    PlatoonSplit(
+                        pitch_type=pt,
+                        pitch_name=name_map.get(pt, pt),
+                        platoon_side=side,
+                        season_usage_pct=0.0,
+                        window_usage_pct=None,
+                        usage_delta=f"Not thrown to {side}-side batters",
+                        season_p_plus=None,
+                        window_p_plus=None,
+                        p_plus_delta=f"Not thrown to {side}-side batters",
+                        available=False,
+                    )
+                )
                 continue
 
             season_usage_pct = n_season_side_type / season_side_total * 100.0
@@ -1073,8 +1114,7 @@ def compute_platoon_mix(data: PitcherData) -> PlatoonMix:
 
             # ── Season P+ from platoon baseline ──
             plat_row = platoon_baseline.filter(
-                (pl.col("pitch_type") == pt)
-                & (pl.col("platoon_matchup") == side)
+                (pl.col("pitch_type") == pt) & (pl.col("platoon_matchup") == side)
             )
             season_p_plus: float | None = None
             if not plat_row.is_empty() and "P+" in plat_row.columns:
@@ -1084,8 +1124,7 @@ def compute_platoon_mix(data: PitcherData) -> PlatoonMix:
             window_plat_pplus = _weighted_window_metrics(
                 data.agg_csvs["pitcher_type_platoon_appearance"],
                 _PPLUS_METRICS,
-                _window_date_type_filter(window_dates, pt)
-                & (pl.col("platoon_matchup") == side),
+                _window_date_type_filter(window_dates, pt) & (pl.col("platoon_matchup") == side),
             )
             window_p_plus = window_plat_pplus["P+"]
 
@@ -1097,18 +1136,20 @@ def compute_platoon_mix(data: PitcherData) -> PlatoonMix:
             else:
                 p_plus_delta = "No window data"
 
-            splits.append(PlatoonSplit(
-                pitch_type=pt,
-                pitch_name=name_map.get(pt, pt),
-                platoon_side=side,
-                season_usage_pct=season_usage_pct,
-                window_usage_pct=window_usage_pct,
-                usage_delta=usage_delta,
-                season_p_plus=season_p_plus,
-                window_p_plus=window_p_plus,
-                p_plus_delta=p_plus_delta,
-                available=True,
-            ))
+            splits.append(
+                PlatoonSplit(
+                    pitch_type=pt,
+                    pitch_name=name_map.get(pt, pt),
+                    platoon_side=side,
+                    season_usage_pct=season_usage_pct,
+                    window_usage_pct=window_usage_pct,
+                    usage_delta=usage_delta,
+                    season_p_plus=season_p_plus,
+                    window_p_plus=window_p_plus,
+                    p_plus_delta=p_plus_delta,
+                    available=True,
+                )
+            )
 
     return PlatoonMix(splits=splits, cold_start=cold_start)
 
@@ -1158,20 +1199,19 @@ def compute_first_pitch_weaponry(data: PitcherData) -> FirstPitchWeaponry:
         n_window = window_count_map.get(pt, 0)
         window_pct = n_window / total_window * 100.0 if total_window > 0 else 0.0
 
-        if cold_start:
-            delta = _COLD_START_STRING
-        else:
-            delta = _usage_delta_string(window_pct - season_pct)
+        delta = _COLD_START_STRING if cold_start else _usage_delta_string(window_pct - season_pct)
 
-        entries.append(FirstPitchEntry(
-            pitch_type=pt,
-            pitch_name=name_map.get(pt, pt),
-            season_pct=season_pct,
-            window_pct=window_pct,
-            delta=delta,
-            n_first_pitches_season=n_season,
-            n_first_pitches_window=n_window,
-        ))
+        entries.append(
+            FirstPitchEntry(
+                pitch_type=pt,
+                pitch_name=name_map.get(pt, pt),
+                season_pct=season_pct,
+                window_pct=window_pct,
+                delta=delta,
+                n_first_pitches_season=n_season,
+                n_first_pitches_window=n_window,
+            )
+        )
 
     # Sort by window_pct descending
     entries.sort(key=lambda x: x.window_pct, reverse=True)
@@ -1211,14 +1251,10 @@ def _compute_ip(statcast: pl.DataFrame, game_pk: int) -> str:
 
     # Count outs in the final inning from events
     final_inning = game.filter(pl.col("inning") == innings[-1])
-    out_pitches = final_inning.filter(
-        pl.col("events").is_in(list(_OUT_EVENTS))
-    )
+    out_pitches = final_inning.filter(pl.col("events").is_in(list(_OUT_EVENTS)))
     outs_in_final = out_pitches.height
     # Double-out events count as 2 outs total (add 1 extra)
-    double_outs = final_inning.filter(
-        pl.col("events").is_in(list(_DOUBLE_OUT_EVENTS))
-    ).height
+    double_outs = final_inning.filter(pl.col("events").is_in(list(_DOUBLE_OUT_EVENTS))).height
     outs_in_final += double_outs
 
     total_thirds = n_full_innings * 3 + outs_in_final
@@ -1227,7 +1263,7 @@ def _compute_ip(statcast: pl.DataFrame, game_pk: int) -> str:
     return f"{whole}.{remainder}"
 
 
-def _compute_rest_days(appearance_dates: list) -> list[int | None]:
+def _compute_rest_days(appearance_dates: list[Any]) -> list[int | None]:
     """Compute rest days between consecutive appearances.
 
     First appearance returns None. Subsequent appearances return
@@ -1248,7 +1284,7 @@ def _compute_rest_days(appearance_dates: list) -> list[int | None]:
     return result
 
 
-def _max_consecutive_days(appearance_dates: list) -> int:
+def _max_consecutive_days(appearance_dates: list[Any]) -> int:
     """Compute maximum consecutive calendar days pitched.
 
     Args:
@@ -1271,7 +1307,7 @@ def _max_consecutive_days(appearance_dates: list) -> int:
     return max_run
 
 
-def _window_date_type_filter(window_dates: list, pitch_type: str) -> pl.Expr:
+def _window_date_type_filter(window_dates: list[Any], pitch_type: str) -> pl.Expr:
     """Build a standard filter for window dates + pitch type."""
     return (pl.col("game_date").is_in(window_dates)) & (pl.col("pitch_type") == pitch_type)
 
@@ -1304,8 +1340,7 @@ def _compute_xrv100_percentile(
 
     # Filter to this pitch type and minimum pitches
     type_data = full_pitcher_type_df.filter(
-        (pl.col("pitch_type") == pitch_type)
-        & (pl.col("n_pitches") >= min_pitches)
+        (pl.col("pitch_type") == pitch_type) & (pl.col("n_pitches") >= min_pitches)
     )
 
     if type_data.is_empty():
@@ -1313,8 +1348,7 @@ def _compute_xrv100_percentile(
 
     # Weight-average xRV100_P per pitcher across game_types
     weighted = type_data.group_by("pitcher").agg(
-        (pl.col("xRV100_P") * pl.col("n_pitches")).sum()
-        / pl.col("n_pitches").sum()
+        (pl.col("xRV100_P") * pl.col("n_pitches")).sum() / pl.col("n_pitches").sum()
     )
 
     # Count pitchers with worse (higher) xRV100 -- negative is better
@@ -1341,9 +1375,7 @@ def compute_execution_metrics(data: PitcherData) -> list[ExecutionMetrics]:
     cold_start = _is_cold_start(data)
 
     # Filter statcast to window
-    window_statcast = data.statcast.filter(
-        pl.col("game_date").is_in(window_dates)
-    )
+    window_statcast = data.statcast.filter(pl.col("game_date").is_in(window_dates))
 
     name_map = _build_name_map(data.statcast)
 
@@ -1354,9 +1386,7 @@ def compute_execution_metrics(data: PitcherData) -> list[ExecutionMetrics]:
     # Load full pitcher_type CSV once for percentile computation
     full_pitcher_type_df = pl.read_csv(AGGS_DIR / "2026-pitcher_type.csv")
     if "game_date" in full_pitcher_type_df.columns:
-        full_pitcher_type_df = full_pitcher_type_df.with_columns(
-            pl.col("game_date").str.to_date("%Y-%m-%d")
-        )
+        full_pitcher_type_df = full_pitcher_type_df.with_columns(pl.col("game_date").str.to_date("%Y-%m-%d"))
 
     results: list[ExecutionMetrics] = []
 
@@ -1366,9 +1396,7 @@ def compute_execution_metrics(data: PitcherData) -> list[ExecutionMetrics]:
 
         # ── CSW% ──────────────────────────────────────────────────
         if n_pitches > 0:
-            csw_count = pt_window.filter(
-                pl.col("description").is_in(list(_CSW_DESCRIPTIONS))
-            ).height
+            csw_count = pt_window.filter(pl.col("description").is_in(list(_CSW_DESCRIPTIONS))).height
             csw_pct = csw_count / n_pitches * 100.0
         else:
             csw_pct = 0.0
@@ -1377,9 +1405,7 @@ def compute_execution_metrics(data: PitcherData) -> list[ExecutionMetrics]:
         pt_non_null_zone = pt_window.filter(pl.col("zone").is_not_null())
         non_null_total = len(pt_non_null_zone)
         if non_null_total > 0:
-            in_zone = pt_non_null_zone.filter(
-                pl.col("zone").is_in(_ZONE_IN)
-            ).height
+            in_zone = pt_non_null_zone.filter(pl.col("zone").is_in(_ZONE_IN)).height
             zone_rate = in_zone / non_null_total * 100.0
         else:
             zone_rate = 0.0
@@ -1388,9 +1414,7 @@ def compute_execution_metrics(data: PitcherData) -> list[ExecutionMetrics]:
         pt_outside = pt_window.filter(pl.col("zone").is_in(_ZONE_OUT))
         outside_total = len(pt_outside)
         if outside_total > 0:
-            outside_swings = pt_outside.filter(
-                pl.col("description").is_in(list(_SWING_DESCRIPTIONS))
-            ).height
+            outside_swings = pt_outside.filter(pl.col("description").is_in(list(_SWING_DESCRIPTIONS))).height
             chase_rate = outside_swings / outside_total * 100.0
         else:
             chase_rate = 0.0
@@ -1407,26 +1431,30 @@ def compute_execution_metrics(data: PitcherData) -> list[ExecutionMetrics]:
 
         # ── xRV100 percentile ─────────────────────────────────────
         xrv100_percentile = _compute_xrv100_percentile(
-            xrv100_p, pt, full_pitcher_type_df,
+            xrv100_p,
+            pt,
+            full_pitcher_type_df,
         )
 
         # ── Small sample / cold start ─────────────────────────────
         small_sample = n_pitches < _MIN_PITCHES
 
-        results.append(ExecutionMetrics(
-            pitch_type=pt,
-            pitch_name=name_map.get(pt, pt),
-            csw_pct=csw_pct,
-            zone_rate=zone_rate,
-            chase_rate=chase_rate,
-            xwhiff_p=xwhiff_p,
-            xswing_p=xswing_p,
-            xrv100_p=xrv100_p,
-            xrv100_percentile=xrv100_percentile,
-            n_pitches=n_pitches,
-            small_sample=small_sample,
-            cold_start=cold_start,
-        ))
+        results.append(
+            ExecutionMetrics(
+                pitch_type=pt,
+                pitch_name=name_map.get(pt, pt),
+                csw_pct=csw_pct,
+                zone_rate=zone_rate,
+                chase_rate=chase_rate,
+                xwhiff_p=xwhiff_p,
+                xswing_p=xswing_p,
+                xrv100_p=xrv100_p,
+                xrv100_percentile=xrv100_percentile,
+                n_pitches=n_pitches,
+                small_sample=small_sample,
+                cold_start=cold_start,
+            )
+        )
 
     # Sort by n_pitches descending
     results.sort(key=lambda x: x.n_pitches, reverse=True)
@@ -1464,18 +1492,18 @@ def compute_workload_context(data: PitcherData) -> WorkloadContext:
         ip = _compute_ip(data.statcast, game_pk)
 
         # Pitch count from statcast (count rows per game_pk)
-        pitch_count = data.statcast.filter(
-            pl.col("game_pk") == game_pk
-        ).height
+        pitch_count = data.statcast.filter(pl.col("game_pk") == game_pk).height
 
-        workload_entries.append(AppearanceWorkload(
-            game_pk=game_pk,
-            game_date=game_date,
-            role=role,
-            ip=ip,
-            pitch_count=pitch_count,
-            rest_days=rest_days_list[i],
-        ))
+        workload_entries.append(
+            AppearanceWorkload(
+                game_pk=game_pk,
+                game_date=game_date,
+                role=role,
+                ip=ip,
+                pitch_count=pitch_count,
+                rest_days=rest_days_list[i],
+            )
+        )
 
     return WorkloadContext(
         appearances=workload_entries,
@@ -1502,8 +1530,7 @@ def compute_hard_hit_rate(data: PitcherData) -> HardHitRate:
     # Window batted balls
     window_sc = data.statcast.filter(pl.col("game_date").is_in(window_dates))
     window_bip = window_sc.filter(
-        (pl.col("description") == "hit_into_play")
-        & pl.col("launch_speed").is_not_null()
+        (pl.col("description") == "hit_into_play") & pl.col("launch_speed").is_not_null()
     )
     n_batted_balls = window_bip.height
     n_hard_hit = window_bip.filter(pl.col("launch_speed") >= 95.0).height
@@ -1511,18 +1538,13 @@ def compute_hard_hit_rate(data: PitcherData) -> HardHitRate:
 
     # Season batted balls
     season_bip = data.statcast.filter(
-        (pl.col("description") == "hit_into_play")
-        & pl.col("launch_speed").is_not_null()
+        (pl.col("description") == "hit_into_play") & pl.col("launch_speed").is_not_null()
     )
     season_n = season_bip.height
     season_hard = season_bip.filter(pl.col("launch_speed") >= 95.0).height
     season_hard_hit_pct = season_hard / season_n * 100.0 if season_n > 0 else 0.0
 
-    # Delta string
-    if cold_start:
-        delta = _COLD_START_STRING
-    else:
-        delta = _usage_delta_string(hard_hit_pct - season_hard_hit_pct)
+    delta = _COLD_START_STRING if cold_start else _usage_delta_string(hard_hit_pct - season_hard_hit_pct)
 
     return HardHitRate(
         hard_hit_pct=hard_hit_pct,
@@ -1563,26 +1585,20 @@ def compute_release_point_metrics(data: PitcherData) -> ReleasePointMetrics:
     )
 
     # Season aggregates by pitch_type
-    season_agg = (
-        valid.group_by("pitch_type")
-        .agg(
-            pl.col("release_pos_x").mean().alias("season_x"),
-            pl.col("release_pos_z").mean().alias("season_z"),
-            pl.col("release_extension").mean().alias("season_ext"),
-            pl.len().alias("n_season"),
-        )
+    season_agg = valid.group_by("pitch_type").agg(
+        pl.col("release_pos_x").mean().alias("season_x"),
+        pl.col("release_pos_z").mean().alias("season_z"),
+        pl.col("release_extension").mean().alias("season_ext"),
+        pl.len().alias("n_season"),
     )
 
     # Window aggregates by pitch_type
     window_valid = valid.filter(pl.col("game_date").is_in(window_dates))
-    window_agg = (
-        window_valid.group_by("pitch_type")
-        .agg(
-            pl.col("release_pos_x").mean().alias("window_x"),
-            pl.col("release_pos_z").mean().alias("window_z"),
-            pl.col("release_extension").mean().alias("window_ext"),
-            pl.len().alias("n_window"),
-        )
+    window_agg = window_valid.group_by("pitch_type").agg(
+        pl.col("release_pos_x").mean().alias("window_x"),
+        pl.col("release_pos_z").mean().alias("window_z"),
+        pl.col("release_extension").mean().alias("window_ext"),
+        pl.len().alias("n_window"),
     )
 
     # Join window and season on pitch_type (only types present in both)
@@ -1736,8 +1752,13 @@ def compute_tto_analysis(data: PitcherData) -> TTOAnalysis:
 
     # Join statcast (n_thruorder_pitcher, pitch_type, stand) with all_pitches (P+, S+)
     sc_cols = sc_window.select(
-        "pitcher", "game_pk", "pitch_number",
-        "n_thruorder_pitcher", "release_speed", "pitch_type", "stand",
+        "pitcher",
+        "game_pk",
+        "pitch_number",
+        "n_thruorder_pitcher",
+        "release_speed",
+        "pitch_type",
+        "stand",
     )
     ap_cols = all_pitches.select("pitcher", "game_pk", "pitch_number", "P+", "S+")
 
@@ -1748,9 +1769,7 @@ def compute_tto_analysis(data: PitcherData) -> TTOAnalysis:
         return TTOAnalysis(splits=[], available=False, summary="No matched pitch data", mix_shifts=[])
 
     # Tag fastball vs secondary
-    joined = joined.with_columns(
-        pl.col("pitch_type").is_in(list(_FASTBALL_TYPES)).alias("is_fastball")
-    )
+    joined = joined.with_columns(pl.col("pitch_type").is_in(list(_FASTBALL_TYPES)).alias("is_fastball"))
 
     # ── Overall aggregation by TTO pass ──
     tto_overall = (
@@ -1805,21 +1824,17 @@ def compute_tto_analysis(data: PitcherData) -> TTOAnalysis:
 
     # Helper: extract fb/sec P+ for a pass
     def _get_fb_sec(pass_num: int) -> tuple[float | None, float | None]:
-        fb_rows = fb_sec.filter(
-            (pl.col("n_thruorder_pitcher") == pass_num) & pl.col("is_fastball")
-        )
-        sec_rows = fb_sec.filter(
-            (pl.col("n_thruorder_pitcher") == pass_num) & ~pl.col("is_fastball")
-        )
+        fb_rows = fb_sec.filter((pl.col("n_thruorder_pitcher") == pass_num) & pl.col("is_fastball"))
+        sec_rows = fb_sec.filter((pl.col("n_thruorder_pitcher") == pass_num) & ~pl.col("is_fastball"))
         fb_val = fb_rows["avg_p_plus"][0] if fb_rows.height > 0 else None
         sec_val = sec_rows["avg_p_plus"][0] if sec_rows.height > 0 else None
         return fb_val, sec_val
 
     # Helper: extract pitch-type breakdown for a pass
-    def _get_pitch_types(pass_num: int, total_pitches: int) -> list[dict]:
-        rows = pitch_type_breakdown.filter(
-            pl.col("n_thruorder_pitcher") == pass_num
-        ).sort("pitches", descending=True)
+    def _get_pitch_types(pass_num: int, total_pitches: int) -> list[dict[str, Any]]:
+        rows = pitch_type_breakdown.filter(pl.col("n_thruorder_pitcher") == pass_num).sort(
+            "pitches", descending=True
+        )
         result = rows.to_dicts()
         for r in result:
             r["usage_pct"] = (r["pitches"] / total_pitches * 100) if total_pitches > 0 else 0.0
@@ -1827,9 +1842,7 @@ def compute_tto_analysis(data: PitcherData) -> TTOAnalysis:
 
     # Helper: extract platoon splits for a pass
     def _get_platoon(pass_num: int) -> list[TTOPlatoonSplit]:
-        rows = platoon_breakdown.filter(
-            pl.col("n_thruorder_pitcher") == pass_num
-        )
+        rows = platoon_breakdown.filter(pl.col("n_thruorder_pitcher") == pass_num)
         if rows.is_empty():
             return []
         # Compute per-stand totals for usage %
@@ -1839,13 +1852,15 @@ def compute_tto_analysis(data: PitcherData) -> TTOAnalysis:
         entries: list[TTOPlatoonSplit] = []
         for r in rows.sort("pitches", descending=True).to_dicts():
             total = stand_totals.get(r["stand"], 1)
-            entries.append(TTOPlatoonSplit(
-                pitch_type=r["pitch_type"],
-                stand=r["stand"],
-                pitches=r["pitches"],
-                usage_pct=r["pitches"] / total * 100,
-                avg_p_plus=r["avg_p_plus"],
-            ))
+            entries.append(
+                TTOPlatoonSplit(
+                    pitch_type=r["pitch_type"],
+                    stand=r["stand"],
+                    pitches=r["pitches"],
+                    usage_pct=r["pitches"] / total * 100,
+                    avg_p_plus=r["avg_p_plus"],
+                )
+            )
         return entries
 
     # Get pass-1 baselines for deltas
@@ -1853,7 +1868,7 @@ def compute_tto_analysis(data: PitcherData) -> TTOAnalysis:
     first_fb, first_sec = _get_fb_sec(first["n_thruorder_pitcher"])
 
     # Get pass-1 per-type baselines (P+ and usage)
-    first_by_type: dict[str, dict] = {}
+    first_by_type: dict[str, dict[str, Any]] = {}
     for pt in _get_pitch_types(first["n_thruorder_pitcher"], first["pitches"]):
         first_by_type[pt["pitch_type"]] = {
             "avg_p_plus": pt["avg_p_plus"],
@@ -1876,10 +1891,24 @@ def compute_tto_analysis(data: PitcherData) -> TTOAnalysis:
             fb_delta = "--"
             sec_delta = "--"
         else:
-            vdelta = _velo_delta_string(velo - first["avg_velo"]) if velo is not None and first["avg_velo"] is not None else "--"
-            pdelta = _pplus_delta_string(p_plus - first["avg_p_plus"]) if p_plus is not None and first["avg_p_plus"] is not None else "--"
-            fb_delta = _pplus_delta_string(fb_pp - first_fb) if fb_pp is not None and first_fb is not None else "--"
-            sec_delta = _pplus_delta_string(sec_pp - first_sec) if sec_pp is not None and first_sec is not None else "--"
+            vdelta = (
+                _velo_delta_string(velo - first["avg_velo"])
+                if velo is not None and first["avg_velo"] is not None
+                else "--"
+            )
+            pdelta = (
+                _pplus_delta_string(p_plus - first["avg_p_plus"])
+                if p_plus is not None and first["avg_p_plus"] is not None
+                else "--"
+            )
+            fb_delta = (
+                _pplus_delta_string(fb_pp - first_fb) if fb_pp is not None and first_fb is not None else "--"
+            )
+            sec_delta = (
+                _pplus_delta_string(sec_pp - first_sec)
+                if sec_pp is not None and first_sec is not None
+                else "--"
+            )
 
         # Per-pitch-type breakdown with usage % and deltas
         pt_entries: list[TTOPitchType] = []
@@ -1904,50 +1933,55 @@ def compute_tto_analysis(data: PitcherData) -> TTOAnalysis:
                 else:
                     pt_u_delta = "New"
 
-            pt_entries.append(TTOPitchType(
-                pitch_type=pt_type,
-                pitches=pt["pitches"],
-                usage_pct=pt_usage,
-                usage_delta=pt_u_delta,
-                avg_p_plus=pt_pp,
-                p_plus_delta=pt_p_delta,
-            ))
+            pt_entries.append(
+                TTOPitchType(
+                    pitch_type=pt_type,
+                    pitches=pt["pitches"],
+                    usage_pct=pt_usage,
+                    usage_delta=pt_u_delta,
+                    avg_p_plus=pt_pp,
+                    p_plus_delta=pt_p_delta,
+                )
+            )
 
         # Platoon splits for this pass
         platoon_entries = _get_platoon(pass_num)
 
-        splits.append(TTOSplit(
-            pass_number=pass_num,
-            pitches=total_pitches,
-            avg_velo=velo,
-            avg_p_plus=p_plus,
-            avg_s_plus=s_plus,
-            fb_p_plus=fb_pp,
-            sec_p_plus=sec_pp,
-            velo_delta=vdelta,
-            p_plus_delta=pdelta,
-            fb_p_plus_delta=fb_delta,
-            sec_p_plus_delta=sec_delta,
-            pitch_types=pt_entries,
-            platoon=platoon_entries,
-            small_sample=total_pitches < _TTO_SMALL_SAMPLE,
-        ))
+        splits.append(
+            TTOSplit(
+                pass_number=pass_num,
+                pitches=total_pitches,
+                avg_velo=velo,
+                avg_p_plus=p_plus,
+                avg_s_plus=s_plus,
+                fb_p_plus=fb_pp,
+                sec_p_plus=sec_pp,
+                velo_delta=vdelta,
+                p_plus_delta=pdelta,
+                fb_p_plus_delta=fb_delta,
+                sec_p_plus_delta=sec_delta,
+                pitch_types=pt_entries,
+                platoon=platoon_entries,
+                small_sample=total_pitches < _TTO_SMALL_SAMPLE,
+            )
+        )
 
     # ── Detect notable mix shifts ──
     mix_shifts: list[str] = []
     last = splits[-1]
-    for pt in last.pitch_types:
-        if pt.pitch_type in first_by_type:
-            first_usage = first_by_type[pt.pitch_type]["usage_pct"]
-            diff = pt.usage_pct - first_usage
+    for entry in last.pitch_types:
+        if entry.pitch_type in first_by_type:
+            first_usage = first_by_type[entry.pitch_type]["usage_pct"]
+            diff = entry.usage_pct - first_usage
             if abs(diff) >= 10.0:
                 mix_shifts.append(
-                    f"{pt.pitch_type} {first_usage:.0f}% → {pt.usage_pct:.0f}% by pass {last.pass_number}"
+                    f"{entry.pitch_type} {first_usage:.0f}% → "
+                    f"{entry.usage_pct:.0f}% by pass {last.pass_number}"
                 )
         else:
-            if pt.pitches >= 5:
+            if entry.pitches >= 5:
                 mix_shifts.append(
-                    f"{pt.pitch_type} introduced in pass {last.pass_number} ({pt.usage_pct:.0f}%)"
+                    f"{entry.pitch_type} introduced in pass {last.pass_number} ({entry.usage_pct:.0f}%)"
                 )
     # Detect pitches dropped in later passes
     for pt_type, baseline in first_by_type.items():

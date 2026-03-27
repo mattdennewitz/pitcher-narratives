@@ -16,6 +16,7 @@ insights with specific metric citations.
 from __future__ import annotations
 
 import re
+from typing import Any
 
 from pydantic import BaseModel
 from pydantic_ai import Agent
@@ -24,14 +25,14 @@ from pydantic_ai.settings import ModelSettings
 from context import PitcherContext
 
 __all__ = [
-    "generate_report_streaming",
-    "check_hallucinated_metrics",
     "HallucinationReport",
     "ReportResult",
-    "hook_writer",
-    "_build_hook_message",
-    "fantasy_analyst",
     "_build_fantasy_message",
+    "_build_hook_message",
+    "check_hallucinated_metrics",
+    "fantasy_analyst",
+    "generate_report_streaming",
+    "hook_writer",
 ]
 
 
@@ -131,7 +132,7 @@ Additional focus for this reliever:
 - Any pitch showing a breakout trend (new addition, shape change, usage surge)?"""
 
 synthesizer = Agent(
-    'anthropic:claude-sonnet-4-6',
+    "anthropic:claude-sonnet-4-6",
     output_type=str,
     system_prompt=_SYNTHESIZER_PROMPT,
     model_settings=ModelSettings(max_tokens=2048),
@@ -218,7 +219,7 @@ about the pitcher's stuff, not about "looking at the data."
 - Do not soften your conclusions. Be direct."""
 
 editor = Agent(
-    'anthropic:claude-sonnet-4-6',
+    "anthropic:claude-sonnet-4-6",
     output_type=str,
     system_prompt=_EDITOR_PROMPT,
     model_settings=ModelSettings(max_tokens=2048),
@@ -240,7 +241,7 @@ tweeting to a front-office audience. The hook must stand alone without \
 context."""
 
 hook_writer = Agent(
-    'anthropic:claude-sonnet-4-6',
+    "anthropic:claude-sonnet-4-6",
     output_type=str,
     system_prompt=_HOOK_PROMPT,
     model_settings=ModelSettings(max_tokens=150),
@@ -273,7 +274,7 @@ Format: exactly 3 lines, each starting with "- " (a bullet). Nothing \
 else — no intro, no summary, no headers."""
 
 fantasy_analyst = Agent(
-    'anthropic:claude-sonnet-4-6',
+    "anthropic:claude-sonnet-4-6",
     output_type=str,
     system_prompt=_FANTASY_PROMPT,
     model_settings=ModelSettings(max_tokens=300),
@@ -293,13 +294,11 @@ class ReportResult(BaseModel):
 # ORCHESTRATION
 # ═══════════════════════════════════════════════════════════════════════
 
+
 def _build_synthesizer_message(ctx: PitcherContext) -> str:
     """Build the Phase 1 user message with role-conditional guidance."""
     guidance = _SP_SYNTH_GUIDANCE if ctx.role == "SP" else _RP_SYNTH_GUIDANCE
-    return (
-        f"## Role-Specific Focus\n{guidance}\n\n"
-        f"## Pitcher Data\n{ctx.to_prompt()}"
-    )
+    return f"## Role-Specific Focus\n{guidance}\n\n## Pitcher Data\n{ctx.to_prompt()}"
 
 
 def _build_editor_message(
@@ -340,7 +339,7 @@ def _build_fantasy_message(ctx: PitcherContext, synthesis: str) -> str:
 def generate_report_streaming(
     ctx: PitcherContext,
     *,
-    _model_override=None,
+    _model_override: Any = None,
 ) -> ReportResult:
     """Generate a four-phase scouting report and stream the editorial output.
 
@@ -358,7 +357,7 @@ def generate_report_streaming(
     Returns:
         ReportResult with narrative, social_hook, and fantasy_insights.
     """
-    synth_kwargs: dict = {"user_prompt": _build_synthesizer_message(ctx)}
+    synth_kwargs: dict[str, Any] = {"user_prompt": _build_synthesizer_message(ctx)}
     if _model_override is not None:
         synth_kwargs["model"] = _model_override
 
@@ -367,7 +366,7 @@ def generate_report_streaming(
     synthesis = synth_result.output
 
     # Phase 2: Streamed editorial
-    editor_kwargs: dict = {
+    editor_kwargs: dict[str, Any] = {
         "user_prompt": _build_editor_message(ctx, synthesis),
     }
     if _model_override is not None:
@@ -376,12 +375,12 @@ def generate_report_streaming(
     stream = editor.run_stream_sync(**editor_kwargs)
     chunks: list[str] = []
     for delta in stream.stream_text(delta=True):
-        print(delta, end='', flush=True)
+        print(delta, end="", flush=True)
         chunks.append(delta)
     print()  # Final newline
 
     # Phase 3: Social media hook (silent)
-    hook_kwargs: dict = {
+    hook_kwargs: dict[str, Any] = {
         "user_prompt": _build_hook_message(ctx, synthesis),
     }
     if _model_override is not None:
@@ -390,7 +389,7 @@ def generate_report_streaming(
     hook_result = hook_writer.run_sync(**hook_kwargs)
 
     # Phase 4: Fantasy analyst (silent)
-    fantasy_kwargs: dict = {
+    fantasy_kwargs: dict[str, Any] = {
         "user_prompt": _build_fantasy_message(ctx, synthesis),
     }
     if _model_override is not None:
@@ -399,7 +398,7 @@ def generate_report_streaming(
     fantasy_result = fantasy_analyst.run_sync(**fantasy_kwargs)
 
     return ReportResult(
-        narrative=''.join(chunks),
+        narrative="".join(chunks),
         social_hook=hook_result.output,
         fantasy_insights=fantasy_result.output,
     )
@@ -427,68 +426,113 @@ class HallucinationReport(BaseModel):
 
 
 # Metrics that appear in the prompt payload and are safe to reference
-_KNOWN_METRICS = frozenset({
-    # Core Pitching+ family
-    "P+", "S+", "L+", "Pitching+", "Stuff+", "Location+",
-    "P+2080", "S+2080", "L+2080",
-    # Run value
-    "xRV100", "xRV",
-    # Expected outcomes
-    "xWhiff", "xSwing", "xGOr", "xPUr", "xBA", "xwOBA", "xSLG",
-    "xERA", "xSwSt",
-    # Batted ball / approach
-    "CSW%", "CSW", "O-Swing%", "Zone%", "Chase%", "HardHit%",
-    "Barrel%", "xHR100",
-    # Velocity / movement
-    "IVB", "HB", "pfx_x", "pfx_z",
-    # Statcast standard
-    "wOBA", "BABIP", "ISO",
-    # Commonly referenced in editorial voice
-    "SwStr%", "K-BB%", "xFIP",
-})
+_KNOWN_METRICS = frozenset(
+    {
+        # Core Pitching+ family
+        "P+",
+        "S+",
+        "L+",
+        "Pitching+",
+        "Stuff+",
+        "Location+",
+        "P+2080",
+        "S+2080",
+        "L+2080",
+        # Run value
+        "xRV100",
+        "xRV",
+        # Expected outcomes
+        "xWhiff",
+        "xSwing",
+        "xGOr",
+        "xPUr",
+        "xBA",
+        "xwOBA",
+        "xSLG",
+        "xERA",
+        "xSwSt",
+        # Batted ball / approach
+        "CSW%",
+        "CSW",
+        "O-Swing%",
+        "Zone%",
+        "Chase%",
+        "HardHit%",
+        "Barrel%",
+        "xHR100",
+        # Velocity / movement
+        "IVB",
+        "HB",
+        "pfx_x",
+        "pfx_z",
+        # Statcast standard
+        "wOBA",
+        "BABIP",
+        "ISO",
+        # Commonly referenced in editorial voice
+        "SwStr%",
+        "K-BB%",
+        "xFIP",
+    }
+)
 
 # Traditional outcome stats that the editor prompt warns against citing.
 # These aren't "hallucinated" but should be flagged as potentially
 # inappropriate for a scouting report focused on process metrics.
-_TRADITIONAL_STATS = frozenset({
-    "ERA", "FIP", "WHIP", "WAR", "W-L",
-    "K%", "BB%", "HR/9", "K/9", "BB/9",
-    "ERA+", "FIP-", "Wins", "Losses", "Saves", "IP",
-})
+_TRADITIONAL_STATS = frozenset(
+    {
+        "ERA",
+        "FIP",
+        "WHIP",
+        "WAR",
+        "W-L",
+        "K%",
+        "BB%",
+        "HR/9",
+        "K/9",
+        "BB/9",
+        "ERA+",
+        "FIP-",
+        "Wins",
+        "Losses",
+        "Saves",
+        "IP",
+    }
+)
 
 _METRIC_PATTERN = re.compile(
-    r'\b('
+    r"\b("
     # xMetric pattern (xBA, xWhiff, xwOBA, xRV100, etc.)
-    r'x[A-Za-z][A-Za-z0-9]*'
-    r'|'
+    r"x[A-Za-z][A-Za-z0-9]*"
+    r"|"
     # Acronym+% pattern (CSW%, O-Swing%, Zone%, K-BB%, SwStr%, Barrel%)
-    r'[A-Z][A-Za-z]*-?[A-Z]*%'
-    r'|'
+    r"[A-Z][A-Za-z]*-?[A-Z]*%"
+    r"|"
     # Pitching+ family (P+, S+, L+, P+2080, etc.)
-    r'[PSL]\+(?:2080)?'
-    r'|'
+    r"[PSL]\+(?:2080)?"
+    r"|"
     # Other named advanced metrics
-    r'(?:IVB|HB|pfx_[xz]|wOBA|BABIP|ISO|xRV100|xFIP|Pitching\+|Stuff\+|Location\+)'
-    r')(?=[\s,.);\-:]|$)'
+    r"(?:IVB|HB|pfx_[xz]|wOBA|BABIP|ISO|xRV100|xFIP|Pitching\+|Stuff\+|Location\+)"
+    r")(?=[\s,.);\-:]|$)"
 )
 
 _TRADITIONAL_PATTERN = re.compile(
-    r'(?<![A-Za-z\-])('
-    r'ERA\+?'
-    r'|FIP-?'
-    r'|WHIP'
-    r'|WAR'
-    r'|W-L'
-    r'|K%'
-    r'|BB%'
-    r'|HR/9'
-    r'|K/9'
-    r'|BB/9'
-    r'|Wins'
-    r'|Losses'
-    r'|Saves'
-    r'|IP'
-    r')(?=[\s,.);\-:]|$)'
+    r"(?<![A-Za-z\-])("
+    r"ERA\+?"
+    r"|FIP-?"
+    r"|WHIP"
+    r"|WAR"
+    r"|W-L"
+    r"|K%"
+    r"|BB%"
+    r"|HR/9"
+    r"|K/9"
+    r"|BB/9"
+    r"|Wins"
+    r"|Losses"
+    r"|Saves"
+    r"|IP"
+    r")(?=[\s,.);\-:]|$)"
 )
 
 

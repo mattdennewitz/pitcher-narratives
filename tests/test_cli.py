@@ -79,7 +79,9 @@ def test_cli_valid_pitcher_exit_0():
     """Integration: Valid pitcher ID with test model exits 0 and produces output."""
     result = subprocess.run(
         [sys.executable, "main.py", "-p", "592155"],
-        capture_output=True, text=True, timeout=60,
+        capture_output=True,
+        text=True,
+        timeout=60,
         env=_test_env(PITCHER_NARRATIVES_TEST_MODEL="1"),
     )
     assert result.returncode == 0
@@ -90,7 +92,9 @@ def test_cli_invalid_pitcher_exit_1():
     """Integration: Invalid pitcher ID exits 1 with error message."""
     result = subprocess.run(
         [sys.executable, "main.py", "-p", "9999999"],
-        capture_output=True, text=True, timeout=60,
+        capture_output=True,
+        text=True,
+        timeout=60,
         env=_test_env(PITCHER_NARRATIVES_TEST_MODEL="1"),
     )
     assert result.returncode == 1
@@ -101,7 +105,9 @@ def test_cli_custom_window():
     """Integration: -w flag changes lookback window (pipeline completes)."""
     result = subprocess.run(
         [sys.executable, "main.py", "-p", "592155", "-w", "7"],
-        capture_output=True, text=True, timeout=60,
+        capture_output=True,
+        text=True,
+        timeout=60,
         env=_test_env(PITCHER_NARRATIVES_TEST_MODEL="1"),
     )
     assert result.returncode == 0
@@ -111,7 +117,9 @@ def test_cli_no_args_shows_help():
     """Integration: No args shows usage and exits 2."""
     result = subprocess.run(
         [sys.executable, "main.py"],
-        capture_output=True, text=True, timeout=60,
+        capture_output=True,
+        text=True,
+        timeout=60,
     )
     assert result.returncode == 2
     assert "usage:" in result.stderr.lower()
@@ -121,7 +129,9 @@ def test_cli_produces_report():
     """Integration: Test model produces non-empty prose report output."""
     result = subprocess.run(
         [sys.executable, "main.py", "-p", "592155"],
-        capture_output=True, text=True, timeout=60,
+        capture_output=True,
+        text=True,
+        timeout=60,
         env=_test_env(PITCHER_NARRATIVES_TEST_MODEL="1"),
     )
     assert result.returncode == 0
@@ -133,7 +143,9 @@ def test_cli_verbose_shows_pitcher_info():
     """Integration: -v flag shows pitcher name and game dates on stderr."""
     result = subprocess.run(
         [sys.executable, "main.py", "-p", "592155", "-v"],
-        capture_output=True, text=True, timeout=60,
+        capture_output=True,
+        text=True,
+        timeout=60,
         env=_test_env(PITCHER_NARRATIVES_TEST_MODEL="1"),
     )
     assert result.returncode == 0
@@ -147,7 +159,9 @@ def test_cli_no_verbose_no_pitcher_info():
     """Integration: Without -v, stderr does not contain pitcher summary."""
     result = subprocess.run(
         [sys.executable, "main.py", "-p", "592155"],
-        capture_output=True, text=True, timeout=60,
+        capture_output=True,
+        text=True,
+        timeout=60,
         env=_test_env(PITCHER_NARRATIVES_TEST_MODEL="1"),
     )
     assert result.returncode == 0
@@ -159,7 +173,9 @@ def test_cli_missing_api_key():
     # Remove ANTHROPIC_API_KEY and PITCHER_NARRATIVES_TEST_MODEL from env
     result = subprocess.run(
         [sys.executable, "main.py", "-p", "592155"],
-        capture_output=True, text=True, timeout=60,
+        capture_output=True,
+        text=True,
+        timeout=60,
         env=_test_env(),
     )
     assert result.returncode == 1

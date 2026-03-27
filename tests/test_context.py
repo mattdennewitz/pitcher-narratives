@@ -3,7 +3,7 @@
 import pytest
 from pydantic import BaseModel
 
-from context import PitcherContext, assemble_pitcher_context
+from context import assemble_pitcher_context
 from data import load_pitcher_data
 from engine import HardHitRate, ReleasePointMetrics
 

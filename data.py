@@ -8,20 +8,21 @@ filters to configurable lookback windows.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import date, timedelta
 from pathlib import Path
+from typing import cast
 
 import polars as pl
 
 __all__ = [
-    "load_statcast",
-    "load_agg_csvs",
-    "classify_appearances",
-    "compute_season_baseline",
-    "compute_pitch_type_baseline",
-    "filter_to_window",
-    "load_pitcher_data",
     "PitcherData",
+    "classify_appearances",
+    "compute_pitch_type_baseline",
+    "compute_season_baseline",
+    "filter_to_window",
+    "load_agg_csvs",
+    "load_pitcher_data",
+    "load_statcast",
 ]
 
 DATA_DIR = Path(__file__).parent
@@ -43,10 +44,18 @@ _APPEARANCE_CSVS = {
 }
 
 # Columns that are identifiers, not metrics (used in baseline computation)
-_ID_COLS = frozenset({
-    "season", "level", "game_type", "pitcher", "player_name",
-    "p_throws", "team_code", "n_pitches",
-})
+_ID_COLS = frozenset(
+    {
+        "season",
+        "level",
+        "game_type",
+        "pitcher",
+        "player_name",
+        "p_throws",
+        "team_code",
+        "n_pitches",
+    }
+)
 
 
 @dataclass
@@ -78,9 +87,7 @@ def _load_csv_with_dates(filename: str, pitcher_id: int | None) -> pl.DataFrame:
     path = AGGS_DIR / filename
     df = pl.read_csv(path)
     if "game_date" in df.columns:
-        df = df.with_columns(
-            pl.col("game_date").str.to_date("%Y-%m-%d")
-        )
+        df = df.with_columns(pl.col("game_date").str.to_date("%Y-%m-%d"))
     if pitcher_id is not None and "pitcher" in df.columns:
         df = df.filter(pl.col("pitcher") == pitcher_id)
     return df
@@ -147,10 +154,7 @@ def classify_appearances(statcast: pl.DataFrame) -> pl.DataFrame:
             pl.col("player_name").first(),
         )
         .with_columns(
-            pl.when(pl.col("first_inning") == 1)
-            .then(pl.lit("SP"))
-            .otherwise(pl.lit("RP"))
-            .alias("role")
+            pl.when(pl.col("first_inning") == 1).then(pl.lit("SP")).otherwise(pl.lit("RP")).alias("role")
         )
         .sort("game_date")
     )
@@ -170,10 +174,7 @@ def compute_season_baseline(pitcher_df: pl.DataFrame) -> pl.DataFrame:
     """
     metric_cols = [c for c in pitcher_df.columns if c not in _ID_COLS]
     weighted_exprs = [
-        (pl.col(c) * pl.col("n_pitches"))
-        .sum()
-        .truediv(pl.col("n_pitches").sum())
-        .alias(c)
+        (pl.col(c) * pl.col("n_pitches")).sum().truediv(pl.col("n_pitches").sum()).alias(c)
         for c in metric_cols
     ]
     return pitcher_df.group_by("pitcher").agg(
@@ -201,10 +202,7 @@ def compute_pitch_type_baseline(pitcher_type_df: pl.DataFrame) -> pl.DataFrame:
     id_cols = _ID_COLS | {"pitch_type"}
     metric_cols = [c for c in df.columns if c not in id_cols]
     weighted_exprs = [
-        (pl.col(c) * pl.col("n_pitches"))
-        .sum()
-        .truediv(pl.col("n_pitches").sum())
-        .alias(c)
+        (pl.col(c) * pl.col("n_pitches")).sum().truediv(pl.col("n_pitches").sum()).alias(c)
         for c in metric_cols
     ]
     return df.group_by(["pitcher", "pitch_type"]).agg(
@@ -229,9 +227,10 @@ def filter_to_window(df: pl.DataFrame, window_days: int) -> pl.DataFrame:
     Returns:
         Filtered DataFrame containing only rows within the window.
     """
-    max_date = df["game_date"].max()
-    if max_date is None:
+    max_date_val = df["game_date"].max()
+    if max_date_val is None:
         return df.clear()
+    max_date = cast(date, max_date_val)
     cutoff = max_date - timedelta(days=window_days)
     return df.filter(pl.col("game_date") >= cutoff)
 

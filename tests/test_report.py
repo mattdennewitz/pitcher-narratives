@@ -6,23 +6,23 @@ from pydantic_ai.models.test import TestModel
 from context import assemble_pitcher_context
 from data import load_pitcher_data
 from report import (
-    synthesizer,
-    editor,
-    hook_writer,
-    fantasy_analyst,
-    _SYNTHESIZER_PROMPT,
     _EDITOR_PROMPT,
-    _SP_SYNTH_GUIDANCE,
-    _RP_SYNTH_GUIDANCE,
     _FANTASY_PROMPT,
-    _build_synthesizer_message,
-    _build_editor_message,
-    _build_hook_message,
-    _build_fantasy_message,
-    generate_report_streaming,
-    check_hallucinated_metrics,
+    _RP_SYNTH_GUIDANCE,
+    _SP_SYNTH_GUIDANCE,
+    _SYNTHESIZER_PROMPT,
     HallucinationReport,
     ReportResult,
+    _build_editor_message,
+    _build_fantasy_message,
+    _build_hook_message,
+    _build_synthesizer_message,
+    check_hallucinated_metrics,
+    editor,
+    fantasy_analyst,
+    generate_report_streaming,
+    hook_writer,
+    synthesizer,
 )
 
 TEST_PITCHER = 592155  # Booser, Cam
@@ -194,9 +194,7 @@ def test_generate_report_returns_report_result(ctx):
 def test_generate_report_uses_test_model(ctx):
     """Pipeline with TestModel produces the custom_output_text from Phase 2."""
     expected = "This is the final editor capsule"
-    result = generate_report_streaming(
-        ctx, _model_override=TestModel(custom_output_text=expected)
-    )
+    result = generate_report_streaming(ctx, _model_override=TestModel(custom_output_text=expected))
     # TestModel returns same text for both phases; Phase 2 narrative is what we get
     assert result.narrative == expected
 
@@ -373,9 +371,7 @@ def test_hook_message_includes_synthesis(ctx):
 
 def test_report_result_has_social_hook(ctx):
     """ReportResult has non-empty narrative and social_hook fields."""
-    result = generate_report_streaming(
-        ctx, _model_override=TestModel(custom_output_text="hook text")
-    )
+    result = generate_report_streaming(ctx, _model_override=TestModel(custom_output_text="hook text"))
     assert isinstance(result, ReportResult)
     assert result.social_hook
     assert result.narrative
@@ -383,9 +379,7 @@ def test_report_result_has_social_hook(ctx):
 
 def test_report_result_narrative_matches_editor_output(ctx):
     """ReportResult narrative matches editor TestModel output."""
-    result = generate_report_streaming(
-        ctx, _model_override=TestModel(custom_output_text="editor output")
-    )
+    result = generate_report_streaming(ctx, _model_override=TestModel(custom_output_text="editor output"))
     assert result.narrative == "editor output"
 
 
@@ -405,7 +399,7 @@ def test_fantasy_analyst_output_type_is_str():
 def test_fantasy_prompt_requires_three_bullets():
     """Fantasy prompt requires exactly 3 bullet points."""
     prompt_lower = _FANTASY_PROMPT.lower()
-    assert ("3" in _FANTASY_PROMPT or "three" in prompt_lower)
+    assert "3" in _FANTASY_PROMPT or "three" in prompt_lower
     assert "bullet" in prompt_lower
 
 
@@ -428,18 +422,14 @@ def test_fantasy_message_includes_synthesis(ctx):
 
 def test_report_result_has_fantasy_insights(ctx):
     """ReportResult has non-empty fantasy_insights field."""
-    result = generate_report_streaming(
-        ctx, _model_override=TestModel(custom_output_text="fantasy text")
-    )
+    result = generate_report_streaming(ctx, _model_override=TestModel(custom_output_text="fantasy text"))
     assert isinstance(result, ReportResult)
     assert result.fantasy_insights
 
 
 def test_report_result_all_fields_populated(ctx):
     """ReportResult has all three fields populated."""
-    result = generate_report_streaming(
-        ctx, _model_override=TestModel(custom_output_text="test output")
-    )
+    result = generate_report_streaming(ctx, _model_override=TestModel(custom_output_text="test output"))
     assert result.narrative
     assert result.social_hook
     assert result.fantasy_insights

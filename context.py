@@ -10,29 +10,28 @@ from pydantic import BaseModel, ConfigDict
 
 from data import PitcherData
 from engine import (
-    compute_fastball_summary,
-    compute_velocity_arc,
-    compute_arsenal_summary,
-    compute_platoon_mix,
-    compute_first_pitch_weaponry,
-    compute_execution_metrics,
-    compute_workload_context,
-    compute_tto_analysis,
-    compute_hard_hit_rate,
-    compute_release_point_metrics,
+    ExecutionMetrics,
     FastballSummary,
-    VelocityArc,
+    FirstPitchWeaponry,
+    HardHitRate,
     PitchTypeSummary,
     PlatoonMix,
-    FirstPitchWeaponry,
-    ExecutionMetrics,
-    WorkloadContext,
-    HardHitRate,
     ReleasePointMetrics,
-    ReleasePointPitchType,
     TTOAnalysis,
     TTOPitchType,
     TTOPlatoonSplit,
+    VelocityArc,
+    WorkloadContext,
+    compute_arsenal_summary,
+    compute_execution_metrics,
+    compute_fastball_summary,
+    compute_first_pitch_weaponry,
+    compute_hard_hit_rate,
+    compute_platoon_mix,
+    compute_release_point_metrics,
+    compute_tto_analysis,
+    compute_velocity_arc,
+    compute_workload_context,
 )
 
 __all__ = ["PitcherContext", "assemble_pitcher_context"]
@@ -72,9 +71,7 @@ class PitcherContext(BaseModel):
         sections: list[str] = []
 
         # Title
-        sections.append(
-            f"# {self.pitcher_name} ({self.throws}HP) -- Scouting Context"
-        )
+        sections.append(f"# {self.pitcher_name} ({self.throws}HP) -- Scouting Context")
 
         # Executive summary — key changes from most recent appearance
         sections.append(self._render_executive_summary())
@@ -122,8 +119,7 @@ class PitcherContext(BaseModel):
         if wl.appearances:
             latest = max(wl.appearances, key=lambda a: a.game_date)
             bullets.append(
-                f"Last outing: {latest.game_date} ({latest.ip} IP, "
-                f"{latest.pitch_count} pitches, {self.role})"
+                f"Last outing: {latest.game_date} ({latest.ip} IP, {latest.pitch_count} pitches, {self.role})"
             )
 
         # Fastball velocity trend
@@ -139,19 +135,17 @@ class PitcherContext(BaseModel):
         if self.arsenal:
             biggest_shift = max(
                 self.arsenal,
-                key=lambda p: abs(p.window_usage_pct - p.season_usage_pct)
-                if p.window_usage_pct is not None and p.season_usage_pct is not None
-                else 0,
+                key=lambda p: (
+                    abs(p.window_usage_pct - p.season_usage_pct)
+                    if p.window_usage_pct is not None and p.season_usage_pct is not None
+                    else 0
+                ),
             )
-            if (
-                biggest_shift.window_usage_pct is not None
-                and biggest_shift.season_usage_pct is not None
-            ):
+            if biggest_shift.window_usage_pct is not None and biggest_shift.season_usage_pct is not None:
                 shift = biggest_shift.window_usage_pct - biggest_shift.season_usage_pct
                 if abs(shift) >= 5.0:
                     bullets.append(
-                        f"Notable mix change: {biggest_shift.pitch_name} "
-                        f"usage {shift:+.1f}pp vs season"
+                        f"Notable mix change: {biggest_shift.pitch_name} usage {shift:+.1f}pp vs season"
                     )
 
         # TTO insight for starters
@@ -171,10 +165,7 @@ class PitcherContext(BaseModel):
             and "Steady" not in hhr.delta
             and abs(hhr.hard_hit_pct - hhr.season_hard_hit_pct) >= 5.0
         ):
-            bullets.append(
-                f"Hard-hit rate: {hhr.delta} vs season "
-                f"({hhr.hard_hit_pct:.1f}%)"
-            )
+            bullets.append(f"Hard-hit rate: {hhr.delta} vs season ({hhr.hard_hit_pct:.1f}%)")
 
         # Workload concern
         if wl.workload_concern:
@@ -189,14 +180,12 @@ class PitcherContext(BaseModel):
         return "\n".join(lines)
 
     def _render_role_section(self) -> str:
-        lines = [f"## Role"]
+        lines = ["## Role"]
         lines.append(f"- Most recent: {self.role}")
         wl = self.workload
         lines.append(f"- Appearances: {len(wl.appearances)}")
         if wl.max_consecutive_days >= 2:
-            lines.append(
-                f"- Max consecutive days: {wl.max_consecutive_days}"
-            )
+            lines.append(f"- Max consecutive days: {wl.max_consecutive_days}")
         if wl.workload_concern:
             lines.append("- **Workload concern: 3+ consecutive days**")
         return "\n".join(lines)
@@ -207,23 +196,15 @@ class PitcherContext(BaseModel):
             return "## Primary Fastball\n- No standard fastball identified"
 
         lines = [f"## Primary Fastball: {fb.pitch_name} ({fb.pitch_type})"]
-        lines.append(
-            f"- Velo: {fb.season_velo:.1f} season / "
-            f"{fb.window_velo:.1f} recent -- {fb.velo_delta}"
-        )
+        lines.append(f"- Velo: {fb.season_velo:.1f} season / {fb.window_velo:.1f} recent -- {fb.velo_delta}")
         if fb.window_p_plus is not None:
             lines.append(
                 f"- Stuff+ (P+): {fb.season_p_plus:.0f} season / "
                 f"{fb.window_p_plus:.0f} recent -- {fb.p_plus_delta}"
             )
         else:
-            lines.append(
-                f"- Stuff+ (P+): {fb.season_p_plus:.0f} season -- "
-                f"{fb.p_plus_delta}"
-            )
-        lines.append(
-            f"- Movement: H {fb.pfx_x_delta}, V {fb.pfx_z_delta}"
-        )
+            lines.append(f"- Stuff+ (P+): {fb.season_p_plus:.0f} season -- {fb.p_plus_delta}")
+        lines.append(f"- Movement: H {fb.pfx_x_delta}, V {fb.pfx_z_delta}")
 
         # Velocity arc from last outing
         va = self.velocity_arc
@@ -291,10 +272,7 @@ class PitcherContext(BaseModel):
                 if pn in by_pass:
                     entry = by_pass[pn]
                     pp = f"{entry.avg_p_plus:.0f}" if entry.avg_p_plus else "--"
-                    cells.append(
-                        f"{entry.usage_pct:.0f}% P+{pp} "
-                        f"({entry.usage_delta}, {entry.p_plus_delta})"
-                    )
+                    cells.append(f"{entry.usage_pct:.0f}% P+{pp} ({entry.usage_delta}, {entry.p_plus_delta})")
                 else:
                     cells.append("dropped")
             lines.append(f"| {pt_name} | {' | '.join(cells)} |")
@@ -318,11 +296,11 @@ class PitcherContext(BaseModel):
                 lines.append(f"*{stand_label}:*")
                 lines.append(f"| Pitch | {header_passes} |")
                 lines.append(f"|-------|{sep_passes}|")
-                for pt_name, by_pass in sorted(stand_data.items()):
+                for pt_name, by_pass_platoon in sorted(stand_data.items()):
                     cells = []
                     for pn in pass_nums:
-                        if pn in by_pass:
-                            e = by_pass[pn]
+                        if pn in by_pass_platoon:
+                            e = by_pass_platoon[pn]
                             pp = f"P+{e.avg_p_plus:.0f}" if e.avg_p_plus else ""
                             cells.append(f"{e.usage_pct:.0f}% {pp} ({e.pitches}p)")
                         else:
@@ -392,14 +370,8 @@ class PitcherContext(BaseModel):
                 )
             lines.append("*(season = window -- no baseline)*")
         else:
-            lines.append(
-                "| Pitch | Horiz (ft) | Delta | Vert (ft) | Delta "
-                "| Ext (ft) | Delta |"
-            )
-            lines.append(
-                "|-------|------------|-------|-----------|-------"
-                "|----------|-------|"
-            )
+            lines.append("| Pitch | Horiz (ft) | Delta | Vert (ft) | Delta | Ext (ft) | Delta |")
+            lines.append("|-------|------------|-------|-----------|-------|----------|-------|")
             for pt in entries:
                 name = f"{pt.pitch_name} ({pt.pitch_type})"
                 if pt.small_sample:
@@ -472,9 +444,7 @@ class PitcherContext(BaseModel):
         )
         for a in sorted_apps:
             rest = f"{a.rest_days}d" if a.rest_days is not None else "--"
-            lines.append(
-                f"| {a.game_date} | {a.ip} | {a.pitch_count} | {rest} |"
-            )
+            lines.append(f"| {a.game_date} | {a.ip} | {a.pitch_count} | {rest} |")
         return "\n".join(lines)
 
 
@@ -488,9 +458,7 @@ def assemble_pitcher_context(data: PitcherData) -> PitcherContext:
         PitcherContext with all sections populated, ready for to_prompt().
     """
     fastball = compute_fastball_summary(data)
-    velocity_arc = (
-        compute_velocity_arc(data, fastball.pitch_type) if fastball else None
-    )
+    velocity_arc = compute_velocity_arc(data, fastball.pitch_type) if fastball else None
     arsenal = compute_arsenal_summary(data)[:_MAX_PITCH_TYPES]
     platoon_mix = compute_platoon_mix(data)
     first_pitch = compute_first_pitch_weaponry(data)
@@ -501,9 +469,7 @@ def assemble_pitcher_context(data: PitcherData) -> PitcherContext:
     tto = compute_tto_analysis(data)
 
     # Determine role from most recent appearance
-    most_recent = data.appearances.sort("game_date", descending=True).row(
-        0, named=True
-    )
+    most_recent = data.appearances.sort("game_date", descending=True).row(0, named=True)
     role = most_recent["role"]
 
     return PitcherContext(
