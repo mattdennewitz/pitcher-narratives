@@ -85,7 +85,7 @@ def main() -> None:
         )
 
     try:
-        report_text = generate_report_streaming(ctx, _model_override=model_override)
+        result = generate_report_streaming(ctx, _model_override=model_override)
     except UserError as e:
         if "ANTHROPIC_API_KEY" in str(e):
             print(
@@ -96,8 +96,11 @@ def main() -> None:
             sys.exit(1)
         raise
 
-    # Post-generation hallucination check
-    hallucination_report = check_hallucinated_metrics(report_text)
+    # Print social hook
+    print(f"\n---\n{result.social_hook}")
+
+    # Post-generation hallucination check (narrative only)
+    hallucination_report = check_hallucinated_metrics(result.narrative)
     if not hallucination_report.is_clean:
         if hallucination_report.unknown_metrics:
             print(
