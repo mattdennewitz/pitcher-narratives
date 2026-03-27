@@ -15,14 +15,75 @@ export OPENAI_API_KEY=sk-...      # for OpenAI (default)
 export ANTHROPIC_API_KEY=sk-...   # for Claude
 export GEMINI_API_KEY=...         # for Gemini
 
-# Generate a report
-pitcher-narratives -p 592155
+# Scout: find interesting appearances from today's games
+pitcher-scout -v
 
-# With options
-pitcher-narratives -p 592155 -w 14 --provider claude --thinking high -v
+# Curate: let the LLM pick the top stories
+pitcher-scout --curate
+
+# Generate a full report for a specific pitcher
+pitcher-narratives -p 669432 -w 5 -v
 ```
 
-## CLI Reference
+## Scout: Finding Interesting Appearances
+
+The scout scans all pitcher appearances in a date window and scores each one for "interestingness" — no LLM calls, just heuristic signal detection against season baselines.
+
+```
+pitcher-scout [-w DAYS] [-n TOP] [-v] [--min-score N]
+              [--curate] [--provider {openai,claude,gemini}]
+```
+
+| Flag | Description |
+|------|-------------|
+| `-w, --window` | Days to scan (default: 1 = most recent game date) |
+| `-n, --top` | Number of results (default: 20) |
+| `-v, --verbose` | Show signal details for each appearance |
+| `--min-score` | Minimum interest score to display |
+| `--curate` | Send results to an LLM to select the 3-5 best stories |
+| `--provider` | LLM provider for curation (default: `openai`) |
+
+### Signals Scored
+
+| Signal | Weight | What it catches |
+|--------|--------|-----------------|
+| `new_pitch` | 4.0 | Pitch type appearing that wasn't in the season repertoire |
+| `development_opportunity` | 3.5 | High S+ (>110) with low L+ (<80) — stuff without feel |
+| `velo_delta` | 3.0 | Fastball velo >= 1.5 mph from season average |
+| `splus_lplus_divergence` | 3.0 | S+ and L+ moving opposite directions (>= 10 pts each) |
+| `dropped_pitch` | 3.0 | Season pitch (>= 10% usage) not thrown at all |
+| `pplus_swing` | 2.5 | Overall P+ >= 15 pts from season average |
+| `walk_rate_pplus_contradiction` | 2.5 | Good P+ (>= 105) with poor L+ (< 85) |
+| `usage_shift` | 2.0 | Any pitch >= 8pp usage change from season |
+| `workload_flag` | 1.0 | 3+ consecutive days pitched |
+
+### Example: Scout Output
+
+```
+$ pitcher-scout -n 5 -v
+
+Score  Pitcher                   T  Date         #P  Signals
+─────  ───────────────────────── ─  ──────────  ───  ────────────────────────────────────────
+ 18.0  Rogers, Trevor            L  2026-03-26   88  splus_lplus_divergence, usage_shift, ...
+       └─ splus_lplus_divergence (3.0): SI: S+ +25, L+ -93 (stuff/command split)
+       └─ usage_shift (2.0): CH usage up 14.4pp (29.5% vs 15.2% season)
+       └─ dropped_pitch (3.0): ST dropped (was 14.8% of season mix)
+       └─ dropped_pitch (3.0): SL dropped (was 10.4% of season mix)
+       └─ development_opportunity (3.5): CU: S+ 128 / L+ 70 (stuff without feel)
+       └─ development_opportunity (3.5): SI: S+ 128 / L+ 12 (stuff without feel)
+ 16.5  Legumina, Casey           R  2026-03-26   29  pplus_swing, splus_lplus_divergence, ...
+ 16.5  Gómez, Yoendrys           R  2026-03-26   28  pplus_swing, splus_lplus_divergence, ...
+ 16.0  Seymour, Ian              L  2026-03-26   21  splus_lplus_divergence, usage_shift, ...
+ 16.0  Backhus, Kyle             L  2026-03-26   20  pplus_swing, splus_lplus_divergence, ...
+```
+
+### Example: LLM Curation
+
+With `--curate`, the LLM selects the most compelling stories from the scored list using a signal hierarchy (Clean Breakout > Lab Project > Identity Crisis > Red Flag), explains each pick, and accounts for every pitcher it didn't select.
+
+## Narrative Builder: Full Scouting Reports
+
+Once you've identified an interesting appearance, generate a full report:
 
 ```
 pitcher-narratives -p PITCHER [-w WINDOW] [-v] [--print-prompts]
@@ -39,13 +100,48 @@ pitcher-narratives -p PITCHER [-w WINDOW] [-v] [--print-prompts]
 | `--provider` | LLM provider: `openai` (default), `claude`, `gemini` |
 | `--thinking` | Reasoning effort level (default: `medium`) |
 
+### Example: Narrative Output
+
+```
+$ pitcher-narratives -p 669432 -w 5
+
+Rogers isn't showing a new arm slot or a new shape on the fastball; all the
+release points are basically on top of the season baseline, and the
+four-seamer's movement is unchanged. The change is in how the arsenal is
+being deployed. The heater is a little harder than earlier in the season and
+still grades above average overall at P+ 114, but its location grade has
+slipped relative to his own baseline, so it's playing more like a pitch that
+sets the table than one that controls at-bats.
+
+The changeup is the clean recent win. Against right-handers it's the best
+pitch in the window, with P+ 123 and enough chase to give him a real
+secondary lane. The sinker is the pitch that will decide whether this is a
+stable two-platoon plan or just a temporary workaround. It has loud stuff,
+S+ 128, but the location grade is only L+ 12. That usage pattern looks
+intentional, not mechanical, especially with no release-point drift showing
+up.
+
+---
+Trevor Rogers' changeup is trending up, posting a P+ 123 and emerging as
+his best pitch against right-handers.
+
+---
+- Trevor Rogers' fastball is a touch harder and still grades at P+ 114, but
+  the location slip keeps ERA and WHIP risk on the board.
+- The changeup is the cleanest recent win, with P+ 123 against righties, and
+  that keeps his strikeout stream appeal alive in side-friendly matchups.
+- The sinker is the swing pitch now, with S+ 128 but only L+ 12 location,
+  and the 67% usage versus lefties in pass 3 makes his results look matchup
+  dependent.
+```
+
 ## Output
 
-Each run produces:
+Each report produces:
 
-1. **Narrative** (streamed to stdout) — 2-3 paragraph scouting capsule in an elite sabermetric analyst voice
-2. **Social hook** — one headline-length sentence for X/Bluesky, under 280 characters
-3. **Fantasy insights** — 3 Axios-style bullet points with fantasy-relevant analysis
+1. **Narrative** (streamed to stdout) — 2-3 paragraph scouting capsule
+2. **Social hook** — one headline-length sentence, under 280 characters
+3. **Fantasy insights** — 3 Axios-style bullet points
 4. **Data file** — `data-{pitcherid}-{provider}.md` with all prompts sent to the LLM
 
 A post-generation hallucination guard scans the narrative for unknown or traditional metrics and warns on stderr.
@@ -53,32 +149,28 @@ A post-generation hallucination guard scans the narrative for unknown or traditi
 ## Architecture
 
 ```
-CLI Input (pitcher ID, window days, provider)
-    |
-    v
-Data Loading (Statcast parquet + 8 Pitching+ CSVs)
-    |
-    v
-Computation Engine (all arithmetic in Python, never LLM)
-    |  Fastball quality, arsenal, platoon mix, first-pitch weaponry,
-    |  execution metrics, workload context, TTO analysis,
-    |  release point mechanics, hard-hit rate, contact quality
-    |
-    v
-Context Assembly (PitcherContext -> to_prompt() markdown, ~1000 tokens)
-    |
-    v
-Four-Phase LLM Pipeline (with CachePoint markers for prompt caching)
-    |  Phase 1: Synthesizer — extracts structured bullet findings
-    |  Phase 2: Editor — writes the scouting capsule (streamed)
-    |  Phase 3: Hook Writer — one social media headline
-    |  Phase 4: Fantasy Analyst — 3 Axios-style bullets
-    |
-    v
-Output (narrative + hook + fantasy bullets + hallucination guard)
+pitcher-scout (triage)                   pitcher-narratives (full report)
+─────────────────────                    ────────────────────────────────
+Appearance-level CSVs + Statcast         Statcast parquet + 8 Pitching+ CSVs
+    │                                        │
+    ▼                                        ▼
+9 signal checkers (pure Python)          Computation Engine (9 analysis modules)
+    │                                        │
+    ▼                                        ▼
+Scored + ranked appearances              Context Assembly (~1000 tokens markdown)
+    │                                        │
+    ▼ (--curate only)                        ▼
+LLM Curator (select 3-5 stories)        Four-Phase LLM Pipeline
+                                             Phase 1: Synthesizer → structured findings
+                                             Phase 2: Editor → scouting capsule (streamed)
+                                             Phase 3: Hook Writer → social headline
+                                             Phase 4: Fantasy Analyst → 3 bullet points
+                                             │
+                                             ▼
+                                         Hallucination Guard + Output
 ```
 
-Every number in the final report traces back through the Python pipeline to a specific Statcast column or Pitching+ aggregation. The LLM interprets — it does not compute.
+The pipeline is split by design: the scout runs without LLM calls (cheap, fast, scannable), and the narrative builder runs the full four-phase pipeline for the pitchers worth writing about. Phases 3 and 4 derive from the editor's capsule, not the raw synthesis, so they inherit the editor's plausibility filters and metric curation.
 
 ## Providers
 
@@ -88,18 +180,19 @@ Every number in the final report traces back through the Python pipeline to a sp
 | `claude` | claude-sonnet-4-6 | Standard `ThinkingEffort` levels | 16384 max_tokens for thinking budget |
 | `gemini` | gemini-3.1-pro-preview | `low`/`high` (mapped from CLI levels) | `GoogleModelSettings`, temperature=1.0 |
 
-Prompt caching is supported across all providers. CachePoint markers are placed after role guidance (Phase 1) and after synthesis output (Phases 2-4) to avoid re-processing shared content across phases and across pitchers in batch runs.
-
 ## Project Structure
 
 ```
 src/pitcher_narratives/
     __init__.py
-    cli.py          # CLI entry point
+    cli.py          # Narrative builder CLI entry point
+    scout_cli.py    # Scout CLI entry point
     data.py         # Statcast + Pitching+ loading pipeline
     engine.py       # Computation engine (all metrics, deltas, flags)
     context.py      # PitcherContext assembly and to_prompt() rendering
     report.py       # Four-phase LLM pipeline + hallucination guard
+    scout.py        # Appearance interest scoring (no LLM)
+    curator.py      # LLM-powered curation of scouted appearances
 tests/
     test_data.py
     test_engine.py
@@ -112,10 +205,11 @@ tests/
 
 ```bash
 uv sync                          # Install deps
-uv run pytest                    # Run tests (174 tests)
+uv run pytest                    # Run tests
 uv run ruff check src/ tests/    # Lint
 uv run ty check                  # Type check
-uv run pre-commit run --all-files  # All hooks
+make scout                       # Scout: top 25, score >= 5.0, verbose
+make curate                      # Scout + LLM curation
 ```
 
 ## Methodology

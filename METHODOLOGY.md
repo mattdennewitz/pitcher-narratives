@@ -203,9 +203,42 @@ This document typically renders at 900-1,200 tokens depending on the pitcher's a
 
 ---
 
+## Appearance Scout
+
+Before generating full reports, the scout identifies which appearances are worth writing about. It runs entirely in Python — no LLM calls — scoring each appearance against the pitcher's season baselines across 9 signal types.
+
+### Signal Detection
+
+| Signal | Weight | Threshold | Description |
+|--------|--------|-----------|-------------|
+| `new_pitch` | 4.0 | >5% game usage, <1% season usage | Pitch type newly appearing in the repertoire |
+| `development_opportunity` | 3.5 | S+ >110, L+ <80 | High stuff with poor command — the "missing piece" pattern |
+| `velo_delta` | 3.0 | >= 1.5 mph from season | Fastball velocity gain or loss |
+| `splus_lplus_divergence` | 3.0 | >= 10 pts each, opposite directions | Stuff improving while command slips, or vice versa |
+| `dropped_pitch` | 3.0 | >= 10% season usage, 0% game usage | Established pitch completely shelved |
+| `pplus_swing` | 2.5 | >= 15 pts from season | Overall P+ spike or collapse |
+| `walk_rate_pplus_contradiction` | 2.5 | P+ >= 105 with L+ < 85 | Good stuff without command (the Cavalli pattern) |
+| `usage_shift` | 2.0 | >= 8pp from season | Pitch type usage change |
+| `workload_flag` | 1.0 | 3+ consecutive days | Reliever workload concern |
+
+The scout loads appearance-level and season-level aggregation CSVs, computes velocity baselines from the Statcast parquet, and scores each appearance by summing the weights of all signals that fire. A typical game day produces 15-30 appearances above a score of 5.0.
+
+### LLM Curator
+
+With `--curate`, the scored list is sent to an LLM for editorial selection. The curator uses a four-tier signal hierarchy:
+
+1. **Clean Breakout** — velocity gain coupled with stuff improvement (strongest signal)
+2. **Lab Project** — top-tier raw stuff (S+ 130+) with poor command (L+ < 80)
+3. **Identity Crisis** — radical pitch mix changes (shelving primaries, doubling secondaries)
+4. **Red Flag** — statistical anomalies that may be tracking errors (3+ mph velo spikes)
+
+The curator selects 3-5 pitchers, writes a brief for each (signal, narrative, conviction score), names 2-3 worth tracking, and explains why every other pitcher was excluded.
+
+---
+
 ## Four-Phase LLM Architecture
 
-The report generation pipeline uses four sequential LLM calls with distinct roles. Phase 1 extracts facts; Phases 2-4 each produce a different output format from those same facts. This separation ensures no editorial phase performs arithmetic — each receives pre-extracted findings and focuses entirely on interpretation and voice.
+The report generation pipeline uses four sequential LLM calls with distinct roles. Phase 1 extracts facts; Phase 2 writes the capsule; Phases 3 and 4 derive from the capsule (not the raw synthesis), inheriting the editor's plausibility filters and metric curation.
 
 Three LLM providers are supported: OpenAI (gpt-5.4-mini), Anthropic (claude-sonnet-4-6), and Google (gemini-3.1-pro-preview). Provider-specific thinking configuration is handled automatically.
 
@@ -215,37 +248,30 @@ Three LLM providers are supported: OpenAI (gpt-5.4-mini), Anthropic (claude-sonn
 
 **Input:** The full `to_prompt()` markdown document plus role-conditional analysis guidance (starter-specific or reliever-specific focus areas).
 
-**Task:** Extract the signal from the noise. Identify the most significant changes — both improvements and declines — and organize them into a rigid structure. The synthesizer does not write prose, does not editorialize, and does not project future performance.
+**Task:** Extract the signal from the noise using three analytical lenses: breakout indicators, regression risks, and development opportunities. The synthesizer audits the arsenal as a portfolio — cross-referencing stuff quality (S+) with command (L+) and platoon splits. It does not write prose, does not editorialize, and does not project future performance.
+
+**Key analytical instructions:**
+
+- **Intent-based reasoning:** Before attributing usage shifts to fatigue or mechanical causes, check whether the opposing lineup's handedness mix explains the pattern. Frame opponent-driven patterns as game plans, not mechanical byproducts.
+- **Portfolio audit:** High S+ / low L+ pitches are flagged as development opportunities and cross-referenced with platoon data to identify which pitch would most change the pitcher's projection.
+- **Plausibility filter:** Velocity outliers (>3 mph) are flagged as possible misclassification. Command contradictions (high L+ with high walk rate) are reframed as pitch-level targeting, not overall command.
 
 **Output format (enforced by prompt):**
 
 ```
 ## Fastball Quality & Velocity Trends
-[Bulleted facts: baseline vs recent velo, P+/S+/L+ triad, movement, within-game arc]
-
 ## Pitching+ Profile
-[Per-pitch-type P+, S+, L+ scores and deltas vs season; stuff-command divergences]
-
 ## Pitch Mix & Usage Shifts
-[Largest positive and negative usage deltas, new/abandoned pitches]
-
 ## Execution & Outcomes
-[CSW%, Zone%, Chase%, xWhiff, xSwing, xRV100 by pitch type]
-
 ## Platoon Splits
-[Pitch mix and P+ disaggregated by batter handedness]
-
 ## Release Point Mechanics
-[Per-pitch-type release x/z/extension deltas vs pitcher's own season baseline]
-
 ## Workload & Stamina
-[Pitch counts, rest days, TTO degradation/improvement, IP trends]
-
+## Opponent Context & Intent
 ## Key Signal
-[The single most important improvement AND the single most important concern]
+    - Most important improvement
+    - Most important concern
+    - Development pitch (high-S+/low-L+ that would solve a platoon weakness)
 ```
-
-The rigid output format guarantees Phase 2 receives the same shape of input for every pitcher. The **Key Signal** section forces the synthesizer to commit to the two facts that should anchor the editorial.
 
 **Role-conditional guidance:**
 - **Starters** receive additional focus on TTO breakdown, pitch mix evolution across passes, platoon-specific TTO patterns, stamina trajectory, and new weapons.
@@ -255,38 +281,39 @@ The rigid output format guarantees Phase 2 receives the same shape of input for 
 
 ### Phase 2: The Editor
 
-**Role:** Elite, sabermetrically inclined baseball writer. Writes for front offices, advanced fantasy players, and data-driven fans. Tone is objective, mildly skeptical, and highly analytical.
+**Role:** Elite, sabermetrically inclined baseball writer. Writes for front offices, advanced fantasy players, and data-driven fans. Tone is pragmatic, cautious, and highly analytical.
 
 **Input:** The structured briefing from Phase 1 (the synthesizer's bulleted output) plus the pitcher's name, handedness, and role.
 
-**Task:** Weave the extracted facts into a tight, 2-3 paragraph scouting capsule following strict editorial guidelines.
+**Task:** Find the narrative thread, then weave the extracted facts into a tight, 2-3 paragraph scouting capsule. The editor reorganizes the synthesizer's category-based structure by narrative importance — leading with whatever is most interesting, not walking through fastball→secondary→platoon→conclusion.
 
 **Structure — The Capsule:**
 
-- **Paragraph 1 (The Setup):** Identifies the core change or current state of the stuff. New pitch? Velocity gain or drop? How are the raw shapes grading out? Grounds the reader in what is physically different about this pitcher right now.
+- **Paragraph 1 (The Setup):** Grounds the reader in what is physically different or notable about this pitcher right now. Follows directly from the narrative thread.
 
-- **Paragraph 2+ (The Verdict):** Explains how that stuff is playing in the zone. Addresses platoon splits directly. Highlights the glaring weakness or the path to sustained success. Delivers a definitive projection.
-
-A third paragraph is permitted when the Setup needs separation (e.g., fastball changes and arsenal evolution each warrant their own paragraph before the Verdict).
+- **Paragraph 2+ (The Verdict):** Explains how the stuff is playing in practice. Weaves in platoon splits where they matter to the story. Delivers a clear-eyed conclusion on the pitcher's current trajectory.
 
 **Editorial guidelines enforced by prompt:**
 
 | Guideline | Description |
 |-----------|-------------|
-| **Anchor every metric** | Never state a velocity, P+ score, or usage rate without contextualizing it against the MLB average (100 for P+/S+/L+) or the pitcher's own baseline. |
-| **Diagnose, don't just describe** | Connect outcomes to physical inputs. If strikeouts are up, explain it's tied to added break or a velocity gain. Link the "what" to the "why." |
-| **Be skeptical** | Do not trust small samples blindly. Flag regression risks when results outpace underlying stuff metrics. Use language like "small-sample issues," "I'm not convinced," "prone to blow-ups." |
-| **Platoon everything** | Treat the arsenal as two separate entities — how it works against lefties and how it works against righties. |
-| **Take a stance** | End with a decisive, unsentimental projection. Assign a concrete tier: "a low 4s ERA arm," "a #5 starter," "profiles as a leverage reliever." No hedging. |
-| **Voice constraints** | No clichés ("bulldog mentality," "pitches to contact," "electric stuff"). No negative comparison constructions ("not just X, it's Y"). State what something is — don't define it by what it isn't. Rely on K-BB%, SwStr%, CSW%, P+/S+/L+, xRV100. |
+| **Three primary metrics** | Choose at most three metrics to carry the narrative. Everything else stays in the briefing. |
+| **Link mechanics to outcomes** | Every mechanical observation (extension, release point) must immediately connect to a tactical result. No orphaned mechanical details. |
+| **Diagnose, don't just describe** | Connect outcomes to physical inputs. Link the "what" to the "why." |
+| **Consider intent** | When data shows usage shifts or location clustering, consider whether the opposing lineup explains the pattern before defaulting to fatigue or mechanical causes. |
+| **Scale confidence to sample** | Three starts get "trending toward." A full season supports firmer assessments. No declaring what a pitcher "profiles as" from a handful of appearances. |
+| **L+ is not command** | L+ measures pitch-level placement, not overall command. High L+ with high walks = precise targeting on one pitch, not a guy in command of the zone. Always pair L+ with walk rate. |
+| **Voice** | Write like an analyst talking to another analyst. Conversational scouting language (stuff, feel, finding a groove, getting tagged). No clinical jargon (degradation, binary, mathematical liability). No formulaic transitions (Meanwhile, However). Vary sentence length. |
+| **Word bans** | Never use: degradation, binary, physical characteristics, extreme variance, profiles as, metrics are grim, navigating a lineup, elite, dominant, massive spike. |
+| **Spot-check** | Before finishing, verify: metric count <= 3, all mechanics link to outcomes, confidence matches sample size, any "command" claim is backed by walk rate. |
 | **No fluff** | No introductory throat-clearing. Start immediately with the analysis. No bullet points, no headers, no tables in the output. |
-| **Data fidelity** | Rely entirely on the briefing provided. Do not hallucinate metrics or trends. Ignore traditional outcome stats (ERA, W/L) in the body — base all analysis on underlying metrics. |
+| **Data fidelity** | Rely entirely on the briefing provided. Do not hallucinate metrics or trends. Be direct without being dismissive or alarmist. |
 
 ### Phase 3: The Hook Writer
 
 **Role:** Wire-service headline writer crafting a single social media post.
 
-**Input:** The pitcher's name, handedness, role, and the structured briefing from Phase 1.
+**Input:** The pitcher's name, handedness, role, and the editor's capsule (Phase 2 output).
 
 **Task:** Write one sentence — headline-length, under 280 characters — that captures the single most important change, trend, or signal. Name the pitcher, name the pitch or metric, state the direction.
 
@@ -296,18 +323,28 @@ A third paragraph is permitted when the Setup needs separation (e.g., fastball c
 
 **Role:** Fantasy baseball analyst writing in news-wire voice for competitive league managers.
 
-**Input:** The pitcher's name, handedness, role, and the structured briefing from Phase 1.
+**Input:** The pitcher's name, handedness, role, and the editor's capsule (Phase 2 output).
 
 **Task:** Write exactly 3 bullet points — Axios-style: short, declarative, news-first. Lead with the fact or trend, then explain why it matters for fantasy. Each bullet cites one specific metric.
 
-**Voice:** Analyst reporting news, not advisor issuing commands. No bold labels, no verdict prefixes. Plain text bullets — the busy reader gets the point in three seconds.
+**Voice:** Analyst reporting news, not manager issuing roster moves. Frame implications as things to monitor ("keep an eye on," "worth watching") rather than directives ("pick him up," "move him to the bench"). No bold labels, no verdict prefixes. Plain text bullets.
+
+### Data Flow
+
+Phases 3 and 4 receive the editor's capsule — not the raw synthesis. This means they inherit the editor's three-metric curation, plausibility filters, L+/walk-rate reframing, and confidence scaling. The synthesis served its purpose feeding the editor; downstream phases work from the editorial output.
+
+```
+Phase 1 (Synthesis) ──→ Phase 2 (Editor/Capsule) ──→ Phase 3 (Hook)
+                                                  ──→ Phase 4 (Fantasy)
+```
 
 ### Prompt Caching
 
 CachePoint markers are inserted at strategic boundaries in the user messages to enable prompt caching across phases and across pitchers in batch runs:
 
 - **Phase 1:** Cache breakpoint after role guidance (stable across all pitchers of the same role).
-- **Phases 2, 3, 4:** Cache breakpoint after the synthesis output (shared across all three downstream phases for the same pitcher).
+- **Phase 2:** Cache breakpoint after the synthesis output.
+- **Phases 3, 4:** Cache breakpoint after the capsule (shared across both downstream phases for the same pitcher).
 
 On Anthropic, these translate to explicit `cache_control` headers. On OpenAI, automatic prefix caching benefits from the same structure. On Gemini, CachePoints are silently ignored.
 
@@ -320,44 +357,47 @@ After the editor produces the final capsule, a **metric hallucination guard** sc
 ## Pipeline Summary
 
 ```
-CLI Input (pitcher ID, window days, provider, thinking level)
-    │
-    ▼
-Data Loading (Statcast parquet + 8 Pitching+ CSVs)
-    │
-    ▼
-Filtering & Classification (window, SP/RP per appearance)
-    │
-    ▼
-Computation Engine (9 analysis modules, all in Python)
-    ├── Fastball Quality (velo, P+/S+/L+, movement, velocity arc)
-    ├── Arsenal Analysis (usage rates, P+/S+/L+ per type)
-    ├── Platoon Mix (per-type per-handedness)
-    ├── First-Pitch Weaponry (count approach changes)
-    ├── Execution Metrics (CSW%, zone/chase, xWhiff, xRV100)
-    ├── Workload Context (rest days, IP, consecutive days)
-    ├── TTO Analysis (FB/sec split, pitch-type breakdown, platoon within TTO)
-    ├── Hard-Hit Rate (exit velo >= 95 mph, window vs season)
-    └── Release Point Mechanics (x/z/extension per pitch type vs own baseline)
-    │
-    ▼
-Context Assembly (PitcherContext → to_prompt() markdown, ~1000 tokens)
-    │
-    ▼
-Phase 1: Synthesizer (extracts structured bullet findings)
-    │
-    ├──▶ Phase 2: Editor (2-3 paragraph scouting capsule, streamed)
-    ├──▶ Phase 3: Hook Writer (one headline sentence, < 280 chars)
-    └──▶ Phase 4: Fantasy Analyst (3 Axios-style bullets)
-    │
-    ▼
-Hallucination Guard (regex scan for unknown/traditional metrics)
-    │
-    ▼
-Output:
-    stdout  → streamed narrative + hook + fantasy bullets
-    stderr  → metric warnings (if any)
-    file    → data-{id}-{provider}.md (all prompts sent to LLM)
+                    ┌─────────────────────────────────────────────┐
+                    │          SCOUT (pitcher-scout)              │
+                    │                                             │
+                    │  Appearance CSVs + Statcast                 │
+                    │      │                                      │
+                    │      ▼                                      │
+                    │  9 signal checkers (pure Python)            │
+                    │      │                                      │
+                    │      ▼                                      │
+                    │  Scored + ranked appearances                │
+                    │      │                                      │
+                    │      ▼ (--curate)                           │
+                    │  LLM Curator (select 3-5 stories)          │
+                    └─────────────────────────────────────────────┘
+                                       │
+                          pitcher IDs worth writing about
+                                       │
+                                       ▼
+                    ┌─────────────────────────────────────────────┐
+                    │     NARRATIVE BUILDER (pitcher-narratives)  │
+                    │                                             │
+                    │  Statcast parquet + 8 Pitching+ CSVs        │
+                    │      │                                      │
+                    │      ▼                                      │
+                    │  Computation Engine (9 analysis modules)    │
+                    │      │                                      │
+                    │      ▼                                      │
+                    │  Context Assembly (~1000 tokens markdown)   │
+                    │      │                                      │
+                    │      ▼                                      │
+                    │  Phase 1: Synthesizer                       │
+                    │      │                                      │
+                    │      ▼                                      │
+                    │  Phase 2: Editor (capsule, streamed)        │
+                    │      │                                      │
+                    │      ├──▶ Phase 3: Hook Writer              │
+                    │      └──▶ Phase 4: Fantasy Analyst          │
+                    │      │                                      │
+                    │      ▼                                      │
+                    │  Hallucination Guard + Output               │
+                    └─────────────────────────────────────────────┘
 ```
 
 Every number in the final report traces back through this pipeline to a specific Statcast column or Pitching+ aggregation. The LLM interprets and articulates — it does not compute.

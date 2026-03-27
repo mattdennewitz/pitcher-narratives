@@ -44,8 +44,6 @@ _USAGE_THRESHOLD = 8.0  # percentage points
 _NEW_PITCH_SEASON_MAX = 1.0  # season usage % below which = "new"
 _NEW_PITCH_GAME_MIN = 5.0  # game usage % above which = meaningful
 _DROPPED_PITCH_SEASON_MIN = 10.0  # season usage % above which = established
-_HARD_HIT_SPIKE = 10.0  # pp above season
-_WALK_RATE_THRESHOLD = 0.15  # 15% BB rate
 _PPLUS_GOOD = 105  # P+ above which walk contradiction fires
 _DEV_SPLUS_MIN = 110  # high stuff threshold
 _DEV_LPLUS_MAX = 80  # low command threshold
@@ -368,26 +366,24 @@ def _check_pplus_swing(
     pitcher_baseline: pl.DataFrame,
 ) -> list[Signal]:
     """Check overall P+ swing vs season baseline."""
-    signals: list[Signal] = []
     game_pplus = app_row.get("P+")
     if game_pplus is None:
-        return signals
+        return []
 
-    bl = pitcher_baseline.row(0, named=True)
-    season_pplus = bl.get("P+")
+    season_pplus = pitcher_baseline.row(0, named=True).get("P+")
     if season_pplus is None:
-        return signals
+        return []
 
     delta = float(game_pplus) - float(season_pplus)
     if abs(delta) >= _PPLUS_THRESHOLD:
         direction = "up" if delta > 0 else "down"
-        signals.append(Signal(
+        return [Signal(
             "pplus_swing",
             _WEIGHTS["pplus_swing"],
             f"P+ {direction} {abs(delta):.0f} pts "
             f"({float(game_pplus):.0f} vs {float(season_pplus):.0f} season)",
-        ))
-    return signals
+        )]
+    return []
 
 
 def _check_splus_lplus_divergence(
@@ -415,13 +411,15 @@ def _check_splus_lplus_divergence(
         l_delta = float(game_l) - float(season_l)
 
         # Opposite directions, both meaningful magnitude
-        if (s_delta > _DIVERGENCE_THRESHOLD and l_delta < -_DIVERGENCE_THRESHOLD) or \
-           (s_delta < -_DIVERGENCE_THRESHOLD and l_delta > _DIVERGENCE_THRESHOLD):
-            pitch_name = row.get("pitch_type", pt)
+        opposite = (
+            (s_delta > _DIVERGENCE_THRESHOLD and l_delta < -_DIVERGENCE_THRESHOLD)
+            or (s_delta < -_DIVERGENCE_THRESHOLD and l_delta > _DIVERGENCE_THRESHOLD)
+        )
+        if opposite:
             signals.append(Signal(
                 "splus_lplus_divergence",
                 _WEIGHTS["splus_lplus_divergence"],
-                f"{pitch_name}: S+ {s_delta:+.0f}, L+ {l_delta:+.0f} (stuff/command split)",
+                f"{pt}: S+ {s_delta:+.0f}, L+ {l_delta:+.0f} (stuff/command split)",
             ))
     return signals
 
@@ -504,18 +502,12 @@ def _check_walk_contradiction(
     app_row: dict,
     pitcher_baseline: pl.DataFrame,
 ) -> list[Signal]:
-    """Check for high walk rate with good P+ (the command contradiction)."""
-    # We need to estimate walk rate from the appearance data.
-    # The appearance CSV doesn't have BB count directly, but we can
-    # approximate from the statcast data or use a proxy.
-    # For now, we'll use the P+ vs L+ divergence at the appearance level
-    # as a proxy — high P+ with very low L+ suggests the contradiction.
+    """Check for high P+ with poor L+ at the appearance level."""
     game_pplus = app_row.get("P+")
     game_lplus = app_row.get("L+")
     if game_pplus is None or game_lplus is None:
         return []
 
-    # High overall P+ but poor location = stuff is good, command is not
     if float(game_pplus) >= _PPLUS_GOOD and float(game_lplus) < 85:
         return [Signal(
             "walk_rate_pplus_contradiction",
