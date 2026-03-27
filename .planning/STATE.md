@@ -98,6 +98,7 @@ None yet.
 | 260326-q9s | Add hard-hit rate metric (percentage of batted balls with exit velocity >= 95 mph) | 2026-03-26 | 0eb772f | [260326-q9s-add-hard-hit-rate-metric-percentage-of-b](./quick/260326-q9s-add-hard-hit-rate-metric-percentage-of-b/) |
 | 260326-sgh | Fix hallucination guard: structured return type, regex fixes, traditional stat detection | 2026-03-26 | 120cab7 | [260326-sgh-evaluate-our-hallucination-guard-for-imp](./quick/260326-sgh-evaluate-our-hallucination-guard-for-imp/) |
 | 260326-t0k | Add -v verbose switch showing pitcher name, game dates, and pitch counts | 2026-03-27 | 173d954 | [260326-t0k-add-v-switch-showing-pitcher-name-game-d](./quick/260326-t0k-add-v-switch-showing-pitcher-name-game-d/) |
+| 260326-ukz | Add 1-2 sentence social media hook summary to report pipeline | 2026-03-27 | 2468bfa | [260326-ukz-add-1-2-sentence-social-media-hook-summa](./quick/260326-ukz-add-1-2-sentence-social-media-hook-summa/) |
 
 ## Session Continuity
 
