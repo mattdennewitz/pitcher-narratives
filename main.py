@@ -99,6 +99,9 @@ def main() -> None:
     # Print social hook
     print(f"\n---\n{result.social_hook}")
 
+    # Print fantasy insights
+    print(f"\n---\n{result.fantasy_insights}")
+
     # Post-generation hallucination check (narrative only)
     hallucination_report = check_hallucinated_metrics(result.narrative)
     if not hallucination_report.is_clean:

@@ -1,4 +1,4 @@
-"""Tests for two-phase report generation (Synthesizer → Editor)."""
+"""Tests for four-phase report generation pipeline."""
 
 import pytest
 from pydantic_ai.models.test import TestModel
@@ -9,13 +9,16 @@ from report import (
     synthesizer,
     editor,
     hook_writer,
+    fantasy_analyst,
     _SYNTHESIZER_PROMPT,
     _EDITOR_PROMPT,
     _SP_SYNTH_GUIDANCE,
     _RP_SYNTH_GUIDANCE,
+    _FANTASY_PROMPT,
     _build_synthesizer_message,
     _build_editor_message,
     _build_hook_message,
+    _build_fantasy_message,
     generate_report_streaming,
     check_hallucinated_metrics,
     HallucinationReport,
@@ -384,3 +387,59 @@ def test_report_result_narrative_matches_editor_output(ctx):
         ctx, _model_override=TestModel(custom_output_text="editor output")
     )
     assert result.narrative == "editor output"
+
+
+# -- Phase 4: Fantasy analyst agent tests ----------------------------------------
+
+
+def test_fantasy_analyst_model_is_claude_sonnet():
+    """Fantasy analyst agent uses claude-sonnet-4-6."""
+    assert "claude-sonnet-4-6" in str(fantasy_analyst.model)
+
+
+def test_fantasy_analyst_output_type_is_str():
+    """Fantasy analyst output_type is str."""
+    assert fantasy_analyst.output_type is str
+
+
+def test_fantasy_prompt_requires_three_bullets():
+    """Fantasy prompt requires exactly 3 bullet points."""
+    prompt_lower = _FANTASY_PROMPT.lower()
+    assert ("3" in _FANTASY_PROMPT or "three" in prompt_lower)
+    assert "bullet" in prompt_lower
+
+
+def test_fantasy_prompt_requires_actionable():
+    """Fantasy prompt requires actionable insights."""
+    assert "actionable" in _FANTASY_PROMPT.lower()
+
+
+def test_fantasy_message_includes_pitcher_name(ctx):
+    """Fantasy message includes pitcher name."""
+    msg = _build_fantasy_message(ctx, "test synthesis")
+    assert ctx.pitcher_name in msg
+
+
+def test_fantasy_message_includes_synthesis(ctx):
+    """Fantasy message includes synthesis text."""
+    msg = _build_fantasy_message(ctx, "Fastball velo down 1.5")
+    assert "Fastball velo down 1.5" in msg
+
+
+def test_report_result_has_fantasy_insights(ctx):
+    """ReportResult has non-empty fantasy_insights field."""
+    result = generate_report_streaming(
+        ctx, _model_override=TestModel(custom_output_text="fantasy text")
+    )
+    assert isinstance(result, ReportResult)
+    assert result.fantasy_insights
+
+
+def test_report_result_all_fields_populated(ctx):
+    """ReportResult has all three fields populated."""
+    result = generate_report_streaming(
+        ctx, _model_override=TestModel(custom_output_text="test output")
+    )
+    assert result.narrative
+    assert result.social_hook
+    assert result.fantasy_insights
