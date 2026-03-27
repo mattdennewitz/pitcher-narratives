@@ -2,7 +2,7 @@
 
 ## Overview
 
-Pitcher Narratives is an automated scouting report system that transforms raw pitch-tracking data into analytical capsules written in the voice of an elite sabermetric baseball analyst. The system uses a deterministic Python pipeline for all data computation and a two-phase LLM architecture that separates objective data extraction from editorial prose.
+Pitcher Narratives is an automated scouting report system that transforms raw pitch-tracking data into analytical capsules written in the voice of an elite sabermetric baseball analyst. The system uses a deterministic Python pipeline for all data computation and a four-phase LLM architecture that separates objective data extraction from editorial prose, social media distillation, and fantasy analysis.
 
 No LLM performs arithmetic, computes deltas, or derives metrics. Every number in the final report originates from a pre-computed Python pipeline. The LLM's role is strictly interpretive: identify which findings are significant, then articulate why they matter.
 
@@ -150,6 +150,16 @@ For each pitch type in the recent window:
 3. **Pitch count:** Total pitches per appearance (row count in Statcast per game).
 4. **Consecutive days pitched:** Maximum streak of consecutive calendar days with appearances. A streak of 3+ triggers a workload concern flag for relievers.
 
+### Hard-Hit Rate
+
+Computes the percentage of batted balls with exit velocity >= 95 mph from Statcast data. Compares the window hard-hit rate against the season baseline with standard delta strings. Batted balls are identified by the presence of a non-null `launch_speed` column. Small samples (fewer than 10 batted balls in the window) are flagged.
+
+### Release Point Mechanics
+
+For each pitch type, computes the mean release position (horizontal `release_pos_x`, vertical `release_pos_z`) and extension (`release_extension`) within the window vs. the pitcher's own season baseline. All baselines are pitcher-specific, pitch-type-by-pitch-type — never league averages.
+
+Delta strings use the same vocabulary as other metrics. Uniform shifts across all pitch types suggest a delivery change, fatigue, or potential injury. A shift in one pitch type suggests tinkering with that offering. The LLM receives explicit guidance to interpret release point data in this mechanical context.
+
 ### Times Through Order (TTO)
 
 Joins Statcast (which carries `n_thruorder_pitcher`) with the `all_pitches.csv` (which carries per-pitch P+/S+) on `(pitcher, game_pk, pitch_number)`. Computes three levels of analysis:
@@ -173,25 +183,31 @@ TTO passes with fewer than 50 total pitches are flagged in the output so the LLM
 
 ## Context Assembly
 
-All engine outputs are assembled into a single `PitcherContext` Pydantic model. The model's `to_prompt()` method renders the data as a structured markdown document with nine sections:
+All engine outputs are assembled into a single `PitcherContext` Pydantic model. The model's `to_prompt()` method renders the data as a structured markdown document with eleven sections:
 
-1. **Executive Summary** — Bullet-point overview of key changes from the most recent appearance (velo trend, P+ trend, biggest usage shift, TTO summary, workload flags).
+1. **Executive Summary** — Bullet-point overview of key changes from the most recent appearance (velo trend, full P+/S+/L+ triad, biggest usage shift, TTO summary, hard-hit rate shift, workload flags).
 2. **Role** — Most recent role (SP/RP), appearance count, consecutive days pitched, workload concern flag.
-3. **Primary Fastball** — Velocity, P+/S+/L+, movement deltas vs. season, velocity arc from last outing.
+3. **Primary Fastball** — Velocity, P+/S+/L+ triad with deltas vs. season, movement deltas, velocity arc from last outing.
 4. **Times Through Order** — Fastball/secondary P+ split table, per-pitch-type mix and P+ evolution across passes, platoon-within-TTO breakdown.
-5. **Arsenal** — Top 4 pitch types by usage with usage deltas and P+ deltas vs. season.
+5. **Arsenal** — Top 4 pitch types by usage with usage deltas and P+/S+/L+ columns with deltas vs. season.
 6. **Execution** — CSW%, Zone%, Chase%, xWhiff, xSwing, xRV100 percentile per pitch type.
-7. **Platoon Shifts** — Per-pitch-type usage and P+ by batter handedness with deltas.
-8. **First-Pitch Tendencies** — Top 3 first-pitch types with recent vs. season usage.
-9. **Recent Appearances** — Date, IP, pitch count, and rest days for each appearance in the window.
+7. **Release Point Mechanics** — Per-pitch-type release x/z/extension with deltas vs. pitcher's own season baseline.
+8. **Contact Quality** — Hard-hit rate (window vs. season) with delta string.
+9. **Platoon Shifts** — Per-pitch-type usage and P+ by batter handedness with deltas.
+10. **First-Pitch Tendencies** — Top 3 first-pitch types with recent vs. season usage.
+11. **Recent Appearances** — Date, IP, pitch count, and rest days for each appearance in the window.
 
-This document typically renders at 800-1,100 tokens depending on the pitcher's arsenal complexity. It serves as the sole data input to the LLM — the model receives no raw DataFrames, no CSV files, and no Statcast rows.
+The Pitching+ triad (P+, S+, L+) is surfaced throughout — in the executive summary, fastball section, and arsenal table — so the LLM can distinguish between stuff changes (S+) and command changes (L+).
+
+This document typically renders at 900-1,200 tokens depending on the pitcher's arsenal complexity. It serves as the sole data input to the LLM — the model receives no raw DataFrames, no CSV files, and no Statcast rows.
 
 ---
 
-## Two-Phase LLM Architecture
+## Four-Phase LLM Architecture
 
-The report generation pipeline uses two sequential LLM calls with distinct roles. This separation ensures the editorial phase never performs arithmetic — it receives pre-extracted findings and focuses entirely on interpretation and voice.
+The report generation pipeline uses four sequential LLM calls with distinct roles. Phase 1 extracts facts; Phases 2-4 each produce a different output format from those same facts. This separation ensures no editorial phase performs arithmetic — each receives pre-extracted findings and focuses entirely on interpretation and voice.
+
+Three LLM providers are supported: OpenAI (gpt-5.4-mini), Anthropic (claude-sonnet-4-6), and Google (gemini-3.1-pro-preview). Provider-specific thinking configuration is handled automatically.
 
 ### Phase 1: The Data Synthesizer
 
@@ -205,7 +221,10 @@ The report generation pipeline uses two sequential LLM calls with distinct roles
 
 ```
 ## Fastball Quality & Velocity Trends
-[Bulleted facts with baselines and deltas]
+[Bulleted facts: baseline vs recent velo, P+/S+/L+ triad, movement, within-game arc]
+
+## Pitching+ Profile
+[Per-pitch-type P+, S+, L+ scores and deltas vs season; stuff-command divergences]
 
 ## Pitch Mix & Usage Shifts
 [Largest positive and negative usage deltas, new/abandoned pitches]
@@ -215,6 +234,9 @@ The report generation pipeline uses two sequential LLM calls with distinct roles
 
 ## Platoon Splits
 [Pitch mix and P+ disaggregated by batter handedness]
+
+## Release Point Mechanics
+[Per-pitch-type release x/z/extension deltas vs pitcher's own season baseline]
 
 ## Workload & Stamina
 [Pitch counts, rest days, TTO degradation/improvement, IP trends]
@@ -260,16 +282,45 @@ A third paragraph is permitted when the Setup needs separation (e.g., fastball c
 | **No fluff** | No introductory throat-clearing. Start immediately with the analysis. No bullet points, no headers, no tables in the output. |
 | **Data fidelity** | Rely entirely on the briefing provided. Do not hallucinate metrics or trends. Ignore traditional outcome stats (ERA, W/L) in the body — base all analysis on underlying metrics. |
 
+### Phase 3: The Hook Writer
+
+**Role:** Wire-service headline writer crafting a single social media post.
+
+**Input:** The pitcher's name, handedness, role, and the structured briefing from Phase 1.
+
+**Task:** Write one sentence — headline-length, under 280 characters — that captures the single most important change, trend, or signal. Name the pitcher, name the pitch or metric, state the direction.
+
+**Constraints:** One sentence only. No run-on sentences joined by dashes or semicolons. No hashtags, emojis, or hype. Must stand alone without context.
+
+### Phase 4: The Fantasy Analyst
+
+**Role:** Fantasy baseball analyst writing in news-wire voice for competitive league managers.
+
+**Input:** The pitcher's name, handedness, role, and the structured briefing from Phase 1.
+
+**Task:** Write exactly 3 bullet points — Axios-style: short, declarative, news-first. Lead with the fact or trend, then explain why it matters for fantasy. Each bullet cites one specific metric.
+
+**Voice:** Analyst reporting news, not advisor issuing commands. No bold labels, no verdict prefixes. Plain text bullets — the busy reader gets the point in three seconds.
+
+### Prompt Caching
+
+CachePoint markers are inserted at strategic boundaries in the user messages to enable prompt caching across phases and across pitchers in batch runs:
+
+- **Phase 1:** Cache breakpoint after role guidance (stable across all pitchers of the same role).
+- **Phases 2, 3, 4:** Cache breakpoint after the synthesis output (shared across all three downstream phases for the same pitcher).
+
+On Anthropic, these translate to explicit `cache_control` headers. On OpenAI, automatic prefix caching benefits from the same structure. On Gemini, CachePoints are silently ignored.
+
 ### Post-Generation Verification
 
-After the editor produces the final capsule, a **metric hallucination guard** scans the output for metric-like patterns (xMetric, Acronym%, P+/S+/L+ family) and flags any term not present in a known-safe set. This catches cases where the LLM invents plausible-sounding metrics (e.g., "xDominance") to make a sentence flow better. Flagged terms are reported as warnings on stderr.
+After the editor produces the final capsule, a **metric hallucination guard** scans the narrative for metric-like patterns (xMetric, Acronym%, P+/S+/L+ family) and flags any term not present in a known-safe set. It also detects traditional outcome stats (ERA, WHIP, W-L) that the editor prompt warns against citing. Flagged terms are reported as warnings on stderr.
 
 ---
 
 ## Pipeline Summary
 
 ```
-CLI Input (pitcher ID, window days)
+CLI Input (pitcher ID, window days, provider, thinking level)
     │
     ▼
 Data Loading (Statcast parquet + 8 Pitching+ CSVs)
@@ -278,29 +329,35 @@ Data Loading (Statcast parquet + 8 Pitching+ CSVs)
 Filtering & Classification (window, SP/RP per appearance)
     │
     ▼
-Computation Engine (7 analysis modules, all in Python)
-    ├── Fastball Quality (velo, P+, movement, velocity arc)
-    ├── Arsenal Analysis (usage rates, P+ per type)
+Computation Engine (9 analysis modules, all in Python)
+    ├── Fastball Quality (velo, P+/S+/L+, movement, velocity arc)
+    ├── Arsenal Analysis (usage rates, P+/S+/L+ per type)
     ├── Platoon Mix (per-type per-handedness)
     ├── First-Pitch Weaponry (count approach changes)
     ├── Execution Metrics (CSW%, zone/chase, xWhiff, xRV100)
     ├── Workload Context (rest days, IP, consecutive days)
-    └── TTO Analysis (FB/sec split, pitch-type breakdown, platoon within TTO)
+    ├── TTO Analysis (FB/sec split, pitch-type breakdown, platoon within TTO)
+    ├── Hard-Hit Rate (exit velo >= 95 mph, window vs season)
+    └── Release Point Mechanics (x/z/extension per pitch type vs own baseline)
     │
     ▼
-Context Assembly (PitcherContext Pydantic model → to_prompt() markdown)
+Context Assembly (PitcherContext → to_prompt() markdown, ~1000 tokens)
     │
     ▼
-Phase 1: Data Synthesizer (LLM extracts structured bullet findings)
+Phase 1: Synthesizer (extracts structured bullet findings)
+    │
+    ├──▶ Phase 2: Editor (2-3 paragraph scouting capsule, streamed)
+    ├──▶ Phase 3: Hook Writer (one headline sentence, < 280 chars)
+    └──▶ Phase 4: Fantasy Analyst (3 Axios-style bullets)
     │
     ▼
-Phase 2: Editor (LLM writes 2-3 paragraph analytical capsule)
+Hallucination Guard (regex scan for unknown/traditional metrics)
     │
     ▼
-Hallucination Guard (regex scan for unknown metrics)
-    │
-    ▼
-Terminal Output (streamed capsule + stderr warnings if flagged)
+Output:
+    stdout  → streamed narrative + hook + fantasy bullets
+    stderr  → metric warnings (if any)
+    file    → data-{id}-{provider}.md (all prompts sent to LLM)
 ```
 
 Every number in the final report traces back through this pipeline to a specific Statcast column or Pitching+ aggregation. The LLM interprets and articulates — it does not compute.
