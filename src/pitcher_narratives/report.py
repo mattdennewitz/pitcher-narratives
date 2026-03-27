@@ -1,10 +1,14 @@
-"""Four-phase report generation pipeline.
+"""Five-phase report generation pipeline.
 
 Phase 1 (Synthesizer): Extracts signal from noise — structured bullet
 points of key findings, deltas, and trends. No narrative.
 
 Phase 2 (Editor): Weaves those facts into a pragmatic, two-paragraph
 capsule with clear projection. Elite sabermetric analyst voice.
+
+Phase 2.5 (Anchor Check): Verifies the capsule is faithful to the
+synthesis — flags missed key signals, unsupported claims, and
+directional inversions. Prints warnings to stderr.
 
 Phase 3 (Hook Writer): Distills the editor's capsule into a 1-2
 sentence social media hook for front-office audiences.
@@ -318,7 +322,7 @@ about the pitcher's stuff, not about "looking at the data."
 - Be direct without being dismissive or alarmist."""
 
 
-_AgentTuple = tuple[Agent[None, str], Agent[None, str], Agent[None, str], Agent[None, str]]
+_AgentTuple = tuple[Agent[None, str], Agent[None, str], Agent[None, str], Agent[None, str], Agent[None, str]]
 _agent_cache: dict[tuple[str, ThinkingEffort], _AgentTuple] = {}
 
 
@@ -326,7 +330,7 @@ def _make_agents(
     provider: str = "openai",
     thinking: ThinkingEffort = "high",
 ) -> _AgentTuple:
-    """Create (or return cached) four pipeline agents for the given provider and thinking level."""
+    """Create (or return cached) five pipeline agents for the given provider and thinking level."""
     key = (provider, thinking)
     if key in _agent_cache:
         return _agent_cache[key]
@@ -348,7 +352,7 @@ def _make_agents(
         settings = ModelSettings(thinking=thinking, max_tokens=16384)
     else:
         settings = ModelSettings(thinking=thinking)
-    prompts = (_SYNTHESIZER_PROMPT, _EDITOR_PROMPT, _HOOK_PROMPT, _FANTASY_PROMPT)
+    prompts = (_SYNTHESIZER_PROMPT, _EDITOR_PROMPT, _HOOK_PROMPT, _FANTASY_PROMPT, _ANCHOR_PROMPT)
     agents: _AgentTuple = tuple(  # type: ignore[assignment]
         Agent(model, output_type=str, system_prompt=p, model_settings=settings, defer_model_check=True)
         for p in prompts
@@ -403,12 +407,51 @@ no labels, no prefixes. Just the insight. Nothing else — no intro, no \
 summary, no headers."""
 
 
+# ═══════════════════════════════════════════════════════════════════════
+# PHASE 2.5: THE ANCHOR CHECK (FACT-CHECKER)
+# ═══════════════════════════════════════════════════════════════════════
+
+_ANCHOR_PROMPT = """\
+You are a fact-checker for a baseball analytics newsletter. You receive \
+two documents: the data analyst's structured briefing (the synthesis) \
+and the editor's finished narrative (the capsule). Your job is to verify \
+that the capsule is faithfully anchored to the synthesis.
+
+Check for these specific problems:
+
+1. Missed Key Signals: The synthesis has a "Key Signal" section with the \
+most important improvement, concern, and development pitch. If the capsule \
+ignores any of these entirely, flag it.
+
+2. Unsupported Claims: If the capsule states a metric, trend, or fact \
+that does not appear anywhere in the synthesis, flag it. The capsule \
+should not invent data.
+
+3. Directional Errors: If the synthesis says a metric went up and the \
+capsule says it went down (or vice versa), flag it.
+
+4. Overstated Confidence: If the synthesis flags something as small \
+sample or uncertain, but the capsule presents it as definitive, flag it.
+
+OUTPUT FORMAT:
+- If everything checks out, respond with exactly: CLEAN
+- If there are problems, list each one on its own line starting with \
+the problem type in brackets:
+  [MISSED SIGNAL] The synthesis flagged X as the key concern but the capsule does not mention it.
+  [UNSUPPORTED] The capsule claims X but this does not appear in the synthesis.
+  [DIRECTION ERROR] The synthesis says X went up but the capsule says it went down.
+  [OVERSTATED] The synthesis notes small sample on X but the capsule presents it as definitive.
+
+Be concise. One line per issue. No preamble, no summary."""
+
+
 class ReportResult(BaseModel):
     """Structured output from the multi-phase report pipeline."""
 
     narrative: str
     social_hook: str
     fantasy_insights: str
+    anchor_warnings: list[str]
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -444,6 +487,16 @@ def _build_editor_message(ctx: PitcherContext, synthesis: str) -> _UserPrompt:
     ]
 
 
+def _build_anchor_message(synthesis: str, capsule: str) -> _UserPrompt:
+    """Build the Phase 2.5 user message for the anchor check."""
+    return [
+        f"## Synthesis (Data Analyst's Briefing)\n{synthesis}",
+        CachePoint(),
+        f"## Capsule (Editor's Narrative)\n{capsule}\n\n"
+        "Check the capsule against the synthesis. Report any issues or respond CLEAN.",
+    ]
+
+
 def _build_hook_message(ctx: PitcherContext, capsule: str) -> _UserPrompt:
     """Build the Phase 3 user message from the editor's capsule."""
     return [
@@ -471,12 +524,16 @@ def _render_user_prompt(parts: _UserPrompt) -> str:
 
 
 def _build_all_phases(ctx: PitcherContext) -> list[tuple[str, str, _UserPrompt]]:
-    """Build (label, system_prompt, user_prompt) for all 4 phases."""
+    """Build (label, system_prompt, user_prompt) for all 5 phases."""
     synth_placeholder = "<synthesis output would go here>"
     capsule_placeholder = "<editor capsule would go here>"
     return [
         ("PHASE 1: SYNTHESIZER", _SYNTHESIZER_PROMPT, _build_synthesizer_message(ctx)),
         ("PHASE 2: EDITOR", _EDITOR_PROMPT, _build_editor_message(ctx, synth_placeholder)),
+        (
+            "PHASE 2.5: ANCHOR CHECK", _ANCHOR_PROMPT,
+            _build_anchor_message(synth_placeholder, capsule_placeholder),
+        ),
         ("PHASE 3: HOOK WRITER", _HOOK_PROMPT, _build_hook_message(ctx, capsule_placeholder)),
         ("PHASE 4: FANTASY ANALYST", _FANTASY_PROMPT, _build_fantasy_message(ctx, capsule_placeholder)),
     ]
@@ -516,17 +573,18 @@ def generate_report_streaming(
     thinking: ThinkingEffort = "high",
     _model_override: Any = None,
 ) -> ReportResult:
-    """Generate a four-phase scouting report and stream the editorial output.
+    """Generate a five-phase scouting report and stream the editorial output.
 
     Phase 1 (Synthesizer): Extracts key findings as structured bullets.
     Phase 2 (Editor): Writes the final two-paragraph capsule from synthesis.
+    Phase 2.5 (Anchor Check): Verifies capsule is faithful to synthesis.
     Phase 3 (Hook Writer): Distills the capsule into a 1-2 sentence social hook.
     Phase 4 (Fantasy Analyst): Produces 3 fantasy baseball bullets from the capsule.
 
     Phases 3 and 4 derive from the editor's capsule (not the raw synthesis),
     so they inherit the editor's plausibility filters and metric curation.
 
-    Only Phase 2 output is streamed to stdout. Phases 1, 3, and 4 run silently.
+    Only Phase 2 output is streamed to stdout. All other phases run silently.
 
     Args:
         ctx: Assembled pitcher context.
@@ -535,9 +593,9 @@ def generate_report_streaming(
         _model_override: Optional model override for testing (e.g., TestModel).
 
     Returns:
-        ReportResult with narrative, social_hook, and fantasy_insights.
+        ReportResult with narrative, social_hook, fantasy_insights, and anchor_warnings.
     """
-    synthesizer, editor, hook_writer, fantasy_analyst = _make_agents(provider, thinking)
+    synthesizer, editor, hook_writer, fantasy_analyst, anchor_checker = _make_agents(provider, thinking)
 
     synth_kwargs: dict[str, Any] = {"user_prompt": _build_synthesizer_message(ctx)}
     if _model_override is not None:
@@ -561,8 +619,22 @@ def generate_report_streaming(
         chunks.append(delta)
     print()  # Final newline
 
-    # Phase 3: Social media hook (silent) — derived from capsule, not synthesis
     capsule = "".join(chunks)
+
+    # Phase 2.5: Anchor check — verify capsule is faithful to synthesis
+    anchor_kwargs: dict[str, Any] = {
+        "user_prompt": _build_anchor_message(synthesis, capsule),
+    }
+    if _model_override is not None:
+        anchor_kwargs["model"] = _model_override
+
+    anchor_result = anchor_checker.run_sync(**anchor_kwargs)
+    anchor_output = anchor_result.output.strip()
+    anchor_warnings: list[str] = []
+    if anchor_output != "CLEAN":
+        anchor_warnings = [line.strip() for line in anchor_output.splitlines() if line.strip()]
+
+    # Phase 3: Social media hook (silent) — derived from capsule, not synthesis
     hook_kwargs: dict[str, Any] = {
         "user_prompt": _build_hook_message(ctx, capsule),
     }
@@ -584,6 +656,7 @@ def generate_report_streaming(
         narrative=capsule,
         social_hook=hook_result.output,
         fantasy_insights=fantasy_result.output,
+        anchor_warnings=anchor_warnings,
     )
 
 

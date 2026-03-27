@@ -134,7 +134,14 @@ def main() -> None:
     # Print fantasy insights
     print(f"\n---\n{result.fantasy_insights}")
 
-    # Post-generation hallucination check (narrative only)
+    # Post-generation checks
+    # 1. Anchor check warnings (from Phase 2.5)
+    if result.anchor_warnings:
+        print("\nANCHOR CHECK:", file=sys.stderr)
+        for warning in result.anchor_warnings:
+            print(f"  {warning}", file=sys.stderr)
+
+    # 2. Hallucination check (regex scan of narrative)
     hallucination_report = check_hallucinated_metrics(result.narrative)
     if not hallucination_report.is_clean:
         if hallucination_report.unknown_metrics:
