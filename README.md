@@ -105,33 +105,43 @@ pitcher-narratives -p PITCHER [-w WINDOW] [-v] [--print-prompts]
 ```
 $ pitcher-narratives -p 669432 -w 5
 
-Rogers has tilted into a more changeup-led mix, and that pitch is carrying
-the recent window. Usage on the changeup is up 12.1 points from his season
-line, and it's returning a 123 P+, with the location side also at 123, so
-the value is coming from where it's landing as much as from the shape. The
-four-seam is a little firmer at 93.2 mph and its P+ has moved to 114, but
-the location grade has slipped from 114 to 106, which tells you the fastball
-is playing a little more on stuff than on placement.
+Trevor Rogers' recent run is being driven by a different pitch hierarchy.
+The cutter has moved into the center of the mix, the changeup usage is up
+12.1 points from his season line, and the sweeper has been taken out
+entirely. The fastball is still sitting a tick better than season, 93.2 mph
+versus 92.8, but its pitch-level location value has slipped from L+ 114 to
+106, so the heater is playing a little looser even with the slight velocity
+gain.
 
-That lines up with how he's actually sequencing hitters. He's gone away from
-the sweeper, opened games with more secondary pitches, and split the mix in
-a way that looks matchup-driven: more changeups and cutters to righties, more
-four-seams and sinkers to lefties. The sinker is the pitch that still needs
-work — its S+ is 128 but its L+ is 12, and the recent P+ is only 44. For
-now Rogers looks a little better than the raw season baseline, but the next
-step depends on whether the sinker becomes a usable part of the plan.
+In practice, the cutter is doing the cleanest work in the sample: 60.0%
+CSW, 70.0% zone rate, and the best recent run-prevention signal in the
+brief. The changeup is the other stabilizer, at P+ 123, and the usage
+pattern looks deliberately shaped by handedness — more changeups and cutters
+to righties, more sinkers late against lefties. The caution is the
+fastball's within-start fade; he lost 1.5 mph across his last 88-pitch
+outing, and by the third pass the heater's effectiveness was down to P+
+102. This is trending toward a more layered arsenal, with the cutter and
+changeup carrying the shape of the outing.
+
+ANCHOR CHECK:
+  [MISSED SIGNAL] The synthesis identified the sinker as the development
+  pitch, but the capsule never explicitly says the sinker is the
+  development focus.
 
 ---
-Trevor Rogers' changeup usage is up 12.1 points, and the pitch is returning
-a 123 P+ with a 123 location grade.
+Trevor Rogers has shifted to a cutter-led mix, with changeup usage up 12.1
+points and the sweeper gone from the arsenal.
 
 ---
-- Trevor Rogers has tilted 12.1 points more toward the changeup, and that
-  keeps the recent strikeout and ERA trend worth watching in mixed formats.
-- His four-seam is averaging 93.2 mph, but the pitch is living more on stuff
-  than placement, which keeps WHIP volatility in play.
-- The sinker's 44 P+ is the clearest red flag, and it keeps his value
-  matchup-dependent until that offering stabilizes.
+- Trevor Rogers' cutter is driving the recent run, with a 60.0% CSW and
+  70.0% zone rate. That keeps the strikeout and ratios profile worth
+  watching if the shape holds.
+- The changeup usage is up 12.1 points from his season line, and it has
+  backed the mix with a P+ 123 mark. That makes his results look more
+  matchup-dependent, especially against right-handed-heavy lineups.
+- The fastball is still 93.2 mph, but it lost 1.5 mph in his last 88-pitch
+  outing and faded to P+ 102 by the third pass. That is the workload and
+  WHIP red flag to keep an eye on.
 ```
 
 ## Output
@@ -141,9 +151,10 @@ Each report produces:
 1. **Narrative** (streamed to stdout) — 2-3 paragraph scouting capsule
 2. **Social hook** — one headline-length sentence, under 280 characters
 3. **Fantasy insights** — 3 Axios-style bullet points
-4. **Data file** — `data-{pitcherid}-{provider}.md` with all prompts sent to the LLM
+4. **Anchor check** — warnings on stderr if the narrative drifted from the data
+5. **Data file** — `data-{pitcherid}-{provider}.md` with all prompts sent to the LLM
 
-A post-generation hallucination guard scans the narrative for unknown or traditional metrics and warns on stderr.
+Post-generation guards run automatically: a **metric hallucination guard** scans for unknown or traditional metrics, and the **anchor check** (Phase 2.5) verifies the narrative is faithful to the synthesis — flagging missed key signals, unsupported claims, directional errors, and overstated confidence.
 
 ## Architecture
 
@@ -159,9 +170,10 @@ Appearance-level CSVs + Statcast         Statcast parquet + 8 Pitching+ CSVs
 Scored + ranked appearances              Context Assembly (~1000 tokens markdown)
     │                                        │
     ▼ (--curate only)                        ▼
-LLM Curator (select 3-5 stories)        Four-Phase LLM Pipeline
+LLM Curator (select 3-5 stories)        Five-Phase LLM Pipeline
                                              Phase 1: Synthesizer → structured findings
                                              Phase 2: Editor → scouting capsule (streamed)
+                                             Phase 2.5: Anchor Check → verify fidelity
                                              Phase 3: Hook Writer → social headline
                                              Phase 4: Fantasy Analyst → 3 bullet points
                                              │
@@ -169,7 +181,7 @@ LLM Curator (select 3-5 stories)        Four-Phase LLM Pipeline
                                          Hallucination Guard + Output
 ```
 
-The pipeline is split by design: the scout runs without LLM calls (cheap, fast, scannable), and the narrative builder runs the full four-phase pipeline for the pitchers worth writing about. Phases 3 and 4 derive from the editor's capsule, not the raw synthesis, so they inherit the editor's plausibility filters and metric curation.
+The pipeline is split by design: the scout runs without LLM calls (cheap, fast, scannable), and the narrative builder runs the full five-phase pipeline for the pitchers worth writing about. The anchor check (Phase 2.5) verifies the editor's capsule is faithful to the synthesis before it flows to Phases 3 and 4, which derive from the capsule and inherit its plausibility filters and metric curation.
 
 ## Providers
 

@@ -329,12 +329,32 @@ Three LLM providers are supported: OpenAI (gpt-5.4-mini), Anthropic (claude-sonn
 
 **Voice:** Analyst reporting news, not manager issuing roster moves. Frame implications as things to monitor ("keep an eye on," "worth watching") rather than directives ("pick him up," "move him to the bench"). No bold labels, no verdict prefixes. Plain text bullets.
 
+### Phase 2.5: The Anchor Check
+
+**Role:** Fact-checker verifying the capsule is faithful to the synthesis.
+
+**Input:** The synthesis (Phase 1 output) and the capsule (Phase 2 output).
+
+**Task:** Compare the two documents and flag specific problems:
+
+| Check | What it catches |
+|-------|-----------------|
+| **Missed key signal** | The synthesis flagged something in Key Signal but the capsule ignored it entirely |
+| **Unsupported claim** | The capsule states a metric or trend not present in the synthesis |
+| **Directional error** | The synthesis says a metric went up but the capsule says it went down |
+| **Overstated confidence** | The synthesis notes small sample but the capsule presents it as definitive |
+
+**Output:** Either `CLEAN` (no issues) or one line per issue with a bracketed type prefix. Warnings are printed to stderr in the CLI alongside the hallucination guard.
+
+**Why this phase exists:** The editor is already doing a lot of self-auditing (spot-check #10), but asking a writer to verify their own factual accuracy is like asking them to proofread their own work. A separate persona reading the synthesis and capsule together catches signal drift that the editor's self-check misses — for example, the synthesizer flagging the sinker as the development pitch while the editor builds the narrative around the changeup and barely mentions it.
+
 ### Data Flow
 
-Phases 3 and 4 receive the editor's capsule — not the raw synthesis. This means they inherit the editor's three-metric curation, plausibility filters, L+/walk-rate reframing, and confidence scaling. The synthesis served its purpose feeding the editor; downstream phases work from the editorial output.
+The anchor check runs after the editor and before Phases 3/4. Phases 3 and 4 receive the editor's capsule — not the raw synthesis — so they inherit the editor's three-metric curation, plausibility filters, L+/walk-rate reframing, and confidence scaling.
 
 ```
-Phase 1 (Synthesis) ──→ Phase 2 (Editor/Capsule) ──→ Phase 3 (Hook)
+Phase 1 (Synthesis) ──→ Phase 2 (Editor/Capsule) ──→ Phase 2.5 (Anchor Check)
+                                                  ──→ Phase 3 (Hook)
                                                   ──→ Phase 4 (Fantasy)
 ```
 
@@ -344,6 +364,7 @@ CachePoint markers are inserted at strategic boundaries in the user messages to 
 
 - **Phase 1:** Cache breakpoint after role guidance (stable across all pitchers of the same role).
 - **Phase 2:** Cache breakpoint after the synthesis output.
+- **Phase 2.5:** Cache breakpoint after the synthesis (shared prefix with Phase 2).
 - **Phases 3, 4:** Cache breakpoint after the capsule (shared across both downstream phases for the same pitcher).
 
 On Anthropic, these translate to explicit `cache_control` headers. On OpenAI, automatic prefix caching benefits from the same structure. On Gemini, CachePoints are silently ignored.
@@ -391,6 +412,9 @@ After the editor produces the final capsule, a **metric hallucination guard** sc
                     │      │                                      │
                     │      ▼                                      │
                     │  Phase 2: Editor (capsule, streamed)        │
+                    │      │                                      │
+                    │      ▼                                      │
+                    │  Phase 2.5: Anchor Check (verify fidelity)  │
                     │      │                                      │
                     │      ├──▶ Phase 3: Hook Writer              │
                     │      └──▶ Phase 4: Fantasy Analyst          │
