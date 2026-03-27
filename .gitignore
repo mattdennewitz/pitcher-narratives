@@ -9,3 +9,5 @@ build/
 *.parquet
 *.csv
 aggs
+*~
+.claude
