@@ -1380,6 +1380,7 @@ source = { editable = "." }
 dependencies = [
     { name = "polars" },
     { name = "pydantic-ai" },
+    { name = "pydantic-ai-slim", extra = ["google"] },
     { name = "python-dotenv" },
 ]
 
@@ -1395,6 +1396,7 @@ dev = [
 requires-dist = [
     { name = "polars", specifier = ">=1.39.3" },
     { name = "pydantic-ai", specifier = ">=1.72.0" },
+    { name = "pydantic-ai-slim", extras = ["google"], specifier = ">=1.72.0" },
     { name = "python-dotenv", specifier = ">=1.2.2" },
 ]
 
