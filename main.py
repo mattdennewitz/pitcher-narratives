@@ -32,6 +32,19 @@ def parse_args() -> argparse.Namespace:
         "-v", "--verbose", action="store_true",
         help="Show pitcher name, game dates, and pitch counts before generating report"
     )
+    parser.add_argument(
+        "--print-prompts", action="store_true",
+        help="Print both prompts as sent to the LLM, then exit"
+    )
+    parser.add_argument(
+        "--provider", choices=["openai", "claude"], default="openai",
+        help="LLM provider (default: openai)"
+    )
+    parser.add_argument(
+        "--thinking", choices=["minimal", "low", "medium", "high", "xhigh"],
+        default="high",
+        help="Thinking/reasoning effort level (default: high)"
+    )
     return parser.parse_args()
 
 
@@ -71,9 +84,13 @@ def main() -> None:
 
     from context import assemble_pitcher_context
     from pydantic_ai.exceptions import UserError
-    from report import generate_report_streaming, check_hallucinated_metrics
+    from report import generate_report_streaming, check_hallucinated_metrics, print_prompts
 
     ctx = assemble_pitcher_context(pitcher_data)
+
+    if args.print_prompts:
+        print_prompts(ctx)
+        sys.exit(0)
 
     # Support test mode: use TestModel when env var is set
     model_override = None
@@ -85,14 +102,19 @@ def main() -> None:
         )
 
     try:
-        report_text = generate_report_streaming(ctx, _model_override=model_override)
+        report_text = generate_report_streaming(
+            ctx,
+            provider=args.provider,
+            thinking=args.thinking,
+            _model_override=model_override,
+        )
     except UserError as e:
-        if "ANTHROPIC_API_KEY" in str(e):
-            print(
-                "Error: ANTHROPIC_API_KEY environment variable is not set.\n"
-                "Get your key from https://console.anthropic.com/",
-                file=sys.stderr,
-            )
+        err = str(e)
+        if "OPENAI_API_KEY" in err:
+            print("Error: OPENAI_API_KEY not set. https://platform.openai.com/", file=sys.stderr)
+            sys.exit(1)
+        if "ANTHROPIC_API_KEY" in err:
+            print("Error: ANTHROPIC_API_KEY not set. https://console.anthropic.com/", file=sys.stderr)
             sys.exit(1)
         raise
 

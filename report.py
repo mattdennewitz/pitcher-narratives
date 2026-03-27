@@ -10,14 +10,21 @@ capsule with decisive projection. Elite sabermetric analyst voice.
 from __future__ import annotations
 
 import re
+import sys
 
 from pydantic import BaseModel
 from pydantic_ai import Agent
-from pydantic_ai.settings import ModelSettings
+from pydantic_ai.settings import ModelSettings, ThinkingEffort
 
 from context import PitcherContext
 
-__all__ = ["generate_report_streaming", "check_hallucinated_metrics", "HallucinationReport"]
+__all__ = ["generate_report_streaming", "check_hallucinated_metrics", "print_prompts", "HallucinationReport", "THINKING_LEVELS", "PROVIDERS"]
+
+THINKING_LEVELS: list[ThinkingEffort] = ['minimal', 'low', 'medium', 'high', 'xhigh']
+PROVIDERS = {
+    'openai': 'openai:gpt-5.4-mini',
+    'claude': 'anthropic:claude-sonnet-4-6',
+}
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -102,14 +109,6 @@ Additional focus for this reliever:
 - Workload trajectory: stuff improving as he stretches out, or degrading?
 - Any pitch showing a breakout trend (new addition, shape change, usage surge)?"""
 
-synthesizer = Agent(
-    'anthropic:claude-sonnet-4-6',
-    output_type=str,
-    system_prompt=_SYNTHESIZER_PROMPT,
-    model_settings=ModelSettings(max_tokens=2048),
-    defer_model_check=True,
-)
-
 
 # ═══════════════════════════════════════════════════════════════════════
 # PHASE 2: THE EDITOR (THE ANALYST)
@@ -182,13 +181,32 @@ provided as context. Base analysis on underlying metrics.
 about the pitcher's stuff, not about "looking at the data."
 - Do not soften your conclusions. Be direct."""
 
-editor = Agent(
-    'anthropic:claude-sonnet-4-6',
-    output_type=str,
-    system_prompt=_EDITOR_PROMPT,
-    model_settings=ModelSettings(max_tokens=2048),
-    defer_model_check=True,
-)
+
+def _make_agents(
+    provider: str = 'openai',
+    thinking: ThinkingEffort = 'high',
+) -> tuple[Agent[None, str], Agent[None, str]]:
+    """Create synthesizer and editor agents for the given provider and thinking level."""
+    model = PROVIDERS[provider]
+    # Anthropic's default max_tokens (4096) is too low when thinking is enabled
+    # because thinking tokens count against the budget.
+    extra = {'max_tokens': 16384} if provider == 'claude' else {}
+    settings = ModelSettings(thinking=thinking, **extra)
+    synth = Agent(
+        model,
+        output_type=str,
+        system_prompt=_SYNTHESIZER_PROMPT,
+        model_settings=settings,
+        defer_model_check=True,
+    )
+    ed = Agent(
+        model,
+        output_type=str,
+        system_prompt=_EDITOR_PROMPT,
+        model_settings=settings,
+        defer_model_check=True,
+    )
+    return synth, ed
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -217,9 +235,34 @@ def _build_editor_message(
     )
 
 
+def print_prompts(ctx: PitcherContext) -> None:
+    """Print both LLM prompts (system + user) to stderr and exit."""
+    synth_user = _build_synthesizer_message(ctx)
+    editor_user = _build_editor_message(ctx, "<synthesis output would go here>")
+
+    sep = "═" * 72
+    print(f"\n{sep}", file=sys.stderr)
+    print("PHASE 1: SYNTHESIZER", file=sys.stderr)
+    print(f"{sep}\n", file=sys.stderr)
+    print("── System Prompt ──\n", file=sys.stderr)
+    print(_SYNTHESIZER_PROMPT, file=sys.stderr)
+    print("\n── User Message ──\n", file=sys.stderr)
+    print(synth_user, file=sys.stderr)
+
+    print(f"\n{sep}", file=sys.stderr)
+    print("PHASE 2: EDITOR", file=sys.stderr)
+    print(f"{sep}\n", file=sys.stderr)
+    print("── System Prompt ──\n", file=sys.stderr)
+    print(_EDITOR_PROMPT, file=sys.stderr)
+    print("\n── User Message ──\n", file=sys.stderr)
+    print(editor_user, file=sys.stderr)
+
+
 def generate_report_streaming(
     ctx: PitcherContext,
     *,
+    provider: str = 'openai',
+    thinking: ThinkingEffort = 'high',
     _model_override=None,
 ) -> str:
     """Generate a two-phase scouting report and stream the final output.
@@ -231,11 +274,15 @@ def generate_report_streaming(
 
     Args:
         ctx: Assembled pitcher context.
+        provider: LLM provider key ('openai' or 'claude').
+        thinking: Thinking effort level.
         _model_override: Optional model override for testing (e.g., TestModel).
 
     Returns:
         The complete report text (Phase 2 output) as a string.
     """
+    synthesizer, editor = _make_agents(provider, thinking)
+
     synth_kwargs: dict = {"user_prompt": _build_synthesizer_message(ctx)}
     if _model_override is not None:
         synth_kwargs["model"] = _model_override
