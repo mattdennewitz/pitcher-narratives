@@ -39,6 +39,20 @@ def test_window_custom(monkeypatch):
     assert args.window == 14
 
 
+def test_verbose_flag_default(monkeypatch):
+    """CLI: -v flag defaults to False when omitted."""
+    monkeypatch.setattr(sys, "argv", ["main.py", "-p", "592155"])
+    args = parse_args()
+    assert args.verbose is False
+
+
+def test_verbose_flag_set(monkeypatch):
+    """CLI: -v flag sets verbose to True."""
+    monkeypatch.setattr(sys, "argv", ["main.py", "-p", "592155", "-v"])
+    args = parse_args()
+    assert args.verbose is True
+
+
 def test_pitcher_required(monkeypatch):
     """CLI-01: Missing -p flag causes SystemExit (argparse error)."""
     monkeypatch.setattr(sys, "argv", ["main.py"])
@@ -113,6 +127,31 @@ def test_cli_produces_report():
     assert result.returncode == 0
     assert "[Test mode]" in result.stdout
     assert "Scouting report" in result.stdout
+
+
+def test_cli_verbose_shows_pitcher_info():
+    """Integration: -v flag shows pitcher name and game dates on stderr."""
+    result = subprocess.run(
+        [sys.executable, "main.py", "-p", "592155", "-v"],
+        capture_output=True, text=True, timeout=60,
+        env=_test_env(PITCHER_NARRATIVES_TEST_MODEL="1"),
+    )
+    assert result.returncode == 0
+    assert "Booser, Cam" in result.stderr
+    assert "Total" in result.stderr
+    # Should still produce the report on stdout
+    assert "[Test mode]" in result.stdout
+
+
+def test_cli_no_verbose_no_pitcher_info():
+    """Integration: Without -v, stderr does not contain pitcher summary."""
+    result = subprocess.run(
+        [sys.executable, "main.py", "-p", "592155"],
+        capture_output=True, text=True, timeout=60,
+        env=_test_env(PITCHER_NARRATIVES_TEST_MODEL="1"),
+    )
+    assert result.returncode == 0
+    assert "Booser, Cam" not in result.stderr
 
 
 def test_cli_missing_api_key():

@@ -28,7 +28,30 @@ def parse_args() -> argparse.Namespace:
         "-w", "--window", type=int, default=30,
         help="Lookback window in days (default: 30)"
     )
+    parser.add_argument(
+        "-v", "--verbose", action="store_true",
+        help="Show pitcher name, game dates, and pitch counts before generating report"
+    )
     return parser.parse_args()
+
+
+def _print_verbose_summary(data) -> None:
+    """Print pitcher name, game dates, and pitch counts to stderr."""
+    appearances = data.appearances.sort("game_date")
+    print(f"\n{data.pitcher_name} (ID: {data.pitcher_id}, {data.throws}HP)", file=sys.stderr)
+    print(f"{'Date':<12} {'Pitches':>7}  Role", file=sys.stderr)
+    print(f"{'─' * 12} {'─' * 7}  {'─' * 4}", file=sys.stderr)
+    for row in appearances.iter_rows(named=True):
+        print(
+            f"{row['game_date']!s:<12} {row['n_pitches']:>7}  {row['role']}",
+            file=sys.stderr,
+        )
+    total = appearances["n_pitches"].sum()
+    print(f"{'─' * 12} {'─' * 7}", file=sys.stderr)
+    print(
+        f"{'Total':<12} {total:>7}  ({len(appearances)} appearances)\n",
+        file=sys.stderr,
+    )
 
 
 def main() -> None:
@@ -42,6 +65,9 @@ def main() -> None:
     except ValueError as e:
         print(str(e), file=sys.stderr)
         sys.exit(1)
+
+    if args.verbose:
+        _print_verbose_summary(pitcher_data)
 
     from context import assemble_pitcher_context
     from pydantic_ai.exceptions import UserError
