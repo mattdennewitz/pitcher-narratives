@@ -289,7 +289,7 @@ Three LLM providers are supported: OpenAI (gpt-5.4-mini), Anthropic (claude-sonn
 
 **Structure — The Capsule:**
 
-- **Paragraph 1 (The Setup):** Grounds the reader in what is physically different or notable about this pitcher right now. Follows directly from the narrative thread.
+- **Paragraph 1 (The Setup):** Tells the reader what is different about this pitcher right now. Leads with what happened — the concrete change — not with a theory about why it happened or what didn't change. The "why" comes after the "what" is established.
 
 - **Paragraph 2+ (The Verdict):** Explains how the stuff is playing in practice. Weaves in platoon splits where they matter to the story. Delivers a clear-eyed conclusion on the pitcher's current trajectory.
 
@@ -300,12 +300,12 @@ Three LLM providers are supported: OpenAI (gpt-5.4-mini), Anthropic (claude-sonn
 | **Three primary metrics** | Choose at most three metrics to carry the narrative. Everything else stays in the briefing. |
 | **Link mechanics to outcomes** | Every mechanical observation (extension, release point) must immediately connect to a tactical result. No orphaned mechanical details. |
 | **Diagnose, don't just describe** | Connect outcomes to physical inputs. Link the "what" to the "why." |
-| **Consider intent** | When data shows usage shifts or location clustering, consider whether the opposing lineup explains the pattern before defaulting to fatigue or mechanical causes. |
+| **Consider intent — lightly** | When data shows usage shifts, consider whether the opposing lineup explains the pattern before defaulting to fatigue. But don't build a theory around every mix change — sometimes a pitcher just threw more changeups. Mention intent as a possibility, never as a confident conclusion from one game. |
 | **Scale confidence to sample** | Three starts get "trending toward." A full season supports firmer assessments. No declaring what a pitcher "profiles as" from a handful of appearances. |
 | **L+ is not command** | L+ measures pitch-level placement, not overall command. High L+ with high walks = precise targeting on one pitch, not a guy in command of the zone. Always pair L+ with walk rate. |
 | **Voice** | Write like an analyst talking to another analyst. Conversational scouting language (stuff, feel, finding a groove, getting tagged). No clinical jargon (degradation, binary, mathematical liability). No formulaic transitions (Meanwhile, However). Vary sentence length. |
 | **Word bans** | Never use: degradation, binary, physical characteristics, extreme variance, profiles as, metrics are grim, navigating a lineup, elite, dominant, massive spike. |
-| **Spot-check** | Before finishing, verify: metric count <= 3, all mechanics link to outcomes, confidence matches sample size, any "command" claim is backed by walk rate. |
+| **Spot-check** | Before finishing, verify: metric count <= 3, all mechanics link to outcomes, confidence matches sample size, any "command" claim is backed by walk rate. Then read the capsule as a reader: does it lead with what happened or with a theory about why? If more words explain the mechanism than describe the change, rebalance. Never open with what is NOT happening. |
 | **No fluff** | No introductory throat-clearing. Start immediately with the analysis. No bullet points, no headers, no tables in the output. |
 | **Data fidelity** | Rely entirely on the briefing provided. Do not hallucinate metrics or trends. Be direct without being dismissive or alarmist. |
 

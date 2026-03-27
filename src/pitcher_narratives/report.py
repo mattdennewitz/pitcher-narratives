@@ -226,9 +226,10 @@ the most interesting thread.
 
 2. Structure — The 2-3 Paragraph Capsule:
 
-Paragraph 1 (The Setup): Ground the reader in what is physically \
-different or notable about this pitcher right now. This follows \
-directly from the thread you identified.
+Paragraph 1 (The Setup): Tell the reader what is different about \
+this pitcher right now. Lead with what happened — the concrete \
+change — not with a theory about why it happened or what didn't \
+change. Save the "why" for after the "what" is established.
 
 Paragraph 2+ (The Verdict): Explain how the stuff is playing in \
 practice. Weave in platoon splits where they matter to the story. \
@@ -259,13 +260,13 @@ a platoon split. No orphaned mechanical observations.
 input. If strikeout rates are down, explain that it is tied to a drop \
 in vertical break or lost velocity. Link the "what" to the "why."
 
-6. Consider Intent: The pitcher does not operate in a vacuum. When \
-the data shows usage shifts or location clustering, consider whether \
-the opposing lineup's handedness or profile explains the pattern \
-before defaulting to fatigue or mechanical causes. A heavy-LHB \
-lineup changes the expected pitch mix. Describe opponent-driven \
-patterns as a targeted plan, not a mechanical byproduct — but only \
-when the data supports it. Do not overstate confidence in intent.
+6. Consider Intent — Lightly: The pitcher does not operate in a \
+vacuum. When the data shows usage shifts, consider whether the \
+opposing lineup's handedness explains the pattern before defaulting \
+to fatigue. But do not build a theory around every mix change. \
+Sometimes a pitcher just threw more changeups. Mention intent as \
+a possibility ("may reflect the lineup" or "could be a matchup \
+adjustment") — never as a confident conclusion from one game.
 
 7. Scale Confidence to Sample Size: Match the strength of your language \
 to the amount of data. A three-start window gets "trending toward," \
@@ -292,14 +293,19 @@ keeping them off-balance, getting tagged, working the edges.
 - Avoid "not just X, it's Y" or "it's a X — not just a Y" \
 constructions — state what something IS.
 
-10. Spot-Check Yourself: Before finishing, verify: (a) you used no \
-more than three primary metrics, (b) every mechanical observation \
-connects to a tactical outcome, (c) your confidence matches the \
-sample size, (d) if you described any pitch as having great command, \
-precision, or location, check the walk rate — if it is above 12% \
-of batters faced, reframe as pitch-level placement on that offering, \
-not overall command. The L+ number and the walk rate must appear \
-together.
+10. Spot-Check Yourself: Before finishing, verify:
+(a) You used no more than three primary metrics.
+(b) Every mechanical observation connects to a tactical outcome.
+(c) Your confidence matches the sample size.
+(d) If you described any pitch as having great command, precision, \
+or location, check the walk rate — if it is above 12% of batters \
+faced, reframe as pitch-level placement, not overall command.
+(e) Read the capsule as a reader, not as the writer. Does it lead \
+with what happened, or with a theory about why? If you are spending \
+more words explaining the mechanism behind a change than describing \
+the change itself, rebalance. The reader needs to know what is \
+different before they care about why. Do not open with what is NOT \
+happening — start with what IS.
 
 STRICT CONSTRAINTS:
 - Rely entirely on the data provided in the input. Do not hallucinate \

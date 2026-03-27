@@ -105,34 +105,33 @@ pitcher-narratives -p PITCHER [-w WINDOW] [-v] [--print-prompts]
 ```
 $ pitcher-narratives -p 669432 -w 5
 
-Rogers isn't showing a new arm slot or a new shape on the fastball; all the
-release points are basically on top of the season baseline, and the
-four-seamer's movement is unchanged. The change is in how the arsenal is
-being deployed. The heater is a little harder than earlier in the season and
-still grades above average overall at P+ 114, but its location grade has
-slipped relative to his own baseline, so it's playing more like a pitch that
-sets the table than one that controls at-bats.
+Rogers has tilted into a more changeup-led mix, and that pitch is carrying
+the recent window. Usage on the changeup is up 12.1 points from his season
+line, and it's returning a 123 P+, with the location side also at 123, so
+the value is coming from where it's landing as much as from the shape. The
+four-seam is a little firmer at 93.2 mph and its P+ has moved to 114, but
+the location grade has slipped from 114 to 106, which tells you the fastball
+is playing a little more on stuff than on placement.
 
-The changeup is the clean recent win. Against right-handers it's the best
-pitch in the window, with P+ 123 and enough chase to give him a real
-secondary lane. The sinker is the pitch that will decide whether this is a
-stable two-platoon plan or just a temporary workaround. It has loud stuff,
-S+ 128, but the location grade is only L+ 12. That usage pattern looks
-intentional, not mechanical, especially with no release-point drift showing
-up.
-
----
-Trevor Rogers' changeup is trending up, posting a P+ 123 and emerging as
-his best pitch against right-handers.
+That lines up with how he's actually sequencing hitters. He's gone away from
+the sweeper, opened games with more secondary pitches, and split the mix in
+a way that looks matchup-driven: more changeups and cutters to righties, more
+four-seams and sinkers to lefties. The sinker is the pitch that still needs
+work — its S+ is 128 but its L+ is 12, and the recent P+ is only 44. For
+now Rogers looks a little better than the raw season baseline, but the next
+step depends on whether the sinker becomes a usable part of the plan.
 
 ---
-- Trevor Rogers' fastball is a touch harder and still grades at P+ 114, but
-  the location slip keeps ERA and WHIP risk on the board.
-- The changeup is the cleanest recent win, with P+ 123 against righties, and
-  that keeps his strikeout stream appeal alive in side-friendly matchups.
-- The sinker is the swing pitch now, with S+ 128 but only L+ 12 location,
-  and the 67% usage versus lefties in pass 3 makes his results look matchup
-  dependent.
+Trevor Rogers' changeup usage is up 12.1 points, and the pitch is returning
+a 123 P+ with a 123 location grade.
+
+---
+- Trevor Rogers has tilted 12.1 points more toward the changeup, and that
+  keeps the recent strikeout and ERA trend worth watching in mixed formats.
+- His four-seam is averaging 93.2 mph, but the pitch is living more on stuff
+  than placement, which keeps WHIP volatility in play.
+- The sinker's 44 P+ is the clearest red flag, and it keeps his value
+  matchup-dependent until that offering stabilizes.
 ```
 
 ## Output
