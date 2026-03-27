@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-03-26)
 Phase: 04
 Plan: Not started
 Status: Phase complete — ready for verification
-Last activity: 2026-03-26 - Completed quick task 260326-q9s: Add hard-hit rate metric
+Last activity: 2026-03-27 - Completed quick task 260326-sgh: Improve hallucination guard
 
 Progress: [░░░░░░░░░░] 0%
 
