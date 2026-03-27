@@ -20,7 +20,7 @@ import sys
 from typing import Any
 
 from pydantic import BaseModel
-from pydantic_ai import Agent
+from pydantic_ai import Agent, CachePoint
 from pydantic_ai.settings import ModelSettings, ThinkingEffort
 
 from pitcher_narratives.context import PitcherContext
@@ -328,45 +328,68 @@ class ReportResult(BaseModel):
 # ═══════════════════════════════════════════════════════════════════════
 
 
-def _build_synthesizer_message(ctx: PitcherContext) -> str:
-    """Build the Phase 1 user message with role-conditional guidance."""
+_UserPrompt = list[str | CachePoint]
+"""Type alias for user prompts with cache breakpoints."""
+
+
+def _build_synthesizer_message(ctx: PitcherContext) -> _UserPrompt:
+    """Build the Phase 1 user message with cache breakpoint after role guidance.
+
+    Role guidance is stable across all pitchers of the same role (SP/RP),
+    so caching it avoids re-processing ~120 tokens per pitcher.
+    """
     guidance = _SP_SYNTH_GUIDANCE if ctx.role == "SP" else _RP_SYNTH_GUIDANCE
-    return f"## Role-Specific Focus\n{guidance}\n\n## Pitcher Data\n{ctx.to_prompt()}"
+    return [
+        f"## Role-Specific Focus\n{guidance}",
+        CachePoint(),
+        f"## Pitcher Data\n{ctx.to_prompt()}",
+    ]
 
 
-def _build_editor_message(
-    ctx: PitcherContext,
-    synthesis: str,
-) -> str:
-    """Build the Phase 2 user message with synthesis output."""
-    return (
-        f"## Pitcher\n"
-        f"{ctx.pitcher_name} ({ctx.throws}HP, {ctx.role})\n\n"
-        f"## Key Findings From Data Analysis\n{synthesis}\n\n"
-        f"Write the two-paragraph scouting capsule now."
-    )
+def _build_editor_message(ctx: PitcherContext, synthesis: str) -> _UserPrompt:
+    """Build the Phase 2 user message with cache breakpoint after synthesis.
+
+    Synthesis output is shared across Phases 2/3/4, so caching it here
+    means Phases 3 and 4 get a cache hit on the same prefix.
+    """
+    return [
+        f"## Pitcher\n{ctx.pitcher_name} ({ctx.throws}HP, {ctx.role})\n\n"
+        f"## Key Findings From Data Analysis\n{synthesis}",
+        CachePoint(),
+        "Write the two-paragraph scouting capsule now.",
+    ]
 
 
-def _build_hook_message(ctx: PitcherContext, synthesis: str) -> str:
-    """Build the Phase 3 user message for the social media hook."""
-    return (
-        f"## Pitcher\n"
-        f"{ctx.pitcher_name} ({ctx.throws}HP, {ctx.role})\n\n"
-        f"## Key Findings\n{synthesis}\n\n"
-        f"Write one social media hook (1-2 sentences). "
-        f"Focus on the single most notable change."
-    )
+def _build_hook_message(ctx: PitcherContext, synthesis: str) -> _UserPrompt:
+    """Build the Phase 3 user message with cache breakpoint after synthesis."""
+    return [
+        f"## Pitcher\n{ctx.pitcher_name} ({ctx.throws}HP, {ctx.role})\n\n"
+        f"## Key Findings\n{synthesis}",
+        CachePoint(),
+        "Write one social media hook (1-2 sentences). Focus on the single most notable change.",
+    ]
 
 
-def _build_fantasy_message(ctx: PitcherContext, synthesis: str) -> str:
-    """Build the Phase 4 user message for fantasy baseball insights."""
-    return (
-        f"## Pitcher\n"
-        f"{ctx.pitcher_name} ({ctx.throws}HP, {ctx.role})\n\n"
-        f"## Key Findings\n{synthesis}\n\n"
-        f"Write exactly 3 bullet points of fantasy baseball insights. "
-        f"Each bullet must be actionable and cite a specific metric or trend."
-    )
+def _build_fantasy_message(ctx: PitcherContext, synthesis: str) -> _UserPrompt:
+    """Build the Phase 4 user message with cache breakpoint after synthesis."""
+    return [
+        f"## Pitcher\n{ctx.pitcher_name} ({ctx.throws}HP, {ctx.role})\n\n"
+        f"## Key Findings\n{synthesis}",
+        CachePoint(),
+        "Write exactly 3 bullet points of fantasy baseball insights. "
+        "Each bullet must be actionable and cite a specific metric or trend.",
+    ]
+
+
+def _render_user_prompt(parts: _UserPrompt) -> str:
+    """Render a user prompt (with CachePoints) as readable text."""
+    out: list[str] = []
+    for part in parts:
+        if isinstance(part, CachePoint):
+            out.append("  ── [cache breakpoint] ──")
+        else:
+            out.append(part)
+    return "\n".join(out)
 
 
 def print_prompts(ctx: PitcherContext) -> None:
@@ -390,7 +413,7 @@ def print_prompts(ctx: PitcherContext) -> None:
         print("── System Prompt ──\n", file=sys.stderr)
         print(system, file=sys.stderr)
         print("\n── User Message ──\n", file=sys.stderr)
-        print(user, file=sys.stderr)
+        print(_render_user_prompt(user), file=sys.stderr)
 
 
 def generate_report_streaming(

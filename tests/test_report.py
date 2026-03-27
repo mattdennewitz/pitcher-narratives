@@ -1,6 +1,7 @@
 """Tests for four-phase report generation pipeline."""
 
 import pytest
+from pydantic_ai import CachePoint
 from pydantic_ai.models.test import TestModel
 
 from pitcher_narratives.context import assemble_pitcher_context
@@ -21,6 +22,11 @@ from pitcher_narratives.report import (
     check_hallucinated_metrics,
     generate_report_streaming,
 )
+
+
+def _prompt_text(parts: list[str | CachePoint]) -> str:
+    """Join the text parts of a user prompt, skipping CachePoints."""
+    return "\n".join(p for p in parts if isinstance(p, str))
 
 TEST_PITCHER = 592155  # Booser, Cam
 
@@ -154,28 +160,28 @@ def test_rp_synth_guidance_contains_put_away():
 
 def test_synthesizer_message_includes_to_prompt(ctx):
     """Synthesizer message includes the to_prompt() output."""
-    msg = _build_synthesizer_message(ctx)
+    msg = _prompt_text(_build_synthesizer_message(ctx))
     assert ctx.to_prompt() in msg
 
 
 def test_synthesizer_message_sp_gets_sp_guidance(ctx):
     """SP context gets SP-specific synthesis focus."""
     sp_ctx = ctx.model_copy(update={"role": "SP"})
-    msg = _build_synthesizer_message(sp_ctx)
+    msg = _prompt_text(_build_synthesizer_message(sp_ctx))
     assert "starter" in msg.lower()
 
 
 def test_synthesizer_message_rp_gets_rp_guidance(ctx):
     """RP context gets RP-specific synthesis focus."""
     rp_ctx = ctx.model_copy(update={"role": "RP"})
-    msg = _build_synthesizer_message(rp_ctx)
+    msg = _prompt_text(_build_synthesizer_message(rp_ctx))
     assert "reliever" in msg.lower()
 
 
 def test_editor_message_includes_synthesis(ctx):
     """Editor message includes the synthesis output."""
     synthesis = "- Fastball velo down 1.2 mph\n- Slider usage up 12pp"
-    msg = _build_editor_message(ctx, synthesis)
+    msg = _prompt_text(_build_editor_message(ctx, synthesis))
     assert synthesis in msg
     assert ctx.pitcher_name in msg
 
@@ -363,13 +369,13 @@ def test_hook_writer_output_type_is_str():
 
 def test_hook_message_includes_pitcher_name(ctx):
     """Hook message includes pitcher name."""
-    msg = _build_hook_message(ctx, "test synthesis")
+    msg = _prompt_text(_build_hook_message(ctx, "test synthesis"))
     assert ctx.pitcher_name in msg
 
 
 def test_hook_message_includes_synthesis(ctx):
     """Hook message includes synthesis text."""
-    msg = _build_hook_message(ctx, "Fastball velo down 1.5")
+    msg = _prompt_text(_build_hook_message(ctx, "Fastball velo down 1.5"))
     assert "Fastball velo down 1.5" in msg
 
 
@@ -417,13 +423,13 @@ def test_fantasy_prompt_requires_verdicts():
 
 def test_fantasy_message_includes_pitcher_name(ctx):
     """Fantasy message includes pitcher name."""
-    msg = _build_fantasy_message(ctx, "test synthesis")
+    msg = _prompt_text(_build_fantasy_message(ctx, "test synthesis"))
     assert ctx.pitcher_name in msg
 
 
 def test_fantasy_message_includes_synthesis(ctx):
     """Fantasy message includes synthesis text."""
-    msg = _build_fantasy_message(ctx, "Fastball velo down 1.5")
+    msg = _prompt_text(_build_fantasy_message(ctx, "Fastball velo down 1.5"))
     assert "Fastball velo down 1.5" in msg
 
 
