@@ -12,8 +12,6 @@ from dataclasses import dataclass
 
 import polars as pl
 
-from pathlib import Path
-
 from data import AGGS_DIR, PitcherData
 
 __all__ = [
@@ -182,6 +180,36 @@ def _movement_delta_string(delta: float, threshold: float = _MOVEMENT_THRESHOLD)
 # ── Internal helpers ──────────────────────────────────────────────────
 
 
+def _safe_metric(df: pl.DataFrame, col: str, default: float = 0.0) -> float:
+    """Extract the first value of a metric column, or default if unavailable."""
+    if df.is_empty() or col not in df.columns:
+        return default
+    return float(df[col][0])
+
+
+def _pplus_delta_strings(
+    cold_start: bool,
+    season_p: float, season_s: float, season_l: float,
+    window_p: float | None, window_s: float | None, window_l: float | None,
+) -> tuple[str, str, str]:
+    """Compute P+/S+/L+ delta strings with cold start and None handling."""
+    if cold_start:
+        return _COLD_START_STRING, _COLD_START_STRING, _COLD_START_STRING
+    if window_p is None:
+        return "No window data", "No window data", "No window data"
+    return (
+        _pplus_delta_string(window_p - season_p),
+        _pplus_delta_string(window_s - season_s) if window_s is not None else "No window data",
+        _pplus_delta_string(window_l - season_l) if window_l is not None else "No window data",
+    )
+
+
+def _build_name_map(statcast: pl.DataFrame) -> dict[str, str]:
+    """Build pitch_type → pitch_name mapping from statcast data."""
+    name_df = statcast.select(["pitch_type", "pitch_name"]).unique()
+    return {row["pitch_type"]: row["pitch_name"] for row in name_df.iter_rows(named=True)}
+
+
 def _identify_primary_fastball(pitch_type_baseline: pl.DataFrame) -> str | None:
     """Return the pitch_type code of the highest-usage fastball type.
 
@@ -226,39 +254,40 @@ def _is_cold_start(data: PitcherData) -> bool:
     return len(data.window_appearances) >= len(data.appearances)
 
 
-def _weighted_window_pplus(
-    appearance_type_df: pl.DataFrame,
-    window_dates: list,
-    pitch_type: str,
+def _weighted_window_metrics(
+    df: pl.DataFrame,
+    metrics: tuple[str, ...],
+    filters: pl.Expr,
 ) -> dict[str, float | int | None]:
-    """Compute n_pitches-weighted P+/S+/L+ for a pitch type in window.
+    """Compute n_pitches-weighted averages for specified metrics in a window.
 
-    Filters pitcher_type_appearance CSV to window_dates and pitch_type,
-    then computes weighted averages.
+    Applies the given filter expression, then computes weighted averages
+    for each metric column present. Returns None for missing columns or
+    empty windows.
 
     Args:
-        appearance_type_df: The pitcher_type_appearance CSV DataFrame.
-        window_dates: List of game dates in the window.
-        pitch_type: Pitch type code to filter on.
+        df: DataFrame with n_pitches and metric columns.
+        metrics: Tuple of metric column names to average.
+        filters: Polars expression combining all filter conditions.
 
     Returns:
-        Dict with keys 'P+', 'S+', 'L+', 'n_pitches'. Values are None
+        Dict keyed by metric names plus 'n_pitches'. Values are None
         if no data found.
     """
-    window = appearance_type_df.filter(
-        (pl.col("game_date").is_in(window_dates))
-        & (pl.col("pitch_type") == pitch_type)
-    )
+    window = df.filter(filters)
+
+    empty = {m: None for m in metrics}
+    empty["n_pitches"] = 0
 
     if window.is_empty():
-        return {"P+": None, "S+": None, "L+": None, "n_pitches": 0}
+        return empty
 
     total_pitches = window["n_pitches"].sum()
     if total_pitches == 0:
-        return {"P+": None, "S+": None, "L+": None, "n_pitches": 0}
+        return empty
 
     result: dict[str, float | int | None] = {"n_pitches": int(total_pitches)}
-    for metric in ("P+", "S+", "L+"):
+    for metric in metrics:
         if metric in window.columns:
             weighted = (window[metric] * window["n_pitches"]).sum() / total_pitches
             result[metric] = float(weighted)
@@ -314,45 +343,11 @@ def _compute_platoon_baseline(pitcher_type_platoon_df: pl.DataFrame) -> pl.DataF
     )
 
 
-def _weighted_window_platoon_pplus(
-    platoon_appearance_df: pl.DataFrame,
-    window_dates: list,
-    pitch_type: str,
-    platoon_matchup: str,
-) -> dict[str, float | int | None]:
-    """Compute n_pitches-weighted P+/S+/L+ for a pitch type + platoon in window.
+_PPLUS_METRICS = ("P+", "S+", "L+")
+"""Pitching+ family metrics used in weighted-average computations."""
 
-    Args:
-        platoon_appearance_df: The pitcher_type_platoon_appearance CSV.
-        window_dates: List of game dates in the window.
-        pitch_type: Pitch type code to filter on.
-        platoon_matchup: 'same' or 'opposite'.
-
-    Returns:
-        Dict with keys 'P+', 'S+', 'L+', 'n_pitches'.
-    """
-    window = platoon_appearance_df.filter(
-        (pl.col("game_date").is_in(window_dates))
-        & (pl.col("pitch_type") == pitch_type)
-        & (pl.col("platoon_matchup") == platoon_matchup)
-    )
-
-    if window.is_empty():
-        return {"P+": None, "S+": None, "L+": None, "n_pitches": 0}
-
-    total_pitches = window["n_pitches"].sum()
-    if total_pitches == 0:
-        return {"P+": None, "S+": None, "L+": None, "n_pitches": 0}
-
-    result: dict[str, float | int | None] = {"n_pitches": int(total_pitches)}
-    for metric in ("P+", "S+", "L+"):
-        if metric in window.columns:
-            weighted = (window[metric] * window["n_pitches"]).sum() / total_pitches
-            result[metric] = float(weighted)
-        else:
-            result[metric] = None
-
-    return result
+_XMETRICS = ("xWhiff_P", "xSwing_P", "xRV100_P")
+"""Expected-outcome metrics used in execution computations."""
 
 
 # ── Dataclasses ───────────────────────────────────────────────────────
@@ -658,33 +653,25 @@ def compute_fastball_summary(data: PitcherData) -> FastballSummary | None:
     pt_baseline = data.pitch_type_baseline.filter(
         pl.col("pitch_type") == primary
     )
-    season_p_plus = float(pt_baseline["P+"][0]) if not pt_baseline.is_empty() and "P+" in pt_baseline.columns else 0.0
-    season_s_plus = float(pt_baseline["S+"][0]) if not pt_baseline.is_empty() and "S+" in pt_baseline.columns else 0.0
-    season_l_plus = float(pt_baseline["L+"][0]) if not pt_baseline.is_empty() and "L+" in pt_baseline.columns else 0.0
+    season_p_plus = _safe_metric(pt_baseline, "P+")
+    season_s_plus = _safe_metric(pt_baseline, "S+")
+    season_l_plus = _safe_metric(pt_baseline, "L+")
 
     # Window values from pitcher_type_appearance CSV
-    window_pplus = _weighted_window_pplus(
+    window_pplus = _weighted_window_metrics(
         data.agg_csvs["pitcher_type_appearance"],
-        window_dates,
-        primary,
+        _PPLUS_METRICS,
+        _window_date_type_filter(window_dates, primary),
     )
 
     window_p_plus = window_pplus["P+"]
     window_s_plus = window_pplus["S+"]
     window_l_plus = window_pplus["L+"]
 
-    if cold_start:
-        p_plus_delta_str = _COLD_START_STRING
-        s_plus_delta_str = _COLD_START_STRING
-        l_plus_delta_str = _COLD_START_STRING
-    elif window_p_plus is not None:
-        p_plus_delta_str = _pplus_delta_string(window_p_plus - season_p_plus)
-        s_plus_delta_str = _pplus_delta_string(window_s_plus - season_s_plus) if window_s_plus is not None else "No window data"
-        l_plus_delta_str = _pplus_delta_string(window_l_plus - season_l_plus) if window_l_plus is not None else "No window data"
-    else:
-        p_plus_delta_str = "No window data"
-        s_plus_delta_str = "No window data"
-        l_plus_delta_str = "No window data"
+    p_plus_delta_str, s_plus_delta_str, l_plus_delta_str = _pplus_delta_strings(
+        cold_start, season_p_plus, season_s_plus, season_l_plus,
+        window_p_plus, window_s_plus, window_l_plus,
+    )
 
     # ── Movement ──────────────────────────────────────────────────
     season_pfx_x = float(fb_statcast["pfx_x"].mean())
@@ -822,11 +809,7 @@ def compute_arsenal_summary(data: PitcherData) -> list[PitchTypeSummary]:
     baseline = data.pitch_type_baseline.sort("n_pitches", descending=True)
     pitch_types = baseline["pitch_type"].to_list()
 
-    # Build pitch_type -> pitch_name mapping from statcast
-    name_map: dict[str, str] = {}
-    name_df = data.statcast.select(["pitch_type", "pitch_name"]).unique()
-    for row in name_df.iter_rows(named=True):
-        name_map[row["pitch_type"]] = row["pitch_name"]
+    name_map = _build_name_map(data.statcast)
 
     # Total pitch counts
     total_season = len(data.statcast)
@@ -856,31 +839,23 @@ def compute_arsenal_summary(data: PitcherData) -> list[PitchTypeSummary]:
 
         # ── P+/S+/L+ ────────────────────────────────────────────
         pt_baseline_row = baseline.filter(pl.col("pitch_type") == pt)
-        season_p_plus = float(pt_baseline_row["P+"][0]) if not pt_baseline_row.is_empty() and "P+" in pt_baseline_row.columns else 0.0
-        season_s_plus = float(pt_baseline_row["S+"][0]) if not pt_baseline_row.is_empty() and "S+" in pt_baseline_row.columns else 0.0
-        season_l_plus = float(pt_baseline_row["L+"][0]) if not pt_baseline_row.is_empty() and "L+" in pt_baseline_row.columns else 0.0
+        season_p_plus = _safe_metric(pt_baseline_row, "P+")
+        season_s_plus = _safe_metric(pt_baseline_row, "S+")
+        season_l_plus = _safe_metric(pt_baseline_row, "L+")
 
-        window_pplus = _weighted_window_pplus(
+        window_pplus = _weighted_window_metrics(
             data.agg_csvs["pitcher_type_appearance"],
-            window_dates,
-            pt,
+            _PPLUS_METRICS,
+            _window_date_type_filter(window_dates, pt),
         )
         window_p_plus = window_pplus["P+"]
         window_s_plus = window_pplus["S+"]
         window_l_plus = window_pplus["L+"]
 
-        if cold_start:
-            p_plus_delta = _COLD_START_STRING
-            s_plus_delta = _COLD_START_STRING
-            l_plus_delta = _COLD_START_STRING
-        elif window_p_plus is not None:
-            p_plus_delta = _pplus_delta_string(window_p_plus - season_p_plus)
-            s_plus_delta = _pplus_delta_string(window_s_plus - season_s_plus) if window_s_plus is not None else "No window data"
-            l_plus_delta = _pplus_delta_string(window_l_plus - season_l_plus) if window_l_plus is not None else "No window data"
-        else:
-            p_plus_delta = "No window data"
-            s_plus_delta = "No window data"
-            l_plus_delta = "No window data"
+        p_plus_delta, s_plus_delta, l_plus_delta = _pplus_delta_strings(
+            cold_start, season_p_plus, season_s_plus, season_l_plus,
+            window_p_plus, window_s_plus, window_l_plus,
+        )
 
         # ── Pitch name ───────────────────────────────────────────
         pitch_name = name_map.get(pt, pt)
@@ -930,18 +905,14 @@ def compute_platoon_mix(data: PitcherData) -> PlatoonMix:
     window_dates = _get_window_game_dates(data)
     cold_start = _is_cold_start(data)
 
-    # Build pitch_type -> pitch_name mapping
-    name_map: dict[str, str] = {}
-    name_df = data.statcast.select(["pitch_type", "pitch_name"]).unique()
-    for row in name_df.iter_rows(named=True):
-        name_map[row["pitch_type"]] = row["pitch_name"]
+    name_map = _build_name_map(data.statcast)
 
     # Add platoon_matchup column to statcast
     statcast_with_platoon = data.statcast.with_columns(
-        pl.struct(["stand", "p_throws"]).map_elements(
-            lambda s: _stand_to_platoon(s["stand"], s["p_throws"]),
-            return_dtype=pl.Utf8,
-        ).alias("platoon_matchup")
+        pl.when(pl.col("stand") == pl.col("p_throws"))
+        .then(pl.lit("same"))
+        .otherwise(pl.lit("opposite"))
+        .alias("platoon_matchup")
     )
     window_sc = statcast_with_platoon.filter(pl.col("game_date").is_in(window_dates))
 
@@ -1011,11 +982,11 @@ def compute_platoon_mix(data: PitcherData) -> PlatoonMix:
                 season_p_plus = float(plat_row["P+"][0])
 
             # ── Window P+ from platoon appearance data ──
-            window_plat_pplus = _weighted_window_platoon_pplus(
+            window_plat_pplus = _weighted_window_metrics(
                 data.agg_csvs["pitcher_type_platoon_appearance"],
-                window_dates,
-                pt,
-                side,
+                _PPLUS_METRICS,
+                _window_date_type_filter(window_dates, pt)
+                & (pl.col("platoon_matchup") == side),
             )
             window_p_plus = window_plat_pplus["P+"]
 
@@ -1060,11 +1031,7 @@ def compute_first_pitch_weaponry(data: PitcherData) -> FirstPitchWeaponry:
     window_dates = _get_window_game_dates(data)
     cold_start = _is_cold_start(data)
 
-    # Build pitch_type -> pitch_name mapping
-    name_map: dict[str, str] = {}
-    name_df = data.statcast.select(["pitch_type", "pitch_name"]).unique()
-    for row in name_df.iter_rows(named=True):
-        name_map[row["pitch_type"]] = row["pitch_name"]
+    name_map = _build_name_map(data.statcast)
 
     # Filter to first pitches
     first_pitches = data.statcast.filter(pl.col("pitch_number") == 1)
@@ -1205,53 +1172,20 @@ def _max_consecutive_days(appearance_dates: list) -> int:
     return max_run
 
 
-def _weighted_window_xmetrics(
-    appearance_type_df: pl.DataFrame,
-    window_dates: list,
-    pitch_type: str,
-) -> dict[str, float | None]:
-    """Compute n_pitches-weighted xWhiff, xSwing, xRV100 for a pitch type in window.
-
-    Args:
-        appearance_type_df: The pitcher_type_appearance CSV DataFrame.
-        window_dates: List of game dates in the window.
-        pitch_type: Pitch type code to filter on.
-
-    Returns:
-        Dict with keys 'xWhiff_P', 'xSwing_P', 'xRV100_P'. Values are
-        None if no data found.
-    """
-    window = appearance_type_df.filter(
-        (pl.col("game_date").is_in(window_dates))
-        & (pl.col("pitch_type") == pitch_type)
-    )
-
-    if window.is_empty():
-        return {"xWhiff_P": None, "xSwing_P": None, "xRV100_P": None}
-
-    total_pitches = window["n_pitches"].sum()
-    if total_pitches == 0:
-        return {"xWhiff_P": None, "xSwing_P": None, "xRV100_P": None}
-
-    result: dict[str, float | None] = {}
-    for metric in ("xWhiff_P", "xSwing_P", "xRV100_P"):
-        if metric in window.columns:
-            weighted = (window[metric] * window["n_pitches"]).sum() / total_pitches
-            result[metric] = float(weighted)
-        else:
-            result[metric] = None
-
-    return result
+def _window_date_type_filter(window_dates: list, pitch_type: str) -> pl.Expr:
+    """Build a standard filter for window dates + pitch type."""
+    return (pl.col("game_date").is_in(window_dates)) & (pl.col("pitch_type") == pitch_type)
 
 
 def _compute_xrv100_percentile(
     pitcher_xrv100: float | None,
     pitch_type: str,
+    full_pitcher_type_df: pl.DataFrame,
     min_pitches: int = 10,
 ) -> int | None:
     """Compute percentile rank of pitcher's xRV100 vs all pitchers for a type.
 
-    Loads the full (unfiltered) pitcher_type.csv to get the league
+    Uses the full (unfiltered) pitcher_type DataFrame to get the league
     distribution. Weight-averages xRV100_P per (pitcher, pitch_type)
     across game_types. Lower (more negative) xRV100 = better pitcher
     = higher percentile.
@@ -1259,6 +1193,8 @@ def _compute_xrv100_percentile(
     Args:
         pitcher_xrv100: The pitcher's weighted window xRV100_P for this type.
         pitch_type: Pitch type code.
+        full_pitcher_type_df: Full unfiltered pitcher_type DataFrame for
+            league distribution.
         min_pitches: Minimum pitches threshold for inclusion.
 
     Returns:
@@ -1267,16 +1203,8 @@ def _compute_xrv100_percentile(
     if pitcher_xrv100 is None:
         return None
 
-    # Load full unfiltered pitcher_type.csv for league distribution
-    full_csv_path = AGGS_DIR / "2026-pitcher_type.csv"
-    full_pt = pl.read_csv(full_csv_path)
-    if "game_date" in full_pt.columns:
-        full_pt = full_pt.with_columns(
-            pl.col("game_date").str.to_date("%Y-%m-%d")
-        )
-
     # Filter to this pitch type and minimum pitches
-    type_data = full_pt.filter(
+    type_data = full_pitcher_type_df.filter(
         (pl.col("pitch_type") == pitch_type)
         & (pl.col("n_pitches") >= min_pitches)
     )
@@ -1318,15 +1246,18 @@ def compute_execution_metrics(data: PitcherData) -> list[ExecutionMetrics]:
         pl.col("game_date").is_in(window_dates)
     )
 
-    # Build pitch_type -> pitch_name mapping from statcast
-    name_map: dict[str, str] = {}
-    name_df = data.statcast.select(["pitch_type", "pitch_name"]).unique()
-    for row in name_df.iter_rows(named=True):
-        name_map[row["pitch_type"]] = row["pitch_name"]
+    name_map = _build_name_map(data.statcast)
 
     # Get pitch types from baseline sorted by n_pitches descending
     baseline = data.pitch_type_baseline.sort("n_pitches", descending=True)
     pitch_types = baseline["pitch_type"].to_list()
+
+    # Load full pitcher_type CSV once for percentile computation
+    full_pitcher_type_df = pl.read_csv(AGGS_DIR / "2026-pitcher_type.csv")
+    if "game_date" in full_pitcher_type_df.columns:
+        full_pitcher_type_df = full_pitcher_type_df.with_columns(
+            pl.col("game_date").str.to_date("%Y-%m-%d")
+        )
 
     results: list[ExecutionMetrics] = []
 
@@ -1366,17 +1297,19 @@ def compute_execution_metrics(data: PitcherData) -> list[ExecutionMetrics]:
             chase_rate = 0.0
 
         # ── xWhiff / xSwing / xRV100 from CSV ────────────────────
-        xmetrics = _weighted_window_xmetrics(
+        xmetrics = _weighted_window_metrics(
             data.agg_csvs["pitcher_type_appearance"],
-            window_dates,
-            pt,
+            _XMETRICS,
+            _window_date_type_filter(window_dates, pt),
         )
         xwhiff_p = xmetrics["xWhiff_P"]
         xswing_p = xmetrics["xSwing_P"]
         xrv100_p = xmetrics["xRV100_P"]
 
         # ── xRV100 percentile ─────────────────────────────────────
-        xrv100_percentile = _compute_xrv100_percentile(xrv100_p, pt)
+        xrv100_percentile = _compute_xrv100_percentile(
+            xrv100_p, pt, full_pitcher_type_df,
+        )
 
         # ── Small sample / cold start ─────────────────────────────
         small_sample = n_pitches < _MIN_PITCHES
@@ -1596,10 +1529,8 @@ def compute_tto_analysis(data: PitcherData) -> TTOAnalysis:
     statcast = data.statcast
     all_pitches = data.agg_csvs.get("all_pitches")
 
-    _empty = TTOAnalysis(splits=[], available=False, summary="", mix_shifts=[])
-
     if all_pitches is None or all_pitches.is_empty():
-        return _empty._replace_summary("No pitch-level data") if hasattr(_empty, '_replace_summary') else TTOAnalysis(splits=[], available=False, summary="No pitch-level data", mix_shifts=[])
+        return TTOAnalysis(splits=[], available=False, summary="No pitch-level data", mix_shifts=[])
 
     # Filter statcast to window games only
     window_game_pks = data.window_appearances["game_pk"].unique().to_list()
@@ -1750,10 +1681,10 @@ def compute_tto_analysis(data: PitcherData) -> TTOAnalysis:
             fb_delta = "--"
             sec_delta = "--"
         else:
-            vdelta = _velo_delta_string(velo - first["avg_velo"]) if velo and first["avg_velo"] else "--"
-            pdelta = _pplus_delta_string(p_plus - first["avg_p_plus"]) if p_plus and first["avg_p_plus"] else "--"
-            fb_delta = _pplus_delta_string(fb_pp - first_fb) if fb_pp and first_fb else "--"
-            sec_delta = _pplus_delta_string(sec_pp - first_sec) if sec_pp and first_sec else "--"
+            vdelta = _velo_delta_string(velo - first["avg_velo"]) if velo is not None and first["avg_velo"] is not None else "--"
+            pdelta = _pplus_delta_string(p_plus - first["avg_p_plus"]) if p_plus is not None and first["avg_p_plus"] is not None else "--"
+            fb_delta = _pplus_delta_string(fb_pp - first_fb) if fb_pp is not None and first_fb is not None else "--"
+            sec_delta = _pplus_delta_string(sec_pp - first_sec) if sec_pp is not None and first_sec is not None else "--"
 
         # Per-pitch-type breakdown with usage % and deltas
         pt_entries: list[TTOPitchType] = []

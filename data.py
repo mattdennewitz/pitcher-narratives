@@ -230,6 +230,8 @@ def filter_to_window(df: pl.DataFrame, window_days: int) -> pl.DataFrame:
         Filtered DataFrame containing only rows within the window.
     """
     max_date = df["game_date"].max()
+    if max_date is None:
+        return df.clear()
     cutoff = max_date - timedelta(days=window_days)
     return df.filter(pl.col("game_date") >= cutoff)
 

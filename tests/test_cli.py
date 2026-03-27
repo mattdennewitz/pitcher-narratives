@@ -11,37 +11,37 @@ import pytest
 from main import parse_args
 
 
-def test_parse_pitcher_flag():
+def test_parse_pitcher_flag(monkeypatch):
     """CLI-01: -p flag accepted and parsed as int."""
-    sys.argv = ["main.py", "-p", "592155"]
+    monkeypatch.setattr(sys, "argv", ["main.py", "-p", "592155"])
     args = parse_args()
     assert args.pitcher == 592155
 
 
-def test_parse_pitcher_long_flag():
+def test_parse_pitcher_long_flag(monkeypatch):
     """CLI-01: --pitcher long flag works."""
-    sys.argv = ["main.py", "--pitcher", "592155"]
+    monkeypatch.setattr(sys, "argv", ["main.py", "--pitcher", "592155"])
     args = parse_args()
     assert args.pitcher == 592155
 
 
-def test_window_default():
+def test_window_default(monkeypatch):
     """CLI-02: -w defaults to 30 when omitted."""
-    sys.argv = ["main.py", "-p", "592155"]
+    monkeypatch.setattr(sys, "argv", ["main.py", "-p", "592155"])
     args = parse_args()
     assert args.window == 30
 
 
-def test_window_custom():
+def test_window_custom(monkeypatch):
     """CLI-02: -w flag overrides default."""
-    sys.argv = ["main.py", "-p", "592155", "-w", "14"]
+    monkeypatch.setattr(sys, "argv", ["main.py", "-p", "592155", "-w", "14"])
     args = parse_args()
     assert args.window == 14
 
 
-def test_pitcher_required():
+def test_pitcher_required(monkeypatch):
     """CLI-01: Missing -p flag causes SystemExit (argparse error)."""
-    sys.argv = ["main.py"]
+    monkeypatch.setattr(sys, "argv", ["main.py"])
     with pytest.raises(SystemExit) as exc_info:
         parse_args()
     assert exc_info.value.code == 2

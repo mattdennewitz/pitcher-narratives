@@ -1,5 +1,6 @@
 """Tests for two-phase report generation (Synthesizer → Editor)."""
 
+import pytest
 from pydantic_ai.models.test import TestModel
 
 from context import assemble_pitcher_context
@@ -19,9 +20,12 @@ from report import (
 
 TEST_PITCHER = 592155  # Booser, Cam
 
-# Fixture-style: load data once (read-only test data)
-_data = load_pitcher_data(TEST_PITCHER, window_days=30)
-_ctx = assemble_pitcher_context(_data)
+
+@pytest.fixture(scope="module")
+def ctx():
+    """Load data once per module (read-only test data)."""
+    data = load_pitcher_data(TEST_PITCHER, window_days=30)
+    return assemble_pitcher_context(data)
 
 
 # -- Phase 1: Synthesizer agent tests -----------------------------------------
@@ -139,51 +143,51 @@ def test_rp_synth_guidance_contains_put_away():
 # -- Message builder tests ----------------------------------------------------
 
 
-def test_synthesizer_message_includes_to_prompt():
+def test_synthesizer_message_includes_to_prompt(ctx):
     """Synthesizer message includes the to_prompt() output."""
-    msg = _build_synthesizer_message(_ctx)
-    assert _ctx.to_prompt() in msg
+    msg = _build_synthesizer_message(ctx)
+    assert ctx.to_prompt() in msg
 
 
-def test_synthesizer_message_sp_gets_sp_guidance():
+def test_synthesizer_message_sp_gets_sp_guidance(ctx):
     """SP context gets SP-specific synthesis focus."""
-    sp_ctx = _ctx.model_copy(update={"role": "SP"})
+    sp_ctx = ctx.model_copy(update={"role": "SP"})
     msg = _build_synthesizer_message(sp_ctx)
     assert "starter" in msg.lower()
 
 
-def test_synthesizer_message_rp_gets_rp_guidance():
+def test_synthesizer_message_rp_gets_rp_guidance(ctx):
     """RP context gets RP-specific synthesis focus."""
-    rp_ctx = _ctx.model_copy(update={"role": "RP"})
+    rp_ctx = ctx.model_copy(update={"role": "RP"})
     msg = _build_synthesizer_message(rp_ctx)
     assert "reliever" in msg.lower()
 
 
-def test_editor_message_includes_synthesis():
+def test_editor_message_includes_synthesis(ctx):
     """Editor message includes the synthesis output."""
     synthesis = "- Fastball velo down 1.2 mph\n- Slider usage up 12pp"
-    msg = _build_editor_message(_ctx, synthesis)
+    msg = _build_editor_message(ctx, synthesis)
     assert synthesis in msg
-    assert _ctx.pitcher_name in msg
+    assert ctx.pitcher_name in msg
 
 
 # -- Two-phase pipeline tests -------------------------------------------------
 
 
-def test_generate_report_returns_string():
+def test_generate_report_returns_string(ctx):
     """Full pipeline returns a non-empty string using TestModel."""
     result = generate_report_streaming(
-        _ctx, _model_override=TestModel(custom_output_text="Test report output")
+        ctx, _model_override=TestModel(custom_output_text="Test report output")
     )
     assert isinstance(result, str)
     assert len(result) > 0
 
 
-def test_generate_report_uses_test_model():
+def test_generate_report_uses_test_model(ctx):
     """Pipeline with TestModel produces the custom_output_text from Phase 2."""
     expected = "This is the final editor capsule"
     result = generate_report_streaming(
-        _ctx, _model_override=TestModel(custom_output_text=expected)
+        ctx, _model_override=TestModel(custom_output_text=expected)
     )
     # TestModel returns same text for both phases; Phase 2 output is what we get
     assert result == expected
