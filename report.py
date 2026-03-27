@@ -16,24 +16,30 @@ insights with specific metric citations.
 from __future__ import annotations
 
 import re
+import sys
 from typing import Any
 
 from pydantic import BaseModel
 from pydantic_ai import Agent
-from pydantic_ai.settings import ModelSettings
+from pydantic_ai.settings import ModelSettings, ThinkingEffort
 
 from context import PitcherContext
 
 __all__ = [
     "HallucinationReport",
+    "PROVIDERS",
     "ReportResult",
-    "_build_fantasy_message",
-    "_build_hook_message",
+    "THINKING_LEVELS",
     "check_hallucinated_metrics",
-    "fantasy_analyst",
     "generate_report_streaming",
-    "hook_writer",
+    "print_prompts",
 ]
+
+THINKING_LEVELS: list[ThinkingEffort] = ['minimal', 'low', 'medium', 'high', 'xhigh']
+PROVIDERS = {
+    'openai': 'openai:gpt-5.4-mini',
+    'claude': 'anthropic:claude-sonnet-4-6',
+}
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -140,14 +146,6 @@ Additional focus for this reliever:
 - Workload trajectory: S+ improving as he stretches out, or degrading? L+ fading?
 - Any pitch showing a breakout trend (S+ surge, shape change, usage surge)?"""
 
-synthesizer = Agent(
-    "anthropic:claude-sonnet-4-6",
-    output_type=str,
-    system_prompt=_SYNTHESIZER_PROMPT,
-    model_settings=ModelSettings(max_tokens=2048),
-    defer_model_check=True,
-)
-
 
 # ═══════════════════════════════════════════════════════════════════════
 # PHASE 2: THE EDITOR (THE ANALYST)
@@ -231,13 +229,46 @@ provided as context. Base analysis on underlying metrics.
 about the pitcher's stuff, not about "looking at the data."
 - Do not soften your conclusions. Be direct."""
 
-editor = Agent(
-    "anthropic:claude-sonnet-4-6",
-    output_type=str,
-    system_prompt=_EDITOR_PROMPT,
-    model_settings=ModelSettings(max_tokens=2048),
-    defer_model_check=True,
-)
+
+def _make_agents(
+    provider: str = 'openai',
+    thinking: ThinkingEffort = 'high',
+) -> tuple[Agent[None, str], Agent[None, str], Agent[None, str], Agent[None, str]]:
+    """Create all four pipeline agents for the given provider and thinking level."""
+    model = PROVIDERS[provider]
+    # Anthropic's default max_tokens (4096) is too low when thinking is enabled
+    # because thinking tokens count against the budget.
+    extra = {'max_tokens': 16384} if provider == 'claude' else {}
+    settings = ModelSettings(thinking=thinking, **extra)
+    synth = Agent(
+        model,
+        output_type=str,
+        system_prompt=_SYNTHESIZER_PROMPT,
+        model_settings=settings,
+        defer_model_check=True,
+    )
+    ed = Agent(
+        model,
+        output_type=str,
+        system_prompt=_EDITOR_PROMPT,
+        model_settings=settings,
+        defer_model_check=True,
+    )
+    hook = Agent(
+        model,
+        output_type=str,
+        system_prompt=_HOOK_PROMPT,
+        model_settings=ModelSettings(thinking=thinking, max_tokens=150, **extra),
+        defer_model_check=True,
+    )
+    fantasy = Agent(
+        model,
+        output_type=str,
+        system_prompt=_FANTASY_PROMPT,
+        model_settings=ModelSettings(thinking=thinking, max_tokens=300, **extra),
+        defer_model_check=True,
+    )
+    return synth, ed, hook, fantasy
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -253,13 +284,6 @@ direction. No hashtags, no emojis, no hype. Write with authority, as if \
 tweeting to a front-office audience. The hook must stand alone without \
 context."""
 
-hook_writer = Agent(
-    "anthropic:claude-sonnet-4-6",
-    output_type=str,
-    system_prompt=_HOOK_PROMPT,
-    model_settings=ModelSettings(max_tokens=150),
-    defer_model_check=True,
-)
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -286,13 +310,6 @@ injury/workload red flags, and category impact (Ks, ERA, WHIP, ratios).
 Format: exactly 3 lines, each starting with "- " (a bullet). Nothing \
 else — no intro, no summary, no headers."""
 
-fantasy_analyst = Agent(
-    "anthropic:claude-sonnet-4-6",
-    output_type=str,
-    system_prompt=_FANTASY_PROMPT,
-    model_settings=ModelSettings(max_tokens=300),
-    defer_model_check=True,
-)
 
 
 class ReportResult(BaseModel):
@@ -349,9 +366,35 @@ def _build_fantasy_message(ctx: PitcherContext, synthesis: str) -> str:
     )
 
 
+def print_prompts(ctx: PitcherContext) -> None:
+    """Print all LLM prompts (system + user) to stderr and exit."""
+    synth_user = _build_synthesizer_message(ctx)
+    placeholder = "<synthesis output would go here>"
+    editor_user = _build_editor_message(ctx, placeholder)
+    hook_user = _build_hook_message(ctx, placeholder)
+    fantasy_user = _build_fantasy_message(ctx, placeholder)
+
+    sep = "═" * 72
+    for label, system, user in [
+        ("PHASE 1: SYNTHESIZER", _SYNTHESIZER_PROMPT, synth_user),
+        ("PHASE 2: EDITOR", _EDITOR_PROMPT, editor_user),
+        ("PHASE 3: HOOK WRITER", _HOOK_PROMPT, hook_user),
+        ("PHASE 4: FANTASY ANALYST", _FANTASY_PROMPT, fantasy_user),
+    ]:
+        print(f"\n{sep}", file=sys.stderr)
+        print(label, file=sys.stderr)
+        print(f"{sep}\n", file=sys.stderr)
+        print("── System Prompt ──\n", file=sys.stderr)
+        print(system, file=sys.stderr)
+        print("\n── User Message ──\n", file=sys.stderr)
+        print(user, file=sys.stderr)
+
+
 def generate_report_streaming(
     ctx: PitcherContext,
     *,
+    provider: str = 'openai',
+    thinking: ThinkingEffort = 'high',
     _model_override: Any = None,
 ) -> ReportResult:
     """Generate a four-phase scouting report and stream the editorial output.
@@ -365,11 +408,15 @@ def generate_report_streaming(
 
     Args:
         ctx: Assembled pitcher context.
+        provider: LLM provider key ('openai' or 'claude').
+        thinking: Thinking effort level.
         _model_override: Optional model override for testing (e.g., TestModel).
 
     Returns:
         ReportResult with narrative, social_hook, and fantasy_insights.
     """
+    synthesizer, editor, hook_writer, fantasy_analyst = _make_agents(provider, thinking)
+
     synth_kwargs: dict[str, Any] = {"user_prompt": _build_synthesizer_message(ctx)}
     if _model_override is not None:
         synth_kwargs["model"] = _model_override
