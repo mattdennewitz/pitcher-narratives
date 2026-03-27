@@ -26,7 +26,9 @@ __all__ = [
     "load_statcast",
 ]
 
-DATA_DIR = Path(os.environ.get("PITCHER_NARRATIVES_DATA_DIR", Path(__file__).resolve().parent.parent.parent))
+_DEFAULT_DATA_DIR = Path(__file__).resolve().parent.parent.parent
+_data_dir_override = os.environ.get("PITCHER_NARRATIVES_DATA_DIR")
+DATA_DIR = Path(_data_dir_override) if _data_dir_override else _DEFAULT_DATA_DIR
 PARQUET_PATH = DATA_DIR / "statcast_2026.parquet"
 AGGS_DIR = DATA_DIR / "aggs"
 

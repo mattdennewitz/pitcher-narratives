@@ -250,35 +250,11 @@ def _make_agents(
     # because thinking tokens count against the budget.
     extra = {"max_tokens": 16384} if provider == "claude" else {}
     settings = ModelSettings(thinking=thinking, **extra)
-    synth = Agent(
-        model,
-        output_type=str,
-        system_prompt=_SYNTHESIZER_PROMPT,
-        model_settings=settings,
-        defer_model_check=True,
+    prompts = (_SYNTHESIZER_PROMPT, _EDITOR_PROMPT, _HOOK_PROMPT, _FANTASY_PROMPT)
+    agents: _AgentTuple = tuple(  # type: ignore[assignment]
+        Agent(model, output_type=str, system_prompt=p, model_settings=settings, defer_model_check=True)
+        for p in prompts
     )
-    ed = Agent(
-        model,
-        output_type=str,
-        system_prompt=_EDITOR_PROMPT,
-        model_settings=settings,
-        defer_model_check=True,
-    )
-    hook = Agent(
-        model,
-        output_type=str,
-        system_prompt=_HOOK_PROMPT,
-        model_settings=settings,
-        defer_model_check=True,
-    )
-    fantasy = Agent(
-        model,
-        output_type=str,
-        system_prompt=_FANTASY_PROMPT,
-        model_settings=settings,
-        defer_model_check=True,
-    )
-    agents = (synth, ed, hook, fantasy)
     _agent_cache[key] = agents
     return agents
 

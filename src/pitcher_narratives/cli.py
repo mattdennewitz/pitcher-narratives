@@ -104,15 +104,11 @@ def main() -> None:
         model_override = TestModel(custom_output_text="[Test mode] Scouting report would appear here.")
 
     # Pre-flight API key check — fail fast instead of hanging on missing key
-    if model_override is None:
-        _KEY_FOR_PROVIDER = {
-            "openai": ("OPENAI_API_KEY", "https://platform.openai.com/"),
-            "claude": ("ANTHROPIC_API_KEY", "https://console.anthropic.com/"),
-        }
-        env_var, url = _KEY_FOR_PROVIDER[args.provider]
-        if not os.environ.get(env_var):
-            print(f"Error: {env_var} not set. {url}", file=sys.stderr)
-            sys.exit(1)
+    _API_KEYS = {"openai": "OPENAI_API_KEY", "claude": "ANTHROPIC_API_KEY"}
+    if model_override is None and not os.environ.get(_API_KEYS[args.provider]):
+        env_var = _API_KEYS[args.provider]
+        print(f"Error: {env_var} not set.", file=sys.stderr)
+        sys.exit(1)
 
     result = generate_report_streaming(
         ctx,
