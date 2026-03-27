@@ -256,6 +256,7 @@ def _make_agents(
         gemini_level = "high" if thinking in ("high", "xhigh") else "low"
         settings: ModelSettings = GoogleModelSettings(
             google_thinking_config={"thinking_level": gemini_level},
+            temperature=1.0,
             max_tokens=16384,
         )
     elif provider == "claude":
