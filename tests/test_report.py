@@ -28,6 +28,7 @@ def _prompt_text(parts: list[str | CachePoint]) -> str:
     """Join the text parts of a user prompt, skipping CachePoints."""
     return "\n".join(p for p in parts if isinstance(p, str))
 
+
 TEST_PITCHER = 592155  # Booser, Cam
 
 
@@ -415,10 +416,10 @@ def test_fantasy_prompt_requires_three_bullets():
     assert "bullet" in prompt_lower
 
 
-def test_fantasy_prompt_requires_verdicts():
-    """Fantasy prompt requires bold action verdicts."""
-    assert "verdict" in _FANTASY_PROMPT.lower()
+def test_fantasy_prompt_news_first_style():
+    """Fantasy prompt uses news-wire voice, not command-style verdicts."""
     assert "axios" in _FANTASY_PROMPT.lower()
+    assert "news" in _FANTASY_PROMPT.lower()
 
 
 def test_fantasy_message_includes_pitcher_name(ctx):

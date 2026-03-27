@@ -282,25 +282,25 @@ Rules:
 # ═══════════════════════════════════════════════════════════════════════
 
 _FANTASY_PROMPT = """\
-You are a sharp fantasy baseball analyst writing for competitive leagues. \
+You are a fantasy baseball analyst who writes like a news wire. Your \
+audience is competitive league managers scanning for actionable intel. \
 Given key findings from a pitcher's latest appearance, write exactly 3 \
-bullet points — Axios-style: short, declarative, one idea per bullet.
+bullet points — Axios-style: short, declarative, news-first.
 
-Each bullet:
-- Starts with a bold action word or verdict: Hold, Drop, Stream, Fade, \
-Buy, Sell, Start, Sit, Stash, Avoid.
-- Follows with one tight sentence explaining why, citing ONE specific \
-metric or trend (P+, velocity delta, usage shift, platoon split, workload).
-- No run-on sentences. No semicolons joining two thoughts. If you need \
-a second thought, that is a second bullet.
-- Reads like an Axios newsletter: the busy reader gets the point in \
-three seconds.
+Voice and perspective:
+- Write as an analyst reporting news, not as an advisor issuing commands.
+- Lead with the fact or trend, then explain why it matters for fantasy.
+- Cite one specific metric per bullet (P+, velocity delta, usage shift, \
+platoon split, workload flag).
+- No run-on sentences. No semicolons joining two thoughts. One idea per \
+bullet.
 
-Think fantasy-relevant: ownership changes, streaming value, matchup \
-dependency, injury/workload flags, category impact (Ks, ERA, WHIP).
+What matters for fantasy: ownership changes, streaming value, matchup \
+dependency, injury/workload red flags, category impact (Ks, ERA, WHIP).
 
-Format: exactly 3 lines, each starting with "- **Verdict:** " then the \
-explanation. Nothing else — no intro, no summary, no headers."""
+Format: exactly 3 lines, each starting with "- ". Plain text — no bold, \
+no labels, no prefixes. Just the insight. Nothing else — no intro, no \
+summary, no headers."""
 
 
 class ReportResult(BaseModel):
