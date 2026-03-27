@@ -1,10 +1,16 @@
-"""Two-phase report generation: Data Synthesizer → Editor/Analyst.
+"""Four-phase report generation pipeline.
 
 Phase 1 (Synthesizer): Extracts signal from noise — structured bullet
 points of key findings, deltas, and trends. No narrative.
 
 Phase 2 (Editor): Weaves those facts into a skeptical, two-paragraph
 capsule with decisive projection. Elite sabermetric analyst voice.
+
+Phase 3 (Hook Writer): Distills synthesis into a 1-2 sentence social
+media hook for front-office audiences.
+
+Phase 4 (Fantasy Analyst): Produces 3 actionable fantasy baseball
+insights with specific metric citations.
 """
 
 from __future__ import annotations
@@ -24,6 +30,8 @@ __all__ = [
     "ReportResult",
     "hook_writer",
     "_build_hook_message",
+    "fantasy_analyst",
+    "_build_fantasy_message",
 ]
 
 
@@ -220,11 +228,45 @@ hook_writer = Agent(
 )
 
 
+# ═══════════════════════════════════════════════════════════════════════
+# PHASE 4: THE FANTASY ANALYST
+# ═══════════════════════════════════════════════════════════════════════
+
+_FANTASY_PROMPT = """\
+You are a sharp fantasy baseball analyst writing for competitive 5x5 \
+and points league managers. Given key findings from a pitcher's latest \
+appearance, write exactly 3 bullet points of actionable fantasy insights.
+
+Each bullet must:
+- Be actionable: roster add/drop/hold, start/sit, buy-low/sell-high, \
+streaming candidate, or matchup dependency call.
+- Cite the specific metric or trend backing the recommendation (P+, \
+velocity change, usage shift, platoon split, workload flag).
+- Be direct and specific. No hedging. No generic advice like "monitor \
+the situation." State what a manager should DO and WHY.
+
+Think fantasy-relevant: does this affect his value in standard leagues? \
+Consider ownership changes, streaming value, matchup dependency, \
+injury/workload red flags, and category impact (Ks, ERA, WHIP, ratios).
+
+Format: exactly 3 lines, each starting with "- " (a bullet). Nothing \
+else — no intro, no summary, no headers."""
+
+fantasy_analyst = Agent(
+    'anthropic:claude-sonnet-4-6',
+    output_type=str,
+    system_prompt=_FANTASY_PROMPT,
+    model_settings=ModelSettings(max_tokens=300),
+    defer_model_check=True,
+)
+
+
 class ReportResult(BaseModel):
-    """Structured output from the two-phase report pipeline."""
+    """Structured output from the multi-phase report pipeline."""
 
     narrative: str
     social_hook: str
+    fantasy_insights: str
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -264,25 +306,37 @@ def _build_hook_message(ctx: PitcherContext, synthesis: str) -> str:
     )
 
 
+def _build_fantasy_message(ctx: PitcherContext, synthesis: str) -> str:
+    """Build the Phase 4 user message for fantasy baseball insights."""
+    return (
+        f"## Pitcher\n"
+        f"{ctx.pitcher_name} ({ctx.throws}HP, {ctx.role})\n\n"
+        f"## Key Findings\n{synthesis}\n\n"
+        f"Write exactly 3 bullet points of fantasy baseball insights. "
+        f"Each bullet must be actionable and cite a specific metric or trend."
+    )
+
+
 def generate_report_streaming(
     ctx: PitcherContext,
     *,
     _model_override=None,
 ) -> ReportResult:
-    """Generate a three-phase scouting report and stream the editorial output.
+    """Generate a four-phase scouting report and stream the editorial output.
 
     Phase 1 (Synthesizer): Extracts key findings as structured bullets.
     Phase 2 (Editor): Writes the final two-paragraph capsule.
     Phase 3 (Hook Writer): Distills synthesis into a 1-2 sentence social hook.
+    Phase 4 (Fantasy Analyst): Produces 3 actionable fantasy baseball bullets.
 
-    Only Phase 2 output is streamed to stdout. Phases 1 and 3 run silently.
+    Only Phase 2 output is streamed to stdout. Phases 1, 3, and 4 run silently.
 
     Args:
         ctx: Assembled pitcher context.
         _model_override: Optional model override for testing (e.g., TestModel).
 
     Returns:
-        ReportResult with narrative (Phase 2) and social_hook (Phase 3).
+        ReportResult with narrative, social_hook, and fantasy_insights.
     """
     synth_kwargs: dict = {"user_prompt": _build_synthesizer_message(ctx)}
     if _model_override is not None:
@@ -315,9 +369,19 @@ def generate_report_streaming(
 
     hook_result = hook_writer.run_sync(**hook_kwargs)
 
+    # Phase 4: Fantasy analyst (silent)
+    fantasy_kwargs: dict = {
+        "user_prompt": _build_fantasy_message(ctx, synthesis),
+    }
+    if _model_override is not None:
+        fantasy_kwargs["model"] = _model_override
+
+    fantasy_result = fantasy_analyst.run_sync(**fantasy_kwargs)
+
     return ReportResult(
         narrative=''.join(chunks),
         social_hook=hook_result.output,
+        fantasy_insights=fantasy_result.output,
     )
 
 
