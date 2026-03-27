@@ -409,9 +409,10 @@ def test_fantasy_prompt_requires_three_bullets():
     assert "bullet" in prompt_lower
 
 
-def test_fantasy_prompt_requires_actionable():
-    """Fantasy prompt requires actionable insights."""
-    assert "actionable" in _FANTASY_PROMPT.lower()
+def test_fantasy_prompt_requires_verdicts():
+    """Fantasy prompt requires bold action verdicts."""
+    assert "verdict" in _FANTASY_PROMPT.lower()
+    assert "axios" in _FANTASY_PROMPT.lower()
 
 
 def test_fantasy_message_includes_pitcher_name(ctx):

@@ -258,14 +258,14 @@ def _make_agents(
         model,
         output_type=str,
         system_prompt=_HOOK_PROMPT,
-        model_settings=ModelSettings(thinking=thinking, max_tokens=max(150, extra.get("max_tokens", 0))),
+        model_settings=settings,
         defer_model_check=True,
     )
     fantasy = Agent(
         model,
         output_type=str,
         system_prompt=_FANTASY_PROMPT,
-        model_settings=ModelSettings(thinking=thinking, max_tokens=max(300, extra.get("max_tokens", 0))),
+        model_settings=settings,
         defer_model_check=True,
     )
     return synth, ed, hook, fantasy
@@ -277,12 +277,16 @@ def _make_agents(
 
 _HOOK_PROMPT = """\
 You are a sharp, analytically-minded baseball writer crafting a single \
-social media hook. Given key findings from a pitcher's latest appearance, \
-write 1-2 sentences that capture the single most important change, trend, \
-or signal. Be specific — name the pitch, cite the metric, state the \
-direction. No hashtags, no emojis, no hype. Write with authority, as if \
-tweeting to a front-office audience. The hook must stand alone without \
-context."""
+headline or social post. Given key findings from a pitcher's latest \
+appearance, write ONE sentence — a headline, not a paragraph. It must \
+fit in a Bluesky post or X/Twitter post (under 280 characters).
+
+Rules:
+- One sentence. Period. No run-on sentences joined by dashes or semicolons.
+- Name the pitcher, name the pitch or metric, state the direction.
+- Write like a wire service headline: punchy, specific, authoritative.
+- No hashtags, no emojis, no hype words, no questions.
+- It must stand alone without any other context."""
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -290,24 +294,25 @@ context."""
 # ═══════════════════════════════════════════════════════════════════════
 
 _FANTASY_PROMPT = """\
-You are a sharp fantasy baseball analyst writing for competitive 5x5 \
-and points league managers. Given key findings from a pitcher's latest \
-appearance, write exactly 3 bullet points of actionable fantasy insights.
+You are a sharp fantasy baseball analyst writing for competitive leagues. \
+Given key findings from a pitcher's latest appearance, write exactly 3 \
+bullet points — Axios-style: short, declarative, one idea per bullet.
 
-Each bullet must:
-- Be actionable: roster add/drop/hold, start/sit, buy-low/sell-high, \
-streaming candidate, or matchup dependency call.
-- Cite the specific metric or trend backing the recommendation (P+, \
-velocity change, usage shift, platoon split, workload flag).
-- Be direct and specific. No hedging. No generic advice like "monitor \
-the situation." State what a manager should DO and WHY.
+Each bullet:
+- Starts with a bold action word or verdict: Hold, Drop, Stream, Fade, \
+Buy, Sell, Start, Sit, Stash, Avoid.
+- Follows with one tight sentence explaining why, citing ONE specific \
+metric or trend (P+, velocity delta, usage shift, platoon split, workload).
+- No run-on sentences. No semicolons joining two thoughts. If you need \
+a second thought, that is a second bullet.
+- Reads like an Axios newsletter: the busy reader gets the point in \
+three seconds.
 
-Think fantasy-relevant: does this affect his value in standard leagues? \
-Consider ownership changes, streaming value, matchup dependency, \
-injury/workload red flags, and category impact (Ks, ERA, WHIP, ratios).
+Think fantasy-relevant: ownership changes, streaming value, matchup \
+dependency, injury/workload flags, category impact (Ks, ERA, WHIP).
 
-Format: exactly 3 lines, each starting with "- " (a bullet). Nothing \
-else — no intro, no summary, no headers."""
+Format: exactly 3 lines, each starting with "- **Verdict:** " then the \
+explanation. Nothing else — no intro, no summary, no headers."""
 
 
 class ReportResult(BaseModel):
