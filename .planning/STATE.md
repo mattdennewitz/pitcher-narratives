@@ -101,7 +101,7 @@ None yet.
 | 260326-ukz | Add 1-2 sentence social media hook summary to report pipeline | 2026-03-27 | 2468bfa | [260326-ukz-add-1-2-sentence-social-media-hook-summa](./quick/260326-ukz-add-1-2-sentence-social-media-hook-summa/) |
 | 260326-uxw | Add fantasy baseball insights (Phase 4) to report pipeline | 2026-03-27 | 0b11cc8 | [260326-uxw-add-fantasy-baseball-insights-phase-3-bu](./quick/260326-uxw-add-fantasy-baseball-insights-phase-3-bu/) |
 | 260326-vj7 | Add release point analysis (x/z/extension per pitch type) to context document | 2026-03-27 | 8106e24 | [260326-vj7-add-release-point-analysis-to-context-do](./quick/260326-vj7-add-release-point-analysis-to-context-do/) |
-| 260326-vwc | Add release point guidance to synthesizer and editor prompts | 2026-03-27 | pending | [260326-vwc-add-release-point-guidance-to-synthesize](./quick/260326-vwc-add-release-point-guidance-to-synthesize/) |
+| 260326-vwc | Add release point guidance to synthesizer and editor prompts | 2026-03-27 | 2cbce40 | [260326-vwc-add-release-point-guidance-to-synthesize](./quick/260326-vwc-add-release-point-guidance-to-synthesize/) |
 
 ## Session Continuity
 
