@@ -17,7 +17,14 @@ from pydantic_ai.settings import ModelSettings
 
 from context import PitcherContext
 
-__all__ = ["generate_report_streaming", "check_hallucinated_metrics", "HallucinationReport"]
+__all__ = [
+    "generate_report_streaming",
+    "check_hallucinated_metrics",
+    "HallucinationReport",
+    "ReportResult",
+    "hook_writer",
+    "_build_hook_message",
+]
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -192,6 +199,35 @@ editor = Agent(
 
 
 # ═══════════════════════════════════════════════════════════════════════
+# PHASE 3: THE HOOK WRITER (SOCIAL MEDIA)
+# ═══════════════════════════════════════════════════════════════════════
+
+_HOOK_PROMPT = """\
+You are a sharp, analytically-minded baseball writer crafting a single \
+social media hook. Given key findings from a pitcher's latest appearance, \
+write 1-2 sentences that capture the single most important change, trend, \
+or signal. Be specific — name the pitch, cite the metric, state the \
+direction. No hashtags, no emojis, no hype. Write with authority, as if \
+tweeting to a front-office audience. The hook must stand alone without \
+context."""
+
+hook_writer = Agent(
+    'anthropic:claude-sonnet-4-6',
+    output_type=str,
+    system_prompt=_HOOK_PROMPT,
+    model_settings=ModelSettings(max_tokens=150),
+    defer_model_check=True,
+)
+
+
+class ReportResult(BaseModel):
+    """Structured output from the two-phase report pipeline."""
+
+    narrative: str
+    social_hook: str
+
+
+# ═══════════════════════════════════════════════════════════════════════
 # ORCHESTRATION
 # ═══════════════════════════════════════════════════════════════════════
 
@@ -217,24 +253,36 @@ def _build_editor_message(
     )
 
 
+def _build_hook_message(ctx: PitcherContext, synthesis: str) -> str:
+    """Build the Phase 3 user message for the social media hook."""
+    return (
+        f"## Pitcher\n"
+        f"{ctx.pitcher_name} ({ctx.throws}HP, {ctx.role})\n\n"
+        f"## Key Findings\n{synthesis}\n\n"
+        f"Write one social media hook (1-2 sentences). "
+        f"Focus on the single most notable change."
+    )
+
+
 def generate_report_streaming(
     ctx: PitcherContext,
     *,
     _model_override=None,
-) -> str:
-    """Generate a two-phase scouting report and stream the final output.
+) -> ReportResult:
+    """Generate a three-phase scouting report and stream the editorial output.
 
     Phase 1 (Synthesizer): Extracts key findings as structured bullets.
     Phase 2 (Editor): Writes the final two-paragraph capsule.
+    Phase 3 (Hook Writer): Distills synthesis into a 1-2 sentence social hook.
 
-    Only Phase 2 output is streamed to stdout. Phase 1 runs silently.
+    Only Phase 2 output is streamed to stdout. Phases 1 and 3 run silently.
 
     Args:
         ctx: Assembled pitcher context.
         _model_override: Optional model override for testing (e.g., TestModel).
 
     Returns:
-        The complete report text (Phase 2 output) as a string.
+        ReportResult with narrative (Phase 2) and social_hook (Phase 3).
     """
     synth_kwargs: dict = {"user_prompt": _build_synthesizer_message(ctx)}
     if _model_override is not None:
@@ -257,7 +305,20 @@ def generate_report_streaming(
         print(delta, end='', flush=True)
         chunks.append(delta)
     print()  # Final newline
-    return ''.join(chunks)
+
+    # Phase 3: Social media hook (silent)
+    hook_kwargs: dict = {
+        "user_prompt": _build_hook_message(ctx, synthesis),
+    }
+    if _model_override is not None:
+        hook_kwargs["model"] = _model_override
+
+    hook_result = hook_writer.run_sync(**hook_kwargs)
+
+    return ReportResult(
+        narrative=''.join(chunks),
+        social_hook=hook_result.output,
+    )
 
 
 # ═══════════════════════════════════════════════════════════════════════
