@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-03-26)
 Phase: 04
 Plan: Not started
 Status: Phase complete — ready for verification
-Last activity: 2026-03-27 - Completed quick task 260326-vz0: pre-commit with ruff + ty
+Last activity: 2026-03-27 - Completed quick task 260326-wc4: Emphasize Pitching+ triad
 
 Progress: [░░░░░░░░░░] 0%
 
@@ -103,6 +103,7 @@ None yet.
 | 260326-vj7 | Add release point analysis (x/z/extension per pitch type) to context document | 2026-03-27 | 8106e24 | [260326-vj7-add-release-point-analysis-to-context-do](./quick/260326-vj7-add-release-point-analysis-to-context-do/) |
 | 260326-vwc | Add release point guidance to synthesizer and editor prompts | 2026-03-27 | 2cbce40 | [260326-vwc-add-release-point-guidance-to-synthesize](./quick/260326-vwc-add-release-point-guidance-to-synthesize/) |
 | 260326-vz0 | Implement pre-commit with ruff and ty, fix all issues | 2026-03-27 | 762298c | [260326-vz0-implement-pre-commit-with-ruff-and-mypy-](./quick/260326-vz0-implement-pre-commit-with-ruff-and-mypy-/) |
+| 260326-wc4 | Emphasize Pitching+ triad (P+, S+, L+) in context and prompts | 2026-03-27 | pending | [260326-wc4-emphasize-pitching-family-p-s-l-througho](./quick/260326-wc4-emphasize-pitching-family-p-s-l-througho/) |
 
 ## Session Continuity
 

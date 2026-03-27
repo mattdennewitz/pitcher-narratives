@@ -48,9 +48,12 @@ are preparing a factual briefing document for a senior sabermetric writer.
 
 INSTRUCTIONS:
 
-1. Identify the Fastball Baseline: Note the average velocity, Pitching+ \
-score, and shape (movement deltas) of the primary fastball over the \
-recent sample versus the season baseline. Flag gains AND drops equally.
+1. Identify the Fastball Baseline: Note the average velocity and the \
+full Pitching+ triad — P+ (overall), S+ (stuff/shape), L+ (location/command) \
+— plus movement deltas for the primary fastball over the recent sample \
+versus the season baseline. Distinguish between stuff changes (S+) and \
+command changes (L+) — they have different implications. Flag gains AND \
+drops equally.
 
 2. Track Intra-Game Stamina: Look at the TTO data and appearance logs. \
 Flag velocity drops, velocity gains, or P+ changes in later passes or \
@@ -92,7 +95,12 @@ characteristics. State sample sizes.
 OUTPUT FORMAT — Use this exact structure:
 
 ## Fastball Quality & Velocity Trends
-[Bulleted facts: baseline vs recent velo, P+, movement, within-game arc]
+[Bulleted facts: baseline vs recent velo, P+/S+/L+ triad, movement, within-game arc]
+
+## Pitching+ Profile
+[Bulleted facts: per-pitch-type P+, S+, L+ scores and deltas vs season. \
+Identify which pitches have elite stuff (S+ > 115) but poor command (L+ < 90) \
+or vice versa. Flag divergences between S+ and L+ — they tell different stories.]
 
 ## Pitch Mix & Usage Shifts
 [Bulleted facts: largest usage deltas, new/abandoned pitches, mix evolution]
@@ -119,17 +127,18 @@ Additional focus for this starter:
 - TTO pass breakdown: which pitches gain or lose effectiveness by pass?
 - Pitch mix evolution across passes: is he leaning on something new late?
 - Platoon-specific TTO patterns (what does he throw vs LHB in pass 3?)
-- Stamina trajectory: does velocity or P+ hold, improve, or cliff?
-- New weapons: any pitch showing a breakout P+ trend or usage surge?"""
+- Stamina trajectory: does velocity, S+, or L+ hold, improve, or cliff?
+- Pitching+ triad per pitch: cite P+, S+, L+ — flag stuff-command divergences
+- New weapons: any pitch showing a breakout S+ or P+ trend or usage surge?"""
 
 _RP_SYNTH_GUIDANCE = """\
 Additional focus for this reliever:
-- Rest day impact on velocity and P+ (back-to-back vs rested — better or worse?)
-- Primary weapon identification: what is the put-away pitch? Is it improving?
+- Rest day impact on velocity, S+, and L+ (back-to-back vs rested — better or worse?)
+- Primary weapon identification: what is the put-away pitch? Cite its P+/S+/L+ triad
 - Pitch count efficiency: how many pitches per batter faced?
 - Platoon-specific strengths and vulnerabilities by handedness
-- Workload trajectory: stuff improving as he stretches out, or degrading?
-- Any pitch showing a breakout trend (new addition, shape change, usage surge)?"""
+- Workload trajectory: S+ improving as he stretches out, or degrading? L+ fading?
+- Any pitch showing a breakout trend (S+ surge, shape change, usage surge)?"""
 
 synthesizer = Agent(
     "anthropic:claude-sonnet-4-6",
@@ -174,7 +183,11 @@ another, before the Verdict).
 
 2. Contextualize Every Metric: Never state a metric (velocity, movement, \
 chase rate, P+) without grounding it against the MLB average (100 for \
-P+/S+/L+) or the pitcher's prior baseline.
+P+/S+/L+) or the pitcher's prior baseline. Always cite the full Pitching+ \
+triad (P+, S+, L+) when discussing pitch quality — S+ tells you about raw \
+stuff (shape, movement, velocity), L+ tells you about command and location. \
+A pitcher with 120 S+ and 85 L+ has elite stuff but poor command — very \
+different from 95 S+ and 120 L+ (command artist, mediocre stuff).
 
 3. Diagnose, Do Not Just Describe: Connect the outcome to the physical \
 input. If strikeout rates are down, explain that it is tied to a drop \

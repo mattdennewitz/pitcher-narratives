@@ -127,9 +127,14 @@ class PitcherContext(BaseModel):
         if fb and fb.velo_delta and fb.velo_delta != "--":
             bullets.append(f"Fastball velo: {fb.velo_delta} vs season")
 
-        # Overall P+ trend
+        # Pitching+ triad trends
         if fb and fb.p_plus_delta and fb.p_plus_delta != "--":
-            bullets.append(f"Fastball P+: {fb.p_plus_delta} vs season")
+            p_plus_parts = [f"P+ {fb.p_plus_delta}"]
+            if fb.s_plus_delta and fb.s_plus_delta != "--":
+                p_plus_parts.append(f"S+ {fb.s_plus_delta}")
+            if fb.l_plus_delta and fb.l_plus_delta != "--":
+                p_plus_parts.append(f"L+ {fb.l_plus_delta}")
+            bullets.append(f"Fastball Pitching+: {', '.join(p_plus_parts)} vs season")
 
         # Biggest arsenal usage shift
         if self.arsenal:
@@ -197,13 +202,28 @@ class PitcherContext(BaseModel):
 
         lines = [f"## Primary Fastball: {fb.pitch_name} ({fb.pitch_type})"]
         lines.append(f"- Velo: {fb.season_velo:.1f} season / {fb.window_velo:.1f} recent -- {fb.velo_delta}")
+        # Pitching+ triad: P+ (overall), S+ (stuff), L+ (location)
         if fb.window_p_plus is not None:
             lines.append(
-                f"- Stuff+ (P+): {fb.season_p_plus:.0f} season / "
+                f"- Pitching+ (P+): {fb.season_p_plus:.0f} season / "
                 f"{fb.window_p_plus:.0f} recent -- {fb.p_plus_delta}"
             )
         else:
-            lines.append(f"- Stuff+ (P+): {fb.season_p_plus:.0f} season -- {fb.p_plus_delta}")
+            lines.append(f"- Pitching+ (P+): {fb.season_p_plus:.0f} season -- {fb.p_plus_delta}")
+        if fb.window_s_plus is not None:
+            lines.append(
+                f"- Stuff+ (S+): {fb.season_s_plus:.0f} season / "
+                f"{fb.window_s_plus:.0f} recent -- {fb.s_plus_delta}"
+            )
+        else:
+            lines.append(f"- Stuff+ (S+): {fb.season_s_plus:.0f} season -- {fb.s_plus_delta}")
+        if fb.window_l_plus is not None:
+            lines.append(
+                f"- Location+ (L+): {fb.season_l_plus:.0f} season / "
+                f"{fb.window_l_plus:.0f} recent -- {fb.l_plus_delta}"
+            )
+        else:
+            lines.append(f"- Location+ (L+): {fb.season_l_plus:.0f} season -- {fb.l_plus_delta}")
         lines.append(f"- Movement: H {fb.pfx_x_delta}, V {fb.pfx_z_delta}")
 
         # Velocity arc from last outing
@@ -311,16 +331,20 @@ class PitcherContext(BaseModel):
 
     def _render_arsenal_section(self) -> str:
         lines = ["## Arsenal"]
-        lines.append("| Pitch | Usage | Delta | P+ | Delta |")
-        lines.append("|-------|-------|-------|----|-------|")
+        lines.append("| Pitch | Usage | Delta | P+ | S+ | L+ | P+ Delta |")
+        lines.append("|-------|-------|-------|----|----|----|---------  |")
         for p in self.arsenal[:_MAX_PITCH_TYPES]:
             wp = f"{p.window_p_plus:.0f}" if p.window_p_plus is not None else "--"
+            ws = f"{p.window_s_plus:.0f}" if p.window_s_plus is not None else "--"
+            wl = f"{p.window_l_plus:.0f}" if p.window_l_plus is not None else "--"
             lines.append(
                 f"| {p.pitch_name} ({p.pitch_type}) "
                 f"| {p.window_usage_pct:.1f}% "
                 f"| {p.usage_delta} "
                 f"| {wp} "
-                f"| {p.p_plus_delta} |"
+                f"| {ws} "
+                f"| {wl} "
+                f"| {p.p_plus_delta} ({p.s_plus_delta}, {p.l_plus_delta}) |"
             )
         return "\n".join(lines)
 
