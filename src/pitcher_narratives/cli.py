@@ -38,7 +38,10 @@ def parse_args() -> argparse.Namespace:
         "--print-prompts", action="store_true", help="Print both prompts as sent to the LLM, then exit"
     )
     parser.add_argument(
-        "--provider", choices=["openai", "claude"], default="openai", help="LLM provider (default: openai)"
+        "--provider",
+        choices=["openai", "claude", "gemini"],
+        default="openai",
+        help="LLM provider (default: openai)"
     )
     parser.add_argument(
         "--thinking",
@@ -112,7 +115,7 @@ def main() -> None:
         model_override = TestModel(custom_output_text="[Test mode] Scouting report would appear here.")
 
     # Pre-flight API key check — fail fast instead of hanging on missing key
-    _API_KEYS = {"openai": "OPENAI_API_KEY", "claude": "ANTHROPIC_API_KEY"}
+    _API_KEYS = {"openai": "OPENAI_API_KEY", "claude": "ANTHROPIC_API_KEY", "gemini": "GEMINI_API_KEY"}
     if model_override is None and not os.environ.get(_API_KEYS[args.provider]):
         env_var = _API_KEYS[args.provider]
         print(f"Error: {env_var} not set.", file=sys.stderr)

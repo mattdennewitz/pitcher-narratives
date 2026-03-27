@@ -41,6 +41,7 @@ THINKING_LEVELS: list[ThinkingEffort] = ["minimal", "low", "medium", "high", "xh
 PROVIDERS = {
     "openai": "openai:gpt-5.4-mini",
     "claude": "anthropic:claude-sonnet-4-6",
+    "gemini": "google-gla:gemini-3-thinking",
 }
 
 
@@ -250,7 +251,7 @@ def _make_agents(
     model = PROVIDERS[provider]
     # Anthropic's default max_tokens (4096) is too low when thinking is enabled
     # because thinking tokens count against the budget.
-    extra = {"max_tokens": 16384} if provider == "claude" else {}
+    extra = {"max_tokens": 16384} if provider in ("claude", "gemini") else {}
     settings = ModelSettings(thinking=thinking, **extra)
     prompts = (_SYNTHESIZER_PROMPT, _EDITOR_PROMPT, _HOOK_PROMPT, _FANTASY_PROMPT)
     agents: _AgentTuple = tuple(  # type: ignore[assignment]
