@@ -19,6 +19,7 @@ from engine import (
     compute_workload_context,
     compute_tto_analysis,
     compute_hard_hit_rate,
+    compute_release_point_metrics,
     FastballSummary,
     VelocityArc,
     PitchTypeSummary,
@@ -27,6 +28,8 @@ from engine import (
     ExecutionMetrics,
     WorkloadContext,
     HardHitRate,
+    ReleasePointMetrics,
+    ReleasePointPitchType,
     TTOAnalysis,
     TTOPitchType,
     TTOPlatoonSplit,
@@ -60,6 +63,7 @@ class PitcherContext(BaseModel):
     first_pitch: FirstPitchWeaponry
     execution: list[ExecutionMetrics]
     hard_hit_rate: HardHitRate
+    release_point: ReleasePointMetrics
     workload: WorkloadContext
     tto: TTOAnalysis | None
 
@@ -89,6 +93,9 @@ class PitcherContext(BaseModel):
 
         # Execution table
         sections.append(self._render_execution_section())
+
+        # Release point mechanics
+        sections.append(self._render_release_point_section())
 
         # Contact quality (hard-hit rate)
         sections.append(self._render_hard_hit_section())
@@ -358,6 +365,57 @@ class PitcherContext(BaseModel):
             )
         return "\n".join(lines)
 
+    def _render_release_point_section(self) -> str:
+        """Render release point table with per-pitch-type x/z/extension."""
+        rp = self.release_point
+        if not rp.pitch_types:
+            return ""
+
+        entries = rp.pitch_types[:_MAX_PITCH_TYPES]
+        all_cold = all(pt.cold_start for pt in entries)
+
+        lines = ["## Release Point"]
+
+        if all_cold:
+            # No baseline available -- show window values only
+            lines.append("| Pitch | Horiz (ft) | Vert (ft) | Ext (ft) |")
+            lines.append("|-------|------------|-----------|----------|")
+            for pt in entries:
+                name = f"{pt.pitch_name} ({pt.pitch_type})"
+                if pt.small_sample:
+                    name += " *"
+                lines.append(
+                    f"| {name} "
+                    f"| {pt.window_release_x:.2f} "
+                    f"| {pt.window_release_z:.2f} "
+                    f"| {pt.window_extension:.2f} |"
+                )
+            lines.append("*(season = window -- no baseline)*")
+        else:
+            lines.append(
+                "| Pitch | Horiz (ft) | Delta | Vert (ft) | Delta "
+                "| Ext (ft) | Delta |"
+            )
+            lines.append(
+                "|-------|------------|-------|-----------|-------"
+                "|----------|-------|"
+            )
+            for pt in entries:
+                name = f"{pt.pitch_name} ({pt.pitch_type})"
+                if pt.small_sample:
+                    name += " *"
+                lines.append(
+                    f"| {name} "
+                    f"| {pt.window_release_x:.2f} "
+                    f"| {pt.release_x_delta} "
+                    f"| {pt.window_release_z:.2f} "
+                    f"| {pt.release_z_delta} "
+                    f"| {pt.window_extension:.2f} "
+                    f"| {pt.extension_delta} |"
+                )
+
+        return "\n".join(lines)
+
     def _render_hard_hit_section(self) -> str:
         """Render contact quality section with hard-hit rate."""
         hhr = self.hard_hit_rate
@@ -438,6 +496,7 @@ def assemble_pitcher_context(data: PitcherData) -> PitcherContext:
     first_pitch = compute_first_pitch_weaponry(data)
     execution = compute_execution_metrics(data)[:_MAX_PITCH_TYPES]
     hard_hit_rate = compute_hard_hit_rate(data)
+    release_point = compute_release_point_metrics(data)
     workload = compute_workload_context(data)
     tto = compute_tto_analysis(data)
 
@@ -459,6 +518,7 @@ def assemble_pitcher_context(data: PitcherData) -> PitcherContext:
         first_pitch=first_pitch,
         execution=execution,
         hard_hit_rate=hard_hit_rate,
+        release_point=release_point,
         workload=workload,
         tto=tto,
     )

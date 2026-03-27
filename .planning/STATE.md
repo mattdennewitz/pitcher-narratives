@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-03-26)
 Phase: 04
 Plan: Not started
 Status: Phase complete — ready for verification
-Last activity: 2026-03-27 - Completed quick task 260326-uxw: Add fantasy baseball insights
+Last activity: 2026-03-27 - Completed quick task 260326-vj7: Add release point analysis
 
 Progress: [░░░░░░░░░░] 0%
 
@@ -100,9 +100,10 @@ None yet.
 | 260326-t0k | Add -v verbose switch showing pitcher name, game dates, and pitch counts | 2026-03-27 | 173d954 | [260326-t0k-add-v-switch-showing-pitcher-name-game-d](./quick/260326-t0k-add-v-switch-showing-pitcher-name-game-d/) |
 | 260326-ukz | Add 1-2 sentence social media hook summary to report pipeline | 2026-03-27 | 2468bfa | [260326-ukz-add-1-2-sentence-social-media-hook-summa](./quick/260326-ukz-add-1-2-sentence-social-media-hook-summa/) |
 | 260326-uxw | Add fantasy baseball insights (Phase 4) to report pipeline | 2026-03-27 | 0b11cc8 | [260326-uxw-add-fantasy-baseball-insights-phase-3-bu](./quick/260326-uxw-add-fantasy-baseball-insights-phase-3-bu/) |
+| 260326-vj7 | Add release point analysis (x/z/extension per pitch type) to context document | 2026-03-27 | 8106e24 | [260326-vj7-add-release-point-analysis-to-context-do](./quick/260326-vj7-add-release-point-analysis-to-context-do/) |
 
 ## Session Continuity
 
-Last session: 2026-03-27T02:35:59Z
-Stopped at: Completed quick-260326-uxw
+Last session: 2026-03-27T02:51:30Z
+Stopped at: Completed quick-260326-vj7
 Resume file: None

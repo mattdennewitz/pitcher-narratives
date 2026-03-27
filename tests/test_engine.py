@@ -27,6 +27,8 @@ from engine import (
     AppearanceWorkload,
     WorkloadContext,
     HardHitRate,
+    ReleasePointPitchType,
+    ReleasePointMetrics,
     compute_fastball_summary,
     compute_velocity_arc,
     compute_arsenal_summary,
@@ -35,6 +37,7 @@ from engine import (
     compute_execution_metrics,
     compute_workload_context,
     compute_hard_hit_rate,
+    compute_release_point_metrics,
     _velo_delta_string,
     _pplus_delta_string,
     _usage_delta_string,
@@ -789,3 +792,92 @@ def test_hard_hit_rate_delta_string():
     data = load_pitcher_data(TEST_PITCHER, window_days=30)
     hhr = compute_hard_hit_rate(data)
     assert any(word in hhr.delta for word in ["Up", "Down", "Steady"])
+
+
+# ── Release Point Metrics ────────────────────────────────────────────
+
+
+def test_release_point_returns_metrics():
+    """compute_release_point_metrics returns ReleasePointMetrics with non-empty pitch_types list."""
+    data = load_pitcher_data(TEST_PITCHER, window_days=30)
+    rp = compute_release_point_metrics(data)
+    assert isinstance(rp, ReleasePointMetrics)
+    assert isinstance(rp.pitch_types, list)
+    assert len(rp.pitch_types) > 0
+
+
+def test_release_point_values_reasonable():
+    """Release point values are in physically reasonable ranges."""
+    data = load_pitcher_data(TEST_PITCHER, window_days=30)
+    rp = compute_release_point_metrics(data)
+    for pt in rp.pitch_types:
+        # Horizontal release: -4 to 4 ft from center
+        assert -4.0 <= pt.window_release_x <= 4.0, f"{pt.pitch_type} release_x={pt.window_release_x}"
+        assert -4.0 <= pt.season_release_x <= 4.0
+        # Vertical release: 3 to 8 ft
+        assert 3.0 <= pt.window_release_z <= 8.0, f"{pt.pitch_type} release_z={pt.window_release_z}"
+        assert 3.0 <= pt.season_release_z <= 8.0
+        # Extension: 4 to 8 ft
+        assert 4.0 <= pt.window_extension <= 8.0, f"{pt.pitch_type} extension={pt.window_extension}"
+        assert 4.0 <= pt.season_extension <= 8.0
+
+
+def test_release_point_per_pitch_type():
+    """Each entry has pitch_type, pitch_name, and all float fields."""
+    data = load_pitcher_data(TEST_PITCHER, window_days=30)
+    rp = compute_release_point_metrics(data)
+    for pt in rp.pitch_types:
+        assert isinstance(pt, ReleasePointPitchType)
+        assert isinstance(pt.pitch_type, str)
+        assert len(pt.pitch_type) > 0
+        assert isinstance(pt.pitch_name, str)
+        assert len(pt.pitch_name) > 2
+        assert isinstance(pt.window_release_x, float)
+        assert isinstance(pt.season_release_x, float)
+        assert isinstance(pt.window_release_z, float)
+        assert isinstance(pt.season_release_z, float)
+        assert isinstance(pt.window_extension, float)
+        assert isinstance(pt.season_extension, float)
+        assert isinstance(pt.n_pitches_window, int)
+        assert pt.n_pitches_window > 0
+
+
+def test_release_point_delta_strings():
+    """Delta strings contain Up/Down/Steady vocabulary."""
+    data = load_pitcher_data(TEST_PITCHER, window_days=30)
+    rp = compute_release_point_metrics(data)
+    for pt in rp.pitch_types:
+        for delta_str in [pt.release_x_delta, pt.release_z_delta, pt.extension_delta]:
+            assert any(word in delta_str for word in ["Up", "Down", "Steady", "Full season"]), (
+                f"Unexpected delta string: {delta_str}"
+            )
+
+
+def test_release_point_cold_start():
+    """With window_days=9999, cold_start=True and deltas contain 'Full season in window'."""
+    data = load_pitcher_data(TEST_PITCHER, window_days=9999)
+    rp = compute_release_point_metrics(data)
+    assert rp.cold_start is True
+    for pt in rp.pitch_types:
+        assert pt.cold_start is True
+        assert "Full season in window" in pt.release_x_delta
+        assert "Full season in window" in pt.release_z_delta
+        assert "Full season in window" in pt.extension_delta
+
+
+def test_release_point_small_sample():
+    """With window_days=1, entries with < 10 pitches have small_sample=True."""
+    data = load_pitcher_data(TEST_PITCHER, window_days=1)
+    rp = compute_release_point_metrics(data)
+    for pt in rp.pitch_types:
+        if pt.n_pitches_window < 10:
+            assert pt.small_sample is True
+
+
+def test_release_point_ordering():
+    """Entries are ordered by season pitch count descending."""
+    data = load_pitcher_data(TEST_PITCHER, window_days=30)
+    rp = compute_release_point_metrics(data)
+    # Verify descending order -- first entry should be FC (most-used pitch)
+    if len(rp.pitch_types) >= 2:
+        assert rp.pitch_types[0].pitch_type == "FC"
