@@ -8,15 +8,18 @@ from data import load_pitcher_data
 from report import (
     synthesizer,
     editor,
+    hook_writer,
     _SYNTHESIZER_PROMPT,
     _EDITOR_PROMPT,
     _SP_SYNTH_GUIDANCE,
     _RP_SYNTH_GUIDANCE,
     _build_synthesizer_message,
     _build_editor_message,
+    _build_hook_message,
     generate_report_streaming,
     check_hallucinated_metrics,
     HallucinationReport,
+    ReportResult,
 )
 
 TEST_PITCHER = 592155  # Booser, Cam
@@ -175,13 +178,14 @@ def test_editor_message_includes_synthesis(ctx):
 # -- Two-phase pipeline tests -------------------------------------------------
 
 
-def test_generate_report_returns_string(ctx):
-    """Full pipeline returns a non-empty string using TestModel."""
+def test_generate_report_returns_report_result(ctx):
+    """Full pipeline returns a ReportResult using TestModel."""
     result = generate_report_streaming(
         ctx, _model_override=TestModel(custom_output_text="Test report output")
     )
-    assert isinstance(result, str)
-    assert len(result) > 0
+    assert isinstance(result, ReportResult)
+    assert len(result.narrative) > 0
+    assert len(result.social_hook) > 0
 
 
 def test_generate_report_uses_test_model(ctx):
@@ -190,8 +194,8 @@ def test_generate_report_uses_test_model(ctx):
     result = generate_report_streaming(
         ctx, _model_override=TestModel(custom_output_text=expected)
     )
-    # TestModel returns same text for both phases; Phase 2 output is what we get
-    assert result == expected
+    # TestModel returns same text for both phases; Phase 2 narrative is what we get
+    assert result.narrative == expected
 
 
 # -- Hallucination guard tests ------------------------------------------------
@@ -337,3 +341,46 @@ def test_hallucination_guard_hardhit_pct_still_known():
     result = check_hallucinated_metrics(text)
     assert result.unknown_metrics == []
     assert result.is_clean
+
+
+# -- Phase 3: Hook writer agent tests -----------------------------------------
+
+
+def test_hook_writer_model_is_claude_sonnet():
+    """Hook writer agent uses claude-sonnet-4-6."""
+    assert "claude-sonnet-4-6" in str(hook_writer.model)
+
+
+def test_hook_writer_output_type_is_str():
+    """Hook writer output_type is str."""
+    assert hook_writer.output_type is str
+
+
+def test_hook_message_includes_pitcher_name(ctx):
+    """Hook message includes pitcher name."""
+    msg = _build_hook_message(ctx, "test synthesis")
+    assert ctx.pitcher_name in msg
+
+
+def test_hook_message_includes_synthesis(ctx):
+    """Hook message includes synthesis text."""
+    msg = _build_hook_message(ctx, "Fastball velo down 1.5")
+    assert "Fastball velo down 1.5" in msg
+
+
+def test_report_result_has_social_hook(ctx):
+    """ReportResult has non-empty narrative and social_hook fields."""
+    result = generate_report_streaming(
+        ctx, _model_override=TestModel(custom_output_text="hook text")
+    )
+    assert isinstance(result, ReportResult)
+    assert result.social_hook
+    assert result.narrative
+
+
+def test_report_result_narrative_matches_editor_output(ctx):
+    """ReportResult narrative matches editor TestModel output."""
+    result = generate_report_streaming(
+        ctx, _model_override=TestModel(custom_output_text="editor output")
+    )
+    assert result.narrative == "editor output"
