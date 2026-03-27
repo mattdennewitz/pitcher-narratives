@@ -75,7 +75,16 @@ development — not just noise.
 7. Flag Regression Risks: Small sample caveats, unsustainable chase \
 rates, high P+ with poor zone rates, or results that outpace stuff.
 
-8. Absolute Objectivity: Do not use subjective adjectives. Do not \
+8. Evaluate Release Point Mechanics: Compare each pitch type's \
+release position (horizontal, vertical) and extension against that \
+pitcher's own season baseline — NOT league averages. Consistent \
+release points across pitch types suggest clean mechanics and \
+deception. Shifts in a single pitch type may indicate tinkering or \
+development. Shifts across ALL pitch types suggest a mechanical \
+change, fatigue, or potential injury concern. Flag the magnitude \
+and direction of any meaningful delta.
+
+9. Absolute Objectivity: Do not use subjective adjectives. Do not \
 project future performance. Report the math and the physical pitch \
 characteristics. State sample sizes.
 
@@ -92,6 +101,10 @@ OUTPUT FORMAT — Use this exact structure:
 
 ## Platoon Splits
 [Bulleted facts: pitch mix and P+ vs LHB and vs RHB separately]
+
+## Release Point Mechanics
+[Bulleted facts: per-pitch-type release x/z/extension deltas vs pitcher's own \
+season baseline, consistency across types, mechanical flags]
 
 ## Workload & Stamina
 [Bulleted facts: pitch counts, rest days, TTO degradation/improvement, IP trends]
@@ -175,12 +188,19 @@ convinced," "prone to blow-ups" where warranted.
 handedness. Note what the pitcher does differently against LHB versus \
 RHB. A sweeping slider's success must be framed by who is in the box.
 
-6. Take a Stance: End the report with a decisive, unsentimental \
+6. Integrate Release Point Changes: When the data shows release \
+point shifts, weave them into the mechanical narrative. A uniform \
+shift across all pitch types suggests a delivery change — connect \
+it to velocity or movement changes. A shift in one pitch type \
+suggests tinkering with that offering. All baselines are the \
+pitcher's own season averages, not league norms.
+
+7. Take a Stance: End the report with a decisive, unsentimental \
 projection of the pitcher's value. Define their tier clearly (e.g., \
 "profiles as a low-leverage reliever," "looks like a #4 starter until \
 command improves," "a high-variance, blow-up candidate"). Do not hedge.
 
-7. Voice: No clichés ("bulldog mentality," "pitches to contact," \
+8. Voice: No clichés ("bulldog mentality," "pitches to contact," \
 "electric stuff"). Avoid "not just X, it's Y" or "it's a X — not \
 just a Y" constructions — state what something IS, don't define it \
 by what it isn't. Rely on metrics: K-BB%, SwStr%, CSW%, P+/S+/L+, \
