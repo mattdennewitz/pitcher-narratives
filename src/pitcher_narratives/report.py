@@ -253,7 +253,7 @@ def _make_agents(
 
     if provider == "gemini":
         # Gemini 3 uses GoogleModelSettings with thinking_level ('low' or 'high')
-        gemini_level = "high" if thinking in ("medium", "high", "xhigh") else "low"
+        gemini_level = "high" if thinking in ("high", "xhigh") else "low"
         settings: ModelSettings = GoogleModelSettings(
             google_thinking_config={"thinking_level": gemini_level},
             max_tokens=16384,
