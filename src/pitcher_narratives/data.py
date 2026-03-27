@@ -7,6 +7,7 @@ filters to configurable lookback windows.
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from datetime import date, timedelta
 from pathlib import Path
@@ -25,7 +26,7 @@ __all__ = [
     "load_statcast",
 ]
 
-DATA_DIR = Path(__file__).resolve().parent.parent.parent
+DATA_DIR = Path(os.environ.get("PITCHER_NARRATIVES_DATA_DIR", Path(__file__).resolve().parent.parent.parent))
 PARQUET_PATH = DATA_DIR / "statcast_2026.parquet"
 AGGS_DIR = DATA_DIR / "aggs"
 

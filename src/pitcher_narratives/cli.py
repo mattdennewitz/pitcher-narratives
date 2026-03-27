@@ -16,8 +16,6 @@ from dotenv import load_dotenv
 if TYPE_CHECKING:
     from pitcher_narratives.data import PitcherData
 
-load_dotenv()
-
 
 def parse_args() -> argparse.Namespace:
     """Parse command-line arguments for pitcher scouting reports."""
@@ -75,6 +73,7 @@ def _print_verbose_summary(data: PitcherData) -> None:
 
 def main() -> None:
     """Entry point: load pitcher data, assemble context, generate report."""
+    load_dotenv()
     args = parse_args()
 
     from pitcher_narratives.data import load_pitcher_data
@@ -87,8 +86,6 @@ def main() -> None:
 
     if args.verbose:
         _print_verbose_summary(pitcher_data)
-
-    from pydantic_ai.exceptions import UserError
 
     from pitcher_narratives.context import assemble_pitcher_context
     from pitcher_narratives.report import check_hallucinated_metrics, generate_report_streaming, print_prompts
@@ -106,22 +103,23 @@ def main() -> None:
 
         model_override = TestModel(custom_output_text="[Test mode] Scouting report would appear here.")
 
-    try:
-        result = generate_report_streaming(
-            ctx,
-            provider=args.provider,
-            thinking=args.thinking,
-            _model_override=model_override,
-        )
-    except UserError as e:
-        err = str(e)
-        if "OPENAI_API_KEY" in err:
-            print("Error: OPENAI_API_KEY not set. https://platform.openai.com/", file=sys.stderr)
+    # Pre-flight API key check — fail fast instead of hanging on missing key
+    if model_override is None:
+        _KEY_FOR_PROVIDER = {
+            "openai": ("OPENAI_API_KEY", "https://platform.openai.com/"),
+            "claude": ("ANTHROPIC_API_KEY", "https://console.anthropic.com/"),
+        }
+        env_var, url = _KEY_FOR_PROVIDER[args.provider]
+        if not os.environ.get(env_var):
+            print(f"Error: {env_var} not set. {url}", file=sys.stderr)
             sys.exit(1)
-        if "ANTHROPIC_API_KEY" in err:
-            print("Error: ANTHROPIC_API_KEY not set. https://console.anthropic.com/", file=sys.stderr)
-            sys.exit(1)
-        raise
+
+    result = generate_report_streaming(
+        ctx,
+        provider=args.provider,
+        thinking=args.thinking,
+        _model_override=model_override,
+    )
 
     # Print social hook
     print(f"\n---\n{result.social_hook}")

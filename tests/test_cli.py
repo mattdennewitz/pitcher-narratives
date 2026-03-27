@@ -68,9 +68,11 @@ def _test_env(**extra: str) -> dict[str, str]:
     then removes ANTHROPIC_API_KEY (tests shouldn't hit the real API)
     and applies any extra key-value pairs.
     """
-    env = {k: v for k, v in os.environ.items() if k != "ANTHROPIC_API_KEY"}
-    # Set empty ANTHROPIC_API_KEY so load_dotenv() won't fill it from .env
+    strip = {"ANTHROPIC_API_KEY", "OPENAI_API_KEY"}
+    env = {k: v for k, v in os.environ.items() if k not in strip}
+    # Set empty keys so load_dotenv() won't fill them from .env
     env.setdefault("ANTHROPIC_API_KEY", "")
+    env.setdefault("OPENAI_API_KEY", "")
     env.update(extra)
     return env
 
@@ -168,7 +170,6 @@ def test_cli_no_verbose_no_pitcher_info():
     assert "Booser, Cam" not in result.stderr
 
 
-@pytest.mark.skip(reason="OpenAI provider hangs on missing key instead of erroring fast")
 def test_cli_missing_api_key():
     """Integration: Missing API key without test model exits 1."""
     result = subprocess.run(

@@ -230,11 +230,21 @@ about the pitcher's stuff, not about "looking at the data."
 - Do not soften your conclusions. Be direct."""
 
 
+_AgentTuple = tuple[Agent[None, str], Agent[None, str], Agent[None, str], Agent[None, str]]
+_agent_cache: dict[tuple[str, ThinkingEffort], _AgentTuple] = {}
+
+
 def _make_agents(
     provider: str = "openai",
     thinking: ThinkingEffort = "high",
-) -> tuple[Agent[None, str], Agent[None, str], Agent[None, str], Agent[None, str]]:
-    """Create all four pipeline agents for the given provider and thinking level."""
+) -> _AgentTuple:
+    """Create (or return cached) four pipeline agents for the given provider and thinking level."""
+    key = (provider, thinking)
+    if key in _agent_cache:
+        return _agent_cache[key]
+
+    if provider not in PROVIDERS:
+        raise ValueError(f"Unknown provider {provider!r}, expected one of: {', '.join(PROVIDERS)}")
     model = PROVIDERS[provider]
     # Anthropic's default max_tokens (4096) is too low when thinking is enabled
     # because thinking tokens count against the budget.
@@ -268,7 +278,9 @@ def _make_agents(
         model_settings=settings,
         defer_model_check=True,
     )
-    return synth, ed, hook, fantasy
+    agents = (synth, ed, hook, fantasy)
+    _agent_cache[key] = agents
+    return agents
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -363,8 +375,7 @@ def _build_editor_message(ctx: PitcherContext, synthesis: str) -> _UserPrompt:
 def _build_hook_message(ctx: PitcherContext, synthesis: str) -> _UserPrompt:
     """Build the Phase 3 user message with cache breakpoint after synthesis."""
     return [
-        f"## Pitcher\n{ctx.pitcher_name} ({ctx.throws}HP, {ctx.role})\n\n"
-        f"## Key Findings\n{synthesis}",
+        f"## Pitcher\n{ctx.pitcher_name} ({ctx.throws}HP, {ctx.role})\n\n## Key Findings\n{synthesis}",
         CachePoint(),
         "Write one social media hook (1-2 sentences). Focus on the single most notable change.",
     ]
@@ -373,8 +384,7 @@ def _build_hook_message(ctx: PitcherContext, synthesis: str) -> _UserPrompt:
 def _build_fantasy_message(ctx: PitcherContext, synthesis: str) -> _UserPrompt:
     """Build the Phase 4 user message with cache breakpoint after synthesis."""
     return [
-        f"## Pitcher\n{ctx.pitcher_name} ({ctx.throws}HP, {ctx.role})\n\n"
-        f"## Key Findings\n{synthesis}",
+        f"## Pitcher\n{ctx.pitcher_name} ({ctx.throws}HP, {ctx.role})\n\n## Key Findings\n{synthesis}",
         CachePoint(),
         "Write exactly 3 bullet points of fantasy baseball insights. "
         "Each bullet must be actionable and cite a specific metric or trend.",
