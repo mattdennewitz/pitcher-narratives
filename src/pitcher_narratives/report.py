@@ -42,7 +42,7 @@ THINKING_LEVELS: list[ThinkingEffort] = ["minimal", "low", "medium", "high", "xh
 PROVIDERS = {
     "openai": "openai:gpt-5.4-mini",
     "claude": "anthropic:claude-sonnet-4-6",
-    "gemini": "google-gla:gemini-3-flash-preview",
+    "gemini": "google-gla:gemini-3.1-pro-preview",
 }
 
 
