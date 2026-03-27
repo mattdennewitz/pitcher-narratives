@@ -5,7 +5,7 @@ from pydantic import BaseModel
 
 from context import PitcherContext, assemble_pitcher_context
 from data import load_pitcher_data
-from engine import HardHitRate
+from engine import HardHitRate, ReleasePointMetrics
 
 TEST_PITCHER = 592155  # Booser, Cam
 
@@ -128,3 +128,18 @@ def test_to_prompt_has_contact_quality(ctx):
     """to_prompt() output contains 'Contact Quality' or 'Hard-hit'."""
     prompt = ctx.to_prompt()
     assert "Contact Quality" in prompt or "Hard-hit" in prompt
+
+
+# ── Release Point in context ─────────────────────────────────────────
+
+
+def test_release_point_in_context(ctx):
+    """assemble_pitcher_context has a non-None release_point field of type ReleasePointMetrics."""
+    assert ctx.release_point is not None
+    assert isinstance(ctx.release_point, ReleasePointMetrics)
+
+
+def test_to_prompt_has_release_point(ctx):
+    """to_prompt() output contains 'Release Point' section header."""
+    prompt = ctx.to_prompt()
+    assert "Release Point" in prompt
