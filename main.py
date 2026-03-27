@@ -71,12 +71,21 @@ def main() -> None:
         raise
 
     # Post-generation hallucination check
-    suspect = check_hallucinated_metrics(report_text)
-    if suspect:
-        print(
-            f"\n⚠ Possible hallucinated metrics: {', '.join(suspect)}",
-            file=sys.stderr,
-        )
+    hallucination_report = check_hallucinated_metrics(report_text)
+    if not hallucination_report.is_clean:
+        if hallucination_report.unknown_metrics:
+            print(
+                f"\nWARNING: Unknown metrics referenced: "
+                f"{', '.join(hallucination_report.unknown_metrics)}",
+                file=sys.stderr,
+            )
+        if hallucination_report.outcome_stat_warnings:
+            print(
+                f"\nNOTE: Traditional outcome stats referenced "
+                f"(prompt warns against these): "
+                f"{', '.join(hallucination_report.outcome_stat_warnings)}",
+                file=sys.stderr,
+            )
 
 
 if __name__ == "__main__":
