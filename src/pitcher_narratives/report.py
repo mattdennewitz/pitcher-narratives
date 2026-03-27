@@ -22,6 +22,7 @@ from typing import Any
 
 from pydantic import BaseModel
 from pydantic_ai import Agent, CachePoint
+from pydantic_ai.models.google import GoogleModelSettings
 from pydantic_ai.settings import ModelSettings, ThinkingEffort
 
 from pitcher_narratives.context import PitcherContext
@@ -41,7 +42,7 @@ THINKING_LEVELS: list[ThinkingEffort] = ["minimal", "low", "medium", "high", "xh
 PROVIDERS = {
     "openai": "openai:gpt-5.4-mini",
     "claude": "anthropic:claude-sonnet-4-6",
-    "gemini": "google-gla:gemini-3-thinking",
+    "gemini": "google-gla:gemini-3-flash-preview",
 }
 
 
@@ -249,10 +250,19 @@ def _make_agents(
     if provider not in PROVIDERS:
         raise ValueError(f"Unknown provider {provider!r}, expected one of: {', '.join(PROVIDERS)}")
     model = PROVIDERS[provider]
-    # Anthropic's default max_tokens (4096) is too low when thinking is enabled
-    # because thinking tokens count against the budget.
-    extra = {"max_tokens": 16384} if provider in ("claude", "gemini") else {}
-    settings = ModelSettings(thinking=thinking, **extra)
+
+    if provider == "gemini":
+        # Gemini 3 uses GoogleModelSettings with thinking_level ('low' or 'high')
+        gemini_level = "high" if thinking in ("medium", "high", "xhigh") else "low"
+        settings: ModelSettings = GoogleModelSettings(
+            google_thinking_config={"thinking_level": gemini_level},
+            max_tokens=16384,
+        )
+    elif provider == "claude":
+        # Anthropic's default max_tokens (4096) is too low when thinking is enabled
+        settings = ModelSettings(thinking=thinking, max_tokens=16384)
+    else:
+        settings = ModelSettings(thinking=thinking)
     prompts = (_SYNTHESIZER_PROMPT, _EDITOR_PROMPT, _HOOK_PROMPT, _FANTASY_PROMPT)
     agents: _AgentTuple = tuple(  # type: ignore[assignment]
         Agent(model, output_type=str, system_prompt=p, model_settings=settings, defer_model_check=True)
