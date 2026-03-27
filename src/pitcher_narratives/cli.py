@@ -88,9 +88,17 @@ def main() -> None:
         _print_verbose_summary(pitcher_data)
 
     from pitcher_narratives.context import assemble_pitcher_context
-    from pitcher_narratives.report import check_hallucinated_metrics, generate_report_streaming, print_prompts
+    from pitcher_narratives.report import (
+        check_hallucinated_metrics,
+        generate_report_streaming,
+        print_prompts,
+        write_data_file,
+    )
 
     ctx = assemble_pitcher_context(pitcher_data)
+
+    data_file = write_data_file(ctx, args.pitcher, args.provider)
+    print(f"Wrote prompt data to {data_file}", file=sys.stderr)
 
     if args.print_prompts:
         print_prompts(ctx)

@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import re
 import sys
+from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel
@@ -33,6 +34,7 @@ __all__ = [
     "check_hallucinated_metrics",
     "generate_report_streaming",
     "print_prompts",
+    "write_data_file",
 ]
 
 THINKING_LEVELS: list[ThinkingEffort] = ["minimal", "low", "medium", "high", "xhigh"]
@@ -376,6 +378,31 @@ def _render_user_prompt(parts: _UserPrompt) -> str:
         else:
             out.append(part)
     return "\n".join(out)
+
+
+def write_data_file(ctx: PitcherContext, pitcher_id: int, provider: str) -> str:
+    """Write all prompt data to data-{pitcherid}-{provider}.md and return the path."""
+    synth_user = _build_synthesizer_message(ctx)
+    placeholder = "<synthesis output would appear here>"
+    editor_user = _build_editor_message(ctx, placeholder)
+    hook_user = _build_hook_message(ctx, placeholder)
+    fantasy_user = _build_fantasy_message(ctx, placeholder)
+
+    sections: list[str] = []
+    sep = "═" * 72
+    for label, system, user in [
+        ("PHASE 1: SYNTHESIZER", _SYNTHESIZER_PROMPT, synth_user),
+        ("PHASE 2: EDITOR", _EDITOR_PROMPT, editor_user),
+        ("PHASE 3: HOOK WRITER", _HOOK_PROMPT, hook_user),
+        ("PHASE 4: FANTASY ANALYST", _FANTASY_PROMPT, fantasy_user),
+    ]:
+        sections.append(f"\n{sep}\n{label}\n{sep}\n")
+        sections.append(f"## System Prompt\n\n{system}\n")
+        sections.append(f"## User Message\n\n{_render_user_prompt(user)}\n")
+
+    filename = f"data-{pitcher_id}-{provider}.md"
+    Path(filename).write_text("\n".join(sections))
+    return filename
 
 
 def print_prompts(ctx: PitcherContext) -> None:

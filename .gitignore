@@ -10,4 +10,5 @@ build/
 *.csv
 aggs
 *~
+data-*.md
 .claude
