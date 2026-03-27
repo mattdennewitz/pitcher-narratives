@@ -383,31 +383,25 @@ def _build_fantasy_message(ctx: PitcherContext, synthesis: str) -> _UserPrompt:
 
 def _render_user_prompt(parts: _UserPrompt) -> str:
     """Render a user prompt (with CachePoints) as readable text."""
-    out: list[str] = []
-    for part in parts:
-        if isinstance(part, CachePoint):
-            out.append("  ── [cache breakpoint] ──")
-        else:
-            out.append(part)
-    return "\n".join(out)
+    return "\n".join("  ── [cache breakpoint] ──" if isinstance(p, CachePoint) else p for p in parts)
+
+
+def _build_all_phases(ctx: PitcherContext) -> list[tuple[str, str, _UserPrompt]]:
+    """Build (label, system_prompt, user_prompt) for all 4 phases."""
+    placeholder = "<synthesis output would go here>"
+    return [
+        ("PHASE 1: SYNTHESIZER", _SYNTHESIZER_PROMPT, _build_synthesizer_message(ctx)),
+        ("PHASE 2: EDITOR", _EDITOR_PROMPT, _build_editor_message(ctx, placeholder)),
+        ("PHASE 3: HOOK WRITER", _HOOK_PROMPT, _build_hook_message(ctx, placeholder)),
+        ("PHASE 4: FANTASY ANALYST", _FANTASY_PROMPT, _build_fantasy_message(ctx, placeholder)),
+    ]
 
 
 def write_data_file(ctx: PitcherContext, pitcher_id: int, provider: str) -> str:
     """Write all prompt data to data-{pitcherid}-{provider}.md and return the path."""
-    synth_user = _build_synthesizer_message(ctx)
-    placeholder = "<synthesis output would appear here>"
-    editor_user = _build_editor_message(ctx, placeholder)
-    hook_user = _build_hook_message(ctx, placeholder)
-    fantasy_user = _build_fantasy_message(ctx, placeholder)
-
-    sections: list[str] = []
     sep = "═" * 72
-    for label, system, user in [
-        ("PHASE 1: SYNTHESIZER", _SYNTHESIZER_PROMPT, synth_user),
-        ("PHASE 2: EDITOR", _EDITOR_PROMPT, editor_user),
-        ("PHASE 3: HOOK WRITER", _HOOK_PROMPT, hook_user),
-        ("PHASE 4: FANTASY ANALYST", _FANTASY_PROMPT, fantasy_user),
-    ]:
+    sections: list[str] = []
+    for label, system, user in _build_all_phases(ctx):
         sections.append(f"\n{sep}\n{label}\n{sep}\n")
         sections.append(f"## System Prompt\n\n{system}\n")
         sections.append(f"## User Message\n\n{_render_user_prompt(user)}\n")
@@ -419,19 +413,8 @@ def write_data_file(ctx: PitcherContext, pitcher_id: int, provider: str) -> str:
 
 def print_prompts(ctx: PitcherContext) -> None:
     """Print all LLM prompts (system + user) to stderr and exit."""
-    synth_user = _build_synthesizer_message(ctx)
-    placeholder = "<synthesis output would go here>"
-    editor_user = _build_editor_message(ctx, placeholder)
-    hook_user = _build_hook_message(ctx, placeholder)
-    fantasy_user = _build_fantasy_message(ctx, placeholder)
-
     sep = "═" * 72
-    for label, system, user in [
-        ("PHASE 1: SYNTHESIZER", _SYNTHESIZER_PROMPT, synth_user),
-        ("PHASE 2: EDITOR", _EDITOR_PROMPT, editor_user),
-        ("PHASE 3: HOOK WRITER", _HOOK_PROMPT, hook_user),
-        ("PHASE 4: FANTASY ANALYST", _FANTASY_PROMPT, fantasy_user),
-    ]:
+    for label, system, user in _build_all_phases(ctx):
         print(f"\n{sep}", file=sys.stderr)
         print(label, file=sys.stderr)
         print(f"{sep}\n", file=sys.stderr)
