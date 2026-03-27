@@ -1,178 +1,179 @@
 # Project Research Summary
 
-**Project:** pitcher-narratives
-**Domain:** LLM-powered pitcher scouting report CLI (Statcast + Pitching+ data to narrative)
-**Researched:** 2026-03-26
+**Project:** Pitcher Narratives — v1.3 Editor-Anchor Reflection Loop
+**Domain:** LLM self-refinement / actor-critic feedback loop for narrative quality
+**Researched:** 2026-03-27
 **Confidence:** HIGH
 
 ## Executive Summary
 
-pitcher-narratives is a Python CLI tool that transforms raw MLB Statcast pitch-level data and Pitching+ aggregation metrics into scout-voice narrative reports using Claude. The expert approach for this class of tool -- data-to-narrative via LLM -- centers on one non-negotiable principle: **pre-compute everything, let the LLM write insight**. The Python layer (polars) must compute all deltas, trends, baselines, and qualitative labels before the LLM sees any data. The LLM receives pre-digested statements like "Slider usage: 32% (+12pp, Significant Increase from baseline)" and writes prose around them. This architecture is well-documented across multiple sources and is the single most important design decision for report quality.
+The v1.3 milestone adds a bounded editor-anchor reflection loop to the existing five-phase pipeline. The current architecture already has the necessary actor-critic structure: the editor (actor) writes a narrative capsule and the anchor checker (critic) verifies factual fidelity against the synthesis. What v1.3 adds is closing the loop — anchor warnings feed back to the editor, the editor revises, and the cycle repeats until the capsule is clean or an iteration cap is hit. Research across both the installed pydantic-ai 1.72 source and LLM self-refinement literature confirms the pattern is sound and the existing codebase requires zero new dependencies.
 
-The recommended stack is lean and already partially constrained by the existing pyproject.toml: Python 3.14, polars for data processing, pydantic-ai with Claude Sonnet 4.6 for report generation, and rich for terminal rendering. The architecture follows a strict pipeline -- Loader, Delta Engine, Schema Assembler, Report Generator, Output Formatter -- where each component has clear boundaries and no component crosses its lane. Pydantic models define the data contract between Python computation and LLM input. The LLM output should be plain text (`output_type=str`), not structured Pydantic output, because narrative prose quality degrades significantly when forced into JSON field slots.
+The recommended implementation is a plain Python while-loop inside `generate_report_streaming()`, using `AnchorResult` structured Pydantic output (replacing the current text-parsed string) with fresh editor prompt construction per revision pass. `CachePoint` avoids reprocessing the static synthesis context on each revision. The maximum iteration cap defaults to 3 total passes (initial + 2 revisions), the first pass streams to stdout while revisions run silently, and all changes are localized to `report.py` and `cli.py` — no new files, no new packages, no async conversion required.
 
-The primary risks are: (1) the LLM reciting statistics instead of generating insight -- mitigated by aggressive preprocessing and anti-recitation prompt design, (2) hallucinated trends and fabricated causal claims -- mitigated by pre-computing ALL trend directions in Python so the LLM never does math, and (3) context window bloat from raw data dumps -- mitigated by targeting under 2,000 tokens for the data context through curated summaries rather than DataFrame dumps. A secondary risk is polars 3.14 compatibility (not officially classified yet), which should be verified as the very first development task.
+The key risks are not engineering risks but prompt design risks: quality regression (the editor over-corrects and strips voice on revision), anchor drift (the checker's severity calibration is inconsistent without example grounding), and editor gaming (the editor learns to satisfy the anchor rubric rather than inform the reader). These pitfalls are documented in NeurIPS 2023-2024 self-refinement research and share a common prevention: the revision prompt must be surgical, pass only the current capsule plus current warnings (no accumulated history), explicitly preserve editorial voice, and allow the editor to acknowledge rather than force-fix every warning. Getting the revision prompt right is more important than the loop mechanics themselves.
 
 ## Key Findings
 
 ### Recommended Stack
 
-The stack is compact with no unnecessary abstractions. All core dependencies are already declared in pyproject.toml. No framework overhead (no LangChain, no Jinja templating, no pandas).
+No new dependencies are needed. The v1.3 reflection loop is implementable entirely with pydantic-ai 1.72 primitives already present in the codebase. The anchor agent's `output_type` changes from `str` to `AnchorResult` (a new Pydantic model) to enable programmatic loop control. All other agents, models, and configuration remain unchanged. `pydantic-graph` was evaluated and ruled out: its `BaseNode` API is async-only, converting the synchronous pipeline would require an `asyncio.run()` bridge throughout `generate_report_streaming()` for zero functional benefit — the loop topology is literally `while not done`, which does not justify the ~80 lines of async boilerplate.
 
 **Core technologies:**
-- **polars >=1.39.3**: Columnar data engine -- handles 145K-row Statcast parquet with lazy evaluation and predicate pushdown; 5-30x faster than pandas for this workload
-- **pydantic-ai >=1.72.0**: LLM agent framework -- type-safe structured input via dependency injection, dynamic instructions via `@agent.instructions`, native Anthropic support
-- **rich >=14.3.3**: Terminal rendering -- styled markdown prose sections and formatted data tables side-by-side
-- **Claude Sonnet 4.6**: LLM model -- near-Opus quality for analytical writing at 5x lower cost; configured via `anthropic:claude-sonnet-4-6` model string
-- **argparse (stdlib)**: CLI -- two arguments (`-p pitcher_id`, `-w lookback_window`) do not justify pulling in typer/click
-
-**Critical version note:** polars does not officially list Python 3.14 support in PyPI classifiers (stops at 3.13). The project requires Python >=3.14. This likely works but must be verified before any other development.
+- `pydantic-ai 1.72` Agent with `output_type=AnchorResult` — structured anchor output enabling programmatic convergence checks; verified against installed source (`agent/abstract.py`, `run.py`)
+- `pydantic.BaseModel` (`AnchorResult`, `AnchorWarning`) — typed warning categories (MISSED_SIGNAL, UNSUPPORTED, DIRECTION_ERROR, OVERSTATED) replacing free-text parsing; enables loop control without fragile string matching
+- Python `dataclass` (`ReflectionTrace`) — iteration tracking with `RunUsage.incr()` for per-iteration token aggregation; zero overhead, trivially debuggable; `RunUsage.incr()` verified in installed `pydantic_ai/usage.py`
+- `CachePoint` (already imported in codebase) — cache the synthesis prefix in revision prompts so the static portion is free across all revision passes
 
 ### Expected Features
 
-**Must have (table stakes -- v1):**
-- Starter/reliever auto-detection (per appearance, not per pitcher) -- structural foundation
-- Appearance-level performance summary -- report anchor
-- Fastball quality summary (velo baseline, trend, within-game variance, shape) -- most important analysis
-- Arsenal inventory with usage rate deltas (recent vs. season baseline) -- second most important
-- P+/S+/L+ scores per pitch type at season and appearance grain -- the project's data advantage
-- Platoon split awareness -- essential for arsenal completeness
-- Trend context framing (deltas with qualitative strings) -- what makes it a scout report, not a stat dump
-- Data tables alongside prose -- output format requirement
+**Must have (table stakes):**
+- Iteration cap (MAX_REVISIONS=2, so 3 total passes) — without a hard ceiling the loop is undeployable; LLM loops do not monotonically improve past 2-3 iterations
+- Convergence detection (CLEAN exit) — break immediately when anchor returns clean; clean first pass should add zero overhead (expected 50-70% of first drafts)
+- Warning pass-through to editor — anchor findings must appear in the revision prompt; the editor cannot fix what it cannot see
+- Distinct editor revision prompt — says "fix these specific issues, preserve everything else" rather than re-running the initial write prompt (which causes full rewrites that destroy good material)
+- Surviving warnings surfaced to user — when the loop hits max iterations with unresolved issues, report them to stderr with iteration count
+- Iteration metadata in ReportResult — `revision_count: int` and `anchor_converged: bool` for cost tracking and diagnostics
 
-**Should have (differentiators -- v1.x):**
-- Execution metrics (CSW%, zone rate, chase rate)
-- Within-game velocity arc narrative
-- Movement shape change detection
-- xRV100-driven pitch effectiveness ranking
-- Qualitative scout-language vocabulary mapping
-- Rest and workload context for relievers
+**Should have (quality improvements, v1.3 fast-follow after baseline loop is validated):**
+- Targeted revision instruction — explicit "revise ONLY the flagged passages" wording preventing wholesale rewrite quality regression
+- Warning-type prioritization — factual errors (DIRECTION_ERROR, UNSUPPORTED) trigger revision; editorial issues (OVERSTATED) surface as warnings without burning another iteration
+- Diff tracking between passes — developer insight into whether the editor is making surgical fixes or wholesale rewrites (length change, hedging word count)
 
-**Defer (v2+):**
-- Count-state tendencies (HIGH complexity, requires Statcast count reconstruction)
-- Times through order analysis (HIGH complexity, requires batting order reconstruction)
-- Key matchup highlights (HIGH complexity, requires batter identification + WPA)
-- Pitch-level P+/S+/L+ outlier detection (queries 143K-row all_pitches file)
+**Defer (v1.4+):**
+- Per-warning fix verification — tracking which specific warnings resolved per pass requires semantic comparison across warning sets; high complexity for marginal benefit
+- Separate cheaper model for anchor — anchor check does not need the same model as the editor; use Haiku/mini for factual classification once the loop behavior is understood
+
+**Anti-features (never build):**
+- Unlimited iteration — quality plateaus or degrades after 2-3 passes; every production LLM loop uses a hard cap
+- Full rewrite on each revision — the single most common failure mode; always use targeted revision prompts
+- LLM-as-judge without ground truth — the anchor's value comes from checking against the synthesis (external anchor); do not expand it to subjective quality scoring
+- Streaming revision passes — confusing UX; the user should never see a capsule stream and then be replaced
+- Temperature escalation across retries — higher temperature introduces new hallucinations; factual errors are fixed by prompt clarity, not randomness
 
 ### Architecture Approach
 
-The system is a synchronous five-stage pipeline: CLI parses args, Loader reads and filters data, Delta Engine computes baselines/trends/qualitative labels, Schema Assembler packages computed data into layered Pydantic models with `to_prompt()` methods, and Report Generator sends the context to Claude via pydantic-ai dependency injection and returns prose. Each engine module (classify, fastball, arsenal, execution, context) maps to one section of the scouting report and is a pure function: DataFrames in, Pydantic models out.
+The reflection loop is a localized change entirely within `generate_report_streaming()` in `report.py`. Phases 1, 3, and 4 (synthesizer, hook writer, fantasy analyst) are completely unchanged and run sequentially after the loop completes. The loop is internal to the Phase 2/2.5 editor-anchor block. Three architectural options were evaluated: simple while-loop (recommended), pydantic-graph state machine (overengineered), and custom `ReflectionLoop` orchestrator class (premature abstraction for a 1-method class). The build order follows natural dependency: pure helper functions first, then loop mechanics, then consumer updates.
 
 **Major components:**
-1. **Data Loader** (`loader.py`) -- reads parquet + CSVs, filters to target pitcher, returns typed DataFrames
-2. **Delta Engine** (`engine/`) -- five modules computing baselines, deltas, and qualitative trend strings; pure polars, no LLM
-3. **Schema Assembler** (`models/context.py`) -- layered Pydantic models with `to_prompt()` that render the LLM's input context
-4. **Report Generator** (`agent.py`) -- pydantic-ai Agent with `output_type=str`, deps injection, dynamic instructions
-5. **Output Formatter** (`formatting.py`) -- rich Console for terminal, plain text for file output
-
-**Key architectural decision:** Use `output_type=str` (free-form prose), NOT a structured Pydantic output model. All structure lives in the INPUT schemas. The output is free-form narrative that reads like a human scout wrote it. This is explicitly called out as a critical anti-pattern to avoid (structured output for prose generation) in both the architecture and pitfalls research.
+1. `AnchorResult` / `AnchorWarning` Pydantic models — replace free-text anchor output; `is_clean: bool` drives loop exit; typed `category` enum enables severity filtering without string parsing
+2. `ReflectionTrace` dataclass — holds `iterations`, `history: list[AnchorResult]`, `usage_per_iteration: list[RunUsage]`; `.converged`, `.exhausted`, `.surviving_warnings`, `.total_usage` properties encapsulate convergence logic cleanly
+3. `_build_revision_message(ctx, synthesis, capsule, warnings)` — fixed-size revision prompt: synthesis (CachePoint-cached) + previous capsule + formatted warnings + targeted revision instruction; no history accumulation across iterations
+4. `_run_editor_first_pass()` / `_run_editor_revision()` — first pass uses `run_stream_sync()` to stdout; revision passes use `run_sync()` silently; streaming only on the final capsule
+5. Reflection while-loop in `generate_report_streaming()` — anchor check, break on clean, editor revision; phases 3/4 receive the final capsule unchanged
 
 ### Critical Pitfalls
 
-1. **Number recitation instead of insight** -- Pre-compute qualitative trend strings in Python; add anti-recitation instructions and few-shot exemplars to the system prompt; omit unchanged metrics entirely from context
-2. **Hallucinated trends and fabricated causation** -- Pre-compute ALL trend directions in polars so the LLM never does arithmetic; add data grounding constraints ("every claim must reference a provided metric"); zero tolerance for trends not in input
-3. **Context window bloat** -- Target under 2,000 tokens for data context; pass 20-40 pre-computed insights, not 1,000 rows; use markdown tables (34-38% more token-efficient than JSON); filter Statcast to ~15-20 of 114 columns
-4. **Starter/reliever detection edge cases** -- Classify each APPEARANCE, not the pitcher; 25% of pitchers have dual roles; check first-inning entry rather than innings thresholds; handle openers explicitly
-5. **Statcast data quality silent failures** -- Audit null rates per column before building pipeline; set minimum pitch count thresholds for per-type analysis; normalize pitch type naming ("FF" vs "4-Seam Fastball"); handle first-appearance cold start (no baseline)
+1. **Quality regression on revision (the polishing paradox)** — the editor over-corrects, strips voice, and hedges everything; LLMs optimize for satisfying the checker, not maintaining voice. Prevent by passing only the current capsule (not revision history), instructing "revise ONLY the flagged passages", and capping at 2 revisions. Warn if the revised capsule is >20% shorter or hedging word density increases.
+
+2. **Anchor drift (too strict or too lenient)** — the anchor LLM's calibration is inconsistent without example guidance; fluent prose masks factual errors. Prevent by adding 2-3 calibration examples to the anchor prompt showing what SHOULD vs. SHOULD NOT be flagged, and by separating factual checks (trigger revision) from editorial checks (surface as warnings only). Target 20-40% first-draft flag rate.
+
+3. **Editor gaming the checker** — after revisions, the editor learns to satisfy the anchor rubric rather than inform the reader; produces a "proof" capsule that mentions every synthesis bullet in synthesis order. Prevent by reformatting anchor warnings as editorial suggestions ("find a natural place for X") rather than error reports, and by explicitly reinstating voice/thread requirements in every revision prompt.
+
+4. **Cost and latency explosion** — worst case adds 4 LLM calls (+~$0.012, +~32s). Prevent with hard iteration cap, CLEAN short-circuit (no overhead when first draft passes), and streaming only the final version. If >30% of reports iterate to max, the anchor is too strict.
+
+5. **Non-deterministic anchor making testing impossible** — the loop logic must be tested using `FunctionModel` (a callable mock returning scripted per-call outputs), not real LLM calls. Real anchor calibration is a separate post-implementation concern requiring a corpus of real reports.
+
+6. **Oscillation without convergence** — the editor fixes issue A, introducing issue B; the anchor flags B; the editor reintroduces A. Prevent with oscillation detection: if a warning from iteration N reappears in iteration N+2, terminate immediately rather than burning through the cap.
+
+7. **Context accumulation bloat** — naively appending previous capsules and warning sets grows the revision prompt ~30% per iteration, diluting editor attention away from the synthesis. Prevent with fixed-size revision context: synthesis + current capsule + current warnings only; no iteration history.
 
 ## Implications for Roadmap
 
-Based on research, suggested phase structure:
+Based on combined research, the implementation has a clear three-phase build order determined by dependency relationships.
 
-### Phase 1: Data Foundation and Pipeline Skeleton
+### Phase 1: Foundation — Helper Functions and Data Models
 
-**Rationale:** Every other component depends on the data layer being correct. The architecture research identifies models and loader as Phase 1 dependencies. The pitfalls research identifies data quality, null handling, and starter/reliever classification as Phase 1 concerns. Nothing can be tested without data flowing.
-**Delivers:** Working data pipeline from parquet/CSV to filtered, validated, pitcher-scoped DataFrames; starter/reliever classification; project skeleton with module structure
-**Addresses features:** Starter/reliever detection, appearance-level performance summary (data layer)
-**Avoids pitfalls:** Statcast data quality silent failures (Pitfall 6), starter/reliever edge cases (Pitfall 5)
-**Stack elements:** polars, Pydantic models (`models/context.py`), argparse CLI skeleton
-**Notes:** Verify polars 3.14 compatibility as the FIRST task. Build data quality assertions before any computation.
+**Rationale:** All loop mechanics depend on these data models and helpers being correct. Every component in this phase is a pure function or a data model with zero side effects — independently testable with no LLM calls and no risk of breaking the existing pipeline. Build confidence here before touching the orchestration.
 
-### Phase 2: Delta Engine and Context Assembly
+**Delivers:** `AnchorResult`/`AnchorWarning` Pydantic models, `ReflectionTrace` dataclass, `_parse_anchor_output()` (extracted from existing inline code), `_build_revision_message()` (new prompt builder), `ReportResult.revision_count` and `ReportResult.anchor_converged` field additions.
 
-**Rationale:** The delta computation layer is the "most important engineering phase" per pitfalls research. It is the primary defense against the top two pitfalls (number recitation and hallucinated trends). The architecture research places all engine modules in Phase 2 and notes they are parallelizable (no inter-dependencies).
-**Delivers:** Complete preprocessing pipeline producing the `PitcherContext` Pydantic model with `to_prompt()` output; all baselines, deltas, qualitative trend strings computed in Python
-**Addresses features:** Fastball quality summary, arsenal inventory + usage deltas, P+/S+/L+ scores, platoon split awareness, trend context framing
-**Avoids pitfalls:** Number recitation (Pitfall 1), hallucinated trends (Pitfall 2), context window bloat (Pitfall 4)
-**Stack elements:** polars (aggregation/delta computation), Pydantic models (layered context hierarchy)
-**Notes:** Target under 2,000 tokens for the assembled context document. This phase is testable WITHOUT the LLM -- validate context output independently.
+**Addresses:** Structured output requirement, context bloat prevention (fixed-size prompt template baked in from the start), non-deterministic testing (pure functions have deterministic unit tests), downstream metadata (ReportResult fields).
 
-### Phase 3: LLM Agent and Report Generation
+**Avoids:** Pitfall 6 (context accumulation) by designing the fixed-size revision prompt template upfront. Pitfall 8 (non-deterministic testing) by making all foundation components pure functions. Pitfall 3 (editor gaming) by crafting the revision prompt to reformat warnings as suggestions rather than error reports.
 
-**Rationale:** The agent depends on finalized PitcherContext shape from Phase 2. Prompt design is the secondary defense against recitation and hallucination. The structured vs. unstructured output decision must be made here (answer: `output_type=str`).
-**Delivers:** Working end-to-end report generation; pydantic-ai Agent with system prompt, dependency injection, and Claude API integration; rich terminal output
-**Addresses features:** Data tables alongside prose, appearance-level performance summary (complete)
-**Avoids pitfalls:** Over-structured output killing prose quality (Pitfall 3), number recitation (prompt-level defense)
-**Stack elements:** pydantic-ai, Claude Sonnet 4.6, rich, python-dotenv
-**Notes:** Invest heavily in the system prompt -- include anti-recitation instructions and few-shot exemplar of good scouting prose. Use `run_sync()` (not streaming) for structured output validation.
+**Research flag:** Standard patterns. All APIs verified against installed source at HIGH confidence. No additional research needed.
 
-### Phase 4: Report Enhancement and Polish
+### Phase 2: Loop Mechanics and Orchestration
 
-**Rationale:** With the core pipeline validated, layer in differentiator features that elevate report quality. These features follow the same engine pattern (DataFrames in, Pydantic models out) and slot into the existing context hierarchy.
-**Delivers:** Execution metrics, velocity arc narrative, movement shape detection, xRV100 rankings, scout-language vocabulary, reliever workload context
-**Addresses features:** All "should have" / v1.x features from FEATURES.md
-**Avoids pitfalls:** Empty report sections for relievers (adapt to actual arsenal); inconsistent report length between roles
-**Notes:** Each feature can be added independently. Prioritize execution metrics (CSW/zone/chase) and xRV100 ranking (low cost, high value) first.
+**Rationale:** With foundation in place, the loop is a straightforward assembly. The streaming decision (stream only the final capsule) must be locked in here because it affects the function signature; reversing it later requires caller changes. The `anchor_checker` output type change to `AnchorResult` is a breaking change in `_make_agents()` and must be done atomically with the type definition.
+
+**Delivers:** `_run_editor_first_pass()` (extract existing streaming block), `_run_editor_revision()` (new silent revision helper), reflection while-loop in `generate_report_streaming()`, `MAX_REVISIONS` constant, `--max-revisions` CLI flag, anchor agent `output_type` change to `AnchorResult`.
+
+**Addresses:** All table stakes features — iteration cap, convergence detection, warning pass-through, surviving warnings, iteration metadata. Default cap set to 2 revisions (3 total passes); configurable via flag.
+
+**Avoids:** Pitfall 4 (cost/latency) through CLEAN short-circuit. Pitfall 2 (anchor drift) by keeping anchor prompt identical across all passes. Pitfall 1 (quality regression) through the targeted revision prompt from Phase 1. Pitfall 5 (infinite loops) through hard cap.
+
+**Research flag:** Needs real-data validation after implementation. The revision prompt quality cannot be verified with mock models — plan for one prompt tuning pass after running against 5-10 real pitcher reports.
+
+### Phase 3: Integration Testing and Quality Validation
+
+**Rationale:** The loop is feature-complete after Phase 2, but Pitfall 7 (downstream phase invalidation) and Pitfall 2 (anchor calibration) cannot be caught by unit tests. End-to-end validation with real data is required before the feature is considered production-ready.
+
+**Delivers:** Comparison of 10 reports with and without the loop (capsule voice quality, hook quality, fantasy insight specificity), anchor calibration assessment (first-draft flag rate, consistency across repeated runs), CLI integration for iteration progress display on stderr, comprehensive test suite using `FunctionModel` for loop convergence scenarios.
+
+**Addresses:** Full "Looks Done But Isn't" checklist from PITFALLS.md — iteration cap termination, oscillation detection, voice preservation, downstream quality, streaming UX, cost tracking, surviving warnings, CLEAN short-circuit, deterministic tests, anchor consistency.
+
+**Avoids:** Pitfall 7 (downstream invalidation — hook/fantasy phases must be re-tested after loop is added). Pitfall 2 (anchor calibration — add few-shot examples if flag rate is outside 20-40%). Pitfall 1 (voice regression — read 10 revised capsules aloud; they should not sound noticeably more hedged).
+
+**Research flag:** Anchor prompt calibration examples must be derived from real flag rates observed during this phase. Cannot be specified in advance. If first-draft flag rate is >50%, the anchor needs calibration examples before shipping.
 
 ### Phase Ordering Rationale
 
-- **Data before computation:** You cannot compute deltas without validated data flowing. Phase 1 must complete before Phase 2 begins.
-- **Computation before LLM:** The context assembly quality sets the ceiling for report quality. Phase 2 is testable without the LLM, allowing rapid iteration on data preprocessing.
-- **LLM integration is a thin layer:** Phase 3 is intentionally narrow -- it is "just" wiring the agent and writing the prompt. Most engineering effort should go into Phases 1 and 2.
-- **Enhancements layer onto a stable foundation:** Phase 4 features follow the exact same engine pattern established in Phase 2. No architectural changes needed.
+- Foundation before loop mechanics because `AnchorResult` is a breaking type change in `_make_agents()`; all consumers must be updated atomically with the model definition
+- Loop mechanics before integration testing because the streaming UX decision is architectural and must be validated in full pipeline context; unit tests cannot confirm the user experience is not confusing
+- Targeted revision prompt wording (differentiator feature) is intentionally omitted from Phase 2 and folded into Phase 3 validation — implement basic "fix these issues" first, refine to surgical "fix only these passages" after seeing real editor behavior on real data
+- Warning-type prioritization is deferred to Phase 3 or fast-follow; the basic loop works without it and implementing it prematurely adds complexity before seeing which warning types actually cause problems
 
 ### Research Flags
 
-Phases likely needing deeper research during planning:
-- **Phase 2:** Delta computation patterns for each report section (fastball, arsenal, execution, context) need specific research into which Statcast columns and P+ metrics map to which narrative insights. The current research identifies the PATTERN but not the exact column-to-insight mappings.
-- **Phase 3:** Prompt engineering for scouting voice requires iterative testing. The anti-recitation and data-grounding instructions need empirical tuning. Consider `/gsd:research-phase` for prompt design specifically.
+Phases needing deeper research or empirical validation during planning:
+- **Phase 3 (anchor calibration):** Calibration examples depend on observed real flag rates. Cannot pre-specify without data. Plan for one calibration iteration after 10+ real reports.
+- **Phase 2 (revision prompt wording):** The highest-risk single artifact. Structure is settled; exact instruction tone must be tuned against real pitcher data. Reserve explicit time for this.
 
-Phases with standard patterns (skip research-phase):
-- **Phase 1:** Data loading with polars is well-documented. Starter/reliever classification is a straightforward heuristic. Standard patterns apply.
-- **Phase 4:** Enhancement features follow the same engine module pattern from Phase 2. No new architectural decisions.
+Phases with standard patterns (skip additional research):
+- **Phase 1:** All data model and helper patterns verified against installed pydantic-ai source at HIGH confidence.
+- **Phase 2 loop mechanics:** The while-loop structure is idiomatic; the only open question (pydantic-graph vs while-loop) is conclusively resolved.
 
 ## Confidence Assessment
 
 | Area | Confidence | Notes |
 |------|------------|-------|
-| Stack | HIGH | All core libraries verified against official docs and PyPI. Only risk is polars 3.14 compatibility (easily verified). |
-| Features | HIGH | Feature landscape sourced from FanGraphs, Baseball Savant, Simple Sabermetrics, and academic literature. Clear prioritization with dependency mapping. |
-| Architecture | HIGH | Pipeline pattern well-established for data-to-narrative LLM tools. pydantic-ai patterns verified against official docs. Build order derives directly from component dependencies. |
-| Pitfalls | MEDIUM-HIGH | Top pitfalls verified across multiple sources (pydantic-ai issues, Statcast data quality research, LLM hallucination studies). Some pydantic-ai streaming edge cases sourced from GitHub issues rather than official docs. |
+| Stack | HIGH | All pydantic-ai 1.72 APIs verified against installed source (`agent/abstract.py`, `run.py`, `usage.py`, `pydantic_graph/`). Zero new dependencies confirmed. |
+| Features | MEDIUM | Table stakes features are clear and well-scoped. Differentiator features (targeted revision, warning prioritization) are grounded in LLM self-refinement literature but specific prompt designs are empirically untested against this codebase. |
+| Architecture | HIGH | Build order and component boundaries verified against existing `report.py`. All three architectural alternatives evaluated with specific rationale for rejection. Anti-patterns documented with root cause analysis. |
+| Pitfalls | MEDIUM-HIGH | Core pitfalls (quality regression, oscillation, context bloat) grounded in NeurIPS 2023-2024 research. Severity specific to this pipeline is inferred, not measured. Prevention strategies are concrete and actionable. |
 
-**Overall confidence:** HIGH
+**Overall confidence:** HIGH for implementation approach; MEDIUM for prompt quality outcomes (must be empirically validated).
 
 ### Gaps to Address
 
-- **Polars 3.14 compatibility:** Not officially classified. Must verify `import polars` works on Python 3.14 before committing to the Python version requirement. Fallback: pin to Python 3.13.
-- **Exact Statcast column selection:** Research identifies that ~15-20 of 114 columns are needed but does not enumerate the exact set. Resolve during Phase 1 implementation by auditing the data files.
-- **System prompt tuning:** No exemplar of ideal scouting prose was produced during research. The prompt will need iterative refinement during Phase 3. Consider sourcing 2-3 real scouting report examples for few-shot prompting.
-- **pydantic-ai streaming + structured output interaction:** Known bug (issue #3393) with `ModelRetry` in output validators during streaming. Not relevant for MVP (`run_sync` + `output_type=str`) but matters if streaming is added later.
-- **First-appearance cold start:** What does the report look like for a pitcher's FIRST appearance of the season (no baseline to compare against)? The preprocessing layer needs a fallback, but this edge case was flagged without a concrete solution.
+- **Revision prompt surgical precision:** The difference between "revise the capsule" and "revise only the flagged passages" is significant for voice quality. Exact prompt language should be tested against 5-10 real capsule+warning pairs during Phase 2 validation. This is the main deliverable risk.
+- **Anchor calibration threshold:** Target 20-40% first-draft flag rate. Current anchor strictness is unknown without running the loop on real data. If flag rate is outside target, Phase 3 calibration work expands significantly.
+- **MAX_REVISIONS default (2 vs 3):** STACK.md recommends 3, ARCHITECTURE.md recommends 2. Both agree it should be configurable. Start at 2 (cheaper, more conservative); raise to 3 if data shows a third pass has net positive quality impact.
+- **TestModel multi-response:** pydantic-ai's `TestModel` returns the same output every call; `FunctionModel` (callable that varies per call) is required for loop convergence tests. Verified to exist in installed source; must be used in Phase 1/2 test infrastructure.
 
 ## Sources
 
 ### Primary (HIGH confidence)
-- [pydantic-ai official docs](https://ai.pydantic.dev/) -- Agent API, output types, dependency injection, Anthropic provider
-- [pydantic-ai Anthropic provider](https://ai.pydantic.dev/models/anthropic/) -- model strings, settings
-- [Polars user guide](https://docs.pola.rs/user-guide/) -- lazy API, aggregation, scan_parquet, I/O patterns
-- [Anthropic model overview](https://platform.claude.com/docs/en/about-claude/models/overview) -- Claude Sonnet 4.6
-- [FanGraphs: PitchingBot Pitch Modeling](https://library.fangraphs.com/pitching/pitchingbot-pitch-modeling-primer/) -- P+/S+/L+ metrics
-- [Statcast CSV Documentation](https://baseballsavant.mlb.com/csv-docs) -- data schema, pitch type classifications
-- [pydantic-ai GitHub issues #839, #3393, #200](https://github.com/pydantic/pydantic-ai/issues/) -- known limitations and bugs
-- [LLM Hallucination Mitigation via Prompt Engineering](https://pmc.ncbi.nlm.nih.gov/articles/PMC12518350/) -- structured prompting reduces hallucination
+
+- `/Users/matt/src/pitcher-narratives/.venv/lib/python3.14/site-packages/pydantic_ai/agent/abstract.py` — `run_sync` signature, `output_type`, `message_history` parameters
+- `/Users/matt/src/pitcher-narratives/.venv/lib/python3.14/site-packages/pydantic_ai/usage.py` — `RunUsage.incr()` for per-iteration token aggregation
+- `/Users/matt/src/pitcher-narratives/.venv/lib/python3.14/site-packages/pydantic_graph/nodes.py`, `graph.py`, `beta/` — `BaseNode` async-only constraint; `Fork`/`Join`/`Decision` nodes; confirmed plain while-loop is correct choice
+- `/Users/matt/src/pitcher-narratives/src/pitcher_narratives/report.py` — current 5-phase pipeline structure, `CachePoint` usage, `_make_agents` pattern, anchor warning categories
+- `/Users/matt/src/pitcher-narratives/tests/test_report.py` — `TestModel` / `FunctionModel` usage patterns for loop testing
 
 ### Secondary (MEDIUM confidence)
-- [Simple Sabermetrics: Elite Opposing Pitcher Scouting Report](https://simplesabermetrics.com/blogs/simple-sabermetrics-blog/how-to-build-an-elite-opposing-pitcher-advanced-scouting-report) -- scouting report structure
-- [Imputing Missing Statcast Data](https://www.mattefay.com/imputing-missing-statcast-data) -- null rates and non-random missingness
-- [Markdown vs JSON Token Efficiency](https://community.openai.com/t/markdown-is-15-more-token-efficient-than-json/841742) -- formatting efficiency
-- [NAACL 2025: LLM-Based Insight Generation](https://aclanthology.org/2025.naacl-long.24.pdf) -- multi-stage LLM patterns
-- [pydantic-ai streaming docs (DeepWiki)](https://deepwiki.com/pydantic/pydantic-ai/4.1-streaming-and-real-time-processing) -- run_stream_sync patterns
-- [Polars + Python 3.14 (polars-bio)](https://biodatageeks.org/polars-bio/blog/2026/02/14/polars-bio-0230-faster-parsing-and-python-314-support/) -- adjacent project 3.14 confirmation
+
+- Huang et al., "Large Language Models Cannot Self-Correct Reasoning Yet" (2024) — quality regression after 2-3 revision passes; self-correction without external feedback degrades performance
+- Madaan et al., "Self-Refine: Iterative Refinement with Self-Feedback" (NeurIPS 2023) — diminishing returns after 2-3 iterations; targeted feedback outperforms holistic feedback
+- Shinn et al., "Reflexion: Language Agents with Verbal Reinforcement Learning" (NeurIPS 2023) — actor-critic loop design; reward hacking risks when critic has no external ground truth
+- Pan et al., "Automatically Correcting Large Language Models" (2024) — external verification (anchor against synthesis) more reliable than intrinsic self-critique
 
 ### Tertiary (LOW confidence)
-- None -- all findings corroborated by at least two sources
+
+- Cost estimates ($0.003/call, ~8s/call, worst case +$0.012 per report) — based on general Sonnet 4.6 pricing; validate against actual API billing after Phase 2
 
 ---
-*Research completed: 2026-03-26*
+*Research completed: 2026-03-27*
 *Ready for roadmap: yes*

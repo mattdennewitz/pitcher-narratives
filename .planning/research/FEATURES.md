@@ -1,196 +1,135 @@
-# Feature Research
+# Feature Landscape: Editor-Anchor Reflection Loop
 
-**Domain:** LLM-generated pitcher scouting narrative reports (MLB, Statcast + Pitching+ data)
-**Researched:** 2026-03-26
-**Confidence:** HIGH
+**Domain:** LLM self-refinement / actor-critic feedback loop for narrative quality
+**Researched:** 2026-03-27
+**Confidence:** MEDIUM (training data only -- no web verification available; patterns well-established in literature through mid-2025)
 
-## Feature Landscape
+## Context
 
-### Table Stakes (Users Expect These)
+The existing v1.2 pipeline runs five phases linearly: synthesizer produces structured bullets, editor writes a capsule, anchor checker verifies fidelity (outputs CLEAN or bracketed warnings), then hook writer and fantasy analyst derive from the capsule. Anchor warnings currently print to stderr and are ignored by the pipeline. The v1.3 milestone closes the loop: anchor feedback goes back to the editor, the editor revises, and the cycle repeats until the anchor returns CLEAN or a cap is hit.
 
-A pitcher report that omits any of these feels incomplete to anyone with sabermetric literacy.
+This research focuses exclusively on the NEW features needed for the reflection loop -- not the existing pipeline features documented in the v1.0 FEATURES.md.
 
-| Feature | Why Expected | Complexity | Notes |
-|---------|--------------|------------|-------|
-| **Fastball quality summary** | Foundation of every pitching assessment. Velo baseline, recent trend, within-game variance, and shape (IVB/HB) are the first things any analyst looks at. | LOW | Data available: `release_speed`, `pfx_x`, `pfx_z` from Statcast; S+ from aggs. Compute season baseline vs. appearance avg/peak. |
-| **Arsenal inventory with usage rates** | Reader needs to know what the pitcher throws and how often. Standard in every Savant player page and scouting report. | LOW | Group by `pitch_type` in Statcast. P+ aggs have per-pitch-type breakdowns. Include velo ranges and primary movement profile per pitch. |
-| **Usage rate deltas (recent vs. baseline)** | The *change* in arsenal mix is more interesting than the mix itself. "He's throwing more sliders" is the insight, not "he throws 22% sliders." | MEDIUM | Compare appearance-level usage from `pitcher_type_appearance` aggs against season baselines from `pitcher_type`. Compute delta + trend direction string. |
-| **Platoon split awareness** | Pitchers adjust arsenals against LHB vs. RHB. A report that ignores platoon splits misses half the story. | MEDIUM | `pitcher_type_platoon` and `pitcher_type_platoon_appearance` aggs provide this directly. Narrative should flag when a pitch is used exclusively or predominantly against one side. |
-| **Stuff+ / Location+ / Pitching+ scores per pitch** | These ARE the project's core data advantage. Omitting them defeats the purpose. Scale to 100 = average; 20-80 variants available. | LOW | Direct from aggs. Display at season, appearance, and per-pitch-type grain. Flag when appearance deviates significantly from season. |
-| **Execution metrics: CSW%, zone rate, chase rate** | Standard modern pitcher evaluation metrics. CSW (called strikes + whiffs) is the single best quick-read on a pitcher's effectiveness. | MEDIUM | Derivable from Statcast pitch-level data (`description` field for called strikes, swinging strikes). xWhiff and xSwing from P+ aggs provide modeled versions. |
-| **Appearance-level performance summary** | The report's anchor: how did this outing go? IP equivalent, batters faced, K/BB, runs, pitch count. | LOW | Aggregate from Statcast appearance data. Context for everything else. |
-| **Starter vs. reliever detection and adapted structure** | Starters and relievers have fundamentally different report structures. A starter report discusses TTO penalty, stamina, deep pitch mix. A reliever report discusses workload, rest days, and shorter-window trends. | MEDIUM | Auto-detect from appearance patterns (IP per appearance). Already specified in PROJECT.md. Starters get "last start deep dive" + "recent starts trend." Relievers get "last N appearances" + rest pattern. |
-| **Trend context (recent window vs. season)** | Raw numbers without context are meaningless. Every metric needs "compared to what?" framing. | MEDIUM | The lookback window (`-w` flag) defines "recent." Pre-compute deltas: appearance vs. season, recent window vs. season. Generate qualitative trend strings ("Significant Increase", "Stable", "Sharp Decline"). |
-| **Data tables alongside prose** | Pure narrative buries the numbers. Pure tables lack insight. The combination is what scouts and analysts actually use. | LOW | Pydantic schema should support both prose sections and embedded data tables. Already specified in PROJECT.md active requirements. |
+## Table Stakes
 
-### Differentiators (Competitive Advantage)
+Features the reflection loop must have. Missing any of these makes the loop either dangerous (unbounded cost) or useless (no convergence signal).
 
-These features move the report from "generated summary" to "genuinely insightful analysis." They align with the project's core value of reading like a scout wrote it.
+| Feature | Why Expected | Complexity | Depends On |
+|---------|--------------|------------|------------|
+| **Iteration cap (max_retries)** | Without a hard ceiling, a stubborn anchor checker and a non-converging editor can loop indefinitely, burning API tokens and wall-clock time. Every production LLM loop in practice uses an iteration cap. The standard range is 2-3 retries (so 3-4 total passes). | LOW | Nothing new -- pure control flow in `generate_report_streaming` |
+| **Convergence detection (CLEAN exit)** | The anchor already returns "CLEAN" when the capsule passes. The loop must check this after each anchor pass and break early. Without it, every run burns max iterations even when the first capsule was fine. | LOW | Existing anchor output format (already returns CLEAN vs warnings) |
+| **Warning pass-through to editor** | The editor cannot fix what it cannot see. Anchor warnings (bracketed lines like `[MISSED SIGNAL] ...`) must be injected into the editor's revision prompt so the LLM knows exactly what to address. | LOW | Existing anchor output format, new editor revision prompt |
+| **Editor revision prompt (distinct from initial prompt)** | The revision pass needs a different instruction than the initial write. The initial prompt says "find the thread and write a capsule." The revision prompt says "here is your capsule, here are the problems -- fix these specific issues while preserving what works." Reusing the initial prompt causes the editor to rewrite from scratch, losing good material. | MEDIUM | New prompt text, inserted into editor agent's user message |
+| **Surviving warnings surfaced to user** | If the loop exhausts its iteration cap with warnings still present, those warnings must reach the user (currently via stderr). The user needs to know the capsule was not fully validated. | LOW | Existing anchor_warnings field in ReportResult |
+| **Iteration metadata tracking** | The user (and developer) needs to know: how many passes did it take? Did it converge or hit the cap? This is essential for debugging prompt quality and tuning the cap. Minimum: iteration count in ReportResult or stderr output. | LOW | New field on ReportResult or stderr logging |
 
-| Feature | Value Proposition | Complexity | Notes |
-|---------|-------------------|------------|-------|
-| **Pitch-level P+/S+/L+ outlier detection** | The `all_pitches` agg has 143K individual pitch scores. Surfacing "his 3rd-inning slider to Judge was his best pitch of the season (P+ 142)" gives the report a granularity no human scout matches. | MEDIUM | Query `all_pitches` for appearance, find pitches >2 SD above/below pitcher's mean for that pitch type. Pair with game context (count, batter, outcome) from Statcast. |
-| **Within-game velocity arc narrative** | Velocity typically peaks around pitch 20, then declines. Describing the *shape* of the velo curve ("held 95+ through 80 pitches, unusual for him" or "lost 2 mph in the 5th, earlier than typical") adds real analytical value. | MEDIUM | Bin pitches by game progression (inning or pitch count bucket). Compute mean fastball velo per bin. Compare to pitcher's typical arc from other appearances in window. |
-| **Movement shape change detection** | "His slider lost 2 inches of horizontal sweep compared to season average" is the kind of observation that makes a report feel scouted. Shape changes often explain outcome changes. | MEDIUM | Compare appearance-level pfx_x/pfx_z means per pitch type against season baselines. Flag deviations beyond a threshold (e.g., >1 inch). Correlate with S+ changes. |
-| **First-pitch and count-state tendencies** | Knowing a pitcher throws first-pitch fastballs 72% of the time (up from 60%) reveals strategic shifts. Two-strike pitch selection tells you about put-away confidence. | HIGH | Requires filtering Statcast by `balls`/`strikes` columns to reconstruct count states. Group pitch selection by count bucket (0-0, ahead, behind, even, two-strike). Compare appearance to season. |
-| **xRV100-driven pitch effectiveness ranking** | Rather than grading pitches by vibes, rank by expected run value per 100 pitches. "His changeup was his best pitch by xRV100 despite throwing it only 14% of the time" is actionable. | LOW | xRV100 available directly in P+ aggs at per-pitch-type grain. Rank and narrate. |
-| **Qualitative scout-language flags** | Instead of "IVB decreased 1.3 inches," write "fastball flattened out." Instead of "chase rate 38%," write "excellent chase generation." Translating numbers into scout vocabulary. | MEDIUM | Build a mapping layer: metric thresholds to qualitative descriptors. e.g., chase rate >35% = "elite chase," velo drop >2mph = "significant velocity fade." Embed in prompt schema. |
-| **Rest and workload context (relievers)** | "Third appearance in four days, velocity down 1.5 mph from first appearance in the stretch" connects workload to performance. Critical for reliever assessment. | MEDIUM | Compute days between appearances from game dates. Correlate with velo/stuff metrics. Flag when workload is heavy (back-to-back, 3-in-4, etc.) and performance deviates. |
-| **Times through order analysis (starters)** | Performance typically degrades 2nd and 3rd time through. Reporting whether *this pitcher* follows that pattern, and whether *this start* showed it, is analytically rich. | HIGH | Requires reconstructing batting order position from Statcast (using `at_bat_number` or `batter` sequence). Group metrics by 1st/2nd/3rd TTO. Compare to pitcher's season TTO splits. |
-| **Key matchup highlights** | "Struck out Soto on three sliders after going fastball-only in their first meeting" adds narrative texture. Human scouts always note signature matchups. | HIGH | Requires joining pitcher appearance data with notable batter names. Identifying "notable" is subjective -- could use batter WAR/OPS thresholds or simply pick the highest-leverage ABs by WPA. |
+## Differentiators
 
-### Anti-Features (Commonly Requested, Often Problematic)
+Features that elevate the loop from "retry until clean" to "smart, targeted revision." Not required for v1.3 launch but significantly improve quality and cost-efficiency.
 
-| Feature | Why Requested | Why Problematic | Alternative |
-|---------|---------------|-----------------|-------------|
-| **Season-over-season comparisons** | "How does 2026 compare to 2025?" is a natural question. | Out of scope per PROJECT.md (single-season 2026 data only). Adding multi-year data multiplies data pipeline complexity 3-4x and distracts from the core value of *recent appearance* analysis. | Frame everything relative to 2026 season baseline. "His slider is 15% better than his season average" is actionable without historical data. |
-| **Batter-side analysis / matchup recommendations** | "What should the lineup do against this pitcher?" is the flip side of pitcher scouting. | Doubles the scope. Batter analysis requires different data models, different narrative structure, different expertise. Explicitly out of scope in PROJECT.md. | Mention batter handedness in platoon splits. Note high-leverage at-bat outcomes. Do not prescribe batting strategies. |
-| **Pitch-by-pitch game replay narrative** | Every pitch described in sequence, like a play-by-play. | 90-120 pitches per start generates 3000+ words of monotonous sequence. No one reads this. The LLM will also struggle to maintain quality over that length. | Surface 3-5 key sequences or pitches (outlier P+ scores, turning points, high-leverage moments). Quality over quantity. |
-| **Visualizations / charts / heatmaps** | Heatmaps and movement plots are standard in web-based tools. | This is a CLI tool producing text output. Generating images adds matplotlib/plotly dependency, terminal rendering complexity, and output format decisions. The LLM generates text, not images. | Use ASCII-style indicators or descriptive language: "located glove-side consistently," "clustered in upper-third of zone." Defer visualizations to a future web UI milestone. |
-| **Real-time / live data ingestion** | "Run this during the game!" | Static parquet/CSV is the data contract. Live API calls to Savant add network dependency, rate limiting concerns, and data freshness complexity. Explicitly out of scope. | Run post-game against updated data files. The value is post-appearance analysis, not live commentary. |
-| **Predictive projections** | "What will he do next start?" | Projection models require different methodology (regression, aging curves, rest effects). An LLM generating projections from a single-season sample is irresponsible and likely wrong. | Note trends that *suggest* direction: "declining velo trend warrants monitoring." Do not project future stats. |
-| **Team-level aggregated reports** | "Give me a report on the whole pitching staff." | Multiplies scope by 12-15x per team. Different narrative structure needed. Explicitly out of scope. | Individual pitcher reports can be run sequentially via shell scripting. |
-| **Comparison to other pitchers** | "How does his slider compare to league average sliders?" | Requires league-wide baselines, percentile rankings, peer grouping. The P+/S+/L+ scores (scaled to 100 = avg) already provide this implicitly. | Use the built-in scale: "S+ 120 slider (well above average)" communicates the comparison. Team-level aggs provide some league context. |
+| Feature | Value Proposition | Complexity | Depends On |
+|---------|-------------------|------------|------------|
+| **Targeted revision (fix-only prompt)** | Instead of "rewrite the capsule," the revision prompt says "here is the capsule, here are the specific problems -- revise ONLY the affected passages." This prevents quality regression: the editor does not rewrite paragraphs that were already good. In practice, targeted revision converges faster (usually 1 retry) and preserves prose quality better than full rewrites. | MEDIUM | Editor revision prompt design, anchor warning format (already structured with brackets) |
+| **Warning-type prioritization** | Not all anchor warnings are equal. `[DIRECTION ERROR]` (saying up when data says down) is a factual error that must be fixed. `[OVERSTATED]` (confidence exceeds sample size) is a tone issue that may be acceptable. Categorizing warnings by severity lets the loop focus on critical fixes and accept minor imperfections rather than iterating endlessly on stylistic nuances. | MEDIUM | Anchor warning categories (already defined: MISSED SIGNAL, UNSUPPORTED, DIRECTION ERROR, OVERSTATED) |
+| **Diff tracking between passes** | Log what changed between the original capsule and the revised version. This serves two purposes: (1) developer insight into whether the editor is making targeted fixes or wholesale rewrites, (2) regression detection if a fix introduces new problems. Simple implementation: character-level or sentence-level diff stored in metadata. | MEDIUM | Two capsule strings to diff, a diff utility |
+| **Partial convergence acceptance** | After N iterations, if only low-severity warnings remain (e.g., OVERSTATED but no DIRECTION ERROR or UNSUPPORTED), accept the capsule as "good enough." This prevents burning retries on subjective disagreements between the anchor checker and editor. | LOW | Warning-type prioritization (above) |
+| **Anchor check caching on CLEAN** | If the first anchor check returns CLEAN, skip the loop entirely with zero overhead. Currently this is trivially true (break on CLEAN), but explicitly short-circuiting before any revision prompt construction saves a few milliseconds and keeps the code path clear. | LOW | Convergence detection |
+| **Per-warning fix verification** | After a revision, check whether each specific warning from the previous pass was addressed. If the editor fixed 2 of 3 warnings but one persists, only pass the remaining warning back. This prevents the editor from oscillating (fixing A introduces B, fixing B reintroduces A). | HIGH | Semantic comparison between warning sets across iterations, anchor re-check |
+
+## Anti-Features
+
+Features that seem obviously good but cause real problems in LLM reflection loops. These are drawn from known failure modes in self-refinement systems.
+
+| Anti-Feature | Why Tempting | Why Problematic | What to Do Instead |
+|--------------|--------------|-----------------|-------------------|
+| **Unlimited iteration** | "Just keep going until it's perfect." | LLMs do not monotonically improve with more passes. After 2-3 revisions, quality plateaus or degrades. Each pass costs ~5-15s and API tokens. Diminishing returns hit fast. Research consistently shows that self-refinement beyond 2-3 rounds rarely improves and often worsens output. | Hard cap of 3 iterations (initial write + 2 revisions). Make this configurable but default to 3. |
+| **Full rewrite on each revision** | Simpler to implement -- just re-run the editor with the same initial prompt plus "also fix these issues." | The editor loses good material. Prose quality is non-monotonic: a capsule that nailed paragraph 1 but fumbled paragraph 2 becomes mediocre in both paragraphs after a full rewrite. The "fix" for one warning introduces new problems. This is the single most common failure mode in LLM reflection loops. | Targeted revision prompt: "Here is the capsule. Here are the problems. Revise the affected sections. Preserve everything else." |
+| **LLM-as-judge with no ground truth** | "Let the anchor checker grade on a 1-10 scale and iterate until score > 8." | The anchor checker was designed for binary verification against the synthesis (ground truth). Expanding it to subjective quality scoring removes its grounding. An LLM judging another LLM's prose without factual anchoring produces noise, not signal. The anchor's power comes from comparing capsule claims against synthesis facts. | Keep the anchor checker's role narrow: factual fidelity only. Do not expand it to style or quality grading. |
+| **Self-refinement without external anchor** | "Let the editor critique its own work." | Self-critique without external reference is unreliable. The same model that wrote the error will rationalize it. The actor-critic pattern works because the critic has different information (the synthesis) and different instructions (verify facts, not write prose). Merging the two roles defeats the purpose. | Keep editor and anchor as separate agents with separate prompts. The anchor's value is that it checks against the synthesis, not against its own aesthetic preferences. |
+| **Expanding anchor scope per iteration** | "On retry 2, also check for style violations and metric-count limits." | Moving the goalposts guarantees non-convergence. If the anchor checks more things on pass 2 than pass 1, the editor can never satisfy an expanding set of requirements. Each iteration should check the SAME criteria. | Anchor prompt is identical on every pass. The only thing that changes is the capsule being checked. |
+| **Streaming the revision passes** | "Stream every revision to stdout so the user sees progress." | The user sees a capsule, then sees it change, then change again. This is confusing and erodes trust. The revision loop is an internal quality mechanism. The user should see the final capsule (streamed) and a count of how many passes it took (on stderr). | Stream only the final accepted capsule. Log iteration count and surviving warnings to stderr. |
+| **Temperature escalation across retries** | "If the first revision didn't fix it, increase temperature for more creative solutions." | Higher temperature increases randomness, not insight. A factual error (`[DIRECTION ERROR]`) is not fixed by creativity -- it's fixed by the editor reading the anchor feedback carefully. Temperature escalation introduces new hallucinations. | Keep temperature constant across all passes. The revision prompt, not the temperature, should drive different output. |
 
 ## Feature Dependencies
 
 ```
-[Appearance-level performance summary]
-    |
-    |--requires--> [Starter vs. reliever detection]
-    |                   |
-    |                   |--shapes--> [Times through order analysis] (starters only)
-    |                   |--shapes--> [Rest and workload context] (relievers only)
-    |
-    |--requires--> [Arsenal inventory with usage rates]
-    |                   |
-    |                   |--requires--> [Usage rate deltas]
-    |                   |--requires--> [Platoon split awareness]
-    |                   |--enhances--> [First-pitch and count-state tendencies]
-    |
-    |--requires--> [Fastball quality summary]
-    |                   |
-    |                   |--enhances--> [Within-game velocity arc narrative]
-    |                   |--enhances--> [Movement shape change detection]
-    |
-    |--requires--> [P+/S+/L+ scores per pitch]
-    |                   |
-    |                   |--enhances--> [Pitch-level P+/S+/L+ outlier detection]
-    |                   |--enhances--> [xRV100-driven pitch effectiveness ranking]
-    |
-    |--requires--> [Trend context (recent window vs. season)]
-    |                   |
-    |                   |--enhances--> [Qualitative scout-language flags]
+[Iteration cap] ──────────────────────┐
+                                       ├── Required by: [Loop orchestration in generate_report_streaming]
+[Convergence detection (CLEAN exit)] ──┘
+        |
+        v
+[Warning pass-through to editor] ── Required for meaningful revision
+        |
+        v
+[Editor revision prompt] ── The new prompt text that makes revision work
+        |
+        ├──> [Targeted revision] ── Enhancement: fix-only vs full rewrite
+        |
+        ├──> [Diff tracking] ── Enhancement: observe what changed
+        |
+        └──> [Per-warning fix verification] ── Enhancement: track individual fixes
 
-[Data tables alongside prose] --independent-- (structural, applies to all sections)
+[Warning-type prioritization] ──> [Partial convergence acceptance]
+        |
+        └── Depends on: existing anchor warning categories (already structured)
 
-[Key matchup highlights] --requires--> [Appearance-level performance summary]
-                          --requires--> [P+/S+/L+ scores per pitch]
+[Surviving warnings surfaced] ── Independent, already partially built (stderr output exists)
+
+[Iteration metadata tracking] ── Independent, small addition to ReportResult
 ```
 
 ### Dependency Notes
 
-- **Starter/reliever detection is foundational:** It determines the entire report structure, section ordering, and which features activate. Must be built first.
-- **Arsenal inventory feeds most analysis:** Usage rates, platoon splits, count tendencies, and effectiveness rankings all depend on having the pitch-type breakdown working.
-- **Trend context is the framing layer:** Every metric needs its delta and qualitative descriptor. This should be a reusable utility, not per-feature logic.
-- **P+/S+/L+ integration is the data backbone:** The agg files are the primary data advantage. Loading and joining them correctly enables all the differentiating features.
-- **Key matchup highlights depend on everything else:** This is a capstone feature that requires pitch-level data, batter context, P+ scores, and game context all working together.
+- **Loop orchestration is the foundation:** The while-loop with iteration cap and CLEAN break is the skeleton everything else hangs on. Build this first.
+- **Revision prompt is the critical design decision:** The quality of the entire reflection loop depends on how well the revision prompt instructs the editor. This is the piece that requires the most iteration and testing.
+- **Targeted revision and diff tracking are independent enhancements** that can be added after the basic loop works. They improve quality but are not required for the loop to function.
+- **Warning-type prioritization enables partial convergence** but also has standalone value for the stderr output (showing severity to the user).
+- **Downstream phases (hook writer, fantasy analyst) are unaffected** -- they continue to derive from the final capsule. The loop is internal to the editor-anchor interaction.
 
-## MVP Definition
+## MVP Recommendation
 
-### Launch With (v1)
+### v1.3 Launch (Reflection Loop MVP)
 
-Minimum viable product -- what's needed to validate that the LLM can produce genuinely useful pitcher narratives.
+Build the loop with table stakes features. This is the minimum that makes the loop functional and safe.
 
-- [ ] **Starter/reliever detection** -- structural foundation for everything
-- [ ] **Appearance-level performance summary** -- anchors the report
-- [ ] **Fastball quality summary** (velo baseline, trend, within-game) -- most important pitch analysis
-- [ ] **Arsenal inventory with usage rates and deltas** -- second most important
-- [ ] **P+/S+/L+ scores per pitch type** (season + appearance) -- the project's data advantage
-- [ ] **Trend context framing** (recent vs. season deltas with qualitative strings) -- what makes it a *scout* report, not a stat dump
-- [ ] **Data tables alongside prose** -- output format
-- [ ] **Platoon split awareness** -- essential for arsenal analysis completeness
+1. **Iteration cap** -- Hard ceiling of 3 total passes (initial + 2 revisions), configurable via constant
+2. **Convergence detection** -- Break on CLEAN
+3. **Warning pass-through** -- Inject anchor warnings into editor revision message
+4. **Editor revision prompt** -- New prompt text for revision passes (distinct from initial editor prompt)
+5. **Surviving warnings surfaced** -- Existing stderr output, now reports "after N iterations"
+6. **Iteration metadata** -- Add `anchor_iterations: int` and `anchor_converged: bool` to ReportResult
 
-### Add After Validation (v1.x)
+### v1.3 Fast-Follow (Quality Improvements)
 
-Features to add once the core narrative quality is validated.
+Add after the basic loop is validated against real pitcher data.
 
-- [ ] **Execution metrics (CSW%, zone rate, chase rate)** -- add when base report quality is confirmed
-- [ ] **Within-game velocity arc narrative** -- add when fastball section is solid
-- [ ] **Movement shape change detection** -- add when arsenal section is solid
-- [ ] **xRV100-driven pitch effectiveness ranking** -- low-cost add once agg loading is working
-- [ ] **Qualitative scout-language flags** -- iterative refinement of prompt vocabulary
-- [ ] **Rest and workload context** -- add for reliever reports after starter flow is validated
+7. **Targeted revision prompt** -- Refine the revision prompt to say "fix only the flagged issues"
+8. **Warning-type prioritization** -- Categorize warnings by severity, accept partial convergence for low-severity-only
+9. **Diff tracking** -- Log sentence-level changes between passes for developer insight
 
-### Future Consideration (v2+)
+### Defer (v1.4+)
 
-Features to defer until the core product is proven.
+10. **Per-warning fix verification** -- Track which specific warnings were resolved per pass. High complexity, requires semantic matching between warning sets.
 
-- [ ] **First-pitch and count-state tendencies** -- requires significant Statcast filtering logic; high value but high complexity
-- [ ] **Times through order analysis** -- requires batting order reconstruction; valuable for starters but complex
-- [ ] **Key matchup highlights** -- requires batter identification and WPA/leverage context; capstone feature
-- [ ] **Pitch-level P+/S+/L+ outlier detection** -- requires querying 143K-row all_pitches file efficiently; high wow-factor
+## Complexity Assessment
 
-## Feature Prioritization Matrix
+| Feature | Lines of Code (Est.) | LLM Calls Added | Risk |
+|---------|---------------------|------------------|------|
+| Iteration cap + convergence | ~15 (while loop + break) | 0 extra when CLEAN on first pass | Very low -- pure control flow |
+| Warning pass-through | ~5 (string formatting) | 0 | Very low |
+| Editor revision prompt | ~30 (new prompt constant + message builder) | 0 (replaces existing editor call) | Medium -- prompt quality is testable only by running the pipeline |
+| Surviving warnings + metadata | ~10 (fields + stderr print) | 0 | Very low |
+| Loop orchestration total | ~60 lines changed in report.py | 0-4 extra LLM calls worst case (2 editor + 2 anchor retries) | Low overall, prompt quality is main risk |
 
-| Feature | User Value | Implementation Cost | Priority |
-|---------|------------|---------------------|----------|
-| Starter/reliever detection | HIGH | LOW | P1 |
-| Appearance-level summary | HIGH | LOW | P1 |
-| Fastball quality summary | HIGH | LOW | P1 |
-| Arsenal inventory + usage deltas | HIGH | MEDIUM | P1 |
-| P+/S+/L+ per pitch type | HIGH | LOW | P1 |
-| Trend context framing | HIGH | MEDIUM | P1 |
-| Platoon split awareness | HIGH | MEDIUM | P1 |
-| Data tables + prose output | HIGH | LOW | P1 |
-| Execution metrics (CSW/zone/chase) | HIGH | MEDIUM | P2 |
-| Within-game velo arc | MEDIUM | MEDIUM | P2 |
-| Movement shape changes | MEDIUM | MEDIUM | P2 |
-| xRV100 pitch ranking | MEDIUM | LOW | P2 |
-| Scout-language flags | MEDIUM | MEDIUM | P2 |
-| Rest/workload context | MEDIUM | MEDIUM | P2 |
-| Count-state tendencies | MEDIUM | HIGH | P3 |
-| Times through order | MEDIUM | HIGH | P3 |
-| Key matchup highlights | HIGH | HIGH | P3 |
-| Pitch-level outlier detection | HIGH | MEDIUM | P3 |
-
-**Priority key:**
-- P1: Must have for launch -- the report is incomplete without these
-- P2: Should have, add when possible -- elevates report from good to great
-- P3: Nice to have, future consideration -- wow-factor features that require solid foundation
-
-## Competitor Feature Analysis
-
-| Feature | Baseball Savant (Player Page) | FanGraphs (PitchingBot) | PitchGrader | Our Approach |
-|---------|-------------------------------|-------------------------|-------------|--------------|
-| Pitch grades (Stuff/Command) | Percentile bars, no per-appearance | 20-80 scale, per pitch type, season-level | AI pitch grading, development focus | P+/S+/L+ at season AND appearance grain, with deltas -- more temporal granularity than any competitor |
-| Arsenal breakdown | Usage %, velo, movement per pitch | Usage %, movement profiles | Arsenal optimization | Usage % with platoon splits AND count-state tendencies, framed as deltas from baseline |
-| Velocity trends | Game-level averages | Season-level only | Session tracking | Within-game arc + cross-appearance trend with qualitative framing |
-| Movement profiles | Scatter plots (visual) | Movement tables | 3D visualization | Narrative description with delta detection ("lost 2in of sweep") -- text-first since CLI |
-| Narrative output | None (data only) | None (data only) | Brief text insights | Full scout-voice narrative with data tables -- this IS the product |
-| Appearance-level analysis | Game feed (raw data) | Not available per-appearance | Session reports | First-class: the report IS about the appearance relative to trend |
-| Platoon analysis | Available but separate page | Split tables | Not emphasized | Integrated into arsenal narrative: "abandoned changeup vs LHB" |
-| Workload/rest context | Not shown | Not shown | Not shown | Built into reliever report structure -- genuinely novel |
+**Cost impact:** Best case (CLEAN on first pass): zero additional LLM calls. Worst case (2 revisions): 4 additional calls (2 editor + 2 anchor). At ~5s per call, worst case adds ~20s. Average case with well-tuned prompts: 0-2 additional calls.
 
 ## Sources
 
-- [Simple Sabermetrics: How to Build an Elite Opposing Pitcher Advanced Scouting Report](https://simplesabermetrics.com/blogs/simple-sabermetrics-blog/how-to-build-an-elite-opposing-pitcher-advanced-scouting-report)
-- [Simple Sabermetrics: The Key Aspects of A Good Scouting Report](https://simplesabermetrics.com/blogs/simple-sabermetrics-blog/the-key-aspects-of-a-good-scouting-report)
-- [FanGraphs: PitchingBot Pitch Modeling Primer](https://library.fangraphs.com/pitching/pitchingbot-pitch-modeling-primer/)
-- [FanGraphs: PitchingBot and Stuff+ Pitch Modeling](https://blogs.fangraphs.com/pitchingbot-and-stuff-pitch-modeling-are-now-on-fangraphs/)
-- [FanGraphs: A Visual Scouting Primer: Pitching](https://blogs.fangraphs.com/a-visual-scouting-primer-pitching-part-one/)
-- [FanGraphs: Are Pitchers Getting Better at Holding Their Velocity?](https://blogs.fangraphs.com/are-pitchers-getting-better-at-holding-their-velocity/)
-- [FanGraphs: In Game Velocity Changes: When Fatigue Attacks](https://fantasy.fangraphs.com/in-game-velocity-changes-when-fatigue-attacks/)
-- [FanGraphs: Plate Discipline Metrics](https://library.fangraphs.com/offense/plate-discipline/)
-- [Baseball Savant: Statcast Player Pages](https://baseballsavant.mlb.com/)
-- [Baseball Savant: Pitch Arsenal Stats](https://baseballsavant.mlb.com/leaderboard/pitch-arsenal-stats)
-- [MLB Glossary: Third Time Through the Order Penalty](https://www.mlb.com/glossary/miscellaneous/third-time-through-the-order-penalty)
-- [Baseball Prospectus: Introducing Pitch Tunnels](https://www.baseballprospectus.com/news/article/31030/prospectus-feature-introducing-pitch-tunnels/)
-- [DIAMOND: An LLM-Driven Agent for Context-Aware Baseball Highlight Summarization](https://arxiv.org/html/2506.02351v1)
-- [PitchGrader](https://www.pitchgrader.com/)
-- [Baseball America: Explaining the 20-80 Scouting Scale](https://www.baseballamerica.com/stories/explaining-the-20-80-baseball-scouting-scale/)
-- [Bayesian Analysis of the Time Through the Order Penalty](https://arxiv.org/abs/2210.06724)
+- Training data on LLM self-refinement patterns (Madaan et al. "Self-Refine" 2023, Shinn et al. "Reflexion" 2023, Pan et al. "Automatically Correcting Large Language Models" 2024) -- LOW confidence on specific details, HIGH confidence on general patterns
+- Direct inspection of existing report.py anchor check implementation
+- Direct inspection of pydantic-ai retry mechanisms (structural retries, not semantic -- confirms custom loop is needed)
+- Project-specific context from PROJECT.md and existing pipeline architecture
 
 ---
-*Feature research for: LLM-generated pitcher scouting narrative reports*
-*Researched: 2026-03-26*
+*Feature research for: Editor-Anchor Reflection Loop (v1.3 milestone)*
+*Researched: 2026-03-27*

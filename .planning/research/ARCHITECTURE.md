@@ -1,377 +1,494 @@
-# Architecture Research
+# Architecture: Editor-Anchor Reflection Loop
 
-**Domain:** LLM-powered data analysis report (CLI pipeline)
-**Researched:** 2026-03-26
+**Domain:** LLM self-refinement / actor-critic loop integration
+**Researched:** 2026-03-27
 **Confidence:** HIGH
 
-## System Overview
+## Problem Statement
+
+The current pipeline runs Phase 2 (Editor) then Phase 2.5 (Anchor Check) once. The anchor check produces warnings -- missed signals, unsupported claims, directional errors, overstated confidence -- but those warnings are printed to stderr and never acted upon. The capsule goes to downstream phases (hook writer, fantasy analyst) unchanged, even when the anchor identifies problems.
+
+The v1.3 milestone closes this loop: anchor warnings feed back to the editor, the editor revises, and the cycle repeats until the capsule is CLEAN or a max iteration cap is hit.
+
+## Current Architecture (What Exists)
 
 ```
-                        pitcher-narratives pipeline
- -----------------------------------------------------------------------
-|                                                                       |
-|  CLI Entry Point                                                      |
-|  (argparse: -p pitcher_id -w lookback_days)                           |
-|       |                                                               |
-|       v                                                               |
-|  +-----------+     +----------------+     +-------------------+       |
-|  | Data      |---->| Delta          |---->| Schema            |       |
-|  | Loader    |     | Engine         |     | Assembler         |       |
-|  +-----------+     +----------------+     +-------------------+       |
-|       |                   |                        |                  |
-|       | reads             | computes               | produces        |
-|       v                   v                        v                  |
-|  +-----------+     +----------------+     +-------------------+       |
-|  | statcast  |     | baselines vs   |     | Pydantic models   |       |
-|  | .parquet  |     | recent deltas  |     | (LLM input schema)|       |
-|  | aggs/*.csv|     | qualitative    |     +--------+----------+       |
-|  +-----------+     | trend strings  |              |                  |
-|                    +----------------+              | deps injection   |
-|                                                    v                  |
-|                                            +-------------------+      |
-|                                            | Report            |      |
-|                                            | Generator         |      |
-|                                            | (pydantic-ai      |      |
-|                                            |  Agent + Claude)  |      |
-|                                            +--------+----------+      |
-|                                                     |                 |
-|                                                     v                 |
-|                                            +-------------------+      |
-|                                            | Output Formatter  |      |
-|                                            | (stdout / file)   |      |
-|                                            +-------------------+      |
- -----------------------------------------------------------------------
+generate_report_streaming()
+    |
+    Phase 1: synthesizer.run_sync(ctx)  --> synthesis (str)
+    |
+    Phase 2: editor.run_stream_sync(synthesis)  --> capsule (str, streamed)
+    |
+    Phase 2.5: anchor_checker.run_sync(synthesis, capsule)  --> "CLEAN" | warnings[]
+    |
+    Phase 3: hook_writer.run_sync(capsule)  --> social_hook (str)
+    |
+    Phase 4: fantasy_analyst.run_sync(capsule)  --> fantasy_insights (str)
+    |
+    return ReportResult(narrative, social_hook, fantasy_insights, anchor_warnings)
 ```
 
-### Component Responsibilities
+Key facts about the current code:
+- All 5 agents are created by `_make_agents()` which returns a tuple of `Agent[None, str]`
+- The editor uses `run_stream_sync()` for Phase 2 (streaming to stdout)
+- The anchor checker uses `run_sync()` and returns str
+- Anchor output is parsed: "CLEAN" means no issues, otherwise each line is a warning
+- `ReportResult` has `anchor_warnings: list[str]` field
+- `_build_editor_message()` takes `(ctx, synthesis)` and returns a prompt list
+- `_build_anchor_message()` takes `(synthesis, capsule)` and returns a prompt list
+- The editor and anchor checker are separate Agent instances with different system prompts
+- The pipeline is synchronous throughout (`run_sync` / `run_stream_sync`)
 
-| Component | Responsibility | Implementation |
-|-----------|----------------|----------------|
-| **CLI** | Parse args, validate pitcher ID exists in data, orchestrate pipeline | `argparse` or `click`, top-level `main()` |
-| **Data Loader** | Read parquet + CSVs, filter to target pitcher, return typed DataFrames | `polars` read/scan, returns pitcher-scoped data |
-| **Delta Engine** | Compute baselines, recent windows, deltas, qualitative trend strings | Pure polars transforms, no LLM involvement |
-| **Schema Assembler** | Map computed data into Pydantic models that form the LLM's input context | Pydantic `BaseModel` construction from DataFrames |
-| **Report Generator** | Send structured context to Claude, get narrative back | `pydantic-ai` Agent with `deps_type` and `output_type` |
-| **Output Formatter** | Render final report to terminal or file | Print/write, minimal logic |
+## Architectural Options Evaluated
 
-## Recommended Project Structure
+### Option A: Simple While Loop (RECOMMENDED)
 
-```
-pitcher_narratives/
-├── __init__.py
-├── cli.py                  # Entry point, arg parsing, pipeline orchestration
-├── loader.py               # Data loading and pitcher-scoping
-├── models/
-│   ├── __init__.py
-│   ├── context.py          # Pydantic models for LLM input (the "schema")
-│   └── report.py           # Pydantic models for LLM output (optional structured output)
-├── engine/
-│   ├── __init__.py
-│   ├── classify.py         # Starter vs reliever detection
-│   ├── fastball.py         # Fastball quality deltas (velo, shape, IVB trends)
-│   ├── arsenal.py          # Usage rates, platoon shifts, first-pitch mix
-│   ├── execution.py        # CSW%, zone rate, chase rate, P+/S+/L+ trends
-│   └── context.py          # Rest days, innings depth, workload
-├── agent.py                # pydantic-ai Agent definition, prompts, report generation
-└── formatting.py           # Output rendering (terminal, file)
-```
-
-### Structure Rationale
-
-- **`models/`**: Separates the data contracts (what the LLM sees and produces) from the computation logic. These Pydantic models are the most important design artifact in the project -- they define the interface between Python computation and LLM reasoning.
-- **`engine/`**: Each file computes one section of the scouting report. Files are split by report section, not by data source. This means `fastball.py` reads from both Statcast (velo, movement) and P+ aggregations (S+ trends) as needed. The boundary is "what story does this section tell" not "which table does this query."
-- **`agent.py`**: Single file for the pydantic-ai Agent. Keeps all LLM interaction (system prompt, dependency wiring, output handling) in one place.
-- **`cli.py`**: Thin orchestrator. Calls loader, engine, assembler, agent, formatter in sequence. No business logic here.
-
-## Architectural Patterns
-
-### Pattern 1: Deps-as-Context (pydantic-ai dependency injection)
-
-**What:** Package all computed pitcher data into a single dataclass, inject it as `deps_type` into the pydantic-ai Agent. Dynamic system prompt functions read from `ctx.deps` to build the full context string the LLM sees.
-
-**When to use:** Always -- this is how pydantic-ai is designed to work for data-driven prompts.
-
-**Trade-offs:** The LLM never sees raw DataFrames; it sees pre-formatted text/tables assembled from Pydantic models. This is correct because the LLM should receive pre-digested insight material, not raw data.
-
-**Example:**
+Replace the single editor-then-anchor block with a `while` loop inside `generate_report_streaming()`.
 
 ```python
-from dataclasses import dataclass
-from pydantic_ai import Agent, RunContext
-from pitcher_narratives.models.context import PitcherContext
+# Phase 2 + 2.5: Editor-Anchor reflection loop
+MAX_REVISIONS = 2
+capsule = _run_editor(editor, ctx, synthesis, _model_override)  # first pass (streamed)
+
+for revision in range(MAX_REVISIONS):
+    warnings = _run_anchor_check(anchor_checker, synthesis, capsule, _model_override)
+    if not warnings:
+        break  # CLEAN -- capsule is faithful
+    # Feed warnings back to editor for revision
+    capsule = _run_editor_revision(editor, ctx, synthesis, capsule, warnings, _model_override)
+
+# Warnings that survive the loop
+surviving_warnings = _run_anchor_check(anchor_checker, synthesis, capsule, _model_override)
+```
+
+**Pros:**
+- Zero new dependencies or abstractions
+- Fits naturally into the existing synchronous flow
+- Easy to understand: it is a loop
+- Testing is straightforward: mock TestModel with different outputs per call
+- The iteration cap, warning tracking, and convergence check are all plain Python
+- Streaming only happens on the first pass (subsequent revisions are silent, which is correct UX)
+
+**Cons:**
+- No formal state machine -- the "state" is local variables (`capsule`, `warnings`, `revision`)
+- If the loop logic grows (e.g., different strategies per warning type), the function body gets long
+
+**Verdict:** This is the right choice. The loop has exactly two participants (editor, anchor), one piece of state (the capsule), and a simple termination condition (CLEAN or max iterations). A state machine framework adds abstraction tax with no payoff at this scale.
+
+### Option B: pydantic-graph State Machine
+
+Model the reflection loop as a graph with nodes for EditorRevise and AnchorCheck that can cycle.
+
+```python
+@dataclass
+class LoopState:
+    synthesis: str
+    capsule: str
+    iteration: int = 0
+    warnings: list[str] = field(default_factory=list)
 
 @dataclass
-class ReportDeps:
-    context: PitcherContext  # all computed data for this pitcher
+class EditorRevise(BaseNode[LoopState]):
+    async def run(self, ctx: GraphRunContext[LoopState]) -> AnchorCheck:
+        ctx.state.capsule = await editor.run(...)
+        ctx.state.iteration += 1
+        return AnchorCheck()
 
-agent = Agent(
-    "anthropic:claude-sonnet-4-20250514",
-    deps_type=ReportDeps,
-    output_type=str,  # narrative prose output
-    instructions="You are a major league scout writing pitcher reports...",
-)
-
-@agent.instructions
-def inject_pitcher_context(ctx: RunContext[ReportDeps]) -> str:
-    """Build the full data context from computed pitcher analysis."""
-    return ctx.deps.context.to_prompt()  # renders structured data as text
+@dataclass
+class AnchorCheck(BaseNode[LoopState]):
+    async def run(self, ctx: GraphRunContext[LoopState]) -> EditorRevise | End[str]:
+        result = await anchor.run(...)
+        if result == "CLEAN" or ctx.state.iteration >= MAX:
+            return End(ctx.state.capsule)
+        ctx.state.warnings = parse_warnings(result)
+        return EditorRevise()
 ```
 
-### Pattern 2: Pre-Compute Everything, LLM Writes Insight
+**Pros:**
+- Formal state machine with typed transitions
+- Graph visualization (mermaid) for documentation
+- Persistence support if you need to resume a loop mid-run
 
-**What:** All arithmetic (deltas, trends, baselines, qualitative flags) happens in Python/polars before the LLM sees anything. The LLM receives statements like "Slider usage: 32% (season baseline: 20%, trend: SIGNIFICANT INCREASE)" -- never raw numbers to do math with.
+**Cons:**
+- pydantic-graph is async-only (`BaseNode.run()` is `async def`). The current pipeline is synchronous. Converting to async requires changing `generate_report_streaming()` signature and all callers, plus handling the async streaming differently.
+- Adds a dependency on `pydantic-graph` (currently unused in the project despite being installed transitively)
+- The graph has exactly 2 nodes and 1 cycle. The framework overhead (State class, BaseNode subclasses, Graph constructor, async runner) dwarfs the actual logic.
+- Testing requires async test fixtures
+- Breaks the clean sequential flow of `generate_report_streaming()` -- the loop becomes an async subgraph embedded in a sync function
 
-**When to use:** Always for this type of data analysis pipeline. LLMs are unreliable at arithmetic but excellent at synthesizing pre-computed findings into narrative.
+**Verdict:** Overengineered. pydantic-graph is designed for multi-step agent workflows with branching, persistence, and complex state. A 2-node cycle is not that. Revisit if the pipeline grows to 10+ nodes with branching logic.
 
-**Trade-offs:** More Python code to write, but dramatically better report quality. The LLM can focus on "what does this mean" instead of "what is 32 minus 20."
+### Option C: Custom Orchestrator Class
 
-**Example:**
+Extract the loop into a `ReflectionLoop` class that encapsulates the editor-anchor cycle.
 
 ```python
-# In engine/arsenal.py
-def compute_usage_deltas(
-    baseline_usage: dict[str, float],
-    recent_usage: dict[str, float],
-) -> list[UsageDelta]:
-    deltas = []
-    for pitch_type, recent_pct in recent_usage.items():
-        baseline_pct = baseline_usage.get(pitch_type, 0.0)
-        delta = recent_pct - baseline_pct
-        trend = classify_trend(delta)  # "Significant Increase", "Slight Decrease", etc.
-        deltas.append(UsageDelta(
-            pitch_type=pitch_type,
-            recent_pct=recent_pct,
-            baseline_pct=baseline_pct,
-            delta=delta,
-            trend=trend,
-        ))
-    return deltas
+class ReflectionLoop:
+    def __init__(self, editor, anchor, max_revisions=2):
+        self.editor = editor
+        self.anchor = anchor
+        self.max_revisions = max_revisions
+
+    def run(self, ctx, synthesis, model_override=None) -> ReflectionResult:
+        capsule = self._first_pass(ctx, synthesis, model_override)
+        for i in range(self.max_revisions):
+            warnings = self._anchor_check(synthesis, capsule, model_override)
+            if not warnings:
+                return ReflectionResult(capsule=capsule, iterations=i+1, warnings=[])
+            capsule = self._revise(ctx, synthesis, capsule, warnings, model_override)
+        final_warnings = self._anchor_check(synthesis, capsule, model_override)
+        return ReflectionResult(capsule=capsule, iterations=self.max_revisions+1, warnings=final_warnings)
 ```
 
-### Pattern 3: Layered Pydantic Models for LLM Context
+**Pros:**
+- Clean separation of loop logic from pipeline orchestration
+- Testable in isolation
+- Encapsulates iteration tracking, convergence detection
 
-**What:** The Pydantic models form a hierarchy: leaf models hold individual computed facts (e.g., `VeloTrend`), section models aggregate them (e.g., `FastballQuality`), and a top-level `PitcherContext` holds all sections. Each model has a `to_prompt()` method that renders itself as formatted text suitable for the LLM.
+**Cons:**
+- Adds a class where a function suffices
+- The "orchestrator" has one method (`run`) and holds two agents -- it is a function wearing a class costume
+- Adds indirection: reader must find the class to understand what happens between Phase 2 and Phase 3
 
-**When to use:** When the LLM input is complex and multi-section. The hierarchy makes it easy to test each section independently and to control exactly what text the LLM sees.
+**Verdict:** Premature abstraction. If the loop gains complexity (warning-type-specific strategies, rollback logic, multi-capsule comparison), extract then. For v1.3 the function-level while loop is clearer.
 
-**Trade-offs:** More models to define upfront, but they serve as living documentation of "what does the LLM know about this pitcher" and are trivially unit-testable.
+## Recommended Architecture
 
-**Example:**
+### The While Loop with Helper Functions
+
+The reflection loop lives inside `generate_report_streaming()` as a bounded while loop, with the messy parts extracted into helper functions. No new files, no new classes, no new abstractions.
+
+```
+generate_report_streaming()
+    |
+    Phase 1: synthesizer.run_sync(ctx)  --> synthesis
+    |
+    Phase 2 + 2.5: REFLECTION LOOP
+    |   |
+    |   |-- _run_editor_first_pass(editor, ctx, synthesis)  --> capsule (STREAMED)
+    |   |
+    |   |-- for revision in range(MAX_REVISIONS):
+    |   |     |-- warnings = _parse_anchor_output(anchor_checker.run_sync(...))
+    |   |     |-- if not warnings: break
+    |   |     |-- capsule = _run_editor_revision(editor, ctx, synthesis, capsule, warnings)
+    |   |
+    |   |-- final_warnings = _parse_anchor_output(anchor_checker.run_sync(...))
+    |   |
+    |   return (capsule, final_warnings, iteration_count)
+    |
+    Phase 3: hook_writer.run_sync(capsule)
+    |
+    Phase 4: fantasy_analyst.run_sync(capsule)
+    |
+    return ReportResult(...)
+```
+
+### Component Boundaries
+
+| Component | Responsibility | New/Modified | Communicates With |
+|-----------|---------------|--------------|-------------------|
+| `generate_report_streaming()` | Top-level pipeline orchestration | MODIFIED -- loop replaces single editor+anchor block | All agents |
+| `_run_editor_first_pass()` | First editor call with streaming output | NEW helper function | editor agent, stdout |
+| `_run_editor_revision()` | Subsequent editor calls (silent, non-streaming) | NEW helper function | editor agent |
+| `_build_revision_message()` | Build editor prompt with anchor feedback appended | NEW message builder | None (pure function) |
+| `_parse_anchor_output()` | Parse anchor output into warnings list (extracted from inline code) | NEW helper (extracted) | None (pure function) |
+| `ReportResult` | Pipeline output model | MODIFIED -- add `revision_count: int` field | CLI consumer |
+| `_make_agents()` | Agent factory | UNCHANGED | N/A |
+
+### Data Flow
+
+```
+                    synthesis (str, from Phase 1)
+                         |
+                         v
+            +------------------------+
+            | Editor (first pass)    |
+            | Streamed to stdout     |
+            +------------------------+
+                         |
+                    capsule_v1 (str)
+                         |
+          +--------------+--------------+
+          |                             |
+          v                             |
+    +-------------+                     |
+    | Anchor      |                     |
+    | Check       |                     |
+    +-------------+                     |
+          |                             |
+    warnings or CLEAN                   |
+          |                             |
+    [if CLEAN] -----> capsule_v1 used --+----> Phase 3, Phase 4
+          |
+    [if warnings]
+          |
+          v
+    +------------------------+
+    | Editor (revision)      |
+    | Receives: synthesis    |
+    |   + capsule_v1         |
+    |   + anchor warnings    |
+    | Silent (no streaming)  |
+    +------------------------+
+          |
+    capsule_v2 (str)
+          |
+          v
+    +-------------+
+    | Anchor      |  (loop back if still dirty, up to MAX_REVISIONS)
+    | Check       |
+    +-------------+
+          |
+    CLEAN or surviving warnings
+          |
+          v
+    Final capsule ---> Phase 3, Phase 4
+```
+
+## Critical Design Decisions
+
+### 1. How the Editor Receives Anchor Feedback
+
+**Decision:** New user message with synthesis + previous capsule + anchor warnings, NOT via message_history.
+
+**Rationale:** The editor agent has a system prompt optimized for writing from a synthesis briefing. Using `message_history` would carry forward the full conversation context (system prompt + original user message + first response + anchor feedback), which:
+- Doubles the token cost (the full synthesis appears twice)
+- Includes the first capsule as a model response, which the LLM may anchor to instead of revising
+- Makes the revision prompt harder to control
+
+Instead, build a new `_build_revision_message()` that gives the editor:
+1. The original synthesis (source of truth)
+2. The previous capsule (what to revise)
+3. The specific anchor warnings (what to fix)
+4. A revision instruction ("Revise the capsule to address these issues")
+
+This is a fresh editor call with a targeted prompt, not a conversation continuation. The editor should not "remember" its first attempt through message history -- it should receive explicit instructions about what to change.
 
 ```python
-class VeloTrend(BaseModel):
-    pitch_type: str
-    season_avg: float
-    recent_avg: float
-    last_game_avg: float
-    delta_season_to_recent: float
-    trend: str  # "Stable", "Ticking Up", "Declining", etc.
-
-    def to_prompt(self) -> str:
-        return (
-            f"{self.pitch_type}: {self.recent_avg:.1f} mph "
-            f"(season: {self.season_avg:.1f}, {self.trend})"
-        )
-
-class FastballQuality(BaseModel):
-    velo_trends: list[VeloTrend]
-    ivb_delta: float | None
-    hb_delta: float | None
-    arm_angle_note: str | None
-
-    def to_prompt(self) -> str:
-        lines = ["## Fastball Quality"]
-        for vt in self.velo_trends:
-            lines.append(f"- {vt.to_prompt()}")
-        if self.ivb_delta is not None:
-            lines.append(f"- IVB change: {self.ivb_delta:+.1f} in")
-        return "\n".join(lines)
-
-class PitcherContext(BaseModel):
-    pitcher_name: str
-    pitcher_id: int
-    role: str  # "starter" | "reliever"
-    fastball: FastballQuality
-    arsenal: ArsenalAnalysis
-    execution: ExecutionMetrics
-    context: GameContext
-
-    def to_prompt(self) -> str:
-        sections = [
-            f"# Scouting Report Data: {self.pitcher_name} ({self.role.title()})",
-            self.fastball.to_prompt(),
-            self.arsenal.to_prompt(),
-            self.execution.to_prompt(),
-            self.context.to_prompt(),
-        ]
-        return "\n\n".join(sections)
+def _build_revision_message(
+    ctx: PitcherContext,
+    synthesis: str,
+    capsule: str,
+    warnings: list[str],
+) -> _UserPrompt:
+    """Build editor prompt for a revision pass with anchor feedback."""
+    warning_block = "\n".join(f"- {w}" for w in warnings)
+    return [
+        f"## Pitcher\n{ctx.pitcher_name} ({ctx.throws}HP, {ctx.role})\n\n"
+        f"## Key Findings From Data Analysis\n{synthesis}",
+        CachePoint(),
+        f"## Your Previous Capsule\n{capsule}\n\n"
+        f"## Anchor Check Findings\n{warning_block}\n\n"
+        "Revise the capsule to address each finding above. Maintain the same "
+        "voice and structure. Do not add information beyond the synthesis. "
+        "If a finding asks you to include a missed signal, weave it in naturally. "
+        "If a finding flags an unsupported claim, remove or correct it.",
+    ]
 ```
 
-## Data Flow
+**Why CachePoint after synthesis:** The synthesis is identical across all revision passes for the same pitcher. Caching it avoids re-processing those tokens on each revision.
 
-### Pipeline Flow (single invocation)
+### 2. Streaming Only on First Pass
 
-```
-CLI: parse(-p 608331 -w 10)
-    |
-    v
-Loader: read parquet + CSVs, filter pitcher=608331
-    |
-    +---> statcast_df: DataFrame (365 rows, pitcher's pitches)
-    +---> season_aggs: DataFrame (1 row, season P+/S+/L+)
-    +---> pitch_type_aggs: DataFrame (~5 rows, per-pitch-type season)
-    +---> appearance_aggs: DataFrame (~8 rows, per-game P+)
-    +---> pitch_type_appearance_aggs: DataFrame (~30 rows, per-pitch per-game)
-    +---> platoon_aggs: DataFrame (~10 rows, per-pitch per-platoon)
-    +---> platoon_appearance_aggs: DataFrame (~50 rows, per-pitch per-platoon per-game)
-    +---> team_aggs: DataFrame (1 row, team context)
-    |
-    v
-Classify: starter or reliever? (from appearance frequency + pitch count patterns)
-    |
-    v
-Engine: compute deltas for each report section
-    |
-    +---> fastball.compute(statcast_df, pitch_type_aggs, appearance_aggs, lookback=10)
-    |       -> VeloTrend[], IVB delta, HB delta, arm angle note
-    |
-    +---> arsenal.compute(statcast_df, pitch_type_aggs, platoon_aggs, lookback=10)
-    |       -> UsageDelta[], platoon shifts, first-pitch mix
-    |
-    +---> execution.compute(statcast_df, season_aggs, appearance_aggs, pitch_type_appearance_aggs)
-    |       -> CSW%, zone rate, chase rate, P+/S+/L+ trends
-    |
-    +---> context.compute(appearance_aggs, role, lookback=10)
-    |       -> rest days, innings depth, pitch count trend
-    |
-    v
-Schema Assembler: instantiate PitcherContext from engine outputs
-    |
-    v
-Agent: agent.run_sync(user_prompt, deps=ReportDeps(context=pitcher_context))
-    |
-    +---> @agent.instructions renders pitcher_context.to_prompt()
-    +---> Claude generates narrative prose
-    |
-    v
-Output Formatter: print report to stdout
+**Decision:** Stream Phase 2 first pass to stdout. Revision passes run silently via `run_sync()`.
+
+**Rationale:** The user sees the initial capsule stream in real-time. If revisions happen, they occur silently -- the user does not need to watch the capsule being rewritten. The final capsule (post-revision) replaces what was streamed. The CLI can print a note like "Revised (2 passes)" to stderr.
+
+This avoids the UX problem of streaming a capsule, then streaming a different capsule, confusing the reader. The first stream is the draft; the final output is what gets used downstream.
+
+**Implementation note:** This means `_run_editor_first_pass()` uses `editor.run_stream_sync()` and prints to stdout, while `_run_editor_revision()` uses `editor.run_sync()` silently.
+
+### 3. Max Revisions = 2
+
+**Decision:** Cap at 2 revision passes (so the editor gets at most 3 total attempts: 1 initial + 2 revisions).
+
+**Rationale:**
+- Each revision is a full LLM call (~5-10s, ~2K-4K tokens). Three total attempts means 3 editor calls + 3 anchor checks = 6 LLM calls for the edit-check loop alone (on top of synthesizer, hook, fantasy = 9 total, up from current 5).
+- In practice, most anchor issues are first-pass problems: the editor missed a key signal or overstated something. One revision pass typically resolves these. Two revisions handle edge cases where the first revision introduced a new issue.
+- If the capsule is not clean after 3 attempts, it has a systematic problem (the synthesis is ambiguous, or the editor and anchor disagree on interpretation). Looping further will not help. Surface the surviving warnings and let the user decide.
+- The cap is a constant (`MAX_REVISIONS = 2`) that can be tuned without code changes.
+
+### 4. ReportResult Changes
+
+**Decision:** Add `revision_count: int` to `ReportResult`. Keep `anchor_warnings: list[str]` for surviving warnings only.
+
+```python
+class ReportResult(BaseModel):
+    narrative: str
+    social_hook: str
+    fantasy_insights: str
+    anchor_warnings: list[str]   # surviving warnings after loop (was: all warnings)
+    revision_count: int           # NEW: 0 = clean first pass, 1-2 = revised
 ```
 
-### Key Data Flows
+**Rationale:** Downstream consumers (CLI output, potential future logging) need to know:
+- Whether any revisions occurred (for cost/latency tracking)
+- What warnings survived (for quality monitoring)
 
-1. **Parquet -> Filtered DataFrame -> Engine computations:** The loader reads the full parquet once (20MB, fast in polars), filters to the target pitcher. Each engine module receives the same filtered DataFrame plus relevant aggregation DataFrames. Engine modules are pure functions: DataFrames in, Pydantic models out.
+The semantics of `anchor_warnings` change slightly: currently it is "all warnings from the single anchor pass." After v1.3, it means "warnings that survived the full reflection loop." This is a breaking change but the only consumer is `cli.py`, which we control.
 
-2. **Engine outputs -> PitcherContext -> LLM prompt:** The schema assembler is trivial -- it just constructs the top-level `PitcherContext` from engine outputs. The `to_prompt()` method chain converts structured data into the text the LLM actually sees. This is the critical formatting boundary.
+### 5. Parse Anchor Output as a Separate Function
 
-3. **LLM response -> stdout:** The agent returns `str` (narrative prose). The output formatter adds any terminal formatting (headers, dividers) and prints. No structured output parsing needed on the way out -- the value is in the prose, not in structured data extraction.
+**Decision:** Extract `_parse_anchor_output(raw: str) -> list[str]` from the inline code.
 
-## Build Order (dependency chain)
-
-The components have a strict dependency chain that dictates build order:
-
-```
-Phase 1: models/context.py    (Pydantic schemas -- the contract everything depends on)
-         loader.py             (data loading -- independent, needed by everything)
-
-Phase 2: engine/classify.py   (starter vs reliever -- gates report structure)
-         engine/fastball.py    (first report section)
-         engine/arsenal.py     (second report section)
-         engine/execution.py   (third report section)
-         engine/context.py     (fourth report section)
-
-Phase 3: agent.py             (LLM wiring -- needs models + engine to exist)
-         models/report.py      (output model, if using structured output)
-
-Phase 4: cli.py               (orchestration -- needs everything above)
-         formatting.py         (presentation -- needs agent output)
+Currently the anchor parsing is inline:
+```python
+anchor_output = anchor_result.output.strip()
+anchor_warnings: list[str] = []
+if anchor_output != "CLEAN":
+    anchor_warnings = [line.strip() for line in anchor_output.splitlines() if line.strip()]
 ```
 
-**Why this order:**
+Extract to:
+```python
+def _parse_anchor_output(raw: str) -> list[str]:
+    """Parse anchor check output into a list of warnings. Empty list = CLEAN."""
+    stripped = raw.strip()
+    if stripped == "CLEAN":
+        return []
+    return [line.strip() for line in stripped.splitlines() if line.strip()]
+```
 
-1. **Models first** because every other component depends on the data contract. If you change what the LLM sees, you change what the engine must produce. Design the Pydantic schema to match the report philosophy (deltas, trends, qualitative strings), then build the engine to produce exactly that.
+**Rationale:** The loop calls the anchor check multiple times. Without extraction, the parsing logic is duplicated. The function is also independently testable.
 
-2. **Loader early** because you cannot develop or test engine code without real data flowing through.
+## Anti-Patterns to Avoid
 
-3. **Engine modules are parallelizable** -- they have no dependencies on each other. Each takes DataFrames and produces its own section model. Build them in report-section order (fastball first because it's the foundation of scouting).
+### Anti-Pattern 1: Using message_history for the Revision Loop
 
-4. **Agent after engine** because the system prompt and dependency injection pattern depend on the finalized PitcherContext shape.
+**What:** Pass `message_history=first_pass.all_messages()` to the editor's revision call, appending the anchor warnings as a new user message in the ongoing conversation.
 
-5. **CLI last** because it's pure orchestration glue.
+**Why it is wrong:** The editor's system prompt says "Write the two-paragraph scouting capsule now." In a conversation continuation, the model sees its own first capsule as an assistant response, then gets told "fix these things." This creates anchoring bias -- the model tries to minimally edit rather than cleanly rewrite. It also doubles the prompt tokens (full synthesis appears in the history plus the new prompt). And it carries over any reasoning/thinking tokens from the first pass, further inflating cost.
 
-## Anti-Patterns
+**Do this instead:** Fresh editor call with `_build_revision_message()` that explicitly provides the capsule as user-message context, not as the model's own prior output. The editor rewrites from scratch with the anchor findings in view.
 
-### Anti-Pattern 1: Sending Raw DataFrames to the LLM
+### Anti-Pattern 2: Streaming Revision Passes
 
-**What people do:** Serialize a DataFrame to CSV/JSON and paste it into the prompt, expecting the LLM to compute deltas and find patterns.
+**What:** Stream every editor pass to stdout, showing the user each draft in real-time.
 
-**Why it's wrong:** LLMs miscalculate. With 30+ rows of numeric data, the LLM will make arithmetic errors, miss important deltas, and waste context window on raw numbers instead of insight. Token cost explodes.
+**Why it is wrong:** Confusing UX. The user sees a complete capsule, then sees it being overwritten by a different capsule. This is visually jarring and makes the output unreadable in a pipe or redirect.
 
-**Do this instead:** Pre-compute every delta, trend, and qualitative flag in Python. The LLM receives "Slider usage increased from 20% to 32% (Significant Increase)" not 30 rows of pitch-by-pitch data.
+**Do this instead:** Stream only the first pass. Run revisions silently. If a revision occurred, print a status note to stderr ("Capsule revised, 2 passes") and output the final capsule as the definitive version.
 
-### Anti-Pattern 2: One Giant System Prompt String
+### Anti-Pattern 3: Per-Warning-Type Revision Strategy
 
-**What people do:** Build the entire LLM prompt as a single f-string or template with all data inlined.
+**What:** Parse the anchor warning type brackets (`[MISSED SIGNAL]`, `[UNSUPPORTED]`, `[DIRECTION ERROR]`, `[OVERSTATED]`) and route each to a different revision strategy or agent.
 
-**Why it's wrong:** Untestable, unmaintainable, impossible to iterate on individual sections. Prompt changes require editing a wall of text.
+**Why it is wrong for v1.3:** The editor is a capable LLM. It can read "you missed X, you made up Y, you got Z backwards" and fix all three in a single revision pass. Routing warnings to different strategies adds complexity with no quality gain. The anchor warning format is already clear and actionable.
 
-**Do this instead:** Use the layered Pydantic model pattern with `to_prompt()` methods. Each section is independently testable. The system prompt is composed from typed, validated data structures. Use pydantic-ai's `@agent.instructions` decorator to inject the data context dynamically from deps.
+**Do this instead:** Pass all warnings to the editor in a single revision prompt. Let the LLM handle the multi-issue revision holistically. If a specific warning type proves systematically resistant to revision (discovered through v1.3 usage), add targeted handling then.
 
-### Anti-Pattern 3: Lazy Loading Every File on Every Run
+### Anti-Pattern 4: Infinite Loop Without Hard Cap
 
-**What people do:** Scan all 8 CSV files lazily and filter each independently, resulting in 8+ file reads.
+**What:** Loop until CLEAN with no iteration limit.
 
-**Why it's wrong:** At this data scale (20MB parquet, ~100MB total CSVs), the overhead of "smart" lazy loading exceeds the cost of just reading the files. Premature optimization that adds complexity.
+**Why it is wrong:** The editor and anchor are both LLMs. They can disagree indefinitely. The anchor might flag something the editor considers acceptable editorial judgment. Or the editor's revision might introduce a new issue the anchor catches, creating an oscillation. Without a hard cap, this burns unbounded API calls.
 
-**Do this instead:** Read the parquet eagerly with `pl.read_parquet()` once. For CSVs, read them eagerly and filter. The entire dataset fits comfortably in memory. Use `pl.scan_parquet` only if the dataset grows past ~1GB.
-
-### Anti-Pattern 4: Structured Output for Narrative Reports
-
-**What people do:** Define a complex Pydantic `output_type` with fields for each paragraph, forcing the LLM to fill structured JSON for prose content.
-
-**Why it's wrong:** Narrative prose is inherently unstructured. Forcing it into JSON fields constrains the LLM's writing quality and creates awkward paragraph boundaries. The value of this tool is scout-quality prose, not structured data extraction.
-
-**Do this instead:** Use `output_type=str` for the narrative report. All structure lives in the INPUT (the Pydantic context models). The output is free-form prose that reads like a human wrote it.
+**Do this instead:** `MAX_REVISIONS = 2` as a constant. Log surviving warnings. Let the user see what the anchor was unhappy about.
 
 ## Integration Points
 
-### External Services
+### Modified Components
 
-| Service | Integration Pattern | Notes |
-|---------|---------------------|-------|
-| Claude (Anthropic API) | Via pydantic-ai Agent, `anthropic:claude-sonnet-4-20250514` or similar model string | Requires `ANTHROPIC_API_KEY` env var. pydantic-ai handles retries and validation. Single API call per report. |
+| File | What Changes | Why |
+|------|-------------|-----|
+| `report.py` | `generate_report_streaming()` gains reflection loop; new helper functions added; `ReportResult` gets `revision_count` | Core integration point |
+| `cli.py` | Print revision count to stderr; adjust anchor warning display | Consumer of new `revision_count` field |
+| `tests/test_report.py` | New tests for loop behavior, revision message builder, anchor parsing | Test coverage |
 
-### Internal Boundaries
+### Unchanged Components
 
-| Boundary | Communication | Notes |
-|----------|---------------|-------|
-| Loader -> Engine | Polars DataFrames passed as function args | Loader returns a typed dataclass or NamedTuple of filtered DataFrames |
-| Engine -> Schema Assembler | Pydantic models (section-level) | Each engine module returns its section model |
-| Schema Assembler -> Agent | `PitcherContext` as `deps.context` | The `to_prompt()` chain renders the full context string |
-| Agent -> Formatter | `str` (narrative prose) | Plain text, possibly with markdown formatting |
+| File | Why Unchanged |
+|------|--------------|
+| `data.py`, `engine.py`, `context.py` | Data pipeline is upstream of the loop; no changes needed |
+| `scout.py`, `curator.py`, `scout_cli.py` | Independent CLI; no connection to report pipeline loop |
+| Agent system prompts (synthesizer, hook, fantasy) | Unaffected by editor-anchor loop |
+| `_ANCHOR_PROMPT` | Anchor prompt is already designed for this -- it checks capsule against synthesis and returns typed warnings. No changes needed. |
+| `_EDITOR_PROMPT` | The editor's system prompt defines how to write from a synthesis. The revision instruction comes in the user message, not the system prompt. |
 
-## Scaling Considerations
+### New Components (All in report.py)
 
-| Concern | Current (1 pitcher/run) | Batch mode (100 pitchers) | Notes |
-|---------|------------------------|--------------------------|-------|
-| Data loading | ~0.5s, read all + filter | Read once, filter 100x | Parquet scan is fast; CSV reads are the bottleneck at batch scale |
-| Computation | ~0.1s per pitcher | ~10s for 100 | Engine functions are pure polars, very fast |
-| LLM calls | ~5-15s (single API call) | 100 serial calls = 8-25 min | Batch would need async `agent.run()` with concurrency limit |
-| Memory | ~200MB (all data in memory) | Same ~200MB (data shared) | Data does not scale with pitcher count |
+| Component | Type | Purpose |
+|-----------|------|---------|
+| `_build_revision_message()` | Function | Build editor prompt with anchor feedback |
+| `_parse_anchor_output()` | Function | Extract warnings from anchor output string |
+| `_run_editor_first_pass()` | Function | First editor call with streaming |
+| `_run_editor_revision()` | Function | Subsequent editor calls, silent |
+| `MAX_REVISIONS` | Constant | Iteration cap (default: 2) |
+| `ReportResult.revision_count` | Field | Track iteration count in output |
 
-### Scaling Priorities
+## Build Order
 
-1. **First bottleneck: LLM latency.** At ~10s per report, batch mode is I/O bound on the API. If batch mode is ever needed, use `asyncio.gather` with a concurrency semaphore (3-5 concurrent calls). This is not needed for MVP.
-2. **Second bottleneck: CSV read time.** The `2026-all_pitches.csv` is 83MB. If batch mode is needed, read it once and pass the full DataFrame to each pitcher's engine. Alternatively, convert it to parquet for faster reads.
+The reflection loop is a localized change to `report.py` with no upstream dependencies. Build order follows the dependency chain within the loop:
+
+### Phase 1: Foundation (no dependencies)
+
+1. **`_parse_anchor_output()`** -- Extract from inline code. Pure function, trivially testable.
+2. **`_build_revision_message()`** -- New message builder. Depends only on `PitcherContext` and `CachePoint` (both exist).
+3. **`ReportResult` update** -- Add `revision_count: int` field.
+
+### Phase 2: Loop Mechanics (depends on Phase 1)
+
+4. **`_run_editor_first_pass()`** -- Extract current streaming editor block into helper.
+5. **`_run_editor_revision()`** -- New function using `_build_revision_message()` + `editor.run_sync()`.
+6. **Reflection loop in `generate_report_streaming()`** -- Replace single editor+anchor block with while loop using the helpers.
+
+### Phase 3: Consumer Updates (depends on Phase 2)
+
+7. **`cli.py` updates** -- Display `revision_count`, adjust anchor warning display.
+8. **Test updates** -- Tests for `_parse_anchor_output`, `_build_revision_message`, loop convergence, max iteration cap, ReportResult changes.
+
+### Rationale
+
+- Phase 1 components are independently testable with no side effects
+- Phase 2 depends on Phase 1 helpers existing
+- Phase 3 is purely cosmetic/testing -- the loop works without CLI changes or tests
+- Each phase can be committed and verified independently
+
+## Testing Strategy
+
+### Unit Tests (new)
+
+| Test | What It Verifies |
+|------|-----------------|
+| `test_parse_anchor_output_clean` | "CLEAN" returns empty list |
+| `test_parse_anchor_output_warnings` | Multi-line warnings parsed correctly |
+| `test_parse_anchor_output_whitespace` | Handles blank lines, trailing whitespace |
+| `test_build_revision_message_includes_warnings` | All warnings appear in prompt |
+| `test_build_revision_message_includes_synthesis` | Synthesis present for editor context |
+| `test_build_revision_message_includes_capsule` | Previous capsule present for reference |
+| `test_build_revision_message_has_cache_point` | CachePoint after synthesis for token savings |
+
+### Integration Tests (modified)
+
+| Test | What It Verifies |
+|------|-----------------|
+| `test_generate_report_clean_first_pass` | TestModel returns "CLEAN" anchor -> revision_count=0 |
+| `test_generate_report_revision_then_clean` | TestModel returns warnings then CLEAN -> revision_count=1 |
+| `test_generate_report_max_revisions` | TestModel always returns warnings -> revision_count=MAX_REVISIONS, surviving warnings populated |
+| `test_report_result_has_revision_count` | ReportResult includes revision_count field |
+
+**Testing the loop with TestModel:** pydantic-ai's `TestModel` returns the same `custom_output_text` for every call. To test the loop properly, use `TestModel` with a call counter or mock that returns different outputs on successive calls. Alternatively, use `FunctionModel` which accepts a callable that can vary its response.
+
+## Cost/Latency Impact
+
+| Scenario | LLM Calls (current) | LLM Calls (v1.3) | Delta |
+|----------|---------------------|-------------------|-------|
+| Clean first pass | 5 | 5 | +0 (no change) |
+| One revision needed | 5 | 7 (+1 editor, +1 anchor) | +2 |
+| Two revisions needed | 5 | 9 (+2 editor, +2 anchor) | +4 |
+| Max cap hit | 5 | 9 | +4 |
+
+At ~$0.003/call (Sonnet 4.6 at ~2K tokens), worst case adds ~$0.012 per report. At ~8s/call, worst case adds ~32s latency. The clean-first-pass case (expected to be most common) adds zero overhead.
 
 ## Sources
 
-- [Pydantic AI Agent documentation](https://ai.pydantic.dev/agent/)
-- [Pydantic AI Dependencies documentation](https://ai.pydantic.dev/dependencies/)
-- [Pydantic AI Output documentation](https://ai.pydantic.dev/output/)
-- [Polars Parquet I/O guide](https://docs.pola.rs/user-guide/io/parquet/)
-- [Polars scan_parquet API](https://docs.pola.rs/api/python/dev/reference/api/polars.scan_parquet.html)
-- Actual data inspection of `statcast_2026.parquet` and `aggs/*.csv` in this repository
+- [pydantic-ai Agent documentation](https://ai.pydantic.dev/agents/) -- Agent.run_sync, run_stream_sync, message_history API
+- [pydantic-ai Message History](https://ai.pydantic.dev/message-history/) -- message_history vs instructions vs system_prompt behavior
+- [pydantic-graph documentation](https://ai.pydantic.dev/graph/) -- BaseNode, Graph, cycle support, async-only constraint
+- Existing `report.py` (v1.2) -- current pipeline structure, agent factory, message builders
+- Existing `cli.py` (v1.2) -- ReportResult consumption pattern
+- Existing `tests/test_report.py` -- current test patterns, TestModel usage
 
 ---
-*Architecture research for: pitcher-narratives (LLM-powered scouting report CLI)*
-*Researched: 2026-03-26*
+*Architecture research for: pitcher-narratives v1.3 Editor-Anchor Reflection Loop*
+*Researched: 2026-03-27*
