@@ -1,2 +1,2 @@
 run:
-	uv run main.py -p 657277 -w 5
+	uv run pitcher-narratives -p 657277 -w 5
