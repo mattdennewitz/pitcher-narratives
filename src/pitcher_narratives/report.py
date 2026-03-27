@@ -3,14 +3,14 @@
 Phase 1 (Synthesizer): Extracts signal from noise — structured bullet
 points of key findings, deltas, and trends. No narrative.
 
-Phase 2 (Editor): Weaves those facts into a skeptical, two-paragraph
-capsule with decisive projection. Elite sabermetric analyst voice.
+Phase 2 (Editor): Weaves those facts into a pragmatic, two-paragraph
+capsule with clear projection. Elite sabermetric analyst voice.
 
-Phase 3 (Hook Writer): Distills synthesis into a 1-2 sentence social
-media hook for front-office audiences.
+Phase 3 (Hook Writer): Distills the editor's capsule into a 1-2
+sentence social media hook for front-office audiences.
 
-Phase 4 (Fantasy Analyst): Produces 3 actionable fantasy baseball
-insights with specific metric citations.
+Phase 4 (Fantasy Analyst): Produces 3 fantasy baseball insights
+from the capsule with specific metric citations.
 """
 
 from __future__ import annotations
@@ -71,35 +71,72 @@ at higher pitch counts. Note if stuff holds, improves, or degrades.
 
 3. Isolate Usage Shifts: Find the largest positive and negative deltas \
 in pitch usage percentage compared to the season average. Flag any pitch \
-that was abandoned or newly introduced.
+that was abandoned or newly introduced. Before attributing a usage shift \
+to fatigue or mechanical causes, check the platoon data — a lineup \
+heavy on one handedness can explain a mix change on its own.
 
 4. Pinpoint Execution Changes: Identify which pitches are generating \
 the highest CSW% and Chase%. Note if a pitch with a high P+ score is \
 suffering from low Zone% (stuff without command). Note if a pitch with \
-low P+ is succeeding on location alone.
+low P+ is succeeding on location alone. If pitch locations cluster on \
+a specific edge or zone, note it — this may reflect a targeted plan \
+against the opposing lineup rather than a mechanical pattern.
 
 5. Extract Platoon Specifics: Document exactly how the pitch mix and \
 P+ change against LHB versus RHB. Identify platoon-specific weapons \
 and vulnerabilities.
 
-6. Flag Breakout Indicators: New pitches gaining traction, velocity \
-gains backed by movement changes, P+ improvements that suggest a real \
+6. Audit the Arsenal as a Portfolio: Do not evaluate each pitch in \
+isolation. Cross-reference stuff quality (S+) with command (L+) and \
+platoon splits to find the full picture:
+- Breakout indicators: New pitches gaining traction, velocity gains \
+backed by movement changes, P+ improvements that suggest real \
 development — not just noise.
+- Regression risks: Small sample caveats, unsustainable chase rates, \
+high P+ with poor zone rates, or results that outpace stuff.
+- Development opportunities: If a pitch has high S+ (>110) but low \
+L+ (<80), do not dismiss it as a failure. Flag it as a pitch with \
+the stuff but not the feel yet. Then check the platoon data — does \
+the pitcher need this specific pitch to handle a handedness split? \
+If so, note the connection: this is the pitch that would change the \
+platoon picture if the command develops.
 
-7. Flag Regression Risks: Small sample caveats, unsustainable chase \
-rates, high P+ with poor zone rates, or results that outpace stuff.
-
-8. Evaluate Release Point Mechanics: Compare each pitch type's \
+7. Evaluate Release Point Mechanics: Compare each pitch type's \
 release position (horizontal, vertical) and extension against that \
 pitcher's own season baseline — NOT league averages. Consistent \
 release points across pitch types suggest clean mechanics and \
 deception. Shifts in a single pitch type may indicate tinkering or \
 development. Shifts across ALL pitch types suggest a mechanical \
-change, fatigue, or potential injury concern. Flag the magnitude \
-and direction of any meaningful delta.
+change or fatigue. Flag the magnitude and direction of any \
+meaningful delta.
 
-9. Absolute Objectivity: Do not use subjective adjectives. Do not \
-project future performance. Report the math and the physical pitch \
+8. Consider Intent: The pitcher is not operating in a vacuum. When \
+you see usage shifts, location clustering, or pitch selection changes, \
+consider whether the opponent's handedness mix or platoon profile \
+explains the pattern before defaulting to fatigue or mechanical causes. \
+Note when the data suggests a game plan rather than a trend. Use your \
+judgement — flag plausible intent without overstating confidence.
+
+9. Plausibility Filter — sanity-check your own findings before \
+reporting them:
+- Velocity outliers: If a velocity change exceeds 3 mph from the \
+season baseline, consider whether pitch misclassification explains \
+it before reporting it as a real gain or loss. Note the possibility.
+- Intent before injury: When you see a change, first ask "is the \
+pitcher trying something new?" before "is something wrong?" Check \
+usage shifts, grip/shape changes, and opponent context before \
+defaulting to physical explanations.
+- Command vs targeting: A high L+ on one pitch does not mean the \
+pitcher has command. If walks exceed 2 per 4 IP (roughly 12%+ of \
+batters faced), frame high L+ as precise targeting or pitch \
+placement on that specific offering — not overall command. He may \
+be painting edges that hitters are not chasing, or locating his \
+secondary stuff well while struggling to find the zone with his \
+fastball. Report the L+ number, but contextualize it against the \
+walk rate. Both facts belong together.
+
+10. Absolute Objectivity: Do not use subjective adjectives. Do not \
+project future performance. Report the math and the pitch \
 characteristics. State sample sizes.
 
 OUTPUT FORMAT — Use this exact structure:
@@ -128,9 +165,18 @@ season baseline, consistency across types, mechanical flags]
 ## Workload & Stamina
 [Bulleted facts: pitch counts, rest days, TTO degradation/improvement, IP trends]
 
+## Opponent Context & Intent
+[Bulleted facts: platoon composition of opposing lineups, usage or location \
+patterns that appear opponent-driven rather than mechanical. Note when a \
+shift looks like a game plan vs a trend. Skip this section if nothing \
+stands out.]
+
 ## Key Signal
-[1-2 bullets: the single most important improvement AND the single most \
-important concern — the two facts that should anchor the editorial]"""
+[Up to 3 bullets:
+- The single most important improvement
+- The single most important concern
+- The development pitch: if there is a high-S+/low-L+ pitch that would \
+solve a documented platoon weakness, name it here. If nothing fits, skip it.]"""
 
 _SP_SYNTH_GUIDANCE = """\
 Additional focus for this starter:
@@ -158,8 +204,7 @@ Additional focus for this reliever:
 _EDITOR_PROMPT = """\
 You are an elite, sabermetrically inclined baseball writer. You write \
 for front offices, advanced fantasy players, and data-driven fans. Your \
-tone is objective, mildly skeptical, and highly analytical. You are not \
-a cheerleader. You do not use clichés.
+tone is pragmatic, cautious, and highly analytical. You do not use clichés.
 
 INPUT: A structured briefing document from your data analyst containing \
 objective facts about a pitcher's recent window, including Pitching+ \
@@ -167,61 +212,94 @@ scores, velocity changes, usage shifts, and execution metrics.
 
 INSTRUCTIONS:
 
-1. Structure — The 2-3 Paragraph Capsule:
+1. Find the Thread: Read the entire briefing, then decide what the \
+story is. Maybe it is a new pitch reshaping the arsenal. Maybe it is \
+a velocity trend that changes the projection. Maybe it is a platoon \
+split that defines his role. Maybe it is a high-stuff pitch that \
+lacks feel — the one thing standing between the current profile and \
+a different tier. Lead with that thread — do not march through the \
+briefing section by section. The synthesizer organizes data by \
+category; your job is to reorganize it by narrative importance. \
+Pay particular attention to the Key Signal section — if the \
+synthesizer flagged a development pitch, consider whether that is \
+the most interesting thread.
 
-Paragraph 1 (The Setup): Identify the core change or the current state \
-of the stuff. Did they add a pitch? Did velocity drop or gain? How are \
-the raw shapes grading out (P+, S+, movement)? Ground the reader in \
-what is physically different about this pitcher right now.
+2. Structure — The 2-3 Paragraph Capsule:
 
-Paragraph 2+ (The Verdict): Explain how that stuff is playing in the \
-zone. Address platoon splits directly — what works vs LHB vs RHB. \
-Highlight the glaring weakness or the path to sustained success. \
-Deliver a definitive conclusion on the pitcher's immediate future.
+Paragraph 1 (The Setup): Ground the reader in what is physically \
+different or notable about this pitcher right now. This follows \
+directly from the thread you identified.
+
+Paragraph 2+ (The Verdict): Explain how the stuff is playing in \
+practice. Weave in platoon splits where they matter to the story. \
+Deliver a clear-eyed conclusion on the pitcher's current trajectory.
 
 Use a third paragraph only when the Setup needs separation (e.g., \
 fastball changes warrant one paragraph, arsenal evolution warrants \
 another, before the Verdict).
 
-2. Contextualize Every Metric: Never state a metric (velocity, movement, \
-chase rate, P+) without grounding it against the MLB average (100 for \
-P+/S+/L+) or the pitcher's prior baseline. Always cite the full Pitching+ \
-triad (P+, S+, L+) when discussing pitch quality — S+ tells you about raw \
-stuff (shape, movement, velocity), L+ tells you about command and location. \
-A pitcher with 120 S+ and 85 L+ has elite stuff but poor command — very \
-different from 95 S+ and 120 L+ (command artist, mediocre stuff).
+3. Three Primary Metrics: Choose at most three metrics to carry your \
+narrative. These are the numbers that tell the story — everything else \
+stays in the briefing. When you cite a metric, always ground it against \
+the MLB average (100 for P+/S+/L+) or the pitcher's own baseline. Use \
+the Pitching+ triad (P+, S+, L+) when discussing pitch quality — S+ \
+measures stuff (shape, movement, velocity), L+ measures pitch-level \
+location quality. Important: L+ grades individual pitch placement, \
+not overall command. A pitcher can have a high L+ on his slider while \
+walking 18% of batters — that means the slider is landing in good \
+spots, not that the pitcher has command. Always pair L+ with the \
+walk rate to give the full picture.
 
-3. Diagnose, Do Not Just Describe: Connect the outcome to the physical \
+4. Link Mechanics to Outcomes: If you mention a mechanical change \
+(extension, release point, arm slot), you must immediately connect it \
+to a tactical result — a specific pitch's zone rate, a movement change, \
+a platoon split. No orphaned mechanical observations.
+
+5. Diagnose, Do Not Just Describe: Connect the outcome to the physical \
 input. If strikeout rates are down, explain that it is tied to a drop \
 in vertical break or lost velocity. Link the "what" to the "why."
 
-4. Be Skeptical: Do not trust small samples blindly. Flag profiles as \
-regression risks if run prevention is good but zone rates are poor or \
-velocity is fading. Use phrases like "small-sample issues," "I'm not \
-convinced," "prone to blow-ups" where warranted.
+6. Consider Intent: The pitcher does not operate in a vacuum. When \
+the data shows usage shifts or location clustering, consider whether \
+the opposing lineup's handedness or profile explains the pattern \
+before defaulting to fatigue or mechanical causes. A heavy-LHB \
+lineup changes the expected pitch mix. Describe opponent-driven \
+patterns as a targeted plan, not a mechanical byproduct — but only \
+when the data supports it. Do not overstate confidence in intent.
 
-5. Platoon Everything: Disaggregate pitch mix and success by batter \
-handedness. Note what the pitcher does differently against LHB versus \
-RHB. A sweeping slider's success must be framed by who is in the box.
+7. Scale Confidence to Sample Size: Match the strength of your language \
+to the amount of data. A three-start window gets "trending toward," \
+"early signs of," or "worth watching." A full-season baseline can \
+support firmer assessments. Do not declare what a pitcher "profiles as" \
+from a handful of appearances.
 
-6. Integrate Release Point Changes: When the data shows release \
-point shifts, weave them into the mechanical narrative. A uniform \
-shift across all pitch types suggests a delivery change — connect \
-it to velocity or movement changes. A shift in one pitch type \
-suggests tinkering with that offering. All baselines are the \
-pitcher's own season averages, not league norms.
+8. Take a Stance: End with a clear assessment of where the pitcher \
+sits and what to watch going forward. Be direct, not dramatic — and \
+scale the conviction to the data (see #7).
 
-7. Take a Stance: End the report with a decisive, unsentimental \
-projection of the pitcher's value. Define their tier clearly (e.g., \
-"profiles as a low-leverage reliever," "looks like a #4 starter until \
-command improves," "a high-variance, blow-up candidate"). Do not hedge.
+9. Voice: Write the way an analyst talks to another analyst — plain, \
+specific, conversational. Not the way a research paper reads.
+- No clichés ("bulldog mentality," "pitches to contact," "electric stuff").
+- No formulaic transitions ("Meanwhile," "However," "The stark gap \
+between"). Just start the next thought.
+- Vary sentence length. Let a short sentence land a point. Then \
+explain in a longer one when the idea needs room.
+- Use conversational scouting language: stuff, feel, finding a groove, \
+keeping them off-balance, getting tagged, working the edges.
+- Never use: "degradation," "binary," "physical characteristics," \
+"extreme variance," "profiles as," "metrics are grim," \
+"navigating a lineup," "elite," "dominant," "massive spike."
+- Avoid "not just X, it's Y" or "it's a X — not just a Y" \
+constructions — state what something IS.
 
-8. Voice: No clichés ("bulldog mentality," "pitches to contact," \
-"electric stuff"). Avoid "not just X, it's Y" or "it's a X — not \
-just a Y" constructions — state what something IS, don't define it \
-by what it isn't. Rely on metrics: K-BB%, SwStr%, CSW%, P+/S+/L+, \
-xRV100. Write with authority and economy — every sentence must earn \
-its place.
+10. Spot-Check Yourself: Before finishing, verify: (a) you used no \
+more than three primary metrics, (b) every mechanical observation \
+connects to a tactical outcome, (c) your confidence matches the \
+sample size, (d) if you described any pitch as having great command, \
+precision, or location, check the walk rate — if it is above 12% \
+of batters faced, reframe as pitch-level placement on that offering, \
+not overall command. The L+ number and the walk rate must appear \
+together.
 
 STRICT CONSTRAINTS:
 - Rely entirely on the data provided in the input. Do not hallucinate \
@@ -231,7 +309,7 @@ provided as context. Base analysis on underlying metrics.
 - No bullet points. No headers. No introductory fluff.
 - Start immediately with the analysis. Your first sentence should be \
 about the pitcher's stuff, not about "looking at the data."
-- Do not soften your conclusions. Be direct."""
+- Be direct without being dismissive or alarmist."""
 
 
 _AgentTuple = tuple[Agent[None, str], Agent[None, str], Agent[None, str], Agent[None, str]]
@@ -302,8 +380,10 @@ Given key findings from a pitcher's latest appearance, write exactly 3 \
 bullet points — Axios-style: short, declarative, news-first.
 
 Voice and perspective:
-- Write as an analyst reporting news, not as an advisor issuing commands.
+- Write as an analyst reporting news, not as a manager issuing roster moves.
 - Lead with the fact or trend, then explain why it matters for fantasy.
+- Frame implications as things to monitor ("keep an eye on," "worth watching") \
+rather than directives ("pick him up," "move him to the bench").
 - Cite one specific metric per bullet (P+, velocity delta, usage shift, \
 platoon split, workload flag).
 - No run-on sentences. No semicolons joining two thoughts. One idea per \
@@ -349,11 +429,7 @@ def _build_synthesizer_message(ctx: PitcherContext) -> _UserPrompt:
 
 
 def _build_editor_message(ctx: PitcherContext, synthesis: str) -> _UserPrompt:
-    """Build the Phase 2 user message with cache breakpoint after synthesis.
-
-    Synthesis output is shared across Phases 2/3/4, so caching it here
-    means Phases 3 and 4 get a cache hit on the same prefix.
-    """
+    """Build the Phase 2 user message with cache breakpoint after synthesis."""
     return [
         f"## Pitcher\n{ctx.pitcher_name} ({ctx.throws}HP, {ctx.role})\n\n"
         f"## Key Findings From Data Analysis\n{synthesis}",
@@ -362,22 +438,24 @@ def _build_editor_message(ctx: PitcherContext, synthesis: str) -> _UserPrompt:
     ]
 
 
-def _build_hook_message(ctx: PitcherContext, synthesis: str) -> _UserPrompt:
-    """Build the Phase 3 user message with cache breakpoint after synthesis."""
+def _build_hook_message(ctx: PitcherContext, capsule: str) -> _UserPrompt:
+    """Build the Phase 3 user message from the editor's capsule."""
     return [
-        f"## Pitcher\n{ctx.pitcher_name} ({ctx.throws}HP, {ctx.role})\n\n## Key Findings\n{synthesis}",
+        f"## Pitcher\n{ctx.pitcher_name} ({ctx.throws}HP, {ctx.role})\n\n"
+        f"## Scouting Capsule\n{capsule}",
         CachePoint(),
         "Write one social media hook (1-2 sentences). Focus on the single most notable change.",
     ]
 
 
-def _build_fantasy_message(ctx: PitcherContext, synthesis: str) -> _UserPrompt:
-    """Build the Phase 4 user message with cache breakpoint after synthesis."""
+def _build_fantasy_message(ctx: PitcherContext, capsule: str) -> _UserPrompt:
+    """Build the Phase 4 user message from the editor's capsule."""
     return [
-        f"## Pitcher\n{ctx.pitcher_name} ({ctx.throws}HP, {ctx.role})\n\n## Key Findings\n{synthesis}",
+        f"## Pitcher\n{ctx.pitcher_name} ({ctx.throws}HP, {ctx.role})\n\n"
+        f"## Scouting Capsule\n{capsule}",
         CachePoint(),
         "Write exactly 3 bullet points of fantasy baseball insights. "
-        "Each bullet must be actionable and cite a specific metric or trend.",
+        "Each bullet should flag what to watch and cite a specific metric or trend.",
     ]
 
 
@@ -388,12 +466,13 @@ def _render_user_prompt(parts: _UserPrompt) -> str:
 
 def _build_all_phases(ctx: PitcherContext) -> list[tuple[str, str, _UserPrompt]]:
     """Build (label, system_prompt, user_prompt) for all 4 phases."""
-    placeholder = "<synthesis output would go here>"
+    synth_placeholder = "<synthesis output would go here>"
+    capsule_placeholder = "<editor capsule would go here>"
     return [
         ("PHASE 1: SYNTHESIZER", _SYNTHESIZER_PROMPT, _build_synthesizer_message(ctx)),
-        ("PHASE 2: EDITOR", _EDITOR_PROMPT, _build_editor_message(ctx, placeholder)),
-        ("PHASE 3: HOOK WRITER", _HOOK_PROMPT, _build_hook_message(ctx, placeholder)),
-        ("PHASE 4: FANTASY ANALYST", _FANTASY_PROMPT, _build_fantasy_message(ctx, placeholder)),
+        ("PHASE 2: EDITOR", _EDITOR_PROMPT, _build_editor_message(ctx, synth_placeholder)),
+        ("PHASE 3: HOOK WRITER", _HOOK_PROMPT, _build_hook_message(ctx, capsule_placeholder)),
+        ("PHASE 4: FANTASY ANALYST", _FANTASY_PROMPT, _build_fantasy_message(ctx, capsule_placeholder)),
     ]
 
 
@@ -434,9 +513,12 @@ def generate_report_streaming(
     """Generate a four-phase scouting report and stream the editorial output.
 
     Phase 1 (Synthesizer): Extracts key findings as structured bullets.
-    Phase 2 (Editor): Writes the final two-paragraph capsule.
-    Phase 3 (Hook Writer): Distills synthesis into a 1-2 sentence social hook.
-    Phase 4 (Fantasy Analyst): Produces 3 actionable fantasy baseball bullets.
+    Phase 2 (Editor): Writes the final two-paragraph capsule from synthesis.
+    Phase 3 (Hook Writer): Distills the capsule into a 1-2 sentence social hook.
+    Phase 4 (Fantasy Analyst): Produces 3 fantasy baseball bullets from the capsule.
+
+    Phases 3 and 4 derive from the editor's capsule (not the raw synthesis),
+    so they inherit the editor's plausibility filters and metric curation.
 
     Only Phase 2 output is streamed to stdout. Phases 1, 3, and 4 run silently.
 
@@ -473,18 +555,19 @@ def generate_report_streaming(
         chunks.append(delta)
     print()  # Final newline
 
-    # Phase 3: Social media hook (silent)
+    # Phase 3: Social media hook (silent) — derived from capsule, not synthesis
+    capsule = "".join(chunks)
     hook_kwargs: dict[str, Any] = {
-        "user_prompt": _build_hook_message(ctx, synthesis),
+        "user_prompt": _build_hook_message(ctx, capsule),
     }
     if _model_override is not None:
         hook_kwargs["model"] = _model_override
 
     hook_result = hook_writer.run_sync(**hook_kwargs)
 
-    # Phase 4: Fantasy analyst (silent)
+    # Phase 4: Fantasy analyst (silent) — derived from capsule, not synthesis
     fantasy_kwargs: dict[str, Any] = {
-        "user_prompt": _build_fantasy_message(ctx, synthesis),
+        "user_prompt": _build_fantasy_message(ctx, capsule),
     }
     if _model_override is not None:
         fantasy_kwargs["model"] = _model_override
@@ -492,7 +575,7 @@ def generate_report_streaming(
     fantasy_result = fantasy_analyst.run_sync(**fantasy_kwargs)
 
     return ReportResult(
-        narrative="".join(chunks),
+        narrative=capsule,
         social_hook=hook_result.output,
         fantasy_insights=fantasy_result.output,
     )
