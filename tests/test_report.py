@@ -1,6 +1,7 @@
-"""Tests for four-phase report generation pipeline."""
+"""Tests for five-phase report generation pipeline."""
 
 import pytest
+from pydantic import ValidationError
 from pydantic_ai import CachePoint
 from pydantic_ai.models.test import TestModel
 
@@ -12,8 +13,11 @@ from pitcher_narratives.report import (
     _RP_SYNTH_GUIDANCE,
     _SP_SYNTH_GUIDANCE,
     _SYNTHESIZER_PROMPT,
+    AnchorResult,
+    AnchorWarning,
     HallucinationReport,
     ReportResult,
+    WarningCategory,
     _build_editor_message,
     _build_fantasy_message,
     _build_hook_message,
@@ -44,15 +48,15 @@ def ctx():
 
 def test_synthesizer_model_matches_provider():
     """Synthesizer agent uses the correct model for each provider."""
-    synth, _, _, _ = _make_agents(provider="claude")
+    (synth, _, _, _), _ = _make_agents(provider="claude")
     assert "claude-sonnet-4-6" in str(synth.model)
-    synth_oai, _, _, _ = _make_agents(provider="openai")
+    (synth_oai, _, _, _), _ = _make_agents(provider="openai")
     assert "gpt-5.4-mini" in str(synth_oai.model)
 
 
 def test_synthesizer_output_type_is_str():
     """Synthesizer output_type is str."""
-    synth, _, _, _ = _make_agents()
+    (synth, _, _, _), _ = _make_agents()
     assert synth.output_type is str
 
 
@@ -89,7 +93,7 @@ def test_synthesizer_prompt_balanced_gains_and_drops():
 
 def test_editor_model_matches_provider():
     """Editor agent uses the correct model for the provider."""
-    _, ed, _, _ = _make_agents(provider="claude")
+    (_, ed, _, _), _ = _make_agents(provider="claude")
     assert "claude-sonnet-4-6" in str(ed.model)
 
 
@@ -358,13 +362,13 @@ def test_hallucination_guard_hardhit_pct_still_known():
 
 def test_hook_writer_model_matches_provider():
     """Hook writer agent uses the correct model for the provider."""
-    _, _, hook, _ = _make_agents(provider="claude")
+    (_, _, hook, _), _ = _make_agents(provider="claude")
     assert "claude-sonnet-4-6" in str(hook.model)
 
 
 def test_hook_writer_output_type_is_str():
     """Hook writer output_type is str."""
-    _, _, hook, _ = _make_agents()
+    (_, _, hook, _), _ = _make_agents()
     assert hook.output_type is str
 
 
@@ -399,13 +403,13 @@ def test_report_result_narrative_matches_editor_output(ctx):
 
 def test_fantasy_analyst_model_matches_provider():
     """Fantasy analyst agent uses the correct model for the provider."""
-    _, _, _, fantasy = _make_agents(provider="claude")
+    (_, _, _, fantasy), _ = _make_agents(provider="claude")
     assert "claude-sonnet-4-6" in str(fantasy.model)
 
 
 def test_fantasy_analyst_output_type_is_str():
     """Fantasy analyst output_type is str."""
-    _, _, _, fantasy = _make_agents()
+    (_, _, _, fantasy), _ = _make_agents()
     assert fantasy.output_type is str
 
 
@@ -447,3 +451,93 @@ def test_report_result_all_fields_populated(ctx):
     assert result.narrative
     assert result.social_hook
     assert result.fantasy_insights
+
+
+# -- Anchor check model tests ---------------------------------------------------
+
+
+def test_anchor_warning_valid_categories():
+    """AnchorWarning accepts all four valid categories."""
+    for cat in ("MISSED_SIGNAL", "UNSUPPORTED", "DIRECTION_ERROR", "OVERSTATED"):
+        w = AnchorWarning(category=cat, description="test")
+        assert w.category == cat
+        assert w.description == "test"
+
+
+def test_anchor_warning_rejects_invalid_category():
+    """AnchorWarning rejects categories not in WarningCategory Literal."""
+    with pytest.raises(ValidationError):
+        AnchorWarning(category="INVALID", description="test")
+
+
+def test_anchor_result_is_clean_when_empty():
+    """AnchorResult with no warnings has is_clean == True."""
+    result = AnchorResult(warnings=[])
+    assert result.is_clean
+
+
+def test_anchor_result_not_clean_with_warnings():
+    """AnchorResult with warnings has is_clean == False."""
+    w = AnchorWarning(category="MISSED_SIGNAL", description="Key velocity drop not mentioned")
+    result = AnchorResult(warnings=[w])
+    assert not result.is_clean
+
+
+def test_anchor_result_multiple_warnings():
+    """AnchorResult with multiple warnings preserves all."""
+    warnings = [
+        AnchorWarning(category="MISSED_SIGNAL", description="a"),
+        AnchorWarning(category="UNSUPPORTED", description="b"),
+        AnchorWarning(category="DIRECTION_ERROR", description="c"),
+    ]
+    result = AnchorResult(warnings=warnings)
+    assert len(result.warnings) == 3
+    assert not result.is_clean
+
+
+# -- ReportResult revision_count tests ------------------------------------------
+
+
+def test_report_result_revision_count_default():
+    """ReportResult revision_count defaults to 0."""
+    r = ReportResult(narrative="n", social_hook="s", fantasy_insights="f", anchor_warnings=[])
+    assert r.revision_count == 0
+
+
+def test_report_result_revision_count_explicit():
+    """ReportResult revision_count can be set explicitly."""
+    r = ReportResult(narrative="n", social_hook="s", fantasy_insights="f", anchor_warnings=[], revision_count=2)
+    assert r.revision_count == 2
+
+
+def test_report_result_anchor_warnings_typed():
+    """ReportResult anchor_warnings accepts AnchorWarning objects."""
+    w = AnchorWarning(category="OVERSTATED", description="small sample")
+    r = ReportResult(narrative="n", social_hook="s", fantasy_insights="f", anchor_warnings=[w])
+    assert isinstance(r.anchor_warnings[0], AnchorWarning)
+    assert r.anchor_warnings[0].category == "OVERSTATED"
+
+
+# -- Anchor agent tests ---------------------------------------------------------
+
+
+def test_anchor_agent_output_type_is_anchor_result():
+    """Anchor agent uses output_type=AnchorResult, not str."""
+    _, anchor = _make_agents()
+    assert anchor.output_type is AnchorResult
+
+
+def test_anchor_agent_model_matches_provider():
+    """Anchor agent uses the correct model for the provider."""
+    _, anchor = _make_agents(provider="claude")
+    assert "claude-sonnet-4-6" in str(anchor.model)
+
+
+def test_generate_report_clean_anchor(ctx):
+    """Pipeline with TestModel returns anchor_warnings as a list."""
+    result = generate_report_streaming(
+        ctx,
+        _model_override=TestModel(custom_output_text="Test output"),
+    )
+    assert isinstance(result, ReportResult)
+    assert isinstance(result.anchor_warnings, list)
