@@ -125,7 +125,7 @@ Plans:
 **Plans**: 1 plan
 
 Plans:
-- [ ] 06-01-PLAN.md -- Wire for/else revision loop, MAX_REVISIONS constant, loop behavior tests
+- [x] 06-01-PLAN.md -- Wire for/else revision loop, MAX_REVISIONS constant, loop behavior tests
 
 ### Phase 7: Revision UX & Validation
 **Goal**: Users can observe the reflection loop's behavior and trust that surviving warnings are transparently reported
@@ -153,5 +153,5 @@ Phases execute in numeric order: 5 -> 6 -> 7
 | 3. Execution & Context Engine | v1.0 | 2/2 | Complete | 2026-03-26 |
 | 4. Report Generation | v1.0 | 2/2 | Complete | 2026-03-26 |
 | 5. Reflection Data Models | v1.3 | 2/2 | Complete | 2026-03-28 |
-| 6. Loop Mechanics | v1.3 | 0/1 | Not started | - |
+| 6. Loop Mechanics | v1.3 | 1/1 | Complete | 2026-03-28 |
 | 7. Revision UX & Validation | v1.3 | 0/1 | Not started | - |
