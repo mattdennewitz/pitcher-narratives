@@ -22,7 +22,7 @@ pitcher-scout -v
 pitcher-scout --curate
 
 # Generate a full report for a specific pitcher
-pitcher-narratives -p 669432 -w 5 -v
+pitcher-narratives -p 573124 -v --provider claude
 ```
 
 ## Scout: Finding Interesting Appearances
@@ -103,31 +103,53 @@ pitcher-narratives -p PITCHER [-w WINDOW] [-v] [--print-prompts]
 ### Example: Narrative Output
 
 ```
-$ pitcher-narratives -p 808967 --provider claude
+$ pitcher-narratives -p 573124 --provider claude -v
 
-Yamamoto's cutter is the most interesting pitch in this arsenal right now,
-and it's functioning almost entirely on placement. The pitch posts P+ 144
-with an xRV100 at the 94th percentile — by some distance the highest marks
-in this four-start dataset — while carrying S+ 98, which is below the MLB
-average of 100. L+ 139 is what's generating the results: a 41-point gap
-between pitch-level location quality and shape quality...
+Rogers, Taylor (ID: 573124, LHP)
+Date         Pitches  Role
+──────────── ───────  ────
+2026-03-20        25  RP
+2026-03-24        25  RP
+2026-03-26        10  RP
+...
+Total            140  (8 appearances)
 
-The broader context matters here. No pitch in this arsenal exceeds S+ 106.
-This is a system-wide characteristic, not a quirk of one pitch, which means
-precision delivery is the load-bearing structure of the entire profile...
+Rogers' sweeper is doing real work — P+ 124, L+ 128, Chase% at 31.0%,
+xRV100 at the 74th percentile. The pitch has above-average shape and Rogers
+is landing it at the edges consistently enough to pull hitters out of the
+zone. That part of the arsenal is functioning. The problem is what happens
+when the sweeper isn't on the mound: a sinker with near-average raw stuff
+(S+ 96) that Rogers simply cannot locate, carrying an L+ of 55 and an
+xRV100 at the 4th percentile, is eating 30% of his pitches overall and
+38.9% against left-handed batters — exactly the matchup where he needs it
+most.
+
+That sinker is the reason Rogers' estimated pitch-per-batter rate sits
+around 7.0, well above the typical reliever range of 3.8–4.2... Right now
+Rogers is a sweeper-dependent reliever whose same-side package is
+compromised. If the sinker location moves toward league average, his LHB
+package becomes meaningfully more functional. If it doesn't, he's a matchup
+piece whose value is bounded by how often the sweeper can carry a
+half-inning.
 
 ---
-Yamamoto's cutter is carrying his entire arsenal on placement alone,
-posting a 41-point gap between location quality and shape quality that
-explains every elite result from a pitch without elite movement.
+Taylor Rogers' sweeper is a legitimate weapon (P+ 124, 31% chase rate),
+but his sinker's 41-point gap between raw stuff and location grades is
+forcing him to throw 7 pitches per batter and making him nearly unusable
+against left-handed hitters.
 
 ---
-- Yamamoto's cutter is carrying his fantasy value through four starts,
-  posting P+ 144 with a 40.0% CSW%...
-- A cutter P+ drop from 108 in pass 1 to 93 in pass 3 flags a potential
-  late-outing location issue...
-- No pitch in this arsenal exceeds S+ 106, meaning the entire profile runs
-  on precision delivery rather than elite shape...
+- Rogers' sweeper is carrying his entire fantasy case right now, posting a
+  P+ of 124 and a Chase% of 31.0%, which supports strikeout upside in short
+  stints but leaves him heavily matchup-dependent.
+- The sinker is a workload red flag — a 41-point gap between S+ and L+
+  signals severe location issues that have contributed to estimated
+  pitch-per-batter rates well above the typical reliever range.
+- A horizontal release point discrepancy on the sinker (1.94 ft vs 2.05 ft
+  on his other pitches) is worth monitoring for signs of a mechanical
+  adjustment that could change his WHIP and ERA trajectory.
+
+Passed anchor check
 ```
 
 The reflection loop runs automatically. When the anchor check finds issues, the editor silently revises and the anchor re-checks (up to 2 passes). Stderr reports the outcome:
