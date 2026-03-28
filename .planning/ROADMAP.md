@@ -136,10 +136,10 @@ Plans:
   2. When revisions occur and the capsule converges to CLEAN, stderr shows "Revised N time(s) -- anchor check passed"
   3. When the loop exhausts its revision cap with unresolved warnings, stderr shows the surviving warning descriptions so the user knows what the report could not self-correct
   4. Surviving warnings use the same stderr format as the existing anchor output (no new output channels or formats to learn)
-**Plans**: TBD
+**Plans**: 1 plan
 
 Plans:
-- [ ] 07-01: TBD
+- [ ] 07-01-PLAN.md -- Extract _print_revision_status helper, replace anchor block, unit + integration tests
 
 ## Progress
 
