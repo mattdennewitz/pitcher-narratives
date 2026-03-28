@@ -2,14 +2,14 @@
 gsd_state_version: 1.0
 milestone: v1.3
 milestone_name: Editor-Anchor Reflection Loop
-status: defining
+status: ready_to_plan
 stopped_at: null
-last_updated: "2026-03-27"
-last_activity: "2026-03-27 - Milestone v1.3 started"
+last_updated: "2026-03-28"
+last_activity: "2026-03-28 - Roadmap created for v1.3 (3 phases, 10 requirements)"
 progress:
-  total_phases: 0
+  total_phases: 3
   completed_phases: 0
-  total_plans: 0
+  total_plans: 4
   completed_plans: 0
   percent: 0
 ---
@@ -21,14 +21,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-27)
 
 **Core value:** Reports must read like a scout wrote them -- surfacing changes, adaptations, and execution trends rather than reciting numbers.
-**Current focus:** Defining requirements for v1.3
+**Current focus:** Phase 5 - Reflection Data Models
 
 ## Current Position
 
-Phase: Not started (defining requirements)
-Plan: —
-Status: Defining requirements
-Last activity: 2026-03-27 — Milestone v1.3 started
+Phase: 5 of 7 (Reflection Data Models) -- first phase of v1.3
+Plan: 0 of 2 in current phase
+Status: Ready to plan
+Last activity: 2026-03-28 -- Roadmap created for v1.3
 
 Progress: [░░░░░░░░░░] 0%
 
@@ -36,7 +36,7 @@ Progress: [░░░░░░░░░░] 0%
 
 **Velocity:**
 
-- Total plans completed: 0
+- Total plans completed: 0 (v1.3)
 - Average duration: --
 - Total execution time: 0 hours
 
@@ -46,20 +46,12 @@ Progress: [░░░░░░░░░░] 0%
 |-------|-------|-------|----------|
 | - | - | - | - |
 
-**Recent Trend:**
+**Recent Trend (from v1.0):**
 
-- Last 5 plans: --
-- Trend: --
+- Last 5 plans: 4min, 2min, 2min, 2min, 2min
+- Trend: Stable (~2-4 min/plan)
 
 *Updated after each plan completion*
-| Phase 01 P01 | 3min | 2 tasks | 6 files |
-| Phase 01 P02 | 2min | 1 tasks | 2 files |
-| Phase 02 P01 | 3min | 1 tasks | 2 files |
-| Phase 02 P02 | 4min | 1 tasks | 2 files |
-| Phase 03 P01 | 4min | 1 tasks | 2 files |
-| Phase 03 P02 | 2min | 1 tasks | 2 files |
-| Phase 04 P01 | 2min | 1 tasks | 2 files |
-| Phase 04 P02 | 2min | 1 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -68,19 +60,11 @@ Progress: [░░░░░░░░░░] 0%
 Decisions are logged in PROJECT.md Key Decisions table.
 Recent decisions affecting current work:
 
-- [Roadmap]: 4-phase pipeline structure derived from requirement dependencies (data -> computation -> assembly -> generation)
-- [Phase 01]: Used dataclass for PitcherData bundle (mutable, cleaner attribute access)
-- [Phase 01]: Window filtering uses max date in dataset, not date.today() -- data is static
-- [Phase 01]: Lazy import of data module inside main() to avoid import-time side effects during unit tests
-- [Phase 01]: Temporary CLI verification output (name/roles/appearances) -- replaced by report in Phase 4
-- [Phase 02]: Used frozenset for _FASTBALL_TYPES (FF/SI/FC) with 0.5 mph velo, 5pt P+, 2.0 mph sharp thresholds; cold start produces explicit string instead of zero deltas
-- [Phase 02]: Platoon usage computed as % of pitches to that side that are this type; missing combos return available=False with descriptive string
-- [Phase 02]: Usage delta sharply threshold at 10pp; _stand_to_platoon maps batter handedness to same/opposite via p_throws comparison
-- [Phase 03]: xRV100 percentile loads full unfiltered pitcher_type.csv for league distribution; IP computed from event-based out counting for mid-inning accuracy; _MIN_PITCHES=10 reused for small_sample and xRV100 percentile threshold
-- [Phase 03]: Used ConfigDict(arbitrary_types_allowed=True) to wrap engine dataclasses as Pydantic fields without conversion
-- [Phase 03]: to_prompt() uses private _render_*_section() helpers; missing data shows '--' in tables; ~544 tokens well under 2,000 budget
-- [Phase 04]: Used defer_model_check=True so Agent can be imported without ANTHROPIC_API_KEY; role guidance passed in user message not system prompt
-- [Phase 04]: Catch pydantic_ai.exceptions.UserError specifically for missing ANTHROPIC_API_KEY; PITCHER_NARRATIVES_TEST_MODEL env var enables API-free integration testing
+- [Research]: Plain while-loop over pydantic-graph (async-only, overkill for 2-node cycle)
+- [Research]: Fresh prompt per revision (no message history -- avoids anchoring bias and token bloat)
+- [Research]: MAX_REVISIONS=2 default (3 total passes); configurable
+- [Research]: Streaming only on final capsule (revision passes run silently)
+- [Research]: Fixed-size revision context (synthesis + current capsule + current warnings only)
 
 ### Pending Todos
 
@@ -88,25 +72,11 @@ None yet.
 
 ### Blockers/Concerns
 
-- [Research]: Polars 3.14 compatibility not officially confirmed -- verify `import polars` works as the FIRST task in Phase 1
-- [Research]: First-appearance cold start (no baseline to compare against) needs a fallback strategy in Phase 2
-
-### Quick Tasks Completed
-
-| # | Description | Date | Commit | Directory |
-|---|-------------|------|--------|-----------|
-| 260326-q9s | Add hard-hit rate metric (percentage of batted balls with exit velocity >= 95 mph) | 2026-03-26 | 0eb772f | [260326-q9s-add-hard-hit-rate-metric-percentage-of-b](./quick/260326-q9s-add-hard-hit-rate-metric-percentage-of-b/) |
-| 260326-sgh | Fix hallucination guard: structured return type, regex fixes, traditional stat detection | 2026-03-26 | 120cab7 | [260326-sgh-evaluate-our-hallucination-guard-for-imp](./quick/260326-sgh-evaluate-our-hallucination-guard-for-imp/) |
-| 260326-t0k | Add -v verbose switch showing pitcher name, game dates, and pitch counts | 2026-03-27 | 173d954 | [260326-t0k-add-v-switch-showing-pitcher-name-game-d](./quick/260326-t0k-add-v-switch-showing-pitcher-name-game-d/) |
-| 260326-ukz | Add 1-2 sentence social media hook summary to report pipeline | 2026-03-27 | 2468bfa | [260326-ukz-add-1-2-sentence-social-media-hook-summa](./quick/260326-ukz-add-1-2-sentence-social-media-hook-summa/) |
-| 260326-uxw | Add fantasy baseball insights (Phase 4) to report pipeline | 2026-03-27 | 0b11cc8 | [260326-uxw-add-fantasy-baseball-insights-phase-3-bu](./quick/260326-uxw-add-fantasy-baseball-insights-phase-3-bu/) |
-| 260326-vj7 | Add release point analysis (x/z/extension per pitch type) to context document | 2026-03-27 | 8106e24 | [260326-vj7-add-release-point-analysis-to-context-do](./quick/260326-vj7-add-release-point-analysis-to-context-do/) |
-| 260326-vwc | Add release point guidance to synthesizer and editor prompts | 2026-03-27 | 2cbce40 | [260326-vwc-add-release-point-guidance-to-synthesize](./quick/260326-vwc-add-release-point-guidance-to-synthesize/) |
-| 260326-vz0 | Implement pre-commit with ruff and ty, fix all issues | 2026-03-27 | 762298c | [260326-vz0-implement-pre-commit-with-ruff-and-mypy-](./quick/260326-vz0-implement-pre-commit-with-ruff-and-mypy-/) |
-| 260326-wc4 | Emphasize Pitching+ triad (P+, S+, L+) in context and prompts | 2026-03-27 | 9678d37 | [260326-wc4-emphasize-pitching-family-p-s-l-througho](./quick/260326-wc4-emphasize-pitching-family-p-s-l-througho/) |
+- [Research]: Revision prompt quality is the primary risk -- exact instruction tone must be tuned against real pitcher data after implementation
+- [Research]: Anchor calibration threshold unknown -- target 20-40% first-draft flag rate; if outside range, anchor prompt needs calibration examples
 
 ## Session Continuity
 
-Last session: 2026-03-27T02:51:30Z
-Stopped at: Completed quick-260326-vj7
+Last session: 2026-03-28
+Stopped at: Roadmap created for v1.3
 Resume file: None
