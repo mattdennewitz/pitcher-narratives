@@ -106,11 +106,11 @@ Plans:
   2. ReportResult dataclass includes a revision_count field (0 = passed first try, 1-2 = revised N times) accessible after report generation completes
   3. A revision prompt builder function produces a fixed-size message containing the synthesis context, the current capsule, formatted warnings, and a targeted instruction to fix only the flagged issues while preserving voice and unflagged material
   4. All new types and the prompt builder are independently testable with no LLM calls (pure functions with deterministic outputs)
-**Plans**: TBD
+**Plans**: 2 plans
 
 Plans:
-- [ ] 05-01: TBD
-- [ ] 05-02: TBD
+- [ ] 05-01-PLAN.md -- Anchor models, ReportResult update, agent + pipeline + CLI changes, test fixes
+- [ ] 05-02-PLAN.md -- Revision prompt builder function and tests
 
 ### Phase 6: Loop Mechanics
 **Goal**: The editor-anchor cycle self-corrects the capsule before downstream phases receive it, with streaming only on the final version
