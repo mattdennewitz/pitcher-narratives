@@ -110,7 +110,7 @@ Plans:
 
 Plans:
 - [x] 05-01-PLAN.md -- Anchor models, ReportResult update, agent + pipeline + CLI changes, test fixes
-- [ ] 05-02-PLAN.md -- Revision prompt builder function and tests
+- [x] 05-02-PLAN.md -- Revision prompt builder function and tests
 
 ### Phase 6: Loop Mechanics
 **Goal**: The editor-anchor cycle self-corrects the capsule before downstream phases receive it, with streaming only on the final version
@@ -122,10 +122,10 @@ Plans:
   3. Only the final capsule (whether first draft or last revision) streams to stdout; revision passes run silently without visible output
   4. Hook writer and fantasy analyst phases receive the final revised capsule, not the original first draft
   5. The loop runs by default on every narrative generation without requiring a flag to enable it
-**Plans**: TBD
+**Plans**: 1 plan
 
 Plans:
-- [ ] 06-01: TBD
+- [ ] 06-01-PLAN.md -- Wire for/else revision loop, MAX_REVISIONS constant, loop behavior tests
 
 ### Phase 7: Revision UX & Validation
 **Goal**: Users can observe the reflection loop's behavior and trust that surviving warnings are transparently reported
@@ -152,6 +152,6 @@ Phases execute in numeric order: 5 -> 6 -> 7
 | 2. Fastball & Arsenal Engine | v1.0 | 2/2 | Complete | 2026-03-26 |
 | 3. Execution & Context Engine | v1.0 | 2/2 | Complete | 2026-03-26 |
 | 4. Report Generation | v1.0 | 2/2 | Complete | 2026-03-26 |
-| 5. Reflection Data Models | v1.3 | 0/2 | Not started | - |
+| 5. Reflection Data Models | v1.3 | 2/2 | Complete | 2026-03-28 |
 | 6. Loop Mechanics | v1.3 | 0/1 | Not started | - |
 | 7. Revision UX & Validation | v1.3 | 0/1 | Not started | - |
