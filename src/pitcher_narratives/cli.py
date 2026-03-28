@@ -138,8 +138,8 @@ def main() -> None:
     # 1. Anchor check warnings (from Phase 2.5)
     if result.anchor_warnings:
         print("\nANCHOR CHECK:", file=sys.stderr)
-        for warning in result.anchor_warnings:
-            print(f"  {warning}", file=sys.stderr)
+        for w in result.anchor_warnings:
+            print(f"  [{w.category}] {w.description}", file=sys.stderr)
 
     # 2. Hallucination check (regex scan of narrative)
     hallucination_report = check_hallucinated_metrics(result.narrative)

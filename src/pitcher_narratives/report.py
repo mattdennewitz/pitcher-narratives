@@ -22,7 +22,7 @@ from __future__ import annotations
 import re
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel
 from pydantic_ai import Agent, CachePoint
@@ -34,8 +34,11 @@ from pitcher_narratives.context import PitcherContext
 __all__ = [
     "PROVIDERS",
     "THINKING_LEVELS",
+    "AnchorResult",
+    "AnchorWarning",
     "HallucinationReport",
     "ReportResult",
+    "WarningCategory",
     "check_hallucinated_metrics",
     "generate_report_streaming",
     "print_prompts",
@@ -322,44 +325,6 @@ about the pitcher's stuff, not about "looking at the data."
 - Be direct without being dismissive or alarmist."""
 
 
-_AgentTuple = tuple[Agent[None, str], Agent[None, str], Agent[None, str], Agent[None, str], Agent[None, str]]
-_agent_cache: dict[tuple[str, ThinkingEffort], _AgentTuple] = {}
-
-
-def _make_agents(
-    provider: str = "openai",
-    thinking: ThinkingEffort = "high",
-) -> _AgentTuple:
-    """Create (or return cached) five pipeline agents for the given provider and thinking level."""
-    key = (provider, thinking)
-    if key in _agent_cache:
-        return _agent_cache[key]
-
-    if provider not in PROVIDERS:
-        raise ValueError(f"Unknown provider {provider!r}, expected one of: {', '.join(PROVIDERS)}")
-    model = PROVIDERS[provider]
-
-    if provider == "gemini":
-        # Gemini 3 uses GoogleModelSettings with thinking_level ('low' or 'high')
-        gemini_level = "high" if thinking in ("high", "xhigh") else "low"
-        settings: ModelSettings = GoogleModelSettings(
-            google_thinking_config={"thinking_level": gemini_level},
-            temperature=1.0,
-            max_tokens=16384,
-        )
-    elif provider == "claude":
-        # Anthropic's default max_tokens (4096) is too low when thinking is enabled
-        settings = ModelSettings(thinking=thinking, max_tokens=16384)
-    else:
-        settings = ModelSettings(thinking=thinking)
-    prompts = (_SYNTHESIZER_PROMPT, _EDITOR_PROMPT, _HOOK_PROMPT, _FANTASY_PROMPT, _ANCHOR_PROMPT)
-    agents: _AgentTuple = tuple(  # type: ignore[assignment]
-        Agent(model, output_type=str, system_prompt=p, model_settings=settings, defer_model_check=True)
-        for p in prompts
-    )
-    _agent_cache[key] = agents
-    return agents
-
 
 # ═══════════════════════════════════════════════════════════════════════
 # PHASE 3: THE HOOK WRITER (SOCIAL MEDIA)
@@ -433,16 +398,30 @@ capsule says it went down (or vice versa), flag it.
 4. Overstated Confidence: If the synthesis flags something as small \
 sample or uncertain, but the capsule presents it as definitive, flag it.
 
-OUTPUT FORMAT:
-- If everything checks out, respond with exactly: CLEAN
-- If there are problems, list each one on its own line starting with \
-the problem type in brackets:
-  [MISSED SIGNAL] The synthesis flagged X as the key concern but the capsule does not mention it.
-  [UNSUPPORTED] The capsule claims X but this does not appear in the synthesis.
-  [DIRECTION ERROR] The synthesis says X went up but the capsule says it went down.
-  [OVERSTATED] The synthesis notes small sample on X but the capsule presents it as definitive.
+For each problem found, report it with its category and a concise description.
+If everything checks out, return an empty list of warnings."""
 
-Be concise. One line per issue. No preamble, no summary."""
+
+WarningCategory = Literal["MISSED_SIGNAL", "UNSUPPORTED", "DIRECTION_ERROR", "OVERSTATED"]
+"""Anchor check warning categories matching _ANCHOR_PROMPT output format."""
+
+
+class AnchorWarning(BaseModel):
+    """A single anchor check warning with typed category."""
+
+    category: WarningCategory
+    description: str
+
+
+class AnchorResult(BaseModel):
+    """Structured output from the anchor check agent."""
+
+    warnings: list[AnchorWarning]
+
+    @property
+    def is_clean(self) -> bool:
+        """True when the capsule is faithfully anchored to the synthesis."""
+        return len(self.warnings) == 0
 
 
 class ReportResult(BaseModel):
@@ -451,7 +430,59 @@ class ReportResult(BaseModel):
     narrative: str
     social_hook: str
     fantasy_insights: str
-    anchor_warnings: list[str]
+    anchor_warnings: list[AnchorWarning]
+    revision_count: int = 0
+    """Number of revision passes (0 = passed first try)."""
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# AGENT FACTORY
+# ═══════════════════════════════════════════════════════════════════════
+
+_StrAgents = tuple[Agent[None, str], Agent[None, str], Agent[None, str], Agent[None, str]]
+_AgentSet = tuple[_StrAgents, Agent[None, AnchorResult]]
+_agent_cache: dict[tuple[str, ThinkingEffort], _AgentSet] = {}
+
+
+def _make_agents(
+    provider: str = "openai",
+    thinking: ThinkingEffort = "high",
+) -> _AgentSet:
+    """Create (or return cached) pipeline agents for the given provider and thinking level."""
+    key = (provider, thinking)
+    if key in _agent_cache:
+        return _agent_cache[key]
+
+    if provider not in PROVIDERS:
+        raise ValueError(f"Unknown provider {provider!r}, expected one of: {', '.join(PROVIDERS)}")
+    model = PROVIDERS[provider]
+
+    if provider == "gemini":
+        # Gemini 3 uses GoogleModelSettings with thinking_level ('low' or 'high')
+        gemini_level = "high" if thinking in ("high", "xhigh") else "low"
+        settings: ModelSettings = GoogleModelSettings(
+            google_thinking_config={"thinking_level": gemini_level},
+            temperature=1.0,
+            max_tokens=16384,
+        )
+    elif provider == "claude":
+        # Anthropic's default max_tokens (4096) is too low when thinking is enabled
+        settings = ModelSettings(thinking=thinking, max_tokens=16384)
+    else:
+        settings = ModelSettings(thinking=thinking)
+
+    str_prompts = (_SYNTHESIZER_PROMPT, _EDITOR_PROMPT, _HOOK_PROMPT, _FANTASY_PROMPT)
+    str_agents: _StrAgents = tuple(  # type: ignore[assignment]
+        Agent(model, output_type=str, system_prompt=p, model_settings=settings, defer_model_check=True)
+        for p in str_prompts
+    )
+    anchor_agent = Agent(
+        model, output_type=AnchorResult, system_prompt=_ANCHOR_PROMPT,
+        model_settings=settings, defer_model_check=True,
+    )
+    result: _AgentSet = (str_agents, anchor_agent)
+    _agent_cache[key] = result
+    return result
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -595,7 +626,7 @@ def generate_report_streaming(
     Returns:
         ReportResult with narrative, social_hook, fantasy_insights, and anchor_warnings.
     """
-    synthesizer, editor, hook_writer, fantasy_analyst, anchor_checker = _make_agents(provider, thinking)
+    (synthesizer, editor, hook_writer, fantasy_analyst), anchor_checker = _make_agents(provider, thinking)
 
     synth_kwargs: dict[str, Any] = {"user_prompt": _build_synthesizer_message(ctx)}
     if _model_override is not None:
@@ -629,10 +660,7 @@ def generate_report_streaming(
         anchor_kwargs["model"] = _model_override
 
     anchor_result = anchor_checker.run_sync(**anchor_kwargs)
-    anchor_output = anchor_result.output.strip()
-    anchor_warnings: list[str] = []
-    if anchor_output != "CLEAN":
-        anchor_warnings = [line.strip() for line in anchor_output.splitlines() if line.strip()]
+    anchor_check: AnchorResult = anchor_result.output
 
     # Phase 3: Social media hook (silent) — derived from capsule, not synthesis
     hook_kwargs: dict[str, Any] = {
@@ -656,7 +684,7 @@ def generate_report_streaming(
         narrative=capsule,
         social_hook=hook_result.output,
         fantasy_insights=fantasy_result.output,
-        anchor_warnings=anchor_warnings,
+        anchor_warnings=anchor_check.warnings,
     )
 
 
