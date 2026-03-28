@@ -112,7 +112,7 @@ def main() -> None:
     if os.environ.get("PITCHER_NARRATIVES_TEST_MODEL"):
         from pydantic_ai.models.test import TestModel
 
-        model_override = TestModel(custom_output_text="[Test mode] Scouting report would appear here.")
+        model_override = TestModel()
 
     # Pre-flight API key check — fail fast instead of hanging on missing key
     _API_KEYS = {"openai": "OPENAI_API_KEY", "claude": "ANTHROPIC_API_KEY", "gemini": "GEMINI_API_KEY"}
