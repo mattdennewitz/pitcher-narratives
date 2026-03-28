@@ -528,6 +528,38 @@ def _build_anchor_message(synthesis: str, capsule: str) -> _UserPrompt:
     ]
 
 
+def _build_revision_message(
+    synthesis: str,
+    capsule: str,
+    warnings: list[AnchorWarning],
+) -> _UserPrompt:
+    """Build a revision prompt for the editor to fix anchor-flagged issues.
+
+    Fixed-size context: synthesis + current capsule + formatted warnings +
+    targeted instruction. No message history (fresh prompt per revision).
+
+    Args:
+        synthesis: The data analyst's structured briefing.
+        capsule: The editor's current narrative capsule.
+        warnings: Anchor check warnings to address.
+
+    Returns:
+        User prompt parts with cache breakpoint after synthesis.
+    """
+    formatted_warnings = "\n".join(
+        f"- [{w.category}] {w.description}" for w in warnings
+    )
+    return [
+        f"## Data Analyst's Briefing\n{synthesis}",
+        CachePoint(),
+        f"## Current Capsule\n{capsule}\n\n"
+        f"## Anchor Check Warnings\n{formatted_warnings}\n\n"
+        "Revise the capsule to address ONLY the warnings listed above. "
+        "Preserve the voice, structure, and all unflagged material. "
+        "Do not add new analysis or metrics not in the briefing.",
+    ]
+
+
 def _build_hook_message(ctx: PitcherContext, capsule: str) -> _UserPrompt:
     """Build the Phase 3 user message from the editor's capsule."""
     return [
