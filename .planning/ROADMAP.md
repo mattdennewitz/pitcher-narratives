@@ -27,7 +27,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 - [ ] **Phase 5: Reflection Data Models** - AnchorResult/AnchorWarning Pydantic models, ReportResult metadata fields, revision prompt builder
 - [ ] **Phase 6: Loop Mechanics** - While-loop wiring anchor feedback to editor revisions with streaming control and downstream capsule handoff
-- [ ] **Phase 7: Revision UX & Validation** - Surface surviving warnings and iteration status to stderr, end-to-end loop validation
+- [x] **Phase 7: Revision UX & Validation** - Surface surviving warnings and iteration status to stderr, end-to-end loop validation
 
 ## Phase Details
 
@@ -139,7 +139,7 @@ Plans:
 **Plans**: 1 plan
 
 Plans:
-- [ ] 07-01-PLAN.md -- Extract _print_revision_status helper, replace anchor block, unit + integration tests
+- [x] 07-01-PLAN.md -- Extract _print_revision_status helper, replace anchor block, unit + integration tests
 
 ## Progress
 
@@ -154,4 +154,4 @@ Phases execute in numeric order: 5 -> 6 -> 7
 | 4. Report Generation | v1.0 | 2/2 | Complete | 2026-03-26 |
 | 5. Reflection Data Models | v1.3 | 2/2 | Complete | 2026-03-28 |
 | 6. Loop Mechanics | v1.3 | 1/1 | Complete | 2026-03-28 |
-| 7. Revision UX & Validation | v1.3 | 0/1 | Not started | - |
+| 7. Revision UX & Validation | v1.3 | 1/1 | Complete | 2026-03-28 |
