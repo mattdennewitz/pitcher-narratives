@@ -8,7 +8,8 @@ import sys
 
 import pytest
 
-from pitcher_narratives.cli import parse_args
+from pitcher_narratives.cli import _print_revision_status, parse_args
+from pitcher_narratives.report import AnchorWarning, ReportResult
 
 
 def test_parse_pitcher_flag(monkeypatch):
@@ -180,3 +181,70 @@ def test_cli_missing_api_key():
     )
     assert result.returncode == 1
     assert "API_KEY" in result.stderr
+
+
+# ── Revision status tests ──
+
+
+def _make_result(
+    revision_count: int = 0,
+    anchor_warnings: list[AnchorWarning] | None = None,
+) -> ReportResult:
+    """Build a minimal ReportResult for revision status tests."""
+    return ReportResult(
+        narrative="n",
+        social_hook="s",
+        fantasy_insights="f",
+        anchor_warnings=anchor_warnings or [],
+        revision_count=revision_count,
+    )
+
+
+def test_revision_status_first_try_clean(capsys):
+    """UX-03: First-try clean capsule prints 'Passed anchor check'."""
+    _print_revision_status(_make_result(revision_count=0, anchor_warnings=[]))
+    err = capsys.readouterr().err
+    assert "Passed anchor check" in err
+
+
+def test_revision_status_revised_and_converged(capsys):
+    """UX-03: Revised once and converged prints revision count + passed."""
+    _print_revision_status(_make_result(revision_count=1))
+    err = capsys.readouterr().err
+    assert "Revised 1 time(s) -- anchor check passed" in err
+
+
+def test_revision_status_revised_twice_converged(capsys):
+    """UX-03: Revised twice and converged prints revision count + passed."""
+    _print_revision_status(_make_result(revision_count=2))
+    err = capsys.readouterr().err
+    assert "Revised 2 time(s) -- anchor check passed" in err
+
+
+def test_revision_status_exhausted_with_warnings(capsys):
+    """UX-03: Exhausted with warnings prints count + warning lines."""
+    result = _make_result(
+        revision_count=2,
+        anchor_warnings=[
+            AnchorWarning(category="MISSED_SIGNAL", description="Fastball velocity drop not addressed"),
+        ],
+    )
+    _print_revision_status(result)
+    err = capsys.readouterr().err
+    assert "Revised 2 time(s) -- anchor check found issues:" in err
+    assert "[MISSED_SIGNAL] Fastball velocity drop not addressed" in err
+
+
+def test_revision_status_exhausted_multiple_warnings(capsys):
+    """UX-03: Multiple surviving warnings all appear in stderr."""
+    result = _make_result(
+        revision_count=2,
+        anchor_warnings=[
+            AnchorWarning(category="MISSED_SIGNAL", description="Fastball velocity drop not addressed"),
+            AnchorWarning(category="UNSUPPORTED", description="Too many raw numbers in opening"),
+        ],
+    )
+    _print_revision_status(result)
+    err = capsys.readouterr().err
+    assert "[MISSED_SIGNAL] Fastball velocity drop not addressed" in err
+    assert "[UNSUPPORTED] Too many raw numbers in opening" in err

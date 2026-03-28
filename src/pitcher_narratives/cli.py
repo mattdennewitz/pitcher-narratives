@@ -15,6 +15,7 @@ from dotenv import load_dotenv
 
 if TYPE_CHECKING:
     from pitcher_narratives.data import PitcherData
+    from pitcher_narratives.report import ReportResult
 
 
 def parse_args() -> argparse.Namespace:
@@ -72,6 +73,30 @@ def _print_verbose_summary(data: PitcherData) -> None:
         f"{'Total':<12} {total:>7}  ({len(appearances)} appearances)\n",
         file=sys.stderr,
     )
+
+
+def _print_revision_status(result: ReportResult) -> None:
+    """Print revision loop outcome to stderr.
+
+    Three outcomes:
+    - First-try clean (revision_count=0, no warnings): "Passed anchor check"
+    - Revised and converged (revision_count>0, no warnings): "Revised N time(s) -- anchor check passed"
+    - Exhausted with warnings (revision_count>0, has warnings): count + warning lines
+    """
+    if result.revision_count == 0 and not result.anchor_warnings:
+        print("\nPassed anchor check", file=sys.stderr)
+    elif result.anchor_warnings:
+        print(
+            f"\nRevised {result.revision_count} time(s) -- anchor check found issues:",
+            file=sys.stderr,
+        )
+        for w in result.anchor_warnings:
+            print(f"  [{w.category}] {w.description}", file=sys.stderr)
+    else:
+        print(
+            f"\nRevised {result.revision_count} time(s) -- anchor check passed",
+            file=sys.stderr,
+        )
 
 
 def main() -> None:
@@ -135,11 +160,8 @@ def main() -> None:
     print(f"\n---\n{result.fantasy_insights}")
 
     # Post-generation checks
-    # 1. Anchor check warnings (from Phase 2.5)
-    if result.anchor_warnings:
-        print("\nANCHOR CHECK:", file=sys.stderr)
-        for w in result.anchor_warnings:
-            print(f"  [{w.category}] {w.description}", file=sys.stderr)
+    # 1. Revision loop status
+    _print_revision_status(result)
 
     # 2. Hallucination check (regex scan of narrative)
     hallucination_report = check_hallucinated_metrics(result.narrative)
