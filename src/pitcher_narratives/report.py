@@ -6,9 +6,10 @@ points of key findings, deltas, and trends. No narrative.
 Phase 2 (Editor): Weaves those facts into a pragmatic, two-paragraph
 capsule with clear projection. Elite sabermetric analyst voice.
 
-Phase 2.5 (Anchor Check): Verifies the capsule is faithful to the
-synthesis — flags missed key signals, unsupported claims, and
-directional inversions. Prints warnings to stderr.
+Phase 2.5 (Anchor Check + Revision Loop): Verifies the capsule is faithful
+to the synthesis. If warnings are found, the editor revises silently and the
+anchor re-checks -- up to MAX_REVISIONS passes. Only the final capsule
+proceeds to downstream phases.
 
 Phase 3 (Hook Writer): Distills the editor's capsule into a 1-2
 sentence social media hook for front-office audiences.
@@ -32,6 +33,7 @@ from pydantic_ai.settings import ModelSettings, ThinkingEffort
 from pitcher_narratives.context import PitcherContext
 
 __all__ = [
+    "MAX_REVISIONS",
     "PROVIDERS",
     "THINKING_LEVELS",
     "AnchorResult",
@@ -51,6 +53,9 @@ PROVIDERS = {
     "claude": "anthropic:claude-sonnet-4-6",
     "gemini": "google-gla:gemini-3.1-pro-preview",
 }
+
+MAX_REVISIONS = 2
+"""Maximum number of editor revision passes before accepting the capsule."""
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -636,18 +641,21 @@ def generate_report_streaming(
     thinking: ThinkingEffort = "high",
     _model_override: Any = None,
 ) -> ReportResult:
-    """Generate a five-phase scouting report and stream the editorial output.
+    """Generate a five-phase scouting report with anchor-driven revision loop.
 
     Phase 1 (Synthesizer): Extracts key findings as structured bullets.
-    Phase 2 (Editor): Writes the final two-paragraph capsule from synthesis.
-    Phase 2.5 (Anchor Check): Verifies capsule is faithful to synthesis.
+    Phase 2 (Editor): Writes the first-draft capsule from synthesis (streamed).
+    Phase 2.5 (Anchor Check + Revision Loop): Checks capsule against synthesis.
+        If warnings are found, the editor revises silently (run_sync) and the
+        anchor re-checks -- up to MAX_REVISIONS passes. Exits immediately when
+        the anchor returns clean.
     Phase 3 (Hook Writer): Distills the capsule into a 1-2 sentence social hook.
     Phase 4 (Fantasy Analyst): Produces 3 fantasy baseball bullets from the capsule.
 
-    Phases 3 and 4 derive from the editor's capsule (not the raw synthesis),
-    so they inherit the editor's plausibility filters and metric curation.
+    Phases 3 and 4 receive the final capsule (post-revision if any), so they
+    inherit the editor's plausibility filters and any anchor-driven corrections.
 
-    Only Phase 2 output is streamed to stdout. All other phases run silently.
+    Only Phase 2 first draft is streamed to stdout. Revision passes run silently.
 
     Args:
         ctx: Assembled pitcher context.
@@ -684,15 +692,40 @@ def generate_report_streaming(
 
     capsule = "".join(chunks)
 
-    # Phase 2.5: Anchor check — verify capsule is faithful to synthesis
-    anchor_kwargs: dict[str, Any] = {
-        "user_prompt": _build_anchor_message(synthesis, capsule),
-    }
-    if _model_override is not None:
-        anchor_kwargs["model"] = _model_override
+    # Phase 2.5: Anchor check + revision loop
+    revision_count = 0
+    for _ in range(MAX_REVISIONS):
+        anchor_kwargs: dict[str, Any] = {
+            "user_prompt": _build_anchor_message(synthesis, capsule),
+        }
+        if _model_override is not None:
+            anchor_kwargs["model"] = _model_override
 
-    anchor_result = anchor_checker.run_sync(**anchor_kwargs)
-    anchor_check: AnchorResult = anchor_result.output
+        anchor_result = anchor_checker.run_sync(**anchor_kwargs)
+        anchor_check = anchor_result.output
+
+        if anchor_check.is_clean:
+            break
+
+        # Revise silently (no streaming)
+        revision_kwargs: dict[str, Any] = {
+            "user_prompt": _build_revision_message(synthesis, capsule, anchor_check.warnings),
+        }
+        if _model_override is not None:
+            revision_kwargs["model"] = _model_override
+
+        revision_result = editor.run_sync(**revision_kwargs)
+        capsule = revision_result.output
+        revision_count += 1
+    else:
+        # Exhausted MAX_REVISIONS -- final anchor check for surviving warnings
+        anchor_kwargs = {
+            "user_prompt": _build_anchor_message(synthesis, capsule),
+        }
+        if _model_override is not None:
+            anchor_kwargs["model"] = _model_override
+        anchor_result = anchor_checker.run_sync(**anchor_kwargs)
+        anchor_check = anchor_result.output
 
     # Phase 3: Social media hook (silent) — derived from capsule, not synthesis
     hook_kwargs: dict[str, Any] = {
@@ -717,6 +750,7 @@ def generate_report_streaming(
         social_hook=hook_result.output,
         fantasy_insights=fantasy_result.output,
         anchor_warnings=anchor_check.warnings,
+        revision_count=revision_count,
     )
 
 
