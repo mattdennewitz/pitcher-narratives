@@ -248,3 +248,27 @@ def test_revision_status_exhausted_multiple_warnings(capsys):
     err = capsys.readouterr().err
     assert "[MISSED_SIGNAL] Fastball velocity drop not addressed" in err
     assert "[UNSUPPORTED] Too many raw numbers in opening" in err
+
+
+# ── Integration: revision loop end-to-end ──
+
+
+def test_cli_revision_exhausted_shows_warnings():
+    """Integration: TestModel exhausts revisions and stderr shows status.
+
+    LOOP-03 + UX-03: TestModel always returns dirty anchor (is_clean=False),
+    so the loop exhausts MAX_REVISIONS and prints surviving warnings to stderr.
+    """
+    result = subprocess.run(
+        [sys.executable, "-m", "pitcher_narratives.cli", "-p", "592155"],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        env=_test_env(PITCHER_NARRATIVES_TEST_MODEL="1"),
+    )
+    assert result.returncode == 0
+    # Must contain revision count message (TestModel always dirty -> exhausted)
+    assert "Revised" in result.stderr
+    assert "anchor check found issues" in result.stderr
+    # Must contain at least one [CATEGORY] formatted warning
+    assert "[" in result.stderr and "]" in result.stderr
