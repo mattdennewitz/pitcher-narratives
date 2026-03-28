@@ -8,14 +8,14 @@
 ### Loop Infrastructure
 
 - [ ] **LOOP-01**: Editor-anchor loop iterates until anchor returns CLEAN or max revision cap (2) is reached
-- [ ] **LOOP-02**: Revision prompt tells editor to fix specific flagged issues while preserving the rest of the capsule
+- [x] **LOOP-02**: Revision prompt tells editor to fix specific flagged issues while preserving the rest of the capsule
 - [ ] **LOOP-03**: Warnings that survive all iterations are passed through to stderr (same format as current anchor output)
 - [ ] **LOOP-04**: Loop terminates immediately when anchor returns CLEAN (no unnecessary iterations)
 
 ### Data Model
 
-- [ ] **MODEL-01**: Anchor check returns structured AnchorResult (Pydantic model with is_clean + typed warnings) instead of raw string
-- [ ] **MODEL-02**: ReportResult includes revision_count (0 = passed first try, 1-2 = revised N times)
+- [x] **MODEL-01**: Anchor check returns structured AnchorResult (Pydantic model with is_clean + typed warnings) instead of raw string
+- [x] **MODEL-02**: ReportResult includes revision_count (0 = passed first try, 1-2 = revised N times)
 
 ### UX & Integration
 
@@ -48,9 +48,9 @@
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| MODEL-01 | Phase 5 | Pending |
-| MODEL-02 | Phase 5 | Pending |
-| LOOP-02 | Phase 5 | Pending |
+| MODEL-01 | Phase 5 | Complete |
+| MODEL-02 | Phase 5 | Complete |
+| LOOP-02 | Phase 5 | Complete |
 | LOOP-01 | Phase 6 | Pending |
 | LOOP-04 | Phase 6 | Pending |
 | UX-01 | Phase 6 | Pending |

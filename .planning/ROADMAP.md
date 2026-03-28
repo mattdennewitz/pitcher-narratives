@@ -109,7 +109,7 @@ Plans:
 **Plans**: 2 plans
 
 Plans:
-- [ ] 05-01-PLAN.md -- Anchor models, ReportResult update, agent + pipeline + CLI changes, test fixes
+- [x] 05-01-PLAN.md -- Anchor models, ReportResult update, agent + pipeline + CLI changes, test fixes
 - [ ] 05-02-PLAN.md -- Revision prompt builder function and tests
 
 ### Phase 6: Loop Mechanics
