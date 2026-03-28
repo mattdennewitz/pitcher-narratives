@@ -1,6 +1,6 @@
 # Pitcher Narratives
 
-LLM-powered scouting reports for MLB pitchers. Given a pitcher ID, assembles pitch-level Statcast data and pre-computed Pitching+ aggregations into a structured context document, then sends it through a four-phase LLM pipeline to produce an analytical narrative, a social media hook, and fantasy baseball insights.
+LLM-powered scouting reports for MLB pitchers. Given a pitcher ID, assembles pitch-level Statcast data and pre-computed Pitching+ aggregations into a structured context document, then sends it through a five-phase LLM pipeline with a self-correcting reflection loop to produce an analytical narrative, a social media hook, and fantasy baseball insights.
 
 Reports read like a scout wrote them — surfacing changes, adaptations, and execution trends rather than reciting numbers.
 
@@ -103,45 +103,40 @@ pitcher-narratives -p PITCHER [-w WINDOW] [-v] [--print-prompts]
 ### Example: Narrative Output
 
 ```
-$ pitcher-narratives -p 669432 -w 5
+$ pitcher-narratives -p 808967 --provider claude
 
-Trevor Rogers' recent run is being driven by a different pitch hierarchy.
-The cutter has moved into the center of the mix, the changeup usage is up
-12.1 points from his season line, and the sweeper has been taken out
-entirely. The fastball is still sitting a tick better than season, 93.2 mph
-versus 92.8, but its pitch-level location value has slipped from L+ 114 to
-106, so the heater is playing a little looser even with the slight velocity
-gain.
+Yamamoto's cutter is the most interesting pitch in this arsenal right now,
+and it's functioning almost entirely on placement. The pitch posts P+ 144
+with an xRV100 at the 94th percentile — by some distance the highest marks
+in this four-start dataset — while carrying S+ 98, which is below the MLB
+average of 100. L+ 139 is what's generating the results: a 41-point gap
+between pitch-level location quality and shape quality...
 
-In practice, the cutter is doing the cleanest work in the sample: 60.0%
-CSW, 70.0% zone rate, and the best recent run-prevention signal in the
-brief. The changeup is the other stabilizer, at P+ 123, and the usage
-pattern looks deliberately shaped by handedness — more changeups and cutters
-to righties, more sinkers late against lefties. The caution is the
-fastball's within-start fade; he lost 1.5 mph across his last 88-pitch
-outing, and by the third pass the heater's effectiveness was down to P+
-102. This is trending toward a more layered arsenal, with the cutter and
-changeup carrying the shape of the outing.
-
-ANCHOR CHECK:
-  [MISSED SIGNAL] The synthesis identified the sinker as the development
-  pitch, but the capsule never explicitly says the sinker is the
-  development focus.
+The broader context matters here. No pitch in this arsenal exceeds S+ 106.
+This is a system-wide characteristic, not a quirk of one pitch, which means
+precision delivery is the load-bearing structure of the entire profile...
 
 ---
-Trevor Rogers has shifted to a cutter-led mix, with changeup usage up 12.1
-points and the sweeper gone from the arsenal.
+Yamamoto's cutter is carrying his entire arsenal on placement alone,
+posting a 41-point gap between location quality and shape quality that
+explains every elite result from a pitch without elite movement.
 
 ---
-- Trevor Rogers' cutter is driving the recent run, with a 60.0% CSW and
-  70.0% zone rate. That keeps the strikeout and ratios profile worth
-  watching if the shape holds.
-- The changeup usage is up 12.1 points from his season line, and it has
-  backed the mix with a P+ 123 mark. That makes his results look more
-  matchup-dependent, especially against right-handed-heavy lineups.
-- The fastball is still 93.2 mph, but it lost 1.5 mph in his last 88-pitch
-  outing and faded to P+ 102 by the third pass. That is the workload and
-  WHIP red flag to keep an eye on.
+- Yamamoto's cutter is carrying his fantasy value through four starts,
+  posting P+ 144 with a 40.0% CSW%...
+- A cutter P+ drop from 108 in pass 1 to 93 in pass 3 flags a potential
+  late-outing location issue...
+- No pitch in this arsenal exceeds S+ 106, meaning the entire profile runs
+  on precision delivery rather than elite shape...
+```
+
+The reflection loop runs automatically. When the anchor check finds issues, the editor silently revises and the anchor re-checks (up to 2 passes). Stderr reports the outcome:
+
+```
+Passed anchor check                              # clean on first try
+Revised 1 time(s) -- anchor check passed         # revised and converged
+Revised 2 time(s) -- anchor check found issues:  # exhausted with warnings
+  [MISSED_SIGNAL] Key velocity drop not addressed
 ```
 
 ## Output
@@ -151,10 +146,10 @@ Each report produces:
 1. **Narrative** (streamed to stdout) — 2-3 paragraph scouting capsule
 2. **Social hook** — one headline-length sentence, under 280 characters
 3. **Fantasy insights** — 3 Axios-style bullet points
-4. **Anchor check** — warnings on stderr if the narrative drifted from the data
+4. **Revision status** — stderr reports anchor check outcome and any surviving warnings
 5. **Data file** — `data-{pitcherid}-{provider}.md` with all prompts sent to the LLM
 
-Post-generation guards run automatically: a **metric hallucination guard** scans for unknown or traditional metrics, and the **anchor check** (Phase 2.5) verifies the narrative is faithful to the synthesis — flagging missed key signals, unsupported claims, directional errors, and overstated confidence.
+Post-generation guards run automatically: the **editor-anchor reflection loop** verifies the narrative is faithful to the synthesis — flagging missed key signals, unsupported claims, directional errors, and overstated confidence. If issues are found, the editor silently revises and the anchor re-checks, up to 2 passes. A **metric hallucination guard** then scans for unknown or traditional metrics.
 
 ## Architecture
 
@@ -173,7 +168,10 @@ Scored + ranked appearances              Context Assembly (~1000 tokens markdown
 LLM Curator (select 3-5 stories)        Five-Phase LLM Pipeline
                                              Phase 1: Synthesizer → structured findings
                                              Phase 2: Editor → scouting capsule (streamed)
-                                             Phase 2.5: Anchor Check → verify fidelity
+                                             Phase 2.5: Anchor Check + Reflection Loop
+                                               ┌─ anchor returns CLEAN → proceed
+                                               └─ warnings found → editor revises silently
+                                                  → anchor re-checks (up to 2 passes)
                                              Phase 3: Hook Writer → social headline
                                              Phase 4: Fantasy Analyst → 3 bullet points
                                              │
@@ -181,7 +179,7 @@ LLM Curator (select 3-5 stories)        Five-Phase LLM Pipeline
                                          Hallucination Guard + Output
 ```
 
-The pipeline is split by design: the scout runs without LLM calls (cheap, fast, scannable), and the narrative builder runs the full five-phase pipeline for the pitchers worth writing about. The anchor check (Phase 2.5) verifies the editor's capsule is faithful to the synthesis before it flows to Phases 3 and 4, which derive from the capsule and inherit its plausibility filters and metric curation.
+The pipeline is split by design: the scout runs without LLM calls (cheap, fast, scannable), and the narrative builder runs the full five-phase pipeline for the pitchers worth writing about. The anchor check (Phase 2.5) verifies the editor's capsule is faithful to the synthesis. If warnings are found, the editor revises using a fresh targeted prompt and the anchor re-checks — up to 2 revision passes. Only the final capsule flows to Phases 3 and 4, which derive from it and inherit the editor's plausibility filters and metric curation.
 
 ## Providers
 
@@ -201,7 +199,7 @@ src/pitcher_narratives/
     data.py         # Statcast + Pitching+ loading pipeline
     engine.py       # Computation engine (all metrics, deltas, flags)
     context.py      # PitcherContext assembly and to_prompt() rendering
-    report.py       # Four-phase LLM pipeline + hallucination guard
+    report.py       # Five-phase LLM pipeline + reflection loop + hallucination guard
     scout.py        # Appearance interest scoring (no LLM)
     curator.py      # LLM-powered curation of scouted appearances
 tests/

@@ -2,7 +2,7 @@
 
 ## Overview
 
-Pitcher Narratives is an automated scouting report system that transforms raw pitch-tracking data into analytical capsules written in the voice of an elite sabermetric baseball analyst. The system uses a deterministic Python pipeline for all data computation and a four-phase LLM architecture that separates objective data extraction from editorial prose, social media distillation, and fantasy analysis.
+Pitcher Narratives is an automated scouting report system that transforms raw pitch-tracking data into analytical capsules written in the voice of an elite sabermetric baseball analyst. The system uses a deterministic Python pipeline for all data computation and a five-phase LLM architecture with a self-correcting reflection loop that separates objective data extraction from editorial prose, fact-checking, social media distillation, and fantasy analysis.
 
 No LLM performs arithmetic, computes deltas, or derives metrics. Every number in the final report originates from a pre-computed Python pipeline. The LLM's role is strictly interpretive: identify which findings are significant, then articulate why they matter.
 
@@ -236,9 +236,9 @@ The curator selects 3-5 pitchers, writes a brief for each (signal, narrative, co
 
 ---
 
-## Four-Phase LLM Architecture
+## Five-Phase LLM Architecture
 
-The report generation pipeline uses four sequential LLM calls with distinct roles. Phase 1 extracts facts; Phase 2 writes the capsule; Phases 3 and 4 derive from the capsule (not the raw synthesis), inheriting the editor's plausibility filters and metric curation.
+The report generation pipeline uses five sequential LLM phases with distinct roles. Phase 1 extracts facts; Phase 2 writes the capsule; Phase 2.5 verifies fidelity and triggers revisions if needed; Phases 3 and 4 derive from the final capsule (not the raw synthesis), inheriting the editor's plausibility filters and metric curation.
 
 Three LLM providers are supported: OpenAI (gpt-5.4-mini), Anthropic (claude-sonnet-4-6), and Google (gemini-3.1-pro-preview). Provider-specific thinking configuration is handled automatically.
 
@@ -329,9 +329,9 @@ Three LLM providers are supported: OpenAI (gpt-5.4-mini), Anthropic (claude-sonn
 
 **Voice:** Analyst reporting news, not manager issuing roster moves. Frame implications as things to monitor ("keep an eye on," "worth watching") rather than directives ("pick him up," "move him to the bench"). No bold labels, no verdict prefixes. Plain text bullets.
 
-### Phase 2.5: The Anchor Check
+### Phase 2.5: The Anchor Check + Reflection Loop
 
-**Role:** Fact-checker verifying the capsule is faithful to the synthesis.
+**Role:** Fact-checker verifying the capsule is faithful to the synthesis, with a self-correcting revision loop.
 
 **Input:** The synthesis (Phase 1 output) and the capsule (Phase 2 output).
 
@@ -339,23 +339,55 @@ Three LLM providers are supported: OpenAI (gpt-5.4-mini), Anthropic (claude-sonn
 
 | Check | What it catches |
 |-------|-----------------|
-| **Missed key signal** | The synthesis flagged something in Key Signal but the capsule ignored it entirely |
-| **Unsupported claim** | The capsule states a metric or trend not present in the synthesis |
-| **Directional error** | The synthesis says a metric went up but the capsule says it went down |
-| **Overstated confidence** | The synthesis notes small sample but the capsule presents it as definitive |
+| **`MISSED_SIGNAL`** | The synthesis flagged something in Key Signal but the capsule ignored it entirely |
+| **`UNSUPPORTED`** | The capsule states a metric or trend not present in the synthesis |
+| **`DIRECTION_ERROR`** | The synthesis says a metric went up but the capsule says it went down |
+| **`OVERSTATED`** | The synthesis notes small sample but the capsule presents it as definitive |
 
-**Output:** Either `CLEAN` (no issues) or one line per issue with a bracketed type prefix. Warnings are printed to stderr in the CLI alongside the hallucination guard.
+**Output:** A structured `AnchorResult` Pydantic model containing a list of typed `AnchorWarning` objects (each with a `category` from the four types above and a `description`). The `is_clean` property returns `True` when no warnings exist.
 
-**Why this phase exists:** The editor is already doing a lot of self-auditing (spot-check #10), but asking a writer to verify their own factual accuracy is like asking them to proofread their own work. A separate persona reading the synthesis and capsule together catches signal drift that the editor's self-check misses — for example, the synthesizer flagging the sinker as the development pitch while the editor builds the narrative around the changeup and barely mentions it.
+**Reflection loop:** If the anchor returns warnings, the editor receives a targeted revision prompt and silently rewrites the capsule. The anchor then re-checks. This repeats up to `MAX_REVISIONS` (default: 2) times, for a maximum of 3 total passes (first draft + 2 revisions).
+
+```
+Editor (streamed) → Anchor Check
+                     ├─ CLEAN → proceed to Phases 3/4
+                     └─ warnings → Editor revises (silent)
+                                   → Anchor re-checks
+                                   ├─ CLEAN → proceed
+                                   └─ warnings → Editor revises (silent)
+                                                 → Anchor re-checks (final)
+                                                 → proceed with surviving warnings
+```
+
+**Revision prompt design:**
+- **Fresh prompt per revision** — no message history; avoids anchoring bias where the editor fixates on its previous mistakes instead of the actual issues
+- **Fixed-size context** — synthesis + current capsule + formatted warnings only; no growing conversation
+- **Targeted instruction** — "Fix ONLY the warnings listed above. Preserve the voice, structure, and all unflagged material. Do not add new analysis."
+
+**Streaming control:** Only the first draft is streamed to stdout. Revision passes use `run_sync` (silent). If a revision occurs, the user already saw the first draft stream by — the final capsule replaces it in the `ReportResult` and flows to downstream phases.
+
+**Stderr output:** The CLI reports the reflection loop outcome:
+- First-try clean: `Passed anchor check`
+- Revised and converged: `Revised N time(s) -- anchor check passed`
+- Exhausted with warnings: `Revised N time(s) -- anchor check found issues:` followed by each surviving warning in `[CATEGORY] description` format
+
+**Why this phase exists:** The editor is already doing a lot of self-auditing (spot-check #10), but asking a writer to verify their own factual accuracy is like asking them to proofread their own work. A separate persona reading the synthesis and capsule together catches signal drift that the editor's self-check misses — for example, the synthesizer flagging the sinker as the development pitch while the editor builds the narrative around the changeup and barely mentions it. The reflection loop closes the feedback gap: instead of just reporting the drift, the system corrects it.
 
 ### Data Flow
 
-The anchor check runs after the editor and before Phases 3/4. Phases 3 and 4 receive the editor's capsule — not the raw synthesis — so they inherit the editor's three-metric curation, plausibility filters, L+/walk-rate reframing, and confidence scaling.
+The anchor check and reflection loop run after the editor and before Phases 3/4. Phases 3 and 4 receive the **final** capsule (post-revision if revisions occurred) — not the raw synthesis and not the first draft — so they inherit the editor's three-metric curation, plausibility filters, L+/walk-rate reframing, and confidence scaling.
 
 ```
 Phase 1 (Synthesis) ──→ Phase 2 (Editor/Capsule) ──→ Phase 2.5 (Anchor Check)
-                                                  ──→ Phase 3 (Hook)
-                                                  ──→ Phase 4 (Fantasy)
+                                                       │
+                                                       ├─ CLEAN ─────────────────┐
+                                                       └─ warnings → revise ─┐   │
+                                                            ↑                │   │
+                                                            └── re-check ←───┘   │
+                                                                                  ▼
+                                                                          Final Capsule
+                                                                            ├──→ Phase 3 (Hook)
+                                                                            └──→ Phase 4 (Fantasy)
 ```
 
 ### Prompt Caching
@@ -371,7 +403,10 @@ On Anthropic, these translate to explicit `cache_control` headers. On OpenAI, au
 
 ### Post-Generation Verification
 
-After the editor produces the final capsule, a **metric hallucination guard** scans the narrative for metric-like patterns (xMetric, Acronym%, P+/S+/L+ family) and flags any term not present in a known-safe set. It also detects traditional outcome stats (ERA, WHIP, W-L) that the editor prompt warns against citing. Flagged terms are reported as warnings on stderr.
+After the reflection loop produces the final capsule and downstream phases complete, two verification steps run:
+
+1. **Revision status** — the CLI reports the anchor check outcome to stderr (clean, converged, or exhausted with surviving warnings).
+2. **Metric hallucination guard** — a regex scan of the narrative for metric-like patterns (xMetric, Acronym%, P+/S+/L+ family) flags any term not present in a known-safe set. It also detects traditional outcome stats (ERA, WHIP, W-L) that the editor prompt warns against citing. Flagged terms are reported as warnings on stderr.
 
 ---
 
@@ -414,7 +449,10 @@ After the editor produces the final capsule, a **metric hallucination guard** sc
                     │  Phase 2: Editor (capsule, streamed)        │
                     │      │                                      │
                     │      ▼                                      │
-                    │  Phase 2.5: Anchor Check (verify fidelity)  │
+                    │  Phase 2.5: Anchor Check + Reflection Loop  │
+                    │      │  ┌─ CLEAN → proceed                  │
+                    │      │  └─ warnings → revise → re-check     │
+                    │      │       (up to 2 revision passes)      │
                     │      │                                      │
                     │      ├──▶ Phase 3: Hook Writer              │
                     │      └──▶ Phase 4: Fantasy Analyst          │
