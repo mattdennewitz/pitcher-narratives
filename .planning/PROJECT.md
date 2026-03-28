@@ -2,7 +2,7 @@
 
 ## What This Is
 
-A CLI tool that generates LLM-written scouting reports for MLB pitchers. Given a pitcher ID, it assembles pitch-level Statcast data and pre-computed Pitching+ aggregations, computes deltas and trend strings across a configurable lookback window, and runs a five-phase LLM pipeline (synthesizer → editor → anchor check → hook writer → fantasy analyst) to produce analytical narratives. Includes a standalone scout CLI that scores appearances for interestingness and optionally curates via LLM.
+A CLI tool that generates LLM-written scouting reports for MLB pitchers. Given a pitcher ID, it assembles pitch-level Statcast data and pre-computed Pitching+ aggregations, computes deltas and trend strings across a configurable lookback window, and runs a five-phase LLM pipeline (synthesizer → editor → anchor check → hook writer → fantasy analyst) with a self-correcting editor-anchor reflection loop to produce analytical narratives. Includes a standalone scout CLI that scores appearances for interestingness and optionally curates via LLM.
 
 ## Core Value
 
@@ -32,18 +32,16 @@ The report must read like a scout wrote it — surfacing *changes, adaptations, 
 - Scout CLI scores appearances across 9 signals without LLM calls — v1.2
 - LLM curator selects 3-5 most compelling stories with signal hierarchy and rejection explanations — v1.2
 
+- Structured AnchorResult/AnchorWarning types with typed warning categories — v1.3
+- Editor-anchor reflection loop self-corrects capsule (up to 2 revision passes) — v1.3
+- Revision prompt builder produces targeted fix instructions from anchor warnings — v1.3
+- Surviving warnings surfaced to stderr in same format as anchor output — v1.3
+- Downstream phases (hook, fantasy) receive final revised capsule — v1.3
+- ReportResult.revision_count tracks iteration history — v1.3
+
 ### Active
 
-## Current Milestone: v1.3 Editor-Anchor Reflection Loop
-
-**Goal:** Close the feedback loop between the editor and anchor check so the capsule self-corrects before reaching downstream phases.
-
-**Target features:**
-- Anchor check feeds warnings back to the editor for revision
-- Editor revises the capsule based on specific anchor feedback
-- Loop iterates until anchor returns CLEAN or max iteration cap is hit
-- Warnings that survive the loop are surfaced to the user
-- Track iteration count and changes per pass
+(No active milestone — planning next)
 
 ### Out of Scope
 
@@ -56,11 +54,13 @@ The report must read like a scout wrote it — surfacing *changes, adaptations, 
 
 ## Context
 
-### Current State (v1.2 shipped)
+### Current State (v1.3 shipped)
 
-**Modules:** data.py (loading), engine.py (computation), context.py (assembly), report.py (5-phase LLM pipeline + hallucination guard), scout.py (appearance scoring), curator.py (LLM curation), cli.py (narrative CLI), scout_cli.py (scout CLI).
+**Modules:** data.py (loading), engine.py (computation), context.py (assembly), report.py (5-phase LLM pipeline + reflection loop + hallucination guard), scout.py (appearance scoring), curator.py (LLM curation), cli.py (narrative CLI + revision status UX), scout_cli.py (scout CLI).
 
 **Tech stack:** Python 3.14, polars 1.39, pydantic-ai 1.72, multi-provider (OpenAI gpt-5.4-mini, Claude Sonnet 4.6, Gemini 3.1 Pro).
+
+**Key v1.3 additions:** AnchorResult/AnchorWarning Pydantic models, MAX_REVISIONS=2 reflection loop, _build_revision_message() prompt builder, _print_revision_status() stderr output. 200 tests passing.
 
 ### Data Sources
 
@@ -96,6 +96,10 @@ The report must read like a scout wrote it — surfacing *changes, adaptations, 
 | Capsule-driven downstream phases | Hook/fantasy inherit editor's plausibility filters | ✓ Good |
 | Separate scout CLI (no LLM) | Cheap triage before expensive narrative generation | ✓ Good |
 | Pragmatic voice over skeptical | Reads like a scout, not a critic or a cheerleader | ✓ Good |
+| Plain while-loop over pydantic-graph | Async-only graph is overkill for 2-node cycle | ✓ Good |
+| Fresh prompt per revision (no history) | Avoids anchoring bias and token bloat | ✓ Good |
+| MAX_REVISIONS=2 (3 total passes) | Balances cost vs. quality; configurable constant | ✓ Good |
+| Streaming only on final capsule | Revision passes silent; no confusing duplicate output | ✓ Good |
 
 ## Evolution
 
@@ -115,4 +119,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-03-27 after v1.2 — starting v1.3 milestone*
+*Last updated: 2026-03-28 after v1.3 — Editor-Anchor Reflection Loop shipped*
