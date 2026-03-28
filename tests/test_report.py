@@ -1,13 +1,17 @@
 """Tests for five-phase report generation pipeline."""
 
 import pytest
+from unittest.mock import MagicMock, patch
+
 from pydantic import ValidationError
 from pydantic_ai import CachePoint
+from pydantic_ai.agent import Agent
 from pydantic_ai.models.test import TestModel
 
 from pitcher_narratives.context import assemble_pitcher_context
 from pitcher_narratives.data import load_pitcher_data
 from pitcher_narratives.report import (
+    MAX_REVISIONS,
     _EDITOR_PROMPT,
     _FANTASY_PROMPT,
     _RP_SYNTH_GUIDANCE,
@@ -596,8 +600,48 @@ def test_anchor_agent_model_matches_provider():
     assert "claude-sonnet-4-6" in str(anchor.model)
 
 
-def test_generate_report_clean_anchor(ctx):
-    """Pipeline with TestModel returns anchor_warnings as a list."""
+def test_generate_report_revision_loop_exercises_full_path(ctx):
+    """Default TestModel always returns dirty anchor -- loop runs MAX_REVISIONS times."""
     result = generate_report_streaming(ctx, _model_override=TestModel())
     assert isinstance(result, ReportResult)
+    assert result.revision_count == MAX_REVISIONS
     assert isinstance(result.anchor_warnings, list)
+    assert len(result.anchor_warnings) > 0  # TestModel produces 1 default warning
+
+
+# -- Revision loop behavior tests -----------------------------------------------
+
+
+def test_max_revisions_constant():
+    """MAX_REVISIONS is 2 (3 total passes including first draft)."""
+    assert MAX_REVISIONS == 2
+
+
+def test_generate_report_downstream_receives_revised_capsule(ctx):
+    """UX-04: narrative is the revision output, not the first draft.
+
+    Patches Agent.run_sync so str-output agents return a distinct string.
+    The first draft comes from run_stream_sync (unpatched), revisions come
+    from run_sync (patched). If capsule is correctly overwritten after
+    revision, result.narrative matches the patched string.
+    """
+    REVISED = "revised capsule text"
+    _original_run_sync = Agent.run_sync
+
+    def _patched_run_sync(self, *args, **kwargs):
+        result = _original_run_sync(self, *args, **kwargs)
+        # Override output for str-output agents (editor revisions, hook, fantasy).
+        # Leave AnchorResult agents (output_type is not str) untouched.
+        if self.output_type is str:
+            return MagicMock(output=REVISED, usage=result.usage)
+        return result
+
+    with patch.object(Agent, "run_sync", _patched_run_sync):
+        result = generate_report_streaming(ctx, _model_override=TestModel())
+
+    # First draft via run_stream_sync returns 'success (no tool calls)'.
+    # Revisions via run_sync return REVISED (via our patch).
+    # If capsule = revision_result.output was executed, narrative == REVISED.
+    # If NOT executed (bug), narrative == 'success (no tool calls)' -> FAILS.
+    assert result.narrative == REVISED
+    assert result.revision_count == MAX_REVISIONS
