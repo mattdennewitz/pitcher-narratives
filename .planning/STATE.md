@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.4
 milestone_name: Interactive Pitcher Q&A
 status: verifying
-stopped_at: Completed 09-01-PLAN.md
-last_updated: "2026-03-30T15:32:37.519Z"
+stopped_at: Completed 10-01-PLAN.md
+last_updated: "2026-03-30T16:14:36.982Z"
 last_activity: 2026-03-30
 progress:
   total_phases: 10
-  completed_phases: 9
-  total_plans: 14
-  completed_plans: 14
+  completed_phases: 10
+  total_plans: 15
+  completed_plans: 15
   percent: 0
 ---
 
@@ -21,12 +21,12 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-30)
 
 **Core value:** Reports must read like a scout wrote them -- surfacing changes, adaptations, and execution trends rather than reciting numbers.
-**Current focus:** Phase 09 — analyst-agent-tools
+**Current focus:** Phase 10 — ask-cli
 
 ## Current Position
 
-Phase: 10
-Plan: Not started
+Phase: 10 (ask-cli) — EXECUTING
+Plan: 1 of 1
 Status: Phase complete — ready for verification
 Last activity: 2026-03-30
 
@@ -52,6 +52,8 @@ Recent decisions affecting current work:
 - [v1.4]: Phase 9 depends on existing PitcherContext (Phase 4), not on Phase 8's resolver
 - [Phase 08]: Single-word queries try fuzzy last-name before full-name to avoid WRatio length-mismatch penalty
 - [Phase 09]: Agent.override() is a context manager, not a clone factory; pass model/settings at run call site instead
+- [Phase 10-ask-cli]: Default provider claude (not openai) per CONTEXT.md locked decision
+- [Phase 10-ask-cli]: Capitalization heuristic for fuzzy name extraction prevents false positives on common English words
 
 ### Pending Todos
 
@@ -63,6 +65,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-30T15:29:14.629Z
-Stopped at: Completed 09-01-PLAN.md
+Last session: 2026-03-30T16:14:36.980Z
+Stopped at: Completed 10-01-PLAN.md
 Resume file: None

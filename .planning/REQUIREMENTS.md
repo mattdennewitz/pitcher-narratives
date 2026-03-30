@@ -23,8 +23,8 @@ Requirements for Interactive Pitcher Q&A milestone. Each maps to roadmap phases.
 
 ### CLI
 
-- [ ] **CLI-01**: User can ask a question via CLI entry point (e.g., `pitcher-ask "Why is Cease's knuckle curve bad?"`)
-- [ ] **CLI-02**: CLI supports `--provider` and `--thinking` flags matching existing report CLI
+- [x] **CLI-01**: User can ask a question via CLI entry point (e.g., `pitcher-ask "Why is Cease's knuckle curve bad?"`)
+- [x] **CLI-02**: CLI supports `--provider` and `--thinking` flags matching existing report CLI
 
 ## v1.5 Requirements
 
@@ -76,8 +76,8 @@ Which phases cover which requirements. Updated during roadmap creation.
 | AGENT-04 | Phase 9 | Complete |
 | AGENT-05 | Phase 9 | Complete |
 | AGENT-06 | Phase 9 | Complete |
-| CLI-01 | Phase 10 | Pending |
-| CLI-02 | Phase 10 | Pending |
+| CLI-01 | Phase 10 | Complete |
+| CLI-02 | Phase 10 | Complete |
 
 **Coverage:**
 - v1.4 requirements: 10 total
