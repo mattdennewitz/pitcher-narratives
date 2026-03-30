@@ -71,8 +71,14 @@ def _extract_pitcher_name(
             result = resolve(candidate)
             if result.match_type in ("exact", "exact_last"):
                 return (candidate, result)
-            # Check if any word in this span was capitalized (proper noun)
-            has_capital = any(is_capitalized[i + j] for j in range(width) if i + j < len(is_capitalized))
+            # For fuzzy/ambiguous, check capitalization:
+            # - Single words: must be capitalized (proper noun heuristic)
+            # - Multi-word: ALL words must be capitalized (e.g., "Dylan Cease"
+            #   yes, "Johnson pitching" no -- "pitching" isn't a name)
+            if width == 1:
+                has_capital = is_capitalized[i]
+            else:
+                has_capital = all(is_capitalized[i + j] for j in range(width) if i + j < len(is_capitalized))
             if result.match_type == "fuzzy" and has_capital:
                 return (candidate, result)
             if result.match_type == "ambiguous" and best_ambiguous[1] is None and has_capital:

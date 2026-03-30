@@ -1,0 +1,225 @@
+"""Tests for ask CLI argument parsing and integration.
+
+Covers unit tests for parse_args and _extract_pitcher_name, plus
+subprocess-based integration tests for the full CLI lifecycle.
+"""
+
+from __future__ import annotations
+
+import os
+import subprocess
+import sys
+
+import pytest
+
+from pitcher_narratives.ask_cli import _extract_pitcher_name, parse_args
+
+
+# ── Helper ──
+
+
+def _test_env(**extra: str) -> dict[str, str]:
+    """Build a clean subprocess environment with optional overrides.
+
+    Starts from os.environ so PATH and other essentials are preserved,
+    then removes API keys (tests shouldn't hit the real API) and applies
+    any extra key-value pairs.
+    """
+    strip = {"ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY"}
+    env = {k: v for k, v in os.environ.items() if k not in strip}
+    # Set empty keys so load_dotenv() won't fill them from .env
+    env.setdefault("ANTHROPIC_API_KEY", "")
+    env.setdefault("OPENAI_API_KEY", "")
+    env.update(extra)
+    return env
+
+
+# ══════════════════════════════════════════════════════════════════════
+# UNIT TESTS: parse_args
+# ══════════════════════════════════════════════════════════════════════
+
+
+def test_parse_question_positional(monkeypatch):
+    """parse_args captures a positional question string."""
+    monkeypatch.setattr(sys, "argv", ["ask_cli", "How is Cease?"])
+    args = parse_args()
+    assert args.question == "How is Cease?"
+
+
+def test_parse_provider_flag(monkeypatch):
+    """parse_args captures --provider flag."""
+    monkeypatch.setattr(sys, "argv", ["ask_cli", "--provider", "openai", "Q?"])
+    args = parse_args()
+    assert args.provider == "openai"
+
+
+def test_parse_thinking_flag(monkeypatch):
+    """parse_args captures --thinking flag."""
+    monkeypatch.setattr(sys, "argv", ["ask_cli", "--thinking", "low", "Q?"])
+    args = parse_args()
+    assert args.thinking == "low"
+
+
+def test_parse_window_flag(monkeypatch):
+    """parse_args captures -w flag."""
+    monkeypatch.setattr(sys, "argv", ["ask_cli", "-w", "14", "Q?"])
+    args = parse_args()
+    assert args.window == 14
+
+
+def test_parse_defaults(monkeypatch):
+    """parse_args defaults: provider=claude, thinking=high, window=30."""
+    monkeypatch.setattr(sys, "argv", ["ask_cli", "Q?"])
+    args = parse_args()
+    assert args.provider == "claude"
+    assert args.thinking == "high"
+    assert args.window == 30
+
+
+# ══════════════════════════════════════════════════════════════════════
+# UNIT TESTS: _extract_pitcher_name
+# ══════════════════════════════════════════════════════════════════════
+
+
+def test_extract_exact_full_name():
+    """Full name 'Dylan Cease' resolves with a definite match."""
+    query, result = _extract_pitcher_name("How is Dylan Cease pitching?")
+    assert query is not None
+    assert "Dylan Cease" in query
+    assert result is not None
+    assert result.match_type in ("exact", "exact_last", "fuzzy")
+    assert result.pitcher_id is not None
+
+
+def test_extract_last_name_only():
+    """Last name 'Cease' resolves to a pitcher containing 'Cease'."""
+    query, result = _extract_pitcher_name("How is Cease pitching?")
+    assert result is not None
+    assert result.match_type in ("exact_last", "fuzzy")
+    assert result.pitcher_name is not None
+    assert "Cease" in result.pitcher_name
+
+
+def test_extract_possessive():
+    """Possessive 'Cease's' is stripped and resolves correctly."""
+    query, result = _extract_pitcher_name("Cease's knuckle curve is bad")
+    assert result is not None
+    assert result.pitcher_name is not None
+    assert "Cease" in result.pitcher_name
+
+
+def test_extract_not_found():
+    """Gibberish question returns (None, None)."""
+    query, result = _extract_pitcher_name("Tell me about xyzzyplugh")
+    assert query is None
+    assert result is None
+
+
+def test_extract_ambiguous():
+    """Ambiguous name 'Johnson' returns ambiguous result with candidates."""
+    query, result = _extract_pitcher_name("How is Johnson pitching?")
+    assert result is not None
+    assert result.match_type == "ambiguous"
+    assert len(result.candidates) > 1
+
+
+# ══════════════════════════════════════════════════════════════════════
+# INTEGRATION TESTS (subprocess)
+# ══════════════════════════════════════════════════════════════════════
+
+
+def test_ask_cli_valid_question_exit_0():
+    """Integration: Valid pitcher question with test model exits 0 and produces output."""
+    result = subprocess.run(
+        [sys.executable, "-m", "pitcher_narratives.ask_cli", "How is Cease pitching?"],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        env=_test_env(PITCHER_NARRATIVES_TEST_MODEL="1"),
+    )
+    assert result.returncode == 0
+    assert result.stdout.strip()  # Non-empty output
+
+
+def test_ask_cli_not_found_exit_1():
+    """Integration: Non-existent pitcher exits 1 with 'No pitcher found' message."""
+    result = subprocess.run(
+        [sys.executable, "-m", "pitcher_narratives.ask_cli", "How is Xyzzyplugh pitching?"],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        env=_test_env(PITCHER_NARRATIVES_TEST_MODEL="1"),
+    )
+    assert result.returncode == 1
+    assert "No pitcher found" in result.stderr
+
+
+def test_ask_cli_ambiguous_exit_1():
+    """Integration: Ambiguous name exits 1 with disambiguation list."""
+    result = subprocess.run(
+        [sys.executable, "-m", "pitcher_narratives.ask_cli", "How is Johnson pitching?"],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        env=_test_env(PITCHER_NARRATIVES_TEST_MODEL="1"),
+    )
+    assert result.returncode == 1
+    assert "Multiple pitchers matched" in result.stderr
+    # Check for numbered list
+    assert "1." in result.stderr
+
+
+def test_ask_cli_no_question_exit_1():
+    """Integration: No question argument exits 1 with usage hint."""
+    result = subprocess.run(
+        [sys.executable, "-m", "pitcher_narratives.ask_cli"],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        env=_test_env(PITCHER_NARRATIVES_TEST_MODEL="1"),
+    )
+    assert result.returncode == 1
+    assert "usage" in result.stderr.lower()
+
+
+def test_ask_cli_missing_api_key_exit_1():
+    """Integration: Missing API key without test model exits 1."""
+    result = subprocess.run(
+        [sys.executable, "-m", "pitcher_narratives.ask_cli", "How is Cease pitching?"],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        env=_test_env(),
+    )
+    assert result.returncode == 1
+    assert "API_KEY" in result.stderr
+
+
+def test_ask_cli_provider_flag():
+    """Integration: --provider openai accepted with test model, exits 0."""
+    result = subprocess.run(
+        [
+            sys.executable, "-m", "pitcher_narratives.ask_cli",
+            "--provider", "openai", "How is Cease pitching?",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        env=_test_env(PITCHER_NARRATIVES_TEST_MODEL="1"),
+    )
+    assert result.returncode == 0
+
+
+def test_ask_cli_thinking_flag():
+    """Integration: --thinking low accepted with test model, exits 0."""
+    result = subprocess.run(
+        [
+            sys.executable, "-m", "pitcher_narratives.ask_cli",
+            "--thinking", "low", "How is Cease pitching?",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        env=_test_env(PITCHER_NARRATIVES_TEST_MODEL="1"),
+    )
+    assert result.returncode == 0
