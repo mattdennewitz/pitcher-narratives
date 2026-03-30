@@ -192,7 +192,10 @@ Plans:
   2. Running `pitcher-ask --provider openai --thinking low "How is Yamamoto's fastball?"` uses the specified provider and thinking level
   3. When the name is ambiguous, the CLI presents a disambiguation list and exits with a helpful message (no crash, no silent failure)
   4. When no question is provided or the pitcher is not found, the CLI exits with a clear error message and nonzero exit code
-**Plans**: TBD
+**Plans**: 1 plan
+
+Plans:
+- [ ] 10-01-PLAN.md — CLI entry point composing resolver + analyst into pitcher-ask command (TDD)
 
 ## Progress
 
@@ -210,4 +213,4 @@ Phases execute in numeric order: 8 -> 9 -> 10
 | 7. Revision UX & Validation | v1.3 | 1/1 | Complete | 2026-03-28 |
 | 8. Name Resolution | v1.4 | 1/1 | Complete | - |
 | 9. Analyst Agent & Tools | v1.4 | 0/1 | In progress | - |
-| 10. Ask CLI | v1.4 | 0/0 | Not started | - |
+| 10. Ask CLI | v1.4 | 0/1 | Planned | - |
