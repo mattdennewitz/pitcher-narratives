@@ -178,7 +178,10 @@ Plans:
   2. Given a pitch-specific question (e.g., "Is his knuckle curve effective?"), the agent calls `get_pitch_detail` with the correct Statcast pitch code (KC) and produces an answer scoped to that pitch type
   3. Given a question the data cannot answer (e.g., "Will he get a win tomorrow?" or "How does he compare to Corbin Burnes?"), the agent declines with an explanation of what data is available rather than hallucinating
   4. The agent's answer streams token-by-token to stdout as it generates
-**Plans**: TBD
+**Plans**: 1 plan
+
+Plans:
+- [ ] 09-01-PLAN.md -- Analyst module with QADeps, PITCH_TYPE_MAP, tools, agent factory, and streaming function (TDD)
 
 ### Phase 10: Ask CLI
 **Goal**: Users have a complete command-line workflow for asking pitcher questions by name
@@ -205,6 +208,6 @@ Phases execute in numeric order: 8 -> 9 -> 10
 | 5. Reflection Data Models | v1.3 | 2/2 | Complete | 2026-03-28 |
 | 6. Loop Mechanics | v1.3 | 1/1 | Complete | 2026-03-28 |
 | 7. Revision UX & Validation | v1.3 | 1/1 | Complete | 2026-03-28 |
-| 8. Name Resolution | v1.4 | 0/1 | In progress | - |
-| 9. Analyst Agent & Tools | v1.4 | 0/0 | Not started | - |
+| 8. Name Resolution | v1.4 | 1/1 | Complete | - |
+| 9. Analyst Agent & Tools | v1.4 | 0/1 | In progress | - |
 | 10. Ask CLI | v1.4 | 0/0 | Not started | - |
