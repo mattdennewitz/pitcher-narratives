@@ -1,135 +1,197 @@
-# Feature Landscape: Editor-Anchor Reflection Loop
+# Feature Landscape: Interactive Pitcher Q&A
 
-**Domain:** LLM self-refinement / actor-critic feedback loop for narrative quality
-**Researched:** 2026-03-27
-**Confidence:** MEDIUM (training data only -- no web verification available; patterns well-established in literature through mid-2025)
+**Domain:** Natural language question-answering over structured baseball analytics data
+**Researched:** 2026-03-30
+**Confidence:** MEDIUM (research grounded in existing codebase inspection, domain knowledge of baseball analytics tooling, and web research on sports Q&A systems; no direct competitor with identical scope found)
 
 ## Context
 
-The existing v1.2 pipeline runs five phases linearly: synthesizer produces structured bullets, editor writes a capsule, anchor checker verifies fidelity (outputs CLEAN or bracketed warnings), then hook writer and fantasy analyst derive from the capsule. Anchor warnings currently print to stderr and are ignored by the pipeline. The v1.3 milestone closes the loop: anchor feedback goes back to the editor, the editor revises, and the cycle repeats until the anchor returns CLEAN or a cap is hit.
+The existing v1.3 system generates full scouting reports through a five-phase LLM pipeline. Users provide a pitcher ID and get a multi-section narrative. The v1.4 milestone adds a complementary capability: users ask a natural language question about a pitcher and get a focused analytical answer grounded in the same data pipeline.
 
-This research focuses exclusively on the NEW features needed for the reflection loop -- not the existing pipeline features documented in the v1.0 FEATURES.md.
+This is NOT a chatbot. This is a single-shot Q&A tool: one question in, one answer out. The user identifies a pitcher by name (not numeric ID), asks a specific question, and gets a data-grounded response. The existing `data.py -> engine.py -> context.py` pipeline provides the analytical backbone -- the new work is question parsing, name resolution, context filtering, and a Q&A-focused analyst agent.
+
+## Question Taxonomy
+
+Before mapping features, it is essential to define what kinds of questions the system should handle. Based on research into sports analytics Q&A systems (SPORTSQL's primitive-based classification, the LangGraph baseball analysis agent pattern, and the existing data model's capabilities), questions about pitchers fall into six categories:
+
+### Category 1: Pitch-Specific Inquiry
+"Why is Cease's knuckle curve bad?" / "How is his slider performing?" / "What's happening with the changeup?"
+
+These ask about a specific pitch type. The system must identify the pitch type from the question, then surface the relevant P+/S+/L+, usage, execution metrics, and movement data for that pitch. This is the most common question type for this tool.
+
+**Data dependency:** Arsenal summary, execution metrics, platoon splits filtered to one pitch type.
+
+### Category 2: Trend / Delta Query
+"Is his fastball velocity trending up or down?" / "Has his command improved recently?"
+
+These ask about change over time. The system already computes deltas (window vs. season) -- these questions map directly to existing engine outputs. The challenge is identifying which metric(s) the user is asking about.
+
+**Data dependency:** Fastball summary (velo deltas), arsenal P+/S+/L+ deltas, execution metric deltas.
+
+### Category 3: Comparative / Platoon Query
+"How does he pitch differently to lefties?" / "What changes against right-handed batters?"
+
+These ask about platoon splits. The existing platoon_mix and TTO platoon data cover this well.
+
+**Data dependency:** Platoon mix splits, TTO platoon breakdown.
+
+### Category 4: Role / Workload Query
+"How does he hold up deep in games?" / "Is he better rested or on short rest?" / "What happens third time through?"
+
+These ask about stamina, workload, and TTO patterns. The existing TTO analysis and workload context cover this.
+
+**Data dependency:** TTO analysis, workload context, velocity arc.
+
+### Category 5: Overall Assessment
+"What's the scouting report on Yamamoto?" / "How is he pitching right now?"
+
+These are broad questions that essentially request a mini-report. For these, the full context document is appropriate -- similar to the existing report pipeline but with a single-phase answer rather than five phases.
+
+**Data dependency:** Full PitcherContext (same as report pipeline).
+
+### Category 6: Unsupported / Out-of-Scope
+"Will he get the win tonight?" / "Should I start him in fantasy?" / "How many strikeouts did he have last game?" / "Compare him to Ohtani."
+
+These ask for predictions, fantasy advice, traditional box-score stats not in the data, or multi-pitcher comparisons. The system should recognize these gracefully and decline or redirect.
+
+**Data dependency:** None (out of scope of the data model).
 
 ## Table Stakes
 
-Features the reflection loop must have. Missing any of these makes the loop either dangerous (unbounded cost) or useless (no convergence signal).
+Features users expect from a Q&A interface layered on top of the existing tool. Missing any of these makes the feature feel broken or useless.
 
 | Feature | Why Expected | Complexity | Depends On |
 |---------|--------------|------------|------------|
-| **Iteration cap (max_retries)** | Without a hard ceiling, a stubborn anchor checker and a non-converging editor can loop indefinitely, burning API tokens and wall-clock time. Every production LLM loop in practice uses an iteration cap. The standard range is 2-3 retries (so 3-4 total passes). | LOW | Nothing new -- pure control flow in `generate_report_streaming` |
-| **Convergence detection (CLEAN exit)** | The anchor already returns "CLEAN" when the capsule passes. The loop must check this after each anchor pass and break early. Without it, every run burns max iterations even when the first capsule was fine. | LOW | Existing anchor output format (already returns CLEAN vs warnings) |
-| **Warning pass-through to editor** | The editor cannot fix what it cannot see. Anchor warnings (bracketed lines like `[MISSED SIGNAL] ...`) must be injected into the editor's revision prompt so the LLM knows exactly what to address. | LOW | Existing anchor output format, new editor revision prompt |
-| **Editor revision prompt (distinct from initial prompt)** | The revision pass needs a different instruction than the initial write. The initial prompt says "find the thread and write a capsule." The revision prompt says "here is your capsule, here are the problems -- fix these specific issues while preserving what works." Reusing the initial prompt causes the editor to rewrite from scratch, losing good material. | MEDIUM | New prompt text, inserted into editor agent's user message |
-| **Surviving warnings surfaced to user** | If the loop exhausts its iteration cap with warnings still present, those warnings must reach the user (currently via stderr). The user needs to know the capsule was not fully validated. | LOW | Existing anchor_warnings field in ReportResult |
-| **Iteration metadata tracking** | The user (and developer) needs to know: how many passes did it take? Did it converge or hit the cap? This is essential for debugging prompt quality and tuning the cap. Minimum: iteration count in ReportResult or stderr output. | LOW | New field on ReportResult or stderr logging |
+| **Pitcher name resolution (fuzzy)** | Users will type "Cease", "cease", "Dylan Cease", "cease, dylan" -- never a numeric pitcher ID. The entire point of Q&A is removing the ID lookup friction. Must handle last-name-only (unambiguous cases), full name, and common variations. | MEDIUM | Pitcher name lookup table extracted from Statcast parquet `player_name` column; fuzzy matching logic |
+| **Disambiguation prompt for ambiguous names** | "Johnson" matches multiple pitchers. The system must list matches and ask the user to clarify, not guess. Silent wrong-pitcher resolution is worse than no resolution. | LOW | Name resolution returning multiple candidates |
+| **Single-phase analyst agent** | A Q&A answer does not need five pipeline phases. One agent with a Q&A-focused system prompt that receives the question + relevant context and produces a focused analytical answer. Simpler, faster, cheaper than the report pipeline. | MEDIUM | pydantic-ai Agent definition, new system prompt, PitcherContext data |
+| **Data-grounded answers only** | The agent must answer from the data in the context document, not from training knowledge. If the data does not contain the answer, it must say so. This is the same principle as the existing report pipeline -- "pre-computed deltas, not LLM arithmetic." | LOW | System prompt engineering (already proven in v1.0-v1.3) |
+| **CLI entry point for questions** | `pitcher-narratives ask "Why is Cease's knuckle curve bad?"` or similar. Must accept pitcher name and question in a natural way. Single-shot, not conversational. | LOW | argparse or new subcommand in cli.py |
+| **Graceful handling of unanswerable questions** | If the question asks about data the system does not have (e.g., "How many strikeouts last game?"), the agent must say so rather than hallucinate. The system prompt must define what data is available. | LOW | System prompt that describes available data scope |
+| **Full reuse of existing data pipeline** | The Q&A feature must load data through `data.py -> engine.py -> context.py` -- no parallel data path. This ensures consistency between reports and Q&A answers and avoids duplicate maintenance. | LOW | Existing `load_pitcher_data()` and `assemble_pitcher_context()` |
 
 ## Differentiators
 
-Features that elevate the loop from "retry until clean" to "smart, targeted revision." Not required for v1.3 launch but significantly improve quality and cost-efficiency.
+Features that make the Q&A tool genuinely useful rather than just a wrapper around "dump context + question into an LLM." Not required for launch but significantly improve answer quality and user experience.
 
 | Feature | Value Proposition | Complexity | Depends On |
 |---------|-------------------|------------|------------|
-| **Targeted revision (fix-only prompt)** | Instead of "rewrite the capsule," the revision prompt says "here is the capsule, here are the specific problems -- revise ONLY the affected passages." This prevents quality regression: the editor does not rewrite paragraphs that were already good. In practice, targeted revision converges faster (usually 1 retry) and preserves prose quality better than full rewrites. | MEDIUM | Editor revision prompt design, anchor warning format (already structured with brackets) |
-| **Warning-type prioritization** | Not all anchor warnings are equal. `[DIRECTION ERROR]` (saying up when data says down) is a factual error that must be fixed. `[OVERSTATED]` (confidence exceeds sample size) is a tone issue that may be acceptable. Categorizing warnings by severity lets the loop focus on critical fixes and accept minor imperfections rather than iterating endlessly on stylistic nuances. | MEDIUM | Anchor warning categories (already defined: MISSED SIGNAL, UNSUPPORTED, DIRECTION ERROR, OVERSTATED) |
-| **Diff tracking between passes** | Log what changed between the original capsule and the revised version. This serves two purposes: (1) developer insight into whether the editor is making targeted fixes or wholesale rewrites, (2) regression detection if a fix introduces new problems. Simple implementation: character-level or sentence-level diff stored in metadata. | MEDIUM | Two capsule strings to diff, a diff utility |
-| **Partial convergence acceptance** | After N iterations, if only low-severity warnings remain (e.g., OVERSTATED but no DIRECTION ERROR or UNSUPPORTED), accept the capsule as "good enough." This prevents burning retries on subjective disagreements between the anchor checker and editor. | LOW | Warning-type prioritization (above) |
-| **Anchor check caching on CLEAN** | If the first anchor check returns CLEAN, skip the loop entirely with zero overhead. Currently this is trivially true (break on CLEAN), but explicitly short-circuiting before any revision prompt construction saves a few milliseconds and keeps the code path clear. | LOW | Convergence detection |
-| **Per-warning fix verification** | After a revision, check whether each specific warning from the previous pass was addressed. If the editor fixed 2 of 3 warnings but one persists, only pass the remaining warning back. This prevents the editor from oscillating (fixing A introduces B, fixing B reintroduces A). | HIGH | Semantic comparison between warning sets across iterations, anchor re-check |
+| **Question-aware context filtering** | For "Why is his knuckle curve bad?", the full 2000-token context doc includes fastball data, workload data, and first-pitch tendencies that are irrelevant. Filtering the context to promote the relevant pitch type's data (arsenal row, execution row, platoon splits for that pitch, P+/S+/L+ breakdown) produces a more focused prompt and better answers. Reduces token waste and focuses the LLM. | MEDIUM | Question parsing to identify pitch type or metric focus; selective rendering of PitcherContext sections |
+| **Question-type classification** | Classify the question into one of the six categories above before building the context. This enables: (1) selecting which context sections to include, (2) tailoring the system prompt for the question type, (3) gracefully declining out-of-scope questions. Can be done with simple keyword/regex heuristics -- does not need an LLM classifier. | MEDIUM | Keyword/regex patterns for pitch names, trend words, platoon indicators, broad-assessment signals |
+| **Pitch type extraction from natural language** | Map "knuckle curve" to pitch_type "KC", "slider" to "SL", "four-seam" / "fastball" to "FF", "sinker" to "SI", "changeup" / "change" to "CH", "cutter" to "FC", "curveball" / "curve" to "CU", "sweeper" to "ST". This enables pitch-specific context filtering. Must handle common synonyms and informal names. | LOW | Static mapping dictionary of natural language names to Statcast pitch_type codes |
+| **Answer with data citations** | The answer should reference specific numbers from the context (e.g., "His knuckle curve carries a 78 S+ this window vs. 95 on the season -- the stuff has degraded"). This grounds the answer and lets the user verify. The existing report pipeline does this via the editor prompt; the Q&A agent prompt needs the same instruction. | LOW | System prompt instruction (pattern already proven in editor prompt) |
+| **Streaming output** | Stream the answer to stdout as it generates, matching the existing report UX. Users expect immediate feedback for a CLI LLM tool. | LOW | Existing streaming infrastructure in report.py, reusable for Q&A agent |
+| **Multi-provider support** | Support the same `--provider openai|claude|gemini` flag as the report CLI. Already implemented in report.py -- just wire the same provider resolution. | LOW | Existing PROVIDERS dict and model resolution in report.py |
 
 ## Anti-Features
 
-Features that seem obviously good but cause real problems in LLM reflection loops. These are drawn from known failure modes in self-refinement systems.
+Features that seem obviously good but would harm the Q&A tool's quality, scope, or maintainability. Each is drawn from observed failure modes in sports analytics Q&A systems or LLM-powered tools.
 
 | Anti-Feature | Why Tempting | Why Problematic | What to Do Instead |
 |--------------|--------------|-----------------|-------------------|
-| **Unlimited iteration** | "Just keep going until it's perfect." | LLMs do not monotonically improve with more passes. After 2-3 revisions, quality plateaus or degrades. Each pass costs ~5-15s and API tokens. Diminishing returns hit fast. Research consistently shows that self-refinement beyond 2-3 rounds rarely improves and often worsens output. | Hard cap of 3 iterations (initial write + 2 revisions). Make this configurable but default to 3. |
-| **Full rewrite on each revision** | Simpler to implement -- just re-run the editor with the same initial prompt plus "also fix these issues." | The editor loses good material. Prose quality is non-monotonic: a capsule that nailed paragraph 1 but fumbled paragraph 2 becomes mediocre in both paragraphs after a full rewrite. The "fix" for one warning introduces new problems. This is the single most common failure mode in LLM reflection loops. | Targeted revision prompt: "Here is the capsule. Here are the problems. Revise the affected sections. Preserve everything else." |
-| **LLM-as-judge with no ground truth** | "Let the anchor checker grade on a 1-10 scale and iterate until score > 8." | The anchor checker was designed for binary verification against the synthesis (ground truth). Expanding it to subjective quality scoring removes its grounding. An LLM judging another LLM's prose without factual anchoring produces noise, not signal. The anchor's power comes from comparing capsule claims against synthesis facts. | Keep the anchor checker's role narrow: factual fidelity only. Do not expand it to style or quality grading. |
-| **Self-refinement without external anchor** | "Let the editor critique its own work." | Self-critique without external reference is unreliable. The same model that wrote the error will rationalize it. The actor-critic pattern works because the critic has different information (the synthesis) and different instructions (verify facts, not write prose). Merging the two roles defeats the purpose. | Keep editor and anchor as separate agents with separate prompts. The anchor's value is that it checks against the synthesis, not against its own aesthetic preferences. |
-| **Expanding anchor scope per iteration** | "On retry 2, also check for style violations and metric-count limits." | Moving the goalposts guarantees non-convergence. If the anchor checks more things on pass 2 than pass 1, the editor can never satisfy an expanding set of requirements. Each iteration should check the SAME criteria. | Anchor prompt is identical on every pass. The only thing that changes is the capsule being checked. |
-| **Streaming the revision passes** | "Stream every revision to stdout so the user sees progress." | The user sees a capsule, then sees it change, then change again. This is confusing and erodes trust. The revision loop is an internal quality mechanism. The user should see the final capsule (streamed) and a count of how many passes it took (on stderr). | Stream only the final accepted capsule. Log iteration count and surviving warnings to stderr. |
-| **Temperature escalation across retries** | "If the first revision didn't fix it, increase temperature for more creative solutions." | Higher temperature increases randomness, not insight. A factual error (`[DIRECTION ERROR]`) is not fixed by creativity -- it's fixed by the editor reading the anchor feedback carefully. Temperature escalation introduces new hallucinations. | Keep temperature constant across all passes. The revision prompt, not the temperature, should drive different output. |
+| **Conversational / multi-turn mode** | "Users will want to ask follow-up questions." | Multi-turn conversation requires session state, message history management, context window budgeting, and a fundamentally different UX model. The existing tool is a CLI pipeline -- adding conversation turns it into a different product. Multi-turn also invites context drift where later answers reference earlier (potentially wrong) answers rather than the data. The project scope explicitly says "CLI script, not a chatbot." | Single-shot Q&A. One question, one answer. Users can run the command again with a different question. Keep it simple. |
+| **SQL generation from natural language** | "Let users write arbitrary queries against the data." SPORTSQL does this well for EPL data. | The Statcast parquet has 114 columns with cryptic names (`pfx_x`, `release_speed`, `delta_run_exp`). Generating correct SQL requires the LLM to know the schema intimately. Incorrect SQL produces wrong answers silently. The existing engine.py already computes the meaningful derived metrics -- bypassing it to query raw data loses the pre-computed deltas, trend strings, and weighted baselines that make answers accurate. | Route all data access through the existing engine, which produces human-readable metrics. The LLM interprets computed results, not raw data. |
+| **Fantasy advice in Q&A answers** | "Users asking about pitchers probably play fantasy baseball." | Fantasy advice is speculative and ungrounded. The existing pipeline has a dedicated fantasy analyst phase with its own prompt guardrails. Mixing fantasy speculation into Q&A answers dilutes the data-grounded analytical voice. If users want fantasy insights, they should run the full report. | Q&A answers are analytical only. No "start/sit" advice, no roster recommendations. Reference the full report pipeline for fantasy analysis. |
+| **LLM-powered name resolution** | "Use the LLM to figure out which pitcher the user means." | Sending a name resolution query to the LLM is slow (~2-5s), expensive, and unreliable. The LLM might hallucinate a pitcher ID or confidently resolve an ambiguous name incorrectly. Name resolution is a lookup problem, not a reasoning problem. | Build a local name lookup table from the parquet data. Use string matching (case-insensitive substring, then Levenshtein distance for typos). Fast, deterministic, zero API cost. |
+| **Comparative cross-pitcher analysis** | "Compare Cease to Yamamoto" | The existing data pipeline loads one pitcher at a time. Cross-pitcher comparison requires loading two PitcherData bundles, aligning their metrics, and giving the LLM a much larger context. This doubles the data loading time and context size, and introduces a new category of prompting challenges (fair comparison framing). Out of scope for v1.4. | Decline comparative questions gracefully: "This tool analyzes one pitcher at a time. Run separate queries for each pitcher." |
+| **Historical season-over-season trends** | "How has he changed since last year?" | The data is single-season (2026 Statcast parquet + 2026 Pitching+ CSVs). There is no 2025 data to compare against. Out of scope per PROJECT.md. | Decline with explanation: "This tool covers the current 2026 season only." |
+| **Question rewriting or rephrasing** | "Rephrase the user's question for better LLM understanding before answering." | An extra LLM call that adds latency and cost. The analyst agent is already capable of interpreting natural language questions directly. Question rewriting is useful when routing to SQL or a retrieval system, but here the LLM receives the raw question plus structured context -- it does not need a rewritten query. | Pass the raw question directly to the analyst agent. The system prompt provides enough framing. |
 
 ## Feature Dependencies
 
 ```
-[Iteration cap] ──────────────────────┐
-                                       ├── Required by: [Loop orchestration in generate_report_streaming]
-[Convergence detection (CLEAN exit)] ──┘
+[Pitcher name resolution] ── Required: Cannot answer without knowing which pitcher
         |
         v
-[Warning pass-through to editor] ── Required for meaningful revision
+[Data pipeline reuse] ── load_pitcher_data(resolved_id) -> assemble_pitcher_context()
         |
         v
-[Editor revision prompt] ── The new prompt text that makes revision work
+[Single-phase analyst agent] ── Core: question + context -> answer
         |
-        ├──> [Targeted revision] ── Enhancement: fix-only vs full rewrite
+        ├──> [Question-type classification] ── Enhancement: informs context filtering
+        |         |
+        |         v
+        ├──> [Question-aware context filtering] ── Enhancement: promotes relevant data
+        |         |
+        |         v
+        |    [Pitch type extraction] ── Enables pitch-specific filtering
         |
-        ├──> [Diff tracking] ── Enhancement: observe what changed
+        ├──> [Streaming output] ── UX parity with report pipeline
         |
-        └──> [Per-warning fix verification] ── Enhancement: track individual fixes
+        ├──> [Multi-provider support] ── Reuses existing PROVIDERS dict
+        |
+        └──> [Data citations in answers] ── Prompt engineering (no code dependency)
 
-[Warning-type prioritization] ──> [Partial convergence acceptance]
+[CLI entry point] ── Independent: argparse subcommand or new script
         |
-        └── Depends on: existing anchor warning categories (already structured)
+        └──> [Disambiguation prompt] ── Triggered by name resolution returning >1 match
 
-[Surviving warnings surfaced] ── Independent, already partially built (stderr output exists)
-
-[Iteration metadata tracking] ── Independent, small addition to ReportResult
+[Graceful out-of-scope handling] ── Independent: system prompt defines data scope
 ```
 
 ### Dependency Notes
 
-- **Loop orchestration is the foundation:** The while-loop with iteration cap and CLEAN break is the skeleton everything else hangs on. Build this first.
-- **Revision prompt is the critical design decision:** The quality of the entire reflection loop depends on how well the revision prompt instructs the editor. This is the piece that requires the most iteration and testing.
-- **Targeted revision and diff tracking are independent enhancements** that can be added after the basic loop works. They improve quality but are not required for the loop to function.
-- **Warning-type prioritization enables partial convergence** but also has standalone value for the stderr output (showing severity to the user).
-- **Downstream phases (hook writer, fantasy analyst) are unaffected** -- they continue to derive from the final capsule. The loop is internal to the editor-anchor interaction.
+- **Name resolution is the gateway:** Nothing works without resolving a pitcher name to an ID. This must be built first and must be robust. It is the only new infrastructure the Q&A feature requires -- everything else either reuses existing code or is prompt engineering.
+- **The analyst agent is the core deliverable:** A pydantic-ai Agent with a Q&A system prompt, receiving the question + PitcherContext.to_prompt() output, returning a string answer. This is structurally identical to the existing report agents but with a different prompt.
+- **Context filtering is the quality lever:** Without it, the agent gets the full ~2000-token context for every question. With it, a pitch-specific question gets a ~500-token focused context. This is the difference between a good answer and a great answer, but the feature works without it.
+- **Question classification enables context filtering:** You need to know "this is a pitch-specific question about the knuckle curve" before you can filter the context to knuckle curve data. But classification also has standalone value for declining out-of-scope questions.
+- **The existing pipeline is not modified:** Q&A is an additive feature. `data.py`, `engine.py`, `context.py`, and `report.py` are unchanged. The new code lives in new modules (e.g., `ask.py`, `resolve.py`) plus a CLI entry point.
 
 ## MVP Recommendation
 
-### v1.3 Launch (Reflection Loop MVP)
+### v1.4 Launch (Interactive Q&A MVP)
 
-Build the loop with table stakes features. This is the minimum that makes the loop functional and safe.
+The minimum feature set that makes the Q&A tool functional and useful.
 
-1. **Iteration cap** -- Hard ceiling of 3 total passes (initial + 2 revisions), configurable via constant
-2. **Convergence detection** -- Break on CLEAN
-3. **Warning pass-through** -- Inject anchor warnings into editor revision message
-4. **Editor revision prompt** -- New prompt text for revision passes (distinct from initial editor prompt)
-5. **Surviving warnings surfaced** -- Existing stderr output, now reports "after N iterations"
-6. **Iteration metadata** -- Add `anchor_iterations: int` and `anchor_converged: bool` to ReportResult
+1. **Pitcher name resolution** -- Build name lookup table from parquet player_name column. Case-insensitive matching on last name, full name, and "Last, First" format. Levenshtein fallback for typos. Disambiguation list when multiple pitchers match.
+2. **CLI entry point** -- `pitcher-narratives ask "pitcher name" "question"` or `pitcher-narratives ask -p "Cease" -q "Why is his knuckle curve bad?"`. Support `--window`, `--provider`, `--thinking` flags from existing CLI.
+3. **Single-phase analyst agent** -- pydantic-ai Agent with Q&A system prompt. Receives question + full PitcherContext.to_prompt(). Returns streaming string answer.
+4. **Data-grounded system prompt** -- Instruct the agent: "Answer only from the data provided. If the data does not address the question, say so. Cite specific numbers. Do not speculate beyond what the data supports."
+5. **Graceful out-of-scope handling** -- System prompt defines what data is available. Agent declines questions about predictions, fantasy, historical seasons, or data not in the context.
+6. **Streaming output** -- Reuse existing streaming pattern from report.py.
 
-### v1.3 Fast-Follow (Quality Improvements)
+### v1.4 Fast-Follow (Quality Improvements)
 
-Add after the basic loop is validated against real pitcher data.
+Add after basic Q&A is validated with real questions.
 
-7. **Targeted revision prompt** -- Refine the revision prompt to say "fix only the flagged issues"
-8. **Warning-type prioritization** -- Categorize warnings by severity, accept partial convergence for low-severity-only
-9. **Diff tracking** -- Log sentence-level changes between passes for developer insight
+7. **Pitch type extraction** -- Map natural language pitch names to Statcast codes (static dictionary).
+8. **Question-type classification** -- Regex/keyword classifier into the six categories. Use for context filtering and out-of-scope detection.
+9. **Question-aware context filtering** -- For pitch-specific questions, render only the relevant arsenal/execution/platoon rows. For TTO questions, promote the TTO section. For broad questions, send full context.
+10. **Multi-provider support** -- Wire existing PROVIDERS dict into Q&A CLI.
 
-### Defer (v1.4+)
+### Defer (v1.5+)
 
-10. **Per-warning fix verification** -- Track which specific warnings were resolved per pass. High complexity, requires semantic matching between warning sets.
+11. **Conversational mode** -- Only if strong user demand. Would require session state, message history, and a different UX paradigm.
+12. **Cross-pitcher comparison** -- Requires loading multiple pitcher data bundles and new prompting strategies.
+13. **Custom lookback window per question** -- "How was his slider last week?" implies a different window than the default 30 days.
 
 ## Complexity Assessment
 
-| Feature | Lines of Code (Est.) | LLM Calls Added | Risk |
-|---------|---------------------|------------------|------|
-| Iteration cap + convergence | ~15 (while loop + break) | 0 extra when CLEAN on first pass | Very low -- pure control flow |
-| Warning pass-through | ~5 (string formatting) | 0 | Very low |
-| Editor revision prompt | ~30 (new prompt constant + message builder) | 0 (replaces existing editor call) | Medium -- prompt quality is testable only by running the pipeline |
-| Surviving warnings + metadata | ~10 (fields + stderr print) | 0 | Very low |
-| Loop orchestration total | ~60 lines changed in report.py | 0-4 extra LLM calls worst case (2 editor + 2 anchor retries) | Low overall, prompt quality is main risk |
+| Feature | Est. Lines of Code | LLM Calls | Risk |
+|---------|-------------------|-----------|------|
+| Name resolution (table + matching) | ~80-120 (new module) | 0 | LOW -- deterministic string matching |
+| CLI entry point | ~40-60 (new subcommand) | 0 | LOW -- mirrors existing CLI pattern |
+| Analyst agent + system prompt | ~60-80 (new module) | 1 per question | MEDIUM -- prompt quality is testable only by running real questions |
+| Streaming output | ~10 (reuse existing) | 0 | LOW -- proven pattern |
+| Pitch type extraction | ~30 (static dict + lookup) | 0 | LOW -- fixed mapping |
+| Question classification | ~50-70 (regex patterns) | 0 | LOW -- heuristic, not ML |
+| Context filtering | ~60-100 (selective to_prompt) | 0 | MEDIUM -- need to expose per-section rendering from PitcherContext |
+| **Total MVP (items 1-6)** | **~200-280 new lines** | **1 LLM call per question** | **LOW-MEDIUM overall** |
 
-**Cost impact:** Best case (CLEAN on first pass): zero additional LLM calls. Worst case (2 revisions): 4 additional calls (2 editor + 2 anchor). At ~5s per call, worst case adds ~20s. Average case with well-tuned prompts: 0-2 additional calls.
+**Cost impact:** One LLM call per question (~$0.005-0.02 depending on provider and context size). Compare to the report pipeline's 5-9 LLM calls. Q&A is 5-9x cheaper per interaction.
+
+**Latency:** Name resolution is instant (local lookup). Data loading is ~1-2s (parquet read + engine compute). LLM response is ~3-8s (streaming). Total: ~5-10s from question to first token.
 
 ## Sources
 
-- Training data on LLM self-refinement patterns (Madaan et al. "Self-Refine" 2023, Shinn et al. "Reflexion" 2023, Pan et al. "Automatically Correcting Large Language Models" 2024) -- LOW confidence on specific details, HIGH confidence on general patterns
-- Direct inspection of existing report.py anchor check implementation
-- Direct inspection of pydantic-ai retry mechanisms (structural retries, not semantic -- confirms custom loop is needed)
-- Project-specific context from PROJECT.md and existing pipeline architecture
+- [SPORTSQL: An Interactive System for Real-Time Sports Reasoning and Visualization](https://arxiv.org/html/2508.17157v1) -- Question primitive classification (Calculate, Compare, Filter, Order, Manipulate, Retrieve), entity resolution via SQL lookups against reference tables, multi-stage pipeline architecture. MEDIUM confidence.
+- [LangGraph Baseball Data Analysis Agent](https://cognitiveclass.ai/courses/build-a-baseball-data-analysis-agent-w-langgraph) -- Pattern of routing queries to correct dataset, interpreting structured data, generating real-time insights. LOW confidence (course description only).
+- [MLB AI at Bat (Google Cloud)](https://cloud.google.com/transform/mlb-statcast-ai-fan-experience-team-analytics) -- MLB's own AI assistant for Statcast data, surfacing stats through natural language. LOW confidence (marketing page, architecture not detailed).
+- [Statcast MCP Server](https://glama.ai/mcp/servers/alex-rimerman/statcast-mcp) -- MCP server translating natural language to Statcast queries, demonstrating the demand for conversational access to baseball data. LOW confidence (third-party tool).
+- [UX Patterns for CLI Tools](https://lucasfcosta.com/2022/06/01/ux-patterns-cli-tools.html) -- Interactive vs. non-interactive CLI patterns; guided setup with defaults. MEDIUM confidence.
+- [Fuzzy Name Matching Best Practices](https://dataladder.com/fuzzy-matching-101/) -- Jaro-Winkler for names, layered matching approach, contextual filtering. MEDIUM confidence.
+- Direct inspection of existing codebase: `data.py`, `engine.py`, `context.py`, `report.py`, `cli.py` -- HIGH confidence on data model, available metrics, and pipeline reusability.
 
 ---
-*Feature research for: Editor-Anchor Reflection Loop (v1.3 milestone)*
-*Researched: 2026-03-27*
+*Feature research for: Interactive Pitcher Q&A (v1.4 milestone)*
+*Researched: 2026-03-30*

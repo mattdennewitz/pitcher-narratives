@@ -1,494 +1,539 @@
-# Architecture: Editor-Anchor Reflection Loop
+# Architecture: Interactive Pitcher Q&A Integration
 
-**Domain:** LLM self-refinement / actor-critic loop integration
-**Researched:** 2026-03-27
+**Domain:** Conversational Q&A agent layered onto existing data pipeline
+**Researched:** 2026-03-30
 **Confidence:** HIGH
 
 ## Problem Statement
 
-The current pipeline runs Phase 2 (Editor) then Phase 2.5 (Anchor Check) once. The anchor check produces warnings -- missed signals, unsupported claims, directional errors, overstated confidence -- but those warnings are printed to stderr and never acted upon. The capsule goes to downstream phases (hook writer, fantasy analyst) unchanged, even when the anchor identifies problems.
+The existing system generates one-shot scouting reports: user provides a pitcher ID, the pipeline computes everything, a 5-phase LLM pipeline produces a narrative. v1.4 adds a second consumer of that same data pipeline -- a Q&A agent that answers natural-language questions about pitchers. This requires solving four integration questions:
 
-The v1.3 milestone closes this loop: anchor warnings feed back to the editor, the editor revises, and the cycle repeats until the capsule is CLEAN or a max iteration cap is hit.
+1. Where does pitcher name resolution live?
+2. Should the analyst agent use tools (multi-turn) or pre-assembled context (single call)?
+3. How do report and Q&A consumers share the data pipeline?
+4. What does the CLI entry point look like?
 
 ## Current Architecture (What Exists)
 
 ```
-generate_report_streaming()
+CLI (cli.py)                 Scout CLI (scout_cli.py)
+    |                              |
+    v                              v
+load_pitcher_data(id, window)  scout_appearances(window, top_n)
+    |                              |
+    v                              |
+PitcherData                        |
+    |                              |
+    v                              |
+assemble_pitcher_context()         |
+    |                              |
+    v                              v
+PitcherContext            ScoredAppearance[]
+    |                              |
+    v                              v
+generate_report_streaming()   curate_appearances()
     |
-    Phase 1: synthesizer.run_sync(ctx)  --> synthesis (str)
-    |
-    Phase 2: editor.run_stream_sync(synthesis)  --> capsule (str, streamed)
-    |
-    Phase 2.5: anchor_checker.run_sync(synthesis, capsule)  --> "CLEAN" | warnings[]
-    |
-    Phase 3: hook_writer.run_sync(capsule)  --> social_hook (str)
-    |
-    Phase 4: fantasy_analyst.run_sync(capsule)  --> fantasy_insights (str)
-    |
-    return ReportResult(narrative, social_hook, fantasy_insights, anchor_warnings)
+    v
+ReportResult (narrative + hook + fantasy + warnings)
 ```
 
-Key facts about the current code:
-- All 5 agents are created by `_make_agents()` which returns a tuple of `Agent[None, str]`
-- The editor uses `run_stream_sync()` for Phase 2 (streaming to stdout)
-- The anchor checker uses `run_sync()` and returns str
-- Anchor output is parsed: "CLEAN" means no issues, otherwise each line is a warning
-- `ReportResult` has `anchor_warnings: list[str]` field
-- `_build_editor_message()` takes `(ctx, synthesis)` and returns a prompt list
-- `_build_anchor_message()` takes `(synthesis, capsule)` and returns a prompt list
-- The editor and anchor checker are separate Agent instances with different system prompts
-- The pipeline is synchronous throughout (`run_sync` / `run_stream_sync`)
+Key module responsibilities:
+- **data.py**: `load_pitcher_data(pitcher_id, window_days)` -> `PitcherData` (parquet + 8 CSVs, classification, baselines)
+- **engine.py**: 10 compute functions (fastball, velocity arc, arsenal, execution, platoon, first pitch, workload, hard hit, release point, TTO) -> dataclass outputs
+- **context.py**: `assemble_pitcher_context(PitcherData)` -> `PitcherContext` Pydantic model with `to_prompt()` -> ~544 token markdown
+- **report.py**: 5-phase LLM pipeline + reflection loop, `generate_report_streaming(PitcherContext)` -> `ReportResult`
+- **scout.py**: Scores appearances for interestingness without LLM calls
+- **curator.py**: LLM-powered curation of scored appearances
+- **cli.py**: argparse entry point for narrative generation (`pitcher-narratives` script)
+- **scout_cli.py**: argparse entry point for scouting (`pitcher-scout` script)
 
-## Architectural Options Evaluated
+Data sources:
+- `statcast_2026.parquet`: 145K pitch-level rows, has `pitcher` (int ID) and `player_name` (str, format "Last, First")
+- `aggs/2026-pitcher.csv`: ~1,651 unique pitchers with `pitcher` and `player_name` columns
 
-### Option A: Simple While Loop (RECOMMENDED)
+## Integration Decision: Name Resolution
 
-Replace the single editor-then-anchor block with a `while` loop inside `generate_report_streaming()`.
+### Decision: Standalone `resolver.py` module (not an LLM tool)
+
+Name resolution is a deterministic string-matching problem. It does not benefit from LLM reasoning and should not consume LLM tokens. The LLM does not need to "decide" to look up a name -- the CLI layer resolves the name before any LLM call happens.
+
+**Implementation:**
 
 ```python
-# Phase 2 + 2.5: Editor-Anchor reflection loop
-MAX_REVISIONS = 2
-capsule = _run_editor(editor, ctx, synthesis, _model_override)  # first pass (streamed)
+# resolver.py
+@dataclass
+class ResolvedPitcher:
+    pitcher_id: int
+    pitcher_name: str    # canonical "Last, First" format
+    confidence: float    # match score 0-100
+    alternatives: list[tuple[int, str, float]]  # other close matches
 
-for revision in range(MAX_REVISIONS):
-    warnings = _run_anchor_check(anchor_checker, synthesis, capsule, _model_override)
-    if not warnings:
-        break  # CLEAN -- capsule is faithful
-    # Feed warnings back to editor for revision
-    capsule = _run_editor_revision(editor, ctx, synthesis, capsule, warnings, _model_override)
-
-# Warnings that survive the loop
-surviving_warnings = _run_anchor_check(anchor_checker, synthesis, capsule, _model_override)
+def resolve_pitcher(query: str) -> ResolvedPitcher: ...
 ```
 
-**Pros:**
-- Zero new dependencies or abstractions
-- Fits naturally into the existing synchronous flow
-- Easy to understand: it is a loop
-- Testing is straightforward: mock TestModel with different outputs per call
-- The iteration cap, warning tracking, and convergence check are all plain Python
-- Streaming only happens on the first pass (subsequent revisions are silent, which is correct UX)
+**Why not a tool?** Three reasons:
+1. Name resolution must succeed before we load any data. If the LLM calls a tool and gets back "Ohtani could be 660271 or did you mean..." -- that adds a round trip and the LLM still cannot proceed without a definitive ID.
+2. The existing data pipeline (`load_pitcher_data`) takes `pitcher_id: int`. Changing this to accept names would couple two concerns.
+3. Fuzzy matching is fast (~ms on 1,651 names) and deterministic. No reason to involve the LLM.
 
-**Cons:**
-- No formal state machine -- the "state" is local variables (`capsule`, `warnings`, `revision`)
-- If the loop logic grows (e.g., different strategies per warning type), the function body gets long
+**Data source for name lookup:** `aggs/2026-pitcher.csv` is the smallest file containing the full pitcher-to-name mapping (375 KB, ~1,651 unique pitchers). Load it once, build an in-memory index.
 
-**Verdict:** This is the right choice. The loop has exactly two participants (editor, anchor), one piece of state (the capsule), and a simple termination condition (CLEAN or max iterations). A state machine framework adds abstraction tax with no payoff at this scale.
+**Matching strategy:**
+- Exact match first (case-insensitive, both "Ohtani" and "Ohtani, Shohei")
+- Token-based matching for partial names ("Shohei" matches "Ohtani, Shohei")
+- Fuzzy matching via `rapidfuzz` for typos ("Ohtanni" -> "Ohtani, Shohei")
+- Threshold: score >= 85 for auto-resolve, 70-85 presents alternatives, <70 fails
 
-### Option B: pydantic-graph State Machine
+**Dependency:** `rapidfuzz` (MIT license, C++ backend, ~100x faster than `thefuzz`, API-compatible). Small pure dependency, no transitive weight. If adding a dependency is undesirable, Python's `difflib.SequenceMatcher` handles 1,651 names fine (just slower on repeated calls).
 
-Model the reflection loop as a graph with nodes for EditorRevise and AnchorCheck that can cycle.
+**Recommendation:** Use `rapidfuzz` -- it is the standard library for this task, MIT licensed, and the performance headroom means name resolution stays under 5ms even with repeated calls.
+
+## Integration Decision: Tool-Based vs. Pre-Assembled Context
+
+### Decision: Pre-assembled context with a single LLM call (no tools)
+
+This is the most consequential architectural choice and the one where this research diverges from the STACK.md recommendation. STACK.md recommends a tool-calling agent with `@agent.tool` decorators wrapping engine compute functions. This ARCHITECTURE.md recommends pre-assembled context instead. Here is the full analysis.
+
+**Option A: Tools (multi-turn)** -- Agent has tools like `get_fastball_summary()`, `get_arsenal()`, `get_platoon_splits()`. The LLM decides which data to fetch based on the question.
+
+**Option B: Pre-assembled context (single call)** -- Assemble the full `PitcherContext.to_prompt()` markdown (~544 tokens) and send it with the question in one call. The LLM answers from the pre-assembled data.
+
+**Option B wins.** The reasoning:
+
+1. **Context is small -- the core argument.** The entire `PitcherContext.to_prompt()` is ~544 tokens. STACK.md's argument for tools is "A 'what's his fastball velo?' question doesn't need platoon splits" -- true, but the overhead of sending unused context is ~400 tokens, which costs <$0.001 and adds zero perceptible latency. The overhead of a tool-calling round trip is 500ms-2s of wall-clock time per tool call, plus the LLM must decide which tool to call (sometimes incorrectly).
+
+2. **Tools add latency, not intelligence.** Each tool call requires: (a) the LLM to decide to call a tool, (b) sending the tool call back to the application, (c) executing the tool, (d) returning the result, (e) the LLM to process the result. For a Q&A interaction where the user wants sub-second responsiveness, a single call with 544 tokens of context is always faster than tool-calling loops. Even a single tool call adds 1-2 seconds of latency.
+
+3. **The existing context is already optimized.** The `to_prompt()` method was specifically designed for LLM consumption. The engine already pre-computes deltas, trend strings, and qualitative labels. The tools in STACK.md would just be wrappers that call the same compute functions and format the output -- duplicating what `to_prompt()` already does.
+
+4. **Tool-based agents are harder to test.** With pre-assembled context, testing is: build context, call agent, assert on output. With tools, you need to verify the LLM calls the right tools for each question type, handle cases where it calls the wrong tool or no tool, mock tool execution, etc. The test matrix is combinatorial.
+
+5. **Tool selection can be wrong.** If a user asks "what's different about his stuff recently?" the LLM must decide: call `get_fastball_summary()`? `get_arsenal_summary()`? Both? All of them? Pre-assembled context sidesteps this entirely -- the LLM has everything and picks what is relevant. The LLM is better at extracting relevant information from a document than at deciding which API to call.
+
+6. **Question-aware filtering is better done in Python.** If context filtering is needed (it likely is not at 544 tokens), detecting "slider" in a question and promoting SL data in the context is a simple regex. It is cheaper, faster, and more reliable than hoping the LLM calls `get_pitch_type_data("SL")`.
+
+**When tools would be the right choice:**
+- If context exceeded ~2,000 tokens (selective retrieval saves real cost)
+- If the agent needs data not in PitcherContext (league averages, other pitchers)
+- If multi-turn conversation is supported (tools enable dynamic data fetching per turn)
+
+None of these apply to v1.4. If any become true in v1.5+, migrating from pre-assembled context to tools is straightforward -- the `ask_question()` function signature does not change, only its internals.
+
+### Reconciliation with STACK.md
+
+STACK.md recommends tools because it views the problem as "the LLM should only see relevant data." This is sound engineering intuition for large contexts. But it does not account for the actual context size (544 tokens) or the latency cost of tool calls in a CLI Q&A interaction. The architectural evidence (measuring `to_prompt()` output) overrides the general principle.
+
+STACK.md's `instructions` vs `system_prompt` recommendation is correct and adopted here. STACK.md's `rapidfuzz` recommendation is correct and adopted here. The tool-calling pattern is the only point of disagreement, and this document explains why.
+
+### Question-Aware Context Filtering
+
+Not a complex feature -- a lightweight enhancement:
 
 ```python
-@dataclass
-class LoopState:
-    synthesis: str
-    capsule: str
-    iteration: int = 0
-    warnings: list[str] = field(default_factory=list)
-
-@dataclass
-class EditorRevise(BaseNode[LoopState]):
-    async def run(self, ctx: GraphRunContext[LoopState]) -> AnchorCheck:
-        ctx.state.capsule = await editor.run(...)
-        ctx.state.iteration += 1
-        return AnchorCheck()
-
-@dataclass
-class AnchorCheck(BaseNode[LoopState]):
-    async def run(self, ctx: GraphRunContext[LoopState]) -> EditorRevise | End[str]:
-        result = await anchor.run(...)
-        if result == "CLEAN" or ctx.state.iteration >= MAX:
-            return End(ctx.state.capsule)
-        ctx.state.warnings = parse_warnings(result)
-        return EditorRevise()
+# In context.py or a new qa_context.py
+def to_qa_prompt(self, question: str) -> str:
+    """Render context with question-relevant sections promoted."""
 ```
 
-**Pros:**
-- Formal state machine with typed transitions
-- Graph visualization (mermaid) for documentation
-- Persistence support if you need to resume a loop mid-run
+The idea: detect keywords in the question (pitch type names, "velocity", "platoon", "workload", etc.) and reorder or annotate the context sections to emphasize relevant data. The full context still ships (it is only 544 tokens), but the question-relevant section gets a "** Relevant to your question **" annotation or moves to the top.
 
-**Cons:**
-- pydantic-graph is async-only (`BaseNode.run()` is `async def`). The current pipeline is synchronous. Converting to async requires changing `generate_report_streaming()` signature and all callers, plus handling the async streaming differently.
-- Adds a dependency on `pydantic-graph` (currently unused in the project despite being installed transitively)
-- The graph has exactly 2 nodes and 1 cycle. The framework overhead (State class, BaseNode subclasses, Graph constructor, async runner) dwarfs the actual logic.
-- Testing requires async test fixtures
-- Breaks the clean sequential flow of `generate_report_streaming()` -- the loop becomes an async subgraph embedded in a sync function
+**Recommendation:** Start without question-aware filtering. The context is small enough that the LLM handles it fine. Add filtering only if testing reveals the agent missing relevant data in answers.
 
-**Verdict:** Overengineered. pydantic-graph is designed for multi-step agent workflows with branching, persistence, and complex state. A 2-node cycle is not that. Revisit if the pipeline grows to 10+ nodes with branching logic.
+## Integration Decision: Sharing the Data Pipeline
 
-### Option C: Custom Orchestrator Class
+### Decision: Reuse `load_pitcher_data()` and `assemble_pitcher_context()` as-is
 
-Extract the loop into a `ReflectionLoop` class that encapsulates the editor-anchor cycle.
+The existing pipeline already does exactly what the Q&A agent needs:
+
+```
+resolve_pitcher("Ohtani")      # NEW: resolver.py
+    |
+    v
+pitcher_id = 660271
+    |
+    v
+load_pitcher_data(660271, 30)  # EXISTING: data.py (unchanged)
+    |
+    v
+PitcherData
+    |
+    v
+assemble_pitcher_context(data) # EXISTING: context.py (unchanged)
+    |
+    v
+PitcherContext
+    |
+    v
+analyst_agent.run_sync(        # NEW: analyst.py
+    question + context.to_prompt()
+)
+    |
+    v
+Answer (str)
+```
+
+**No modifications needed to data.py, engine.py, or context.py.** The Q&A agent is a new consumer of the same data pipeline, not a modification of it.
+
+The `window_days` parameter maps naturally to Q&A: default to 30 for general questions, allow the user to specify a different window if they want ("how has he looked in the last week?").
+
+## Integration Decision: CLI Entry Point
+
+### Decision: New `ask_cli.py` module with new `pitcher-ask` script entry point
+
+The project already has two separate CLI scripts:
+- `pitcher-narratives` -> `cli.py:main`
+- `pitcher-scout` -> `scout_cli.py:main`
+
+Follow the same pattern: a new `pitcher-ask` script entry point.
+
+```toml
+# pyproject.toml
+[project.scripts]
+pitcher-narratives = "pitcher_narratives.cli:main"
+pitcher-scout = "pitcher_narratives.scout_cli:main"
+pitcher-ask = "pitcher_narratives.ask_cli:main"       # NEW
+```
+
+**Why not a subcommand of `pitcher-narratives`?** Three reasons:
+1. The existing CLIs use `argparse` with no subcommand structure. Adding subcommands to `pitcher-narratives` would break the existing `pitcher-narratives -p 660271` interface.
+2. The project already set the precedent of separate scripts per concern (`pitcher-scout` is separate from `pitcher-narratives`).
+3. The Q&A usage pattern is fundamentally different: it takes a name (not an ID) and a question (not a window).
+
+**CLI interface:**
+
+```bash
+# Basic usage
+pitcher-ask "Ohtani" "How's his slider looking?"
+
+# With options
+pitcher-ask "Gerrit Cole" "Is his fastball velocity trending down?" -w 14
+pitcher-ask "Cole, Gerrit" "What's changed recently?" --provider claude
+```
+
+Arguments:
+- `pitcher` (positional): Pitcher name (fuzzy matched)
+- `question` (positional): Natural language question
+- `-w` / `--window`: Lookback window in days (default 30, reuses existing convention)
+- `--provider`: LLM provider (default openai, same options as existing CLIs)
+- `--thinking`: Thinking effort level (default medium, same as existing)
+
+## Recommended Architecture (v1.4)
+
+### New Component Map
+
+```
+CLI Layer
+  ask_cli.py [NEW]          -- argparse, orchestrates name resolution + Q&A
+  cli.py     [UNCHANGED]    -- existing narrative CLI
+  scout_cli.py [UNCHANGED]  -- existing scout CLI
+
+Resolution Layer
+  resolver.py [NEW]         -- fuzzy name-to-ID matching
+
+Data Layer
+  data.py    [UNCHANGED]    -- load_pitcher_data()
+  engine.py  [UNCHANGED]    -- 10 compute functions
+  context.py [UNCHANGED]    -- PitcherContext assembly + to_prompt()
+
+LLM Layer
+  analyst.py [NEW]          -- Q&A agent with analyst system prompt
+  report.py  [UNCHANGED]    -- 5-phase narrative pipeline
+  curator.py [UNCHANGED]    -- curation agent
+```
+
+### New Modules Detail
+
+#### `resolver.py` -- Pitcher Name Resolution
 
 ```python
-class ReflectionLoop:
-    def __init__(self, editor, anchor, max_revisions=2):
-        self.editor = editor
-        self.anchor = anchor
-        self.max_revisions = max_revisions
+"""Fuzzy pitcher name resolution from local data.
 
-    def run(self, ctx, synthesis, model_override=None) -> ReflectionResult:
-        capsule = self._first_pass(ctx, synthesis, model_override)
-        for i in range(self.max_revisions):
-            warnings = self._anchor_check(synthesis, capsule, model_override)
-            if not warnings:
-                return ReflectionResult(capsule=capsule, iterations=i+1, warnings=[])
-            capsule = self._revise(ctx, synthesis, capsule, warnings, model_override)
-        final_warnings = self._anchor_check(synthesis, capsule, model_override)
-        return ReflectionResult(capsule=capsule, iterations=self.max_revisions+1, warnings=final_warnings)
+Maps natural-language pitcher names to MLB pitcher IDs using the
+pitcher aggregation CSV as the name registry.
+"""
+
+@dataclass
+class ResolvedPitcher:
+    pitcher_id: int
+    pitcher_name: str
+    confidence: float
+    alternatives: list[tuple[int, str, float]]
+
+class AmbiguousMatchError(Exception):
+    """Multiple pitchers matched with similar confidence."""
+    candidates: list[tuple[int, str, float]]
+
+class NoMatchError(Exception):
+    """No pitcher matched the query."""
+    query: str
+
+def build_pitcher_index() -> dict[int, str]:
+    """Load unique pitcher ID -> name mapping from 2026-pitcher.csv."""
+
+def resolve_pitcher(query: str) -> ResolvedPitcher:
+    """Resolve a natural-language name to a pitcher ID.
+
+    Strategy: exact match -> token match -> fuzzy match.
+    Raises AmbiguousMatchError or NoMatchError on failure.
+    """
 ```
 
-**Pros:**
-- Clean separation of loop logic from pipeline orchestration
-- Testable in isolation
-- Encapsulates iteration tracking, convergence detection
+Responsibilities:
+- Load pitcher name registry from `aggs/2026-pitcher.csv` (once, cached)
+- Support multiple input formats: "Ohtani", "Shohei Ohtani", "Ohtani, Shohei"
+- Fuzzy match via `rapidfuzz.fuzz.token_sort_ratio` for typo tolerance
+- Return structured result with confidence score and alternatives
+- Raise specific errors for ambiguous or no-match cases
 
-**Cons:**
-- Adds a class where a function suffices
-- The "orchestrator" has one method (`run`) and holds two agents -- it is a function wearing a class costume
-- Adds indirection: reader must find the class to understand what happens between Phase 2 and Phase 3
+#### `analyst.py` -- Q&A Analyst Agent
 
-**Verdict:** Premature abstraction. If the loop gains complexity (warning-type-specific strategies, rollback logic, multi-capsule comparison), extract then. For v1.3 the function-level while loop is clearer.
+```python
+"""Single-phase Q&A analyst agent.
 
-## Recommended Architecture
+Takes a question and PitcherContext, returns a grounded analytical
+response. No multi-phase pipeline, no reflection loop -- single call
+optimized for interactive responsiveness.
+"""
 
-### The While Loop with Helper Functions
-
-The reflection loop lives inside `generate_report_streaming()` as a bounded while loop, with the messy parts extracted into helper functions. No new files, no new classes, no new abstractions.
-
+def ask_question(
+    question: str,
+    ctx: PitcherContext,
+    *,
+    provider: str = "openai",
+    thinking: ThinkingEffort = "medium",
+    _model_override: Any = None,
+) -> str:
+    """Answer a question about a pitcher using pre-assembled context."""
 ```
-generate_report_streaming()
-    |
-    Phase 1: synthesizer.run_sync(ctx)  --> synthesis
-    |
-    Phase 2 + 2.5: REFLECTION LOOP
-    |   |
-    |   |-- _run_editor_first_pass(editor, ctx, synthesis)  --> capsule (STREAMED)
-    |   |
-    |   |-- for revision in range(MAX_REVISIONS):
-    |   |     |-- warnings = _parse_anchor_output(anchor_checker.run_sync(...))
-    |   |     |-- if not warnings: break
-    |   |     |-- capsule = _run_editor_revision(editor, ctx, synthesis, capsule, warnings)
-    |   |
-    |   |-- final_warnings = _parse_anchor_output(anchor_checker.run_sync(...))
-    |   |
-    |   return (capsule, final_warnings, iteration_count)
-    |
-    Phase 3: hook_writer.run_sync(capsule)
-    |
-    Phase 4: fantasy_analyst.run_sync(capsule)
-    |
-    return ReportResult(...)
+
+System prompt characteristics:
+- Grounded analyst voice (reuse the pragmatic tone from the editor prompt)
+- Explicit instruction: answer ONLY from the provided data, say "the data doesn't cover that" when asked about something not in the context
+- No hallucination -- cite specific numbers from the context
+- Concise answers (2-4 sentences for most questions, longer for "tell me everything about his slider")
+- No bullet points, no headers -- conversational prose
+
+Key differences from the report pipeline:
+- Single agent, single call (no multi-phase, no reflection loop)
+- Optimized for speed (interactive feel, not report quality)
+- Lower thinking effort by default (medium vs high)
+- Output is direct answer text, not a structured ReportResult
+- Uses `instructions` parameter (not `system_prompt`) per STACK.md recommendation, for future multi-turn compatibility
+
+#### `ask_cli.py` -- Q&A CLI Entry Point
+
+```python
+"""CLI entry point for interactive pitcher Q&A.
+
+Resolves pitcher names to IDs, loads data, and answers questions
+using the analyst agent.
+"""
+
+def main() -> None:
+    """Entry point: resolve name, load data, ask question, print answer."""
 ```
+
+Flow:
+1. Parse args (pitcher name, question, options)
+2. Resolve name via `resolver.resolve_pitcher()`
+3. Print resolution result to stderr ("Resolved: Ohtani, Shohei (660271)")
+4. Load data via `data.load_pitcher_data()`
+5. Assemble context via `context.assemble_pitcher_context()`
+6. Call `analyst.ask_question()` with streaming output
+7. Print answer to stdout
+
+Error handling:
+- `NoMatchError`: print "No pitcher found matching 'X'" to stderr, exit 1
+- `AmbiguousMatchError`: print candidates to stderr ("Did you mean: ..."), exit 1
+- `ValueError` from `load_pitcher_data`: print error, exit 1
+- Missing API key: same pre-flight check pattern as existing CLIs
 
 ### Component Boundaries
 
-| Component | Responsibility | New/Modified | Communicates With |
-|-----------|---------------|--------------|-------------------|
-| `generate_report_streaming()` | Top-level pipeline orchestration | MODIFIED -- loop replaces single editor+anchor block | All agents |
-| `_run_editor_first_pass()` | First editor call with streaming output | NEW helper function | editor agent, stdout |
-| `_run_editor_revision()` | Subsequent editor calls (silent, non-streaming) | NEW helper function | editor agent |
-| `_build_revision_message()` | Build editor prompt with anchor feedback appended | NEW message builder | None (pure function) |
-| `_parse_anchor_output()` | Parse anchor output into warnings list (extracted from inline code) | NEW helper (extracted) | None (pure function) |
-| `ReportResult` | Pipeline output model | MODIFIED -- add `revision_count: int` field | CLI consumer |
-| `_make_agents()` | Agent factory | UNCHANGED | N/A |
+| Component | Responsibility | Communicates With |
+|-----------|---------------|-------------------|
+| `ask_cli.py` | Arg parsing, orchestration, error handling, streaming output | resolver, data, context, analyst |
+| `resolver.py` | Name -> ID mapping, fuzzy matching, ambiguity handling | data (reads CSV directly) |
+| `analyst.py` | LLM Q&A agent definition, system prompt, single-call answering | context (reads PitcherContext) |
+| `data.py` | Data loading (unchanged) | parquet + CSV files |
+| `engine.py` | Computation (unchanged) | data.py outputs |
+| `context.py` | Context assembly (unchanged) | engine.py outputs |
 
 ### Data Flow
 
 ```
-                    synthesis (str, from Phase 1)
-                         |
-                         v
-            +------------------------+
-            | Editor (first pass)    |
-            | Streamed to stdout     |
-            +------------------------+
-                         |
-                    capsule_v1 (str)
-                         |
-          +--------------+--------------+
-          |                             |
-          v                             |
-    +-------------+                     |
-    | Anchor      |                     |
-    | Check       |                     |
-    +-------------+                     |
-          |                             |
-    warnings or CLEAN                   |
-          |                             |
-    [if CLEAN] -----> capsule_v1 used --+----> Phase 3, Phase 4
-          |
-    [if warnings]
-          |
-          v
-    +------------------------+
-    | Editor (revision)      |
-    | Receives: synthesis    |
-    |   + capsule_v1         |
-    |   + anchor warnings    |
-    | Silent (no streaming)  |
-    +------------------------+
-          |
-    capsule_v2 (str)
-          |
-          v
-    +-------------+
-    | Anchor      |  (loop back if still dirty, up to MAX_REVISIONS)
-    | Check       |
-    +-------------+
-          |
-    CLEAN or surviving warnings
-          |
-          v
-    Final capsule ---> Phase 3, Phase 4
+User: pitcher-ask "Ohtani" "How's his slider looking?" -w 14
+
+ask_cli.py:
+  1. Parse: pitcher="Ohtani", question="How's his slider looking?", window=14
+  2. resolver.resolve_pitcher("Ohtani")
+     -> ResolvedPitcher(id=660271, name="Ohtani, Shohei", confidence=95)
+  3. stderr: "Resolved: Ohtani, Shohei (660271)"
+  4. data.load_pitcher_data(660271, window_days=14) -> PitcherData
+  5. context.assemble_pitcher_context(data) -> PitcherContext
+  6. analyst.ask_question(
+       question="How's his slider looking?",
+       ctx=pitcher_context,
+       provider="openai",
+     )
+  7. Stream answer to stdout
 ```
 
-## Critical Design Decisions
+## Patterns to Follow
 
-### 1. How the Editor Receives Anchor Feedback
+### Pattern 1: Separate CLI per Concern (established)
+**What:** Each major feature gets its own CLI entry point script and pyproject.toml entry.
+**When:** Adding a new user-facing capability with a different interaction pattern.
+**Evidence:** `cli.py` / `pitcher-narratives` and `scout_cli.py` / `pitcher-scout` already demonstrate this.
 
-**Decision:** New user message with synthesis + previous capsule + anchor warnings, NOT via message_history.
+### Pattern 2: Agent Factory with Caching (established)
+**What:** `_make_agents()` in report.py creates and caches agents keyed by (provider, thinking).
+**When:** Creating LLM agents that may be reused across calls.
+**Apply to:** The analyst agent in `analyst.py` should follow the same pattern -- a module-level `_make_analyst()` that caches by (provider, thinking).
 
-**Rationale:** The editor agent has a system prompt optimized for writing from a synthesis briefing. Using `message_history` would carry forward the full conversation context (system prompt + original user message + first response + anchor feedback), which:
-- Doubles the token cost (the full synthesis appears twice)
-- Includes the first capsule as a model response, which the LLM may anchor to instead of revising
-- Makes the revision prompt harder to control
+### Pattern 3: Pre-flight API Key Check (established)
+**What:** Check for the required API key env var before making any LLM call.
+**When:** Any CLI that calls an LLM.
+**Evidence:** Both `cli.py` and `scout_cli.py` do this.
 
-Instead, build a new `_build_revision_message()` that gives the editor:
-1. The original synthesis (source of truth)
-2. The previous capsule (what to revise)
-3. The specific anchor warnings (what to fix)
-4. A revision instruction ("Revise the capsule to address these issues")
+### Pattern 4: Lazy Imports for Speed (established)
+**What:** Import heavy modules (`pydantic_ai`, `polars`) inside functions, not at module top.
+**When:** CLI modules where import time affects perceived startup latency.
+**Evidence:** `cli.py` uses `from pitcher_narratives.data import load_pitcher_data` inside `main()`.
 
-This is a fresh editor call with a targeted prompt, not a conversation continuation. The editor should not "remember" its first attempt through message history -- it should receive explicit instructions about what to change.
-
-```python
-def _build_revision_message(
-    ctx: PitcherContext,
-    synthesis: str,
-    capsule: str,
-    warnings: list[str],
-) -> _UserPrompt:
-    """Build editor prompt for a revision pass with anchor feedback."""
-    warning_block = "\n".join(f"- {w}" for w in warnings)
-    return [
-        f"## Pitcher\n{ctx.pitcher_name} ({ctx.throws}HP, {ctx.role})\n\n"
-        f"## Key Findings From Data Analysis\n{synthesis}",
-        CachePoint(),
-        f"## Your Previous Capsule\n{capsule}\n\n"
-        f"## Anchor Check Findings\n{warning_block}\n\n"
-        "Revise the capsule to address each finding above. Maintain the same "
-        "voice and structure. Do not add information beyond the synthesis. "
-        "If a finding asks you to include a missed signal, weave it in naturally. "
-        "If a finding flags an unsupported claim, remove or correct it.",
-    ]
-```
-
-**Why CachePoint after synthesis:** The synthesis is identical across all revision passes for the same pitcher. Caching it avoids re-processing those tokens on each revision.
-
-### 2. Streaming Only on First Pass
-
-**Decision:** Stream Phase 2 first pass to stdout. Revision passes run silently via `run_sync()`.
-
-**Rationale:** The user sees the initial capsule stream in real-time. If revisions happen, they occur silently -- the user does not need to watch the capsule being rewritten. The final capsule (post-revision) replaces what was streamed. The CLI can print a note like "Revised (2 passes)" to stderr.
-
-This avoids the UX problem of streaming a capsule, then streaming a different capsule, confusing the reader. The first stream is the draft; the final output is what gets used downstream.
-
-**Implementation note:** This means `_run_editor_first_pass()` uses `editor.run_stream_sync()` and prints to stdout, while `_run_editor_revision()` uses `editor.run_sync()` silently.
-
-### 3. Max Revisions = 2
-
-**Decision:** Cap at 2 revision passes (so the editor gets at most 3 total attempts: 1 initial + 2 revisions).
-
-**Rationale:**
-- Each revision is a full LLM call (~5-10s, ~2K-4K tokens). Three total attempts means 3 editor calls + 3 anchor checks = 6 LLM calls for the edit-check loop alone (on top of synthesizer, hook, fantasy = 9 total, up from current 5).
-- In practice, most anchor issues are first-pass problems: the editor missed a key signal or overstated something. One revision pass typically resolves these. Two revisions handle edge cases where the first revision introduced a new issue.
-- If the capsule is not clean after 3 attempts, it has a systematic problem (the synthesis is ambiguous, or the editor and anchor disagree on interpretation). Looping further will not help. Surface the surviving warnings and let the user decide.
-- The cap is a constant (`MAX_REVISIONS = 2`) that can be tuned without code changes.
-
-### 4. ReportResult Changes
-
-**Decision:** Add `revision_count: int` to `ReportResult`. Keep `anchor_warnings: list[str]` for surviving warnings only.
-
-```python
-class ReportResult(BaseModel):
-    narrative: str
-    social_hook: str
-    fantasy_insights: str
-    anchor_warnings: list[str]   # surviving warnings after loop (was: all warnings)
-    revision_count: int           # NEW: 0 = clean first pass, 1-2 = revised
-```
-
-**Rationale:** Downstream consumers (CLI output, potential future logging) need to know:
-- Whether any revisions occurred (for cost/latency tracking)
-- What warnings survived (for quality monitoring)
-
-The semantics of `anchor_warnings` change slightly: currently it is "all warnings from the single anchor pass." After v1.3, it means "warnings that survived the full reflection loop." This is a breaking change but the only consumer is `cli.py`, which we control.
-
-### 5. Parse Anchor Output as a Separate Function
-
-**Decision:** Extract `_parse_anchor_output(raw: str) -> list[str]` from the inline code.
-
-Currently the anchor parsing is inline:
-```python
-anchor_output = anchor_result.output.strip()
-anchor_warnings: list[str] = []
-if anchor_output != "CLEAN":
-    anchor_warnings = [line.strip() for line in anchor_output.splitlines() if line.strip()]
-```
-
-Extract to:
-```python
-def _parse_anchor_output(raw: str) -> list[str]:
-    """Parse anchor check output into a list of warnings. Empty list = CLEAN."""
-    stripped = raw.strip()
-    if stripped == "CLEAN":
-        return []
-    return [line.strip() for line in stripped.splitlines() if line.strip()]
-```
-
-**Rationale:** The loop calls the anchor check multiple times. Without extraction, the parsing logic is duplicated. The function is also independently testable.
+### Pattern 5: stderr for Status, stdout for Output (established)
+**What:** All status messages, progress indicators, and error messages go to stderr. Only the final output (report, table, answer) goes to stdout.
+**When:** Always.
+**Evidence:** All existing CLIs follow this strictly.
 
 ## Anti-Patterns to Avoid
 
-### Anti-Pattern 1: Using message_history for the Revision Loop
+### Anti-Pattern 1: Making the LLM Do Name Resolution
+**What:** Giving the analyst agent a `resolve_name` tool so it can look up pitcher IDs.
+**Why bad:** Wastes LLM tokens on a deterministic string-matching task. Adds latency (tool call round trip). Creates error paths where the LLM misinterprets ambiguous matches.
+**Instead:** Resolve the name in Python before any LLM call. The LLM receives a fully-resolved PitcherContext.
 
-**What:** Pass `message_history=first_pass.all_messages()` to the editor's revision call, appending the anchor warnings as a new user message in the ongoing conversation.
+### Anti-Pattern 2: Modifying PitcherContext for Q&A
+**What:** Adding Q&A-specific fields or methods to the shared `PitcherContext` model.
+**Why bad:** Couples two consumers. The report pipeline and Q&A agent have different context needs. PitcherContext is already well-scoped for its purpose.
+**Instead:** If Q&A needs different context formatting, create a thin wrapper or a separate `to_qa_prompt()` method. But start by reusing `to_prompt()` as-is -- it is only 544 tokens and likely sufficient.
 
-**Why it is wrong:** The editor's system prompt says "Write the two-paragraph scouting capsule now." In a conversation continuation, the model sees its own first capsule as an assistant response, then gets told "fix these things." This creates anchoring bias -- the model tries to minimally edit rather than cleanly rewrite. It also doubles the prompt tokens (full synthesis appears in the history plus the new prompt). And it carries over any reasoning/thinking tokens from the first pass, further inflating cost.
+### Anti-Pattern 3: Multi-Phase Pipeline for Q&A
+**What:** Replicating the synthesizer -> editor -> anchor check flow for Q&A.
+**Why bad:** Massive overkill. The report pipeline exists because generating a polished narrative requires multiple refinement passes. Q&A is a direct question-answer interaction. One LLM call is correct.
+**Instead:** Single agent, single call. If answer quality becomes a problem, add a lightweight fact-check step later (but do not start with it).
 
-**Do this instead:** Fresh editor call with `_build_revision_message()` that explicitly provides the capsule as user-message context, not as the model's own prior output. The editor rewrites from scratch with the anchor findings in view.
+### Anti-Pattern 4: Subcommands on Existing CLI
+**What:** Changing `pitcher-narratives -p 660271` to `pitcher-narratives report -p 660271` and adding `pitcher-narratives ask "Ohtani" "question"`.
+**Why bad:** Breaking change to the existing interface. The existing CLI has no subcommand structure. Users and scripts depending on `pitcher-narratives -p 660271` would break.
+**Instead:** New `pitcher-ask` script. Clean separation, zero breaking changes.
 
-### Anti-Pattern 2: Streaming Revision Passes
+### Anti-Pattern 5: Tool-Based Agent for 544-Token Context
+**What:** Wrapping each engine compute function as an `@agent.tool` so the LLM fetches data selectively.
+**Why bad:** At 544 tokens total context, the overhead of tool-calling (latency, LLM decision-making about which tool to call, error handling for wrong tool selection) exceeds the cost of sending the full context. Tools are correct when context is large and selective retrieval saves meaningful tokens/cost. That threshold is not met here.
+**Instead:** Send full `PitcherContext.to_prompt()` as user message context. Reassess if context grows past ~2,000 tokens.
 
-**What:** Stream every editor pass to stdout, showing the user each draft in real-time.
+## Suggested Build Order
 
-**Why it is wrong:** Confusing UX. The user sees a complete capsule, then sees it being overwritten by a different capsule. This is visually jarring and makes the output unreadable in a pipe or redirect.
+The build order follows dependency chains and enables incremental testing.
 
-**Do this instead:** Stream only the first pass. Run revisions silently. If a revision occurred, print a status note to stderr ("Capsule revised, 2 passes") and output the final capsule as the definitive version.
+### Phase 1: Pitcher Name Resolution (`resolver.py`)
+**Rationale:** Foundation for the new CLI. Has zero LLM dependencies, pure Python + `rapidfuzz`. Can be built and thoroughly tested independently.
 
-### Anti-Pattern 3: Per-Warning-Type Revision Strategy
+Build:
+1. `resolver.py` with `build_pitcher_index()`, `resolve_pitcher()`, error types
+2. Unit tests: exact match, partial name, fuzzy match, ambiguous, no match, "Last, First" format, "First Last" format
+3. Add `rapidfuzz` to `pyproject.toml` dependencies
 
-**What:** Parse the anchor warning type brackets (`[MISSED SIGNAL]`, `[UNSUPPORTED]`, `[DIRECTION ERROR]`, `[OVERSTATED]`) and route each to a different revision strategy or agent.
+Dependencies: Only `data.py` (for CSV path constants). No other modules touched.
 
-**Why it is wrong for v1.3:** The editor is a capable LLM. It can read "you missed X, you made up Y, you got Z backwards" and fix all three in a single revision pass. Routing warnings to different strategies adds complexity with no quality gain. The anchor warning format is already clear and actionable.
+### Phase 2: Q&A Analyst Agent (`analyst.py`)
+**Rationale:** The core LLM integration. Depends on `PitcherContext` (which already exists and is unchanged). Can be tested with `TestModel` from pydantic-ai.
 
-**Do this instead:** Pass all warnings to the editor in a single revision prompt. Let the LLM handle the multi-issue revision holistically. If a specific warning type proves systematically resistant to revision (discovered through v1.3 usage), add targeted handling then.
+Build:
+1. `analyst.py` with system prompt, agent factory, `ask_question()` function
+2. System prompt: grounded analyst voice, data-only answers, cite specific numbers
+3. Unit tests with `TestModel` (no real LLM calls): verify prompt assembly, verify context is included, verify streaming works
 
-### Anti-Pattern 4: Infinite Loop Without Hard Cap
+Dependencies: `context.py` (unchanged), `report.py` (imports `PROVIDERS`, `THINKING_LEVELS` constants).
 
-**What:** Loop until CLEAN with no iteration limit.
+### Phase 3: Q&A CLI Entry Point (`ask_cli.py`)
+**Rationale:** Wires the previous two components together. Follows established CLI patterns.
 
-**Why it is wrong:** The editor and anchor are both LLMs. They can disagree indefinitely. The anchor might flag something the editor considers acceptable editorial judgment. Or the editor's revision might introduce a new issue the anchor catches, creating an oscillation. Without a hard cap, this burns unbounded API calls.
+Build:
+1. `ask_cli.py` with `parse_args()` and `main()`
+2. Positional args for pitcher name and question
+3. Standard options: `-w`, `--provider`, `--thinking`
+4. Error handling for resolution failures and missing API keys
+5. `pyproject.toml` entry: `pitcher-ask = "pitcher_narratives.ask_cli:main"`
+6. Integration tests: end-to-end with `TestModel`
 
-**Do this instead:** `MAX_REVISIONS = 2` as a constant. Log surviving warnings. Let the user see what the anchor was unhappy about.
+Dependencies: `resolver.py` (Phase 1), `analyst.py` (Phase 2), `data.py` + `context.py` (unchanged).
 
-## Integration Points
+### Phase 4 (optional): Question-Aware Context Filtering
+**Rationale:** Only build if testing reveals the agent struggling with questions about specific pitch types or metrics. The 544-token context is likely small enough that the LLM handles it without filtering.
 
-### Modified Components
+Build:
+1. Keyword detection in questions (pitch type names, metric categories)
+2. Context section reordering or annotation
+3. Tests verifying filtering behavior
 
-| File | What Changes | Why |
-|------|-------------|-----|
-| `report.py` | `generate_report_streaming()` gains reflection loop; new helper functions added; `ReportResult` gets `revision_count` | Core integration point |
-| `cli.py` | Print revision count to stderr; adjust anchor warning display | Consumer of new `revision_count` field |
-| `tests/test_report.py` | New tests for loop behavior, revision message builder, anchor parsing | Test coverage |
+Dependencies: `context.py` (would add a new method, not modify existing ones).
 
-### Unchanged Components
+## What Stays Unchanged
 
-| File | Why Unchanged |
-|------|--------------|
-| `data.py`, `engine.py`, `context.py` | Data pipeline is upstream of the loop; no changes needed |
-| `scout.py`, `curator.py`, `scout_cli.py` | Independent CLI; no connection to report pipeline loop |
-| Agent system prompts (synthesizer, hook, fantasy) | Unaffected by editor-anchor loop |
-| `_ANCHOR_PROMPT` | Anchor prompt is already designed for this -- it checks capsule against synthesis and returns typed warnings. No changes needed. |
-| `_EDITOR_PROMPT` | The editor's system prompt defines how to write from a synthesis. The revision instruction comes in the user message, not the system prompt. |
+| Module | Reason |
+|--------|--------|
+| `data.py` | Q&A uses `load_pitcher_data()` as-is. No API changes needed. |
+| `engine.py` | All 10 compute functions used indirectly through `assemble_pitcher_context()`. No changes. |
+| `context.py` | `PitcherContext` and `assemble_pitcher_context()` reused as-is. `to_prompt()` provides the Q&A context. |
+| `report.py` | Narrative pipeline is a separate consumer. Q&A does not touch it. Constants (`PROVIDERS`, `THINKING_LEVELS`) may be imported. |
+| `scout.py` | Appearance scoring is unrelated to Q&A. |
+| `curator.py` | Curation is unrelated to Q&A. |
+| `cli.py` | Existing narrative CLI unchanged. |
+| `scout_cli.py` | Existing scout CLI unchanged. |
 
-### New Components (All in report.py)
+## What Gets Created
 
-| Component | Type | Purpose |
-|-----------|------|---------|
-| `_build_revision_message()` | Function | Build editor prompt with anchor feedback |
-| `_parse_anchor_output()` | Function | Extract warnings from anchor output string |
-| `_run_editor_first_pass()` | Function | First editor call with streaming |
-| `_run_editor_revision()` | Function | Subsequent editor calls, silent |
-| `MAX_REVISIONS` | Constant | Iteration cap (default: 2) |
-| `ReportResult.revision_count` | Field | Track iteration count in output |
+| Module | Purpose | Size Estimate |
+|--------|---------|---------------|
+| `resolver.py` | Name-to-ID resolution | ~100-150 lines |
+| `analyst.py` | Q&A analyst agent | ~80-120 lines |
+| `ask_cli.py` | Q&A CLI entry point | ~80-100 lines |
+| `tests/test_resolver.py` | Resolver unit tests | ~150-200 lines |
+| `tests/test_analyst.py` | Agent unit tests | ~80-120 lines |
+| `tests/test_ask_cli.py` | CLI integration tests | ~80-120 lines |
 
-## Build Order
+**Total new code:** ~570-810 lines across 6 files. No modifications to existing files except `pyproject.toml` (adding `pitcher-ask` entry point and `rapidfuzz` dependency).
 
-The reflection loop is a localized change to `report.py` with no upstream dependencies. Build order follows the dependency chain within the loop:
+## Scalability Considerations
 
-### Phase 1: Foundation (no dependencies)
+| Concern | v1.4 (current) | Future |
+|---------|-----------------|--------|
+| Name resolution speed | <5ms for 1,651 pitchers with rapidfuzz | Scales linearly, still fast at 10K+ |
+| Context size | 544 tokens (well within limits) | If context grows past 2K tokens, question-aware filtering or tools become worthwhile |
+| LLM latency | Single call, ~1-3 seconds | If multi-turn needed, consider tool-based approach |
+| Data loading | Full parquet scan per query (~1-2s) | Could cache PitcherData for repeated questions about same pitcher |
+| Pitcher index | Loaded from CSV per invocation | Could persist as a pickle/sqlite for <1ms startup |
 
-1. **`_parse_anchor_output()`** -- Extract from inline code. Pure function, trivially testable.
-2. **`_build_revision_message()`** -- New message builder. Depends only on `PitcherContext` and `CachePoint` (both exist).
-3. **`ReportResult` update** -- Add `revision_count: int` field.
+## Confidence Assessment
 
-### Phase 2: Loop Mechanics (depends on Phase 1)
-
-4. **`_run_editor_first_pass()`** -- Extract current streaming editor block into helper.
-5. **`_run_editor_revision()`** -- New function using `_build_revision_message()` + `editor.run_sync()`.
-6. **Reflection loop in `generate_report_streaming()`** -- Replace single editor+anchor block with while loop using the helpers.
-
-### Phase 3: Consumer Updates (depends on Phase 2)
-
-7. **`cli.py` updates** -- Display `revision_count`, adjust anchor warning display.
-8. **Test updates** -- Tests for `_parse_anchor_output`, `_build_revision_message`, loop convergence, max iteration cap, ReportResult changes.
-
-### Rationale
-
-- Phase 1 components are independently testable with no side effects
-- Phase 2 depends on Phase 1 helpers existing
-- Phase 3 is purely cosmetic/testing -- the loop works without CLI changes or tests
-- Each phase can be committed and verified independently
-
-## Testing Strategy
-
-### Unit Tests (new)
-
-| Test | What It Verifies |
-|------|-----------------|
-| `test_parse_anchor_output_clean` | "CLEAN" returns empty list |
-| `test_parse_anchor_output_warnings` | Multi-line warnings parsed correctly |
-| `test_parse_anchor_output_whitespace` | Handles blank lines, trailing whitespace |
-| `test_build_revision_message_includes_warnings` | All warnings appear in prompt |
-| `test_build_revision_message_includes_synthesis` | Synthesis present for editor context |
-| `test_build_revision_message_includes_capsule` | Previous capsule present for reference |
-| `test_build_revision_message_has_cache_point` | CachePoint after synthesis for token savings |
-
-### Integration Tests (modified)
-
-| Test | What It Verifies |
-|------|-----------------|
-| `test_generate_report_clean_first_pass` | TestModel returns "CLEAN" anchor -> revision_count=0 |
-| `test_generate_report_revision_then_clean` | TestModel returns warnings then CLEAN -> revision_count=1 |
-| `test_generate_report_max_revisions` | TestModel always returns warnings -> revision_count=MAX_REVISIONS, surviving warnings populated |
-| `test_report_result_has_revision_count` | ReportResult includes revision_count field |
-
-**Testing the loop with TestModel:** pydantic-ai's `TestModel` returns the same `custom_output_text` for every call. To test the loop properly, use `TestModel` with a call counter or mock that returns different outputs on successive calls. Alternatively, use `FunctionModel` which accepts a callable that can vary its response.
-
-## Cost/Latency Impact
-
-| Scenario | LLM Calls (current) | LLM Calls (v1.3) | Delta |
-|----------|---------------------|-------------------|-------|
-| Clean first pass | 5 | 5 | +0 (no change) |
-| One revision needed | 5 | 7 (+1 editor, +1 anchor) | +2 |
-| Two revisions needed | 5 | 9 (+2 editor, +2 anchor) | +4 |
-| Max cap hit | 5 | 9 | +4 |
-
-At ~$0.003/call (Sonnet 4.6 at ~2K tokens), worst case adds ~$0.012 per report. At ~8s/call, worst case adds ~32s latency. The clean-first-pass case (expected to be most common) adds zero overhead.
+| Decision | Confidence | Rationale |
+|----------|------------|-----------|
+| Standalone resolver (not LLM tool) | HIGH | Deterministic task, established pattern, tested in production systems |
+| Pre-assembled context (not tools) | HIGH | Context is 544 tokens, tools add latency for no benefit at this scale. Measured via `to_prompt()` output. |
+| Separate CLI script | HIGH | Established project pattern, zero breaking changes |
+| rapidfuzz for fuzzy matching | HIGH | Industry standard, MIT license, well-documented |
+| Single-call agent (no pipeline) | HIGH | Q&A is fundamentally different from narrative generation |
+| Skip question-aware filtering initially | MEDIUM | Likely unnecessary at 544 tokens, but may help with specific pitch-type questions |
+| `instructions` over `system_prompt` | HIGH | Future-proofs for multi-turn per STACK.md recommendation |
 
 ## Sources
 
-- [pydantic-ai Agent documentation](https://ai.pydantic.dev/agents/) -- Agent.run_sync, run_stream_sync, message_history API
-- [pydantic-ai Message History](https://ai.pydantic.dev/message-history/) -- message_history vs instructions vs system_prompt behavior
-- [pydantic-graph documentation](https://ai.pydantic.dev/graph/) -- BaseNode, Graph, cycle support, async-only constraint
-- Existing `report.py` (v1.2) -- current pipeline structure, agent factory, message builders
-- Existing `cli.py` (v1.2) -- ReportResult consumption pattern
-- Existing `tests/test_report.py` -- current test patterns, TestModel usage
-
----
-*Architecture research for: pitcher-narratives v1.3 Editor-Anchor Reflection Loop*
-*Researched: 2026-03-27*
+- [Pydantic AI - Function Tools documentation](https://ai.pydantic.dev/tools/)
+- [Pydantic AI - Dependencies and RunContext](https://ai.pydantic.dev/dependencies/)
+- [Pydantic AI - Agents](https://ai.pydantic.dev/agent/)
+- [RapidFuzz documentation](https://rapidfuzz.github.io/RapidFuzz/)
+- [RapidFuzz GitHub](https://github.com/rapidfuzz/RapidFuzz)
+- Existing codebase: `data.py`, `context.py`, `report.py`, `cli.py`, `scout_cli.py` (primary evidence for architecture decisions)
+- `.planning/research/STACK.md` (v1.4 stack research, reconciled in this document)

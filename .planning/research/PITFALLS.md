@@ -1,230 +1,254 @@
 # Pitfalls Research
 
-**Domain:** LLM self-refinement / editor-anchor reflection loop for baseball narrative pipeline
-**Researched:** 2026-03-27
-**Confidence:** MEDIUM-HIGH (grounded in published LLM self-correction research, practical engineering experience with iterative LLM pipelines, and direct codebase analysis; no live web verification available for this session)
+**Domain:** Interactive Q&A over structured baseball data -- adding natural language questioning to an existing analytics CLI pipeline
+**Researched:** 2026-03-30
+**Confidence:** MEDIUM-HIGH (grounded in direct codebase analysis of 9 source modules and 200 tests, actual dataset analysis of 1,651 pitcher names showing real collision patterns, web-verified LLM tool-calling failure modes from Arize AI production field analysis and academic research, and pydantic-ai documentation)
 
 ## Critical Pitfalls
 
-### Pitfall 1: Quality Regression on Iteration (The Polishing Paradox)
+### Pitfall 1: Fuzzy Name Resolution Returning the Wrong Pitcher
 
 **What goes wrong:**
-The editor's first draft is actually the best version. Each revision pass degrades the capsule -- stripping out vivid scouting language, hedging confident claims into mush, or flattening the narrative into a bland, "safe" summary that passes the anchor check but reads like a committee wrote it. By iteration 3, the capsule has lost its voice. Research from Huang et al. (2024, "Large Language Models Cannot Self-Correct Reasoning Yet") demonstrates that LLM self-refinement frequently degrades correct answers into incorrect ones -- the model is not reliably able to distinguish "improvement" from "change."
+A user types `ask "What's Rodriguez throwing?"` and the system picks the first Rodriguez match -- say, Bradgley Rodriguez -- when the user meant Grayson Rodriguez, the Orioles ace. The system confidently generates an analytical response about the wrong pitcher. The user has no reason to doubt the answer because the system never indicated ambiguity. This is worse than an error message: it is a silent wrong answer.
 
-In this specific codebase, the editor prompt explicitly cultivates a voice: "pragmatic, cautious, highly analytical... Write the way an analyst talks to another analyst -- plain, specific, conversational." Revision passes push the editor away from this voice toward generic, defensible prose because the model optimizes for satisfying the checker, not for maintaining voice.
+The actual dataset contains **168 duplicate last-name families** across 1,651 pitchers. Rodriguez alone has **12 entries**. Garcia has 11. Anderson and Smith each have 9. Martinez has 8. These are not edge cases -- they are the most commonly searched names.
+
+Additionally, the dataset stores names with accented characters inconsistently: "Ramirez, Kelvin" (no accent) coexists with "Ramirez, Erasmo" (accent on i). "Perez, Adonys" coexists with "Perez, Cionel" (accent on e). A user typing "Perez" must match both "Perez" and "Perez" variants, but naive string comparison treats them as different names.
 
 **Why it happens:**
-The editor sees anchor warnings as "things I got wrong" and over-corrects. If the anchor says `[OVERSTATED] The synthesis notes small sample on X but the capsule presents it as definitive`, the editor does not merely soften that one claim -- it preemptively hedges everything. LLMs have a strong "be helpful and comply" instinct. When told "you made mistakes," they become conservative across the board, not just on the flagged issues.
+Developers reach for `rapidfuzz.process.extractOne()` with a threshold and call it done. This works for datasets with unique names but silently picks the highest-scoring match from a set of near-equal candidates. When "Rodriguez" matches 12 entries with the same last-name score, the "winner" is arbitrary -- determined by which first name happens to score slightly higher against the empty first-name input.
 
-Additionally, each revision pass has less context about the *original editorial intent*. The editor wrote paragraph 1 to set up paragraph 2 with a specific thread. A surgical revision to paragraph 2 can break the thread that paragraph 1 established, but the editor does not re-read with fresh eyes -- it patches locally.
+The accent problem compounds this: fuzzy matchers like Levenshtein or Jaro-Winkler treat "e" and "e" as different characters. Without Unicode normalization (NFKD decomposition + accent stripping), "Perez" matches "Perez, Adonys" at 100% but "Perez, Cionel" at ~85%. The user gets a false confidence match against the less well-known pitcher.
 
 **How to avoid:**
-- **Preserve the original capsule.** Always pass the original (iteration 0) capsule alongside the current revision and the anchor warnings. The revision prompt should say: "Revise ONLY the specific issues flagged below. Do not rewrite passages that were not flagged. Maintain the voice and thread of the original."
-- **Diff-based revision instructions.** Instead of "rewrite the capsule addressing these warnings," say "For each warning, identify the specific sentence that needs to change and revise only that sentence. Return the full capsule with minimal changes."
-- **Quality gate on revision.** After each revision, run a quick length/voice check: if the revised capsule is >20% shorter than the original, or if hedging language density spikes ("may," "could," "potentially" per sentence), reject the revision and keep the previous version.
-- **Cap iterations at 2** (strongly recommended 1 preferred). Research consistently shows diminishing returns after the first revision pass. A second pass catches genuine misses from pass 1, but a third pass is almost always net-negative.
+- **Require disambiguation when multiple candidates score above threshold.** If `extractOne()` returns a score of 85+ AND `extract()` returns 2+ candidates within 5 points of each other, present the list: "Multiple matches for 'Rodriguez': Grayson Rodriguez (BAL), Bradgley Rodriguez (NYY)... Which one?" This is not a failure -- it is correct behavior.
+- **Normalize Unicode before matching.** Apply `unicodedata.normalize('NFKD', name).encode('ascii', 'ignore').decode()` to both the query and the dataset names before scoring. This collapses "Perez" and "Perez" into the same candidate pool.
+- **Index by both "First Last" and "Last, First" forms.** Users will type "Grayson Rodriguez", but the data stores "Rodriguez, Grayson". Build the matcher against both forms. Also index common short forms (first initial + last name).
+- **Include team code or pitcher ID as disambiguation.** When multiple matches exist, show team affiliation from the data: "Rodriguez, Grayson (BAL)" vs "Rodriguez, Bradgley (NYY)". The user can then specify.
+- **Never auto-select from ambiguous results in a CLI tool.** The cost of a wrong answer is higher than the cost of asking for clarification. The existing report pipeline fails fast with "Pitcher not found" on bad IDs -- the Q&A pipeline should be equally strict about ambiguous names.
 
 **Warning signs:**
-- Capsule gets shorter with each iteration (content being stripped, not refined).
-- Hedging words ("may," "could," "potentially," "appears to") increase across iterations.
-- The narrative thread weakens -- paragraph 2 no longer follows from paragraph 1.
-- Specific scouting language ("stuff," "feel," "finding a groove") is replaced with generic analytical language.
-- The capsule reads the same regardless of whether the pitcher had a fascinating or boring outing.
+- Tests only cover unique-name lookups (e.g., "Ohtani" which has no collisions) and never test common surnames.
+- No test for accented-character queries.
+- The name resolver has no "multiple match" code path -- only "found" and "not found."
+- Users report getting answers about pitchers they did not ask about.
 
 **Phase to address:**
-Phase 1 (reflection loop design) -- this must be baked into the revision prompt and iteration cap from day one. Cannot be fixed after the loop is built without redesigning the revision mechanism.
+Phase 1 (Name Resolution) -- this must be built with disambiguation from the start. Retrofitting disambiguation into a resolver that returns a single ID requires changing the entire downstream call chain.
 
 ---
 
-### Pitfall 2: Anchor Drift -- Checker Becomes Too Lenient or Too Strict
+### Pitfall 2: Context Window Bloat -- Sending Full PitcherContext for Narrow Questions
 
 **What goes wrong:**
-The anchor check, currently a single LLM call with a static prompt, does not have calibrated severity. Two failure modes:
+The user asks "What is Corbin Burnes' fastball velocity?" -- a question answerable from 2 lines of the PitcherContext. But the system sends the entire `to_prompt()` output (~2,000 tokens of markdown covering 12 sections: executive summary, role, fastball, TTO, arsenal, execution, release point, hard-hit rate, platoon, first pitch, appearances, and workload). The LLM processes all 2,000 tokens, most of which are irrelevant, increasing latency and cost while diluting the model's attention on the actually relevant data.
 
-*Too strict:* The anchor flags stylistic choices as factual errors. "The capsule says the slider 'has become his weapon' but the synthesis only shows a 4% usage increase" -- this is the anchor policing editorial interpretation, not factual fidelity. Every capsule gets flagged, the loop always runs to max iterations, and the final output is stripped of all editorial voice.
+For a Q&A agent that handles many questions per session, this waste compounds. Ten questions about the same pitcher at 2,000 tokens each is 20,000 input tokens. With question-aware filtering, the same ten questions might use 500-800 tokens each -- a 60-75% reduction.
 
-*Too lenient:* The anchor returns CLEAN on capsules that contain genuine directional errors or unsupported claims because the error is phrased in a way the anchor LLM does not catch. The anchor prompt currently checks for four specific patterns (missed signal, unsupported, direction error, overstated) but an LLM prompted to "check for problems" has a bias toward returning CLEAN when the capsule is well-written -- fluent prose masks factual errors.
+Worse, the "lost in the middle" phenomenon means the LLM may actually answer less accurately with more context: research consistently shows that when relevant information is buried in a large context, LLMs miss it more often than when it is presented in isolation (Arize AI field analysis, 2025).
 
 **Why it happens:**
-The anchor is an LLM, not a rule engine. Its judgment varies by run, by model temperature, and by how persuasively the capsule is written. A capsule that sounds confident and authoritative gets fewer flags than a tentative one, even if the tentative one is more factually accurate. This is the opposite of what you want.
-
-In the current codebase, the anchor prompt asks for `[MISSED SIGNAL]`, `[UNSUPPORTED]`, `[DIRECTION ERROR]`, and `[OVERSTATED]` categories. But it provides no threshold guidance -- "how much of a usage increase warrants calling it a 'weapon'?" is left to the LLM's judgment, which is inconsistent.
+The existing `PitcherContext.to_prompt()` method is designed for narrative generation, where every section is potentially relevant because the LLM needs the full picture to find narrative threads. Developers reuse it for Q&A because it already works and "more context is better" feels intuitively correct. It is not. The report pipeline and Q&A pipeline have opposite context needs: reports need breadth (all sections), Q&A needs depth (the right section).
 
 **How to avoid:**
-- **Add calibration examples to the anchor prompt.** Include 2-3 examples of issues that SHOULD be flagged and 2-3 examples of acceptable editorial interpretation that should NOT be flagged. This anchors (pun intended) the severity level.
-- **Separate factual checks from editorial checks.** Factual: "The synthesis says velo was 94.2 but the capsule says 95.1." Editorial: "The capsule calls the slider a 'weapon' based on modest data." Only factual checks should trigger revision loops. Editorial flags get surfaced to the user as warnings but do not trigger revision.
-- **Add deterministic pre-checks before the LLM anchor.** The existing `check_hallucinated_metrics()` function is a great model. Add deterministic checks for: (a) numbers in capsule that do not appear in synthesis, (b) directional words ("increase"/"decrease") that contradict synthesis trend strings. These catch the easy errors without LLM judgment variability.
-- **Log anchor outputs across runs to calibrate.** If the anchor flags >50% of first-draft capsules, it is too strict. If it flags <10%, it is probably too lenient. Target 20-40% flag rate on first drafts.
+- **Build a question-aware context filter.** Before sending context to the LLM, classify the question into one of the existing PitcherContext sections (fastball, arsenal, execution, platoon, workload, etc.) and send only those sections. This can be a simple keyword/pattern match -- not an LLM call. "fastball velocity" maps to the fastball section. "pitch mix" maps to arsenal. "splits" maps to platoon. "workload" maps to workload + appearances.
+- **Create `PitcherContext.to_prompt_sections()` that returns a dict of section name to markdown.** The Q&A agent selects which sections to include. The report pipeline continues to use `to_prompt()` which joins all sections.
+- **Default to sending 2-3 relevant sections plus the executive summary**, not the full context. The executive summary provides enough meta-context for the LLM to frame the answer without reading every detail.
+- **Test with narrow questions.** If "What is his fastball velocity?" includes TTO data, platoon splits, and release point mechanics in the prompt, the filtering is not working.
 
 **Warning signs:**
-- The loop runs to max iterations on most pitchers (anchor too strict).
-- The loop almost never iterates (anchor too lenient -- or the editor is perfect, but test this assumption).
-- Anchor flags are inconsistent: the same capsule pattern gets flagged in one run but not another.
-- Anchor flags stylistic issues: "The capsule uses the word 'weapon' but the synthesis does not use this word."
-- Genuine errors in capsules that are obviously wrong when a human reads them pass the anchor check.
+- All Q&A responses take roughly the same time regardless of question specificity.
+- Token usage per Q&A call is comparable to a full report generation call.
+- The LLM includes irrelevant details in its answer ("His fastball sits at 95.2 mph... and his platoon splits show...") when the user only asked about velocity.
+- Narrow questions get worse answers than expected because the LLM is "lost in the middle."
 
 **Phase to address:**
-Phase 1 (anchor prompt calibration) and Phase 2 (deterministic pre-checks). The calibration examples must exist before the loop is tested, or you will spend all of Phase 2 debugging false positives.
+Phase 2 or 3 (Context Filtering) -- this requires `PitcherContext` refactoring, which is a cross-cutting change. Build the Q&A agent first with full context (Phase 1-2), then add filtering as an optimization phase. But plan for it architecturally from the start: the Q&A agent should accept a `sections: list[str]` parameter even if Phase 1 passes `["all"]`.
 
 ---
 
-### Pitfall 3: The Editor Gaming the Checker
+### Pitfall 3: Tool-Calling Agent Hallucinating Data Lookups
 
 **What goes wrong:**
-After one or two iterations, the editor learns (within the conversation context) what the anchor flags and starts writing to satisfy the checker rather than to inform the reader. The capsule becomes a "proof" that it addressed every synthesis bullet point rather than a narrative that tells a story. Every Key Signal gets explicitly mentioned, every metric gets a hedge, and the result reads like a checklist disguised as prose.
+If the Q&A agent is built with pydantic-ai tools (e.g., a `lookup_pitcher` tool and a `get_pitch_metrics` tool), the LLM can hallucinate tool calls in several ways:
 
-This is the LLM equivalent of "teaching to the test." The editor's revision pass sees the anchor's feedback format and optimizes for producing text that will parse as CLEAN, not text that reads well.
+1. **Fabricated parameters:** The LLM calls `get_pitch_metrics(pitcher_id=999999, pitch_type="KN")` with an ID it invented because it "knows" the pitcher throws a knuckleball from its training data, even though the pitcher is not in the dataset or does not throw that pitch in 2026.
+
+2. **Tool call when none is needed:** The user asks a general question ("What makes a good changeup?") and the LLM calls `lookup_pitcher()` anyway because it has been trained to use tools when available.
+
+3. **Skipping the tool entirely:** The LLM has training-data knowledge about the pitcher and answers from memory instead of calling the data lookup tool. "Corbin Burnes throws his cutter at 88 mph" -- but the data says 86.4 mph. The answer sounds authoritative but is stale training data, not grounded in the actual dataset.
+
+4. **Wrong tool sequence:** In a multi-tool setup, the LLM calls `get_pitch_metrics()` before `lookup_pitcher()`, passing a fabricated pitcher_id instead of resolving the name first.
+
+Research from Arize AI (2025) confirms that hallucinated arguments are a primary production failure mode: "Agents confidently invent parameters that 'feel' correct rather than admitting uncertainty."
 
 **Why it happens:**
-The revision prompt necessarily includes the anchor warnings. The editor treats these as a rubric. LLMs are extremely good at satisfying explicit rubrics -- and extremely bad at satisfying implicit quality criteria (voice, flow, narrative thread) when those criteria conflict with the rubric. The anchor says "you missed the development pitch" so the editor jams in a sentence about the development pitch, even if it breaks the narrative flow.
+LLMs treat tools as suggestions, not constraints. A tool called `get_pitch_metrics` with a parameter `pitcher_id: int` tells the LLM "you need an integer here" but does not tell it which integers are valid. The LLM fills in plausible-looking values from its training distribution. This is the tool-calling equivalent of hallucination.
 
-In the current pipeline, the editor prompt says "Find the Thread" and "reorganize by narrative importance." But the revision prompt implicitly says "address these specific warnings." These two instructions conflict, and the explicit one wins.
+The "skip the tool" failure is particularly insidious with baseball data because LLMs have extensive baseball knowledge in their training data. The model can generate a plausible-sounding answer about any well-known pitcher without ever touching the tools.
 
 **How to avoid:**
-- **The revision prompt must explicitly say the editorial constraints still apply.** "You are still bound by all original instructions. Address the specific issues below WITHOUT abandoning your narrative thread. If an issue cannot be addressed without breaking the capsule's flow, note it as unresolvable and return the capsule unchanged for that issue."
-- **Never pass the raw anchor output to the editor.** Reformat anchor warnings into targeted, minimal revision instructions. Instead of passing `[MISSED SIGNAL] The synthesis flagged X as the key concern but the capsule does not mention it`, pass: "The key concern from the synthesis (X) should be referenced somewhere in the capsule. Find a natural place for it." This is less rubric-like and more editorial.
-- **Allow the editor to reject warnings.** The revision prompt should say: "If you believe a flagged issue is already adequately addressed through implication or narrative context, respond with [ACKNOWLEDGED] and explain why. Not every flag requires a text change." This prevents forced, unnatural insertions.
+- **Prefer a single-tool or zero-tool architecture for v1.4.** The simplest Q&A agent receives the PitcherContext as user-message context (not via a tool) and answers questions directly. No tool calls, no hallucinated parameters, no wrong sequences. The data pipeline runs before the agent, not inside it. This matches the existing report pipeline pattern.
+- **If tools are used, validate all parameters against the dataset.** A `lookup_pitcher` tool should raise `ModelRetry("Pitcher ID 999999 not found in dataset")` so the LLM gets a clear error and can self-correct. pydantic-ai's `ModelRetry` exception is designed exactly for this.
+- **Explicitly instruct the agent NOT to use training data.** The system prompt must say: "Answer ONLY from the provided data. If the data does not contain information to answer the question, say so. Never fill in details from your general knowledge."
+- **Limit the tool count.** Research shows accuracy drops with more tools available. Keep to 2-3 tools maximum. The Q&A agent should need at most: (1) a name resolver and (2) a data lookup. Ideally, zero tools -- just context in the prompt.
+- **Add a grounding check.** After the LLM answers, verify that any numbers it cites actually appear in the context. The existing `check_hallucinated_metrics()` regex scanner from the report pipeline is a starting model.
 
 **Warning signs:**
-- Revised capsules are longer than originals (stuffing in additional claims to satisfy warnings).
-- The capsule mentions every Key Signal bullet point in the same order they appeared in the synthesis.
-- Sentences like "It is worth noting that..." or "Additionally..." appear only in revised versions -- these are the editor's tell that it is satisfying a checklist.
-- The narrative thread from paragraph 1 does not carry into paragraph 2 (the revision broke the connection).
+- The agent produces answers about pitchers not in the dataset.
+- The agent cites specific velocities or percentages that do not appear in the PitcherContext.
+- Tool call logs show fabricated pitcher IDs or pitch types.
+- The agent answers general baseball questions that are not grounded in data (working as a chatbot, not an analyst).
 
 **Phase to address:**
-Phase 1 (revision prompt design). The prompt must be carefully crafted to subordinate checker satisfaction to editorial quality. This is the hardest prompt engineering problem in the entire reflection loop.
+Phase 2 (Q&A Agent Design) -- the tool vs. no-tool architecture decision must be made here. The recommendation is strongly toward no-tool (context-in-prompt) for v1.4 to avoid this entire category of failure.
 
 ---
 
-### Pitfall 4: Cost and Latency Explosion
+### Pitfall 4: Breaking the Existing Report Pipeline While Adding Q&A
 
 **What goes wrong:**
-Each iteration of the reflection loop adds two LLM calls (editor revision + anchor re-check). With the current five-phase pipeline, the base case is 5 LLM calls. A reflection loop with max_iterations=3 could add up to 6 more calls (3 editor + 3 anchor), tripling the cost and latency for the editor-anchor portion. At $0.003/1K input tokens with Claude Sonnet, a single report that previously cost ~$0.02 could cost ~$0.06. Across a full day's slate of 15 pitchers, that is meaningful.
+The Q&A feature shares modules with the report pipeline: `data.py`, `engine.py`, and `context.py`. A developer modifying `data.py` to add a `resolve_pitcher_name()` function accidentally changes the import order, modifies `PitcherData` to add an optional field that breaks existing unpacking, or alters `load_pitcher_data()` to accept a name string alongside an ID, introducing a code path that existing tests do not cover. The 200 existing tests continue to pass because they test the ID-based path, but the shared module now has a regression that surfaces only in edge cases.
 
-More critically, latency matters for a CLI tool. The editor currently streams to stdout. If the loop means the user sees a streamed first draft, then silence while revision happens, then a *different* final version appears -- the UX is terrible.
+More subtly, adding a Q&A entry point to `cli.py` (or a new `ask_cli.py`) that shares `parse_args()` can break the existing report CLI if argument parsing is modified to accommodate question input. argparse is sensitive to required/optional argument changes -- making `-p` optional (because Q&A might resolve by name) breaks every test that expects `-p` to be required.
 
 **Why it happens:**
-Reflection loops are cheap to implement ("just call the editor again") but expensive to run. The cost is invisible during development when you are testing one pitcher at a time but hits hard in production-like usage. Nobody models the cost before building the loop.
+The existing codebase is a well-tested monolith with tightly coupled modules. The modules were designed for a single use case (ID-based report generation) and their interfaces reflect that assumption. Adding a second use case (name-based Q&A) requires touching the same modules, and "just add a parameter" changes ripple through the call chain.
 
-The streaming UX problem is architectural: the current `generate_report_streaming` function streams Phase 2 to stdout in real-time. A reflection loop means Phase 2 might run 2-3 times, and only the last iteration's output is "real."
+The danger is amplified because the existing 200 tests all pass -- creating false confidence that changes are safe. The tests cover the report pipeline thoroughly but do not exercise the Q&A code paths.
 
 **How to avoid:**
-- **Do not stream the first draft if it might be revised.** Either: (a) run the editor silently on iteration 0, stream only the final iteration, or (b) stream iteration 0 with a visual indicator that revision is in progress, then print the final version. Option (a) is simpler but sacrifices the real-time feel. Option (b) preserves UX but is more complex.
-- **Budget-aware iteration cap.** Track cumulative tokens across the loop. If total editor+anchor tokens exceed 2x the single-pass cost, stop iterating regardless of anchor status. This prevents runaway costs on edge cases where the anchor is being unreasonable.
-- **Make the loop opt-in, not default.** Add a `--refine` flag to the CLI. Default behavior is the current single-pass pipeline. Users who want higher quality pay the latency/cost premium explicitly.
-- **Consider cheaper models for the anchor.** The anchor check does not need the same model quality as the editor. A smaller, faster model (gpt-5.4-mini, or Claude Haiku) can do factual checking. The current codebase creates all agents with the same model -- the anchor agent should accept a separate model parameter.
+- **Create new modules for Q&A-specific logic.** Name resolution goes in `resolver.py`, not `data.py`. The Q&A agent goes in `qa.py`, not `report.py`. The Q&A CLI goes in `ask_cli.py`, not `cli.py`. The shared modules (`data.py`, `engine.py`, `context.py`) should not be modified unless absolutely necessary.
+- **Compose, do not modify.** The Q&A pipeline should call `load_pitcher_data(pitcher_id, window_days)` with a resolved ID, not modify `load_pitcher_data` to accept names. Name resolution happens upstream of the data pipeline.
+- **Separate CLI entry points.** Add a new `ask` subcommand or a separate `ask_cli.py` with its own `parse_args()`. Do not modify the existing `cli.py:parse_args()`. If both CLIs share a common runner, extract that to a shared module.
+- **Run the full existing test suite after every change.** This sounds obvious, but in practice developers run only the new Q&A tests during development and discover report regressions late.
+- **Add integration tests that exercise the report pipeline end-to-end** (not just unit tests) before starting Q&A work. If any Q&A change breaks the report pipeline, these tests catch it immediately.
 
 **Warning signs:**
-- Average report generation time increases >2x after adding the loop.
-- Token costs per report increase >2x on average (some increase is expected, but >2x means the loop is usually iterating).
-- Users complain about "the report changed after I started reading it" (streaming UX problem).
-- The loop runs to max iterations for >30% of pitchers (the anchor is too strict, but the cost symptom appears first).
+- Any diff to `data.py`, `engine.py`, or `context.py` in a Q&A PR.
+- The existing `cli.py:parse_args()` function is modified.
+- New optional parameters added to `load_pitcher_data()` or `assemble_pitcher_context()`.
+- Test suite passes but a manual `uv run python -m pitcher_narratives.cli -p 592155` fails.
 
 **Phase to address:**
-Phase 1 (loop architecture and CLI flag) and Phase 2 (streaming UX redesign). The streaming decision must be made before implementation begins because it affects the function signature of `generate_report_streaming`.
+All phases -- this is a cross-cutting concern. The module boundary decision (new modules vs. modifying existing) must be made in Phase 1 (Architecture). Every subsequent phase must be verified against the existing test suite.
 
 ---
 
-### Pitfall 5: Infinite or Near-Infinite Loops
+### Pitfall 5: Over-Engineering Question Understanding
 
 **What goes wrong:**
-The anchor flags issue A. The editor fixes A but introduces issue B. The anchor flags B. The editor fixes B but reintroduces A. The loop oscillates without converging, hitting max_iterations every time and producing a capsule that is no better than the first draft.
+A developer builds a full NLU pipeline for question classification: intent detection, entity extraction, slot filling, follow-up resolution, multi-turn state management. The Q&A agent gets a tool for each question type (velocity tool, arsenal tool, platoon tool, workload tool). The system prompt becomes a 3,000-token instruction manual explaining 15 question categories. The result is a fragile Rube Goldberg machine that fails on questions that do not fit neatly into a category ("Is he tipping his pitches?"), while a simple prompt with full context would have answered it directly.
 
-A more subtle variant: the anchor flags a borderline issue. The editor makes a minimal change. The anchor flags the same issue again because the change was not sufficient. The editor makes another minimal change. The anchor is still not satisfied. This is not oscillation but gradual drift, and it burns through the iteration budget without resolution.
+The academic research is clear on this: "Modern models handle JSON generation reliably enough that isolating schema generation into a separate tool wasn't worth the delegation cost. When in doubt, cutting hard logic and taking advantage of the multi-billion parameter model is often the right approach" (Elastic, 2025). For question answering over a 2,000-token context, the LLM does not need help understanding the question -- it needs the right context and clear instructions.
 
 **Why it happens:**
-LLMs do not have a stable notion of "fixed." Each editor call produces a *new* capsule, not a *patch* of the old one. The new capsule can introduce new issues anywhere, not just where the revision was targeted. The anchor checks the entire capsule each time, so new issues surface that were not present before.
+Developers with NLP backgrounds default to structured classification pipelines. They decompose "What is his fastball velocity?" into `intent=velocity, entity=fastball, metric=speed` and route to a handler function. This was the right approach in 2020 with weak language models. With Claude Sonnet 4.6, the model can read 2,000 tokens of structured baseball data and answer any reasonable question about it without explicit routing.
 
-The oscillation problem is especially acute when two anchor categories conflict. A capsule can be simultaneously flagged as `[OVERSTATED]` (too much confidence) and `[MISSED SIGNAL]` (not enough emphasis on a finding). The editor hedges to fix overstated, which triggers missed signal, which causes the editor to emphasize, which triggers overstated again.
+The over-engineering instinct is also driven by the fear of Pitfall 2 (context bloat). "If I classify the question, I can send less context." This is true but solves a $0.001 problem with a $100 solution. The context budget for Q&A (~2K tokens) is small enough that sending the full context is cheaper than building and maintaining a classification pipeline.
 
 **How to avoid:**
-- **Hard iteration cap of 3, recommended 2.** This is not a bug -- it is a design decision. The loop exists to catch obvious errors, not to achieve perfection. Two passes (original + one revision) catches ~80% of fixable issues. A third pass has rapidly diminishing returns.
-- **Track warnings across iterations.** If a warning that was present in iteration N reappears in iteration N+2 (after being absent in N+1), the loop is oscillating. Terminate immediately and surface the unresolved warning to the user.
-- **Warn-set shrinking.** Each iteration should only check for warnings that were present in the previous iteration, not re-check the entire capsule for new issues. If iteration 1 found `[MISSED SIGNAL]` and `[DIRECTION ERROR]`, iteration 2's anchor check should ONLY verify those two issues were addressed. New issues introduced by the revision are handled as regular anchor warnings in the final output, not loop triggers.
-- **Deterministic exit conditions.** The loop terminates when: (a) anchor returns CLEAN, (b) max iterations reached, (c) oscillation detected, or (d) the only remaining warnings are editorial (not factual). All four conditions must be implemented.
+- **Start with the simplest possible architecture: one agent, one prompt, full context.** The user's question goes into the user message. The PitcherContext goes into the user message. The system prompt says "You are an analytical baseball assistant. Answer the question using only the provided data." No tools, no routing, no classification.
+- **Add complexity only when the simple approach measurably fails.** If the simple agent cannot answer a specific class of questions, add targeted context filtering for that class. Do not pre-build routing for hypothetical question types.
+- **The Q&A agent should be a single pydantic-ai Agent with `output_type=str`.** This matches the existing editor agent pattern. No structured output needed for free-form Q&A responses.
+- **If context filtering is needed later, use keyword matching, not LLM classification.** A simple dict mapping `{"velocity": ["fastball"], "arsenal": ["arsenal", "mix", "pitch type"], ...}` is deterministic, zero-cost, and testable. An LLM classifier for the same task is non-deterministic, costs tokens, and adds latency.
 
 **Warning signs:**
-- Average iteration count is close to max_iterations (the loop is always hitting the cap).
-- The same warning text appears in both iteration 1 and iteration 3 (oscillation).
-- Token usage per report varies wildly (some reports converge in 1 pass, others burn through 3).
-- The final capsule is qualitatively worse than the first draft for >20% of pitchers.
+- The Q&A module has more lines of question-routing code than actual agent interaction code.
+- There are more than 2 tools registered on the Q&A agent.
+- The system prompt for Q&A is longer than the system prompt for the synthesizer (currently ~3,000 tokens).
+- Questions that seem simple ("How is he doing?") fail because they do not match a recognized intent category.
 
 **Phase to address:**
-Phase 1 (loop termination logic). The termination conditions must be designed and implemented before the loop itself. Getting the termination wrong means the loop is undeployable.
+Phase 2 (Q&A Agent Design) -- this is an architecture decision. The recommendation is to start with the simplest possible agent and resist adding complexity until there is evidence it is needed.
 
 ---
 
-### Pitfall 6: Revision Context Accumulation Bloat
+### Pitfall 6: Answering Questions the Data Cannot Support
 
 **What goes wrong:**
-Each iteration of the loop adds context: the original synthesis, the previous capsule, the anchor warnings, and possibly the revision history. By iteration 3, the editor's input prompt contains the synthesis (~2K tokens), the original capsule (~500 tokens), the revised capsule (~500 tokens), the first set of warnings (~200 tokens), the second set of warnings (~200 tokens), plus the revision instructions. The editor is now processing ~4K tokens of context that is mostly about its own previous failures, not about the pitcher.
+The user asks "Will Corbin Burnes get a Cy Young vote?" or "How does he compare to Gerrit Cole?" or "What happened in his game against the Dodgers last night?" The Q&A agent gamely attempts to answer, drawing on LLM training data rather than the provided context. The response sounds authoritative but is completely ungrounded: the dataset contains pitch-level Statcast data and Pitching+ metrics for 2026, not awards predictions, cross-pitcher comparisons, or game narratives.
 
-This dilutes the editor's attention away from the source data and toward the meta-conversation about what it got wrong. The resulting capsule over-indexes on addressing warnings and under-indexes on the actual scouting insights.
+This is the Q&A equivalent of the report pipeline's hallucination problem, but worse: the report pipeline has an anchor checker that catches drift. The Q&A pipeline has no equivalent guard because each question is independent -- there is no synthesis to check against.
 
 **Why it happens:**
-The natural implementation is to append: "Here is your previous capsule. Here are the warnings. Revise." Each iteration appends more. Nobody measures the context growth because each individual addition seems small.
+LLMs are trained to be helpful. When asked a question, they answer it. They do not say "I cannot answer this from the provided data" unless explicitly instructed to do so, and even then they sometimes answer anyway. The instinct to be helpful overrides the instruction to be grounded.
+
+The boundary between "answerable from data" and "requires external knowledge" is fuzzy. "Is his slider improving?" is answerable (Pitching+ trend data). "Is his slider the best in baseball?" is not (requires cross-pitcher comparison the dataset does not support). "Is his slider good enough to start?" is borderline (requires interpretation beyond the data).
 
 **How to avoid:**
-- **Fixed-size revision context.** The revision prompt should contain exactly: (1) the original synthesis (unchanged), (2) the CURRENT capsule (not history of all capsules), (3) the CURRENT anchor warnings. No revision history. The editor does not need to know what it wrote two iterations ago.
-- **Keep the synthesis as the primary context.** The revision prompt should lead with the synthesis, then the capsule, then the warnings. Token-wise, the synthesis should always be >50% of the total context. If warnings are consuming more tokens than the synthesis, something is wrong.
-- **Summarize warnings.** If the anchor produced 5 warnings, pass only the top 2-3 most severe. Minor warnings that survive the loop get surfaced to the user, not fed back to the editor.
+- **Define scope explicitly in the system prompt.** "You can answer questions about this pitcher's velocity, pitch mix, Pitching+ metrics, platoon splits, workload, and execution. You CANNOT answer questions about: other pitchers, future predictions, awards, game narratives, or anything not in the provided data. If the question falls outside your scope, say so clearly."
+- **Include a "What I can answer" section in the help output.** The CLI should print a brief guide when invoked with `--help` or when the user's first question is ambiguous.
+- **Add scope-boundary examples to the system prompt.** Few-shot examples of out-of-scope questions with the correct refusal response anchor the model's behavior better than instructions alone.
+- **Reuse the anti-recitation patterns from the report pipeline.** The existing synthesizer and editor prompts have explicit "do not project future performance" and "report the math" instructions. Adapt these for Q&A.
+- **Test with deliberately out-of-scope questions.** "Who is the best pitcher in baseball?", "Will he make the All-Star team?", "How does he compare to [other pitcher]?" should all produce clear refusals.
 
 **Warning signs:**
-- Editor revision prompt token count grows >30% per iteration.
-- The revised capsule references its own revision process ("Addressing the concern about..." or "As noted in the synthesis...").
-- The capsule's primary metrics shift between iterations (the editor lost focus on the narrative thread and is now writing to the warnings).
+- The Q&A agent answers comparative questions ("better than X") without flagging that it cannot compare pitchers.
+- The agent makes predictions ("He is likely to...") despite having only historical data.
+- The agent cites statistics that do not appear in the PitcherContext.
+- The agent answers about games, opponents, or events not in the Statcast data.
 
 **Phase to address:**
-Phase 1 (revision prompt design). The prompt template must have a fixed structure that does not grow with iterations.
+Phase 2 (Q&A Agent Prompt Design) -- the scope boundary must be in the system prompt from the first version. Testing with out-of-scope questions should be in Phase 3 (Validation).
 
 ---
 
-### Pitfall 7: Downstream Phase Invalidation
+### Pitfall 7: Accent and Unicode Handling Silently Dropping Pitchers
 
 **What goes wrong:**
-In the current pipeline, Phase 3 (Hook Writer) and Phase 4 (Fantasy Analyst) derive from the editor's capsule. If the reflection loop changes the capsule after the first draft, the downstream phases must re-run against the final capsule. But if the implementation naively runs the loop and then proceeds to downstream phases, this works fine. The dangerous case is if someone tries to parallelize: running downstream phases against the first-draft capsule while the loop is still running, then not re-running them when the capsule changes.
+A user types `ask "How is Jose Berrios doing?"` and the system returns "No pitcher found matching 'Jose Berrios'" -- even though Jose Berrios (pitcher 621244) is in the dataset as "Berrios, Jose" with an accent on the e. The fuzzy matcher scores "Jose" vs "Jose" at ~90% (close but not identical), and the combined name score drops below threshold.
 
-A more subtle issue: the hook writer and fantasy analyst were calibrated against single-draft capsules. A revised capsule that has been stripped of voice and hedged to satisfy the anchor may produce weaker hooks and blander fantasy insights -- the downstream phases inherit the quality regression from Pitfall 1.
+The problem is asymmetric: 71 pitchers in the dataset have accented characters. Users typing on an English keyboard will never type those accents. The system must match "Ramirez" to both "Ramirez" (no accent, 1 pitcher) and "Ramirez" (accent, 5 pitchers) or it silently excludes ~4% of the roster.
+
+More insidiously, names with suffixes add noise: "Edwards Jr., Carl" should match "Carl Edwards", "Edwards Jr", and "Carl Edwards Jr" but not "Carl Edwards III" (a different fictional person). The dataset has 10 suffixed names (Jr., II, III, IV). Fuzzy matching on raw strings penalizes queries that omit suffixes.
 
 **Why it happens:**
-Performance optimization temptation. The loop adds latency, so a developer tries to overlap downstream phases with the revision loop. Or the reflection loop is added to the editor/anchor portion without re-testing downstream phase quality.
+String matching operates on bytes/codepoints by default. "e" (U+0065 + U+0301, combining acute) and "e" (U+0065) are different codepoints. Developers test with ASCII names and the matcher works perfectly. Accented names fail silently because the threshold drops them just below the match cutoff -- they do not throw errors, they just return "not found."
+
+Suffix handling fails because "Edwards Jr., Carl" contains "Jr." as literal text that inflates the edit distance when the query omits it.
 
 **How to avoid:**
-- **Sequential execution is mandatory.** The loop must fully complete before downstream phases begin. This is already the natural implementation given the current codebase structure, but it should be explicitly documented and tested.
-- **Test downstream phase quality after adding the loop.** Generate 10 reports with and without the loop. Compare hook quality and fantasy insight quality. If the loop degrades downstream output, the reflection loop is a net negative even if the capsule itself is more accurate.
-- **The ReportResult model should track iteration metadata.** Add `revision_count: int` and `surviving_warnings: list[str]` to `ReportResult` so downstream consumers know whether the capsule was revised.
+- **Normalize all names to ASCII before matching.** `unicodedata.normalize('NFKD', s).encode('ascii', 'ignore').decode()` strips all accents. Match against normalized names, then map back to the original accented form for display.
+- **Strip suffixes before matching.** Remove "Jr.", "Sr.", "II", "III", "IV" from both query and candidate names before scoring. Store the suffix separately for display.
+- **Build a test suite with every accented name in the dataset.** All 71 accented names should be matchable by their ASCII equivalent. All 10 suffixed names should be matchable without the suffix.
+- **Use `rapidfuzz` with `processor=rapidfuzz.utils.default_process`** which lowercases and strips non-alphanumeric characters. This helps but does not solve the accent problem -- explicit normalization is still needed.
 
 **Warning signs:**
-- Hooks become generic after adding the reflection loop (they are derived from hedged, de-voiced capsules).
-- Fantasy insights lose their specificity (the revised capsule mentions more metrics but with less conviction).
-- The hook or fantasy output contradicts the final capsule (they were generated from an earlier draft).
+- A user searches for a well-known pitcher with an accented name and gets "not found."
+- The name resolver's test suite uses only ASCII names.
+- No `unicodedata` import exists in the resolver module.
+- Suffixed names require the exact suffix to match.
 
 **Phase to address:**
-Phase 2 (integration testing). After the loop is working, re-test the full pipeline end-to-end. This is not a Phase 1 concern but it must be explicitly planned.
+Phase 1 (Name Resolution) -- Unicode normalization must be in the matching pipeline from day one. It is trivial to add but impossible to retrofit without re-testing all name matching logic.
 
 ---
 
-### Pitfall 8: Non-Deterministic Anchor Making Testing Impossible
+### Pitfall 8: Q&A Agent Reciting Numbers Instead of Providing Insight
 
 **What goes wrong:**
-The anchor check is an LLM call with inherent randomness. The same synthesis + capsule pair produces different anchor outputs on different runs. This makes it impossible to write deterministic tests for the reflection loop. You cannot assert "this capsule should trigger exactly 2 iterations" because the anchor might flag 0, 1, or 3 issues depending on the run.
+The user asks "How is his fastball doing?" and the Q&A agent responds: "His four-seam fastball averages 95.2 mph, with a P+ of 108, S+ of 112, L+ of 98. His movement is +0.3 inches horizontal and -0.2 inches vertical. His CSW% is 28.4% and his zone rate is 52.1%." This is a data dump, not an answer. The user could have read the PitcherContext themselves for the same information.
+
+The existing report pipeline spent three milestones (v1.0, v1.1, v1.3) building anti-recitation prompting patterns to prevent exactly this. The synthesizer has "absolute objectivity" and "report the math" instructions. The editor has "find the thread" and "pragmatic voice" instructions. These patterns are the core value of the project. If the Q&A agent regresses to number recitation, it undermines the entire product philosophy.
 
 **Why it happens:**
-LLM outputs are stochastic even at low temperatures. The anchor's binary decision (CLEAN vs. warnings) means small probabilistic differences get amplified into completely different loop behavior. A warning that the anchor assigns 51% probability gets flagged; one at 49% does not. Across runs, this flip-flops.
+The Q&A agent prompt is written from scratch without incorporating the hard-won anti-recitation patterns from the report pipeline. The developer thinks "Q&A is simpler than reports -- just answer the question." But "just answering" a question about structured data defaults to reciting the data, because that is what the data contains. Insight requires the same prompt engineering that the report pipeline invested in.
 
 **How to avoid:**
-- **Test the loop logic with a mock anchor.** The reflection loop's iteration logic (termination conditions, oscillation detection, context management) should be testable with a deterministic mock that returns scripted anchor outputs. The pydantic-ai `TestModel` is perfect for this.
-- **Test the anchor prompt separately.** Create a set of 5-10 synthesis+capsule pairs with known issues. Run the anchor against each one 5 times. If the same issue is flagged <80% of the time, the anchor prompt needs calibration examples for that issue type.
-- **Log anchor outputs in production.** Every anchor check result should be logged (at minimum, the warning list). This creates a corpus for calibrating the anchor over time and for debugging "why did this report iterate 3 times?"
-- **Set temperature=0 (or as low as the provider allows) for the anchor agent specifically.** The anchor is doing classification, not creative writing. Low temperature reduces variability.
+- **Inherit the editorial voice from the report pipeline.** The Q&A system prompt should include the same anti-recitation principles: "Do not recite numbers. Interpret them. Tell the user what the numbers mean, not what the numbers are. Use the same pragmatic, analytical voice as a front-office analyst."
+- **Include delta-first framing.** "When discussing metrics, lead with the change (delta) and its significance, not the absolute value. 'His fastball has gained 1.5 mph since his season average, and his S+ is up 12 points, suggesting a real stuff improvement' -- not 'His fastball averages 95.2 mph with an S+ of 112.'"
+- **Test with a rubric.** For each Q&A test case, check: Does the answer contain more than 3 raw numbers? Does it start with a data point or with an insight? Does it use words like "suggests," "indicates," "this means" or just lists values?
+- **Consider reusing the synthesizer prompt's framing for the Q&A agent.** The synthesizer already knows how to extract signal from noise in PitcherContext data. The Q&A agent can be a targeted version of the same thing.
 
 **Warning signs:**
-- The same pitcher's report varies significantly between runs (not in prose style, which is expected, but in iteration count and warning types).
-- Tests that assert on anchor behavior are flaky.
-- You cannot reproduce a bug report about "weird output for pitcher X" because re-running produces different results.
+- Q&A responses read like formatted tables or bullet-point lists of metrics.
+- The word "suggests" or "indicates" never appears in Q&A output.
+- Q&A output is shorter than 2 sentences (data dumps are terse; insights require explanation).
+- Users say "I could have read the data myself."
 
 **Phase to address:**
-Phase 1 (testing infrastructure). The mock anchor must be implemented before the loop logic is tested. Real anchor calibration is Phase 2.
+Phase 2 (Q&A Agent Prompt Design) -- the anti-recitation patterns must be in the system prompt from the first version. This is a prompt engineering task, not a code change, but it requires intentional design.
 
 ---
 
@@ -232,91 +256,99 @@ Phase 1 (testing infrastructure). The mock anchor must be implemented before the
 
 | Shortcut | Immediate Benefit | Long-term Cost | When Acceptable |
 |----------|-------------------|----------------|-----------------|
-| Passing full anchor output directly to editor revision prompt | Simple to implement | Editor over-corrects, games the checker, revision quality degrades | Never -- always reformat warnings into minimal revision instructions |
-| Using the same model for anchor and editor | One model config, simpler code | Anchor cost is unnecessarily high; same model may be "sympathetic" to its own writing style | MVP only -- use a cheaper/different model for anchor before v1.4 |
-| No iteration cap | "Let it converge naturally" | Unbounded cost, oscillation risk, quality regression | Never -- cap at 2-3 from day one |
-| Streaming the first draft when loop is enabled | Preserves the current UX feel | User sees text that gets replaced; confusing and wasteful | Never when loop is active -- stream only the final version |
-| Skipping oscillation detection | Simpler termination logic | Loop burns through iterations without progress, wasting tokens and degrading quality | Never -- oscillation detection is cheap to implement and critical for loop health |
-| Not tracking revision metadata in ReportResult | Simpler data model | Cannot diagnose loop behavior in production, cannot A/B test loop quality | Never -- add revision_count and surviving_warnings from day one |
+| Sending full PitcherContext for every question | No need to build context filtering; reuse `to_prompt()` directly | ~60-75% wasted tokens per query; slower responses; "lost in the middle" accuracy degradation | v1.4 MVP only -- add section-level filtering before v1.5 |
+| Single-match name resolution (no disambiguation) | Simpler code, no interactive disambiguation flow | Silent wrong-pitcher answers for common names; trust erosion | Never -- disambiguation is table stakes for name resolution |
+| No scope boundary in Q&A prompt | Faster to write the prompt; model seems to "just work" in demos | Agent answers out-of-scope questions with hallucinated content; no way to detect this automatically | Never -- scope boundary must exist from first prompt version |
+| Reusing `cli.py:parse_args()` for Q&A arguments | Less code duplication; one CLI entry point | Report CLI breaks when Q&A-specific arguments are added; argparse changes ripple through tests | Never -- create separate entry point from day one |
+| No grounding check on Q&A output | Faster iteration; trust the model | No detection of training-data leakage into answers; users get stale data | v1.4 MVP only -- add grounding check before v1.5 |
+| Hardcoding name resolution to current parquet file | Works for single-season data; no need for data versioning | Breaks when 2027 data is loaded (different pitcher roster); name index is stale | Acceptable for v1.4 (single-season tool) but document the assumption |
 
 ## Integration Gotchas
 
 | Integration | Common Mistake | Correct Approach |
 |-------------|----------------|------------------|
-| Reflection loop + streaming | Streaming Phase 2 on every iteration, showing the user drafts that get replaced | Stream only the final iteration. Run prior iterations silently. Show a progress indicator ("Refining... pass 2/3") on stderr |
-| Reflection loop + pydantic-ai agents | Creating a new Agent for each revision call | Reuse the existing editor Agent -- pydantic-ai agents are stateless between `run_sync` calls. The revision context goes in the user prompt, not the agent config |
-| Reflection loop + CachePoint | Expecting cache hits on revision prompts | CachePoints work on prefix matching. Revision prompts have different prefixes (they include warnings). Cache the synthesis portion but expect no cache benefit on the revision-specific parts |
-| Anchor check + model temperature | Using the same temperature for anchor as for editor | Editor benefits from temperature 0.7-1.0 (creative prose). Anchor should use temperature 0-0.3 (classification consistency). Override `model_settings` for the anchor agent |
-| Anchor output parsing | Using string matching on LLM output to detect CLEAN vs. warnings | The anchor might return "CLEAN." or "Clean" or "The capsule is clean." Use case-insensitive matching and check for absence of bracket-prefixed lines, not just exact "CLEAN" string |
-| Revision prompt + original editor prompt | Including the full editor system prompt in the revision call | The editor agent already has the system prompt. The revision context goes in the user message. Do not repeat system prompt content in the user message -- it wastes tokens and can create conflicting instructions |
+| Name resolver + `load_pitcher_data()` | Modifying `load_pitcher_data()` to accept a name string, coupling name resolution to data loading | Keep name resolution separate: `resolve_name("Rodriguez") -> [pitcher_ids]`, then `load_pitcher_data(pitcher_id)`. The data loader should only accept IDs. |
+| Q&A agent + PitcherContext | Creating a new context assembly function for Q&A instead of reusing `assemble_pitcher_context()` | Reuse the existing function. If section filtering is needed, add it as a post-processing step: `ctx = assemble_pitcher_context(data); filtered_prompt = ctx.to_prompt_sections(["fastball", "arsenal"])` |
+| Q&A CLI + report CLI | Adding Q&A subcommand by modifying `cli.py:parse_args()` with argparse subparsers | Create `ask_cli.py` with its own `parse_args()`. If subcommands are desired, create a new top-level `main_cli.py` that dispatches to both. |
+| Q&A prompt + existing anti-recitation patterns | Writing the Q&A system prompt from scratch, losing the editorial voice patterns from `_EDITOR_PROMPT` and `_SYNTHESIZER_PROMPT` | Extract the reusable anti-recitation principles into a shared prompt fragment. Both the report pipeline and Q&A agent import from the same source. |
+| Fuzzy matching library + existing dependencies | Adding `rapidfuzz` to `pyproject.toml` when a simpler approach (polars string operations + Levenshtein from stdlib) might suffice | Evaluate whether polars' built-in string similarity functions or `difflib.SequenceMatcher` (stdlib) are sufficient for 1,651 names before adding a dependency. For 1,651 entries, even O(n) brute-force is instant. |
+| pydantic-ai tool registration + existing agents | Registering data-lookup tools on the Q&A agent that overlap with the report pipeline's agent capabilities | Q&A agent should be a standalone Agent instance, not sharing tools with report agents. Different use case, different tool set (or no tools). |
 
 ## Performance Traps
 
 | Trap | Symptoms | Prevention | When It Breaks |
 |------|----------|------------|----------------|
-| Unbounded iteration count | Report generation takes 30+ seconds, token costs spike, user abandons CLI | Hard cap of 2-3 iterations; budget-aware early termination | Any iteration count >3 |
-| Full re-check on every iteration | Anchor re-checks entire capsule instead of just the flagged issues, finds new issues each time | Targeted re-check: only verify the specific warnings from the previous iteration | When the capsule is long (>500 words) and the anchor is strict |
-| Growing revision context | Editor prompt exceeds 5K tokens by iteration 3, attention diluted | Fixed-size revision prompt: synthesis + current capsule + current warnings only | By iteration 2-3 if revision history is accumulated |
-| Same expensive model for all loop calls | 2-6 extra calls at full model price | Use a cheaper model for anchor (Haiku/gpt-5.4-mini), keep expensive model for editor only | Immediately -- anchor does not need creative writing ability |
+| Loading full parquet for every question | 2-3 second latency before the LLM even starts; 145K rows read for a single name lookup | Cache the name-to-ID index in memory (1,651 entries, <100KB). Only load full pitcher data after ID resolution. | Immediately -- perceptible on first use |
+| Re-loading pitcher data for each question in a session | If the user asks multiple questions about the same pitcher, `load_pitcher_data()` re-reads parquet + 8 CSVs each time | Cache `PitcherData` by pitcher_id. A simple dict cache is sufficient for a CLI session. | After 2-3 questions about the same pitcher |
+| Full PitcherContext assembly for every question | `assemble_pitcher_context()` calls 10 engine functions, each doing polars computations. Unnecessary if the context was already assembled for the same pitcher+window. | Cache the assembled PitcherContext alongside PitcherData. | After 2-3 questions about the same pitcher |
+| Eager name index building on every CLI invocation | Building the full name index from parquet at startup adds 2-3 seconds even when the user already knows the pitcher ID | Build name index lazily on first name-based query, or build it once and cache to a lightweight file (JSON or pickle). | On every invocation if the user uses `--pitcher` ID directly |
+| Unicode normalization on every fuzzy match | Normalizing 1,651 names per query is O(n) string operations | Pre-normalize names when building the index. Normalize the query once. | Never a real bottleneck at this scale, but wasteful |
 
 ## UX Pitfalls
 
 | Pitfall | User Impact | Better Approach |
 |---------|-------------|-----------------|
-| Silent reflection loop with no progress indicator | User thinks the CLI hung after the synthesis phase completes | Print iteration progress to stderr: "Anchor check: 2 warnings found. Revising (pass 2/3)..." |
-| Showing the first draft then replacing it | User starts reading, then text changes. Disorienting and erodes trust | Either stream only the final version, or clearly mark: "--- DRAFT (revision in progress) ---" |
-| Not surfacing surviving warnings | User does not know the capsule has unresolved issues | Print surviving warnings to stderr after the capsule, as the current code already does. Add iteration count: "After 2 revision passes, 1 warning remains:" |
-| Always running the loop even when the first draft is CLEAN | Unnecessary latency for reports that do not need revision | Skip the loop entirely when the first anchor check returns CLEAN (which should be 50-70% of the time if the editor prompt is good) |
-| No way to disable the loop | Power users who trust the first draft and want speed cannot opt out | Add `--no-refine` flag, or make `--refine` opt-in until the loop is proven reliable |
+| Silently picking the wrong pitcher from ambiguous name | User gets a confident, detailed answer about the wrong person. Trust destroyed. | Show disambiguation prompt: "Found 12 pitchers matching 'Rodriguez'. Did you mean: [list with team codes]?" |
+| No indication of data scope | User asks about 2025 data or a pitcher not in the dataset; gets a vague "I don't have that information" | State scope upfront: "I have 2026 Statcast data for [pitcher name]. Ask me about their velocity, pitch mix, Pitching+ metrics, splits, or workload." |
+| Error messages that do not suggest next steps | "Pitcher not found" with no guidance | "No pitcher found matching 'Rodriguex'. Did you mean 'Rodriguez'? (12 pitchers). Try a more specific name like 'Grayson Rodriguez'." |
+| Q&A output format inconsistent with report output | Reports are polished prose; Q&A responses are terse one-liners or data dumps | Q&A responses should match the report's analytical voice. Not as long, but same quality of insight. |
+| No way to see what data the agent is working with | User cannot verify whether the agent has the right pitcher or the right data | After name resolution, print: "Analyzing [pitcher name] (ID: [id], [team], [throws]HP) -- [N] appearances in [window] day window" to stderr, matching the existing verbose output. |
+| Asking for a pitcher with no recent data | User asks about a pitcher who was DFA'd or injured and has no appearances in the lookback window | Handle gracefully: "Cam Booser has no appearances in the last 30 days. Try a longer window with --window 90." |
 
 ## "Looks Done But Isn't" Checklist
 
-- [ ] **Iteration cap:** Implemented and tested -- verify the loop actually terminates when max is reached, including when the anchor keeps finding new issues
-- [ ] **Oscillation detection:** Verify the loop detects when warning A disappears in pass 2 but reappears in pass 3 -- this is the most common convergence failure
-- [ ] **Voice preservation:** Generate 10 reports with and without the loop. Read them aloud. The loop versions should not sound noticeably more hedged or generic
-- [ ] **Downstream quality:** Hook writer and fantasy analyst output quality has been compared pre- and post-loop. Regression means the loop is degrading capsule quality
-- [ ] **Streaming UX:** Run the CLI with the loop enabled and verify the user experience is not confusing (no replaced text, clear progress indicators)
-- [ ] **Cost tracking:** Measure total tokens per report with the loop. If average cost is >2x the non-loop cost, the anchor is too strict or the cap is too high
-- [ ] **Surviving warnings surfaced:** When the loop hits max iterations with unresolved warnings, those warnings appear in the CLI output so the user knows
-- [ ] **CLEAN short-circuit:** When the first anchor check returns CLEAN, the loop does not run (no wasted iterations). Verify this is the common case (>50%)
-- [ ] **Deterministic tests exist:** The loop logic has tests using mock anchor outputs that cover: CLEAN on first pass, convergence in 2 passes, oscillation, max iterations hit
-- [ ] **Anchor consistency:** The anchor flags the same known-bad capsule >80% of the time across 5 runs. If not, the anchor prompt needs calibration examples
+- [ ] **Name disambiguation:** Test with "Rodriguez", "Garcia", "Smith", "Anderson", "Martinez" -- all have 8+ collisions in the dataset. A single-match return is a bug for these names.
+- [ ] **Accent normalization:** Test with "Berrios", "Ramirez", "Perez", "Diaz", "Dominguez" -- all have accented variants in the dataset. Unaccented query must match accented entries.
+- [ ] **Suffix handling:** Test with "Edwards" (should match "Edwards Jr., Carl"), "Leiter" (should match "Leiter Jr., Mark"), "Lynch" (should match "Lynch IV, Daniel").
+- [ ] **Out-of-scope refusal:** Ask "Who is the best pitcher in baseball?", "How does he compare to [other pitcher]?", "Will he make the All-Star team?" -- all must be refused with a clear explanation, not answered.
+- [ ] **Grounding check:** Ask about a well-known pitcher and verify no answer content comes from LLM training data rather than the PitcherContext. Check that cited numbers appear in the context document.
+- [ ] **Existing tests pass:** All 200 existing tests pass with zero modifications to `data.py`, `engine.py`, `context.py`, or `report.py`.
+- [ ] **Report pipeline still works:** `uv run python -m pitcher_narratives.cli -p 592155 --provider openai` produces the same output as before Q&A was added.
+- [ ] **Empty result handling:** Ask about a pitcher with no appearances in the window. The system should explain the data gap, not crash or return a vague error.
+- [ ] **First-name-only queries:** "Grayson" should not match (too ambiguous). "Shohei" might match uniquely. Test both cases.
+- [ ] **Case insensitivity:** "grayson rodriguez", "GRAYSON RODRIGUEZ", "Grayson Rodriguez" should all produce the same result.
 
 ## Recovery Strategies
 
 | Pitfall | Recovery Cost | Recovery Steps |
 |---------|---------------|----------------|
-| Quality regression (Pitfall 1) | MEDIUM | Redesign revision prompt to be surgical, not wholesale; add voice preservation checks; may need to reduce iteration cap to 1 |
-| Anchor drift (Pitfall 2) | LOW | Add calibration examples to anchor prompt; add deterministic pre-checks; adjust severity by adding example-based few-shot |
-| Editor gaming (Pitfall 3) | MEDIUM | Rewrite revision prompt to reformat warnings as editorial suggestions, not error reports; allow editor to reject warnings |
-| Cost explosion (Pitfall 4) | LOW | Add budget-aware termination; use cheaper model for anchor; make loop opt-in |
-| Infinite loops (Pitfall 5) | LOW | Add iteration cap (if missing) or reduce it; add oscillation detection; add targeted re-check |
-| Context bloat (Pitfall 6) | LOW | Switch to fixed-size revision prompt (current capsule + current warnings only); drop revision history |
-| Downstream invalidation (Pitfall 7) | MEDIUM | Ensure sequential execution; re-test downstream phases; may need to adjust hook/fantasy prompts if capsule voice changed |
-| Non-deterministic testing (Pitfall 8) | LOW | Add mock anchor for loop logic tests; log real anchor outputs for calibration corpus |
+| Wrong pitcher from ambiguous name (Pitfall 1) | LOW | Add disambiguation flow; change resolver to return list instead of single result; add interactive selection |
+| Context bloat (Pitfall 2) | MEDIUM | Refactor `PitcherContext.to_prompt()` into section-level methods; add section selection to Q&A agent call; requires touching context.py |
+| Tool hallucination (Pitfall 3) | LOW-MEDIUM | Remove tools and switch to context-in-prompt pattern (if over-engineered); add ModelRetry validation (if keeping tools) |
+| Report pipeline regression (Pitfall 4) | HIGH | Diagnose which module change caused the regression; may require reverting and re-implementing with proper module boundaries |
+| Over-engineered NLU (Pitfall 5) | MEDIUM | Remove classification pipeline; replace with simple agent + full context; discard routing code |
+| Out-of-scope answers (Pitfall 6) | LOW | Add scope boundary examples to system prompt; add out-of-scope test cases |
+| Unicode/accent failures (Pitfall 7) | LOW | Add `unicodedata.normalize()` to the resolver; add suffix stripping; add test cases for all 71 accented names |
+| Number recitation (Pitfall 8) | LOW | Revise system prompt with anti-recitation patterns from report pipeline; add insight-quality test rubric |
 
 ## Pitfall-to-Phase Mapping
 
 | Pitfall | Prevention Phase | Verification |
 |---------|------------------|--------------|
-| Quality regression | Phase 1 (revision prompt design) | Read 10 loop-revised capsules vs 10 first-drafts. Voice quality should be indistinguishable. Hedging word count should not increase >20% |
-| Anchor drift | Phase 1 (anchor calibration) + Phase 2 (deterministic checks) | Run anchor 5x on 5 known-issue capsules. Flag rate should be >80% per known issue. Run on 5 clean capsules. False positive rate should be <20% |
-| Editor gaming | Phase 1 (revision prompt design) | Revised capsules should not mention all Key Signal bullets in synthesis order. Narrative thread from P1 to P2 should survive revision |
-| Cost explosion | Phase 1 (loop architecture) | Measure: average tokens per report pre-loop vs post-loop. Target <1.8x increase. Average iteration count should be <1.5 |
-| Infinite loops | Phase 1 (termination logic) | Unit tests with mock anchor: oscillation case terminates in 2 passes, not max. Convergence case terminates in 1 extra pass |
-| Context bloat | Phase 1 (revision prompt template) | Assert: revision prompt token count is constant across iterations (within 10%). Synthesis is >50% of total revision context |
-| Downstream invalidation | Phase 2 (integration testing) | Generate 10 reports end-to-end with loop. Hook quality and fantasy insight specificity compared to pre-loop baseline |
-| Non-deterministic testing | Phase 1 (test infrastructure) | Loop logic test suite passes 100% of the time (no flakes). Uses mock anchors, not real LLM calls |
+| Wrong pitcher from ambiguous name | Phase 1 (Name Resolution) | Test with all 168 duplicate-last-name families. Disambiguation flow works for "Rodriguez" (12 matches). Single-name pitchers resolve directly. |
+| Context bloat | Phase 2/3 (Context Filtering) | Measure token count per Q&A call. Narrow questions (fastball velocity) should use <50% of full context tokens. Broad questions can use full context. |
+| Tool hallucination | Phase 2 (Agent Architecture) | If tools are used: verify all tool calls use valid pitcher IDs from the dataset. If no-tool: verify no tool registration on Q&A agent. Run 10 diverse questions and check no training-data leakage. |
+| Report pipeline regression | All Phases | Full test suite (200 tests) passes after every phase. Manual smoke test of report pipeline after each phase. Zero modifications to existing shared modules. |
+| Over-engineered NLU | Phase 2 (Agent Design) | Q&A module has fewer lines of code than report module's `_SYNTHESIZER_PROMPT`. No intent-classification code. Agent has 0-2 tools max. |
+| Out-of-scope answers | Phase 2 (Prompt Design) + Phase 3 (Validation) | 5+ out-of-scope test questions all produce clear refusals. No comparative or predictive answers. |
+| Unicode/accent failures | Phase 1 (Name Resolution) | All 71 accented names matchable by ASCII equivalent. All 10 suffixed names matchable without suffix. Automated test coverage for both. |
+| Number recitation | Phase 2 (Prompt Design) | 5+ Q&A test responses checked against rubric: fewer than 3 raw numbers, opens with insight not data point, uses interpretive language. |
 
 ## Sources
 
-- Huang et al., "Large Language Models Cannot Self-Correct Reasoning Yet" (2024) -- demonstrates that LLM self-correction without external feedback degrades performance; self-refinement works best when the critic provides genuinely new information, not just re-evaluating the same context (MEDIUM confidence -- from training data, not verified against live source)
-- Madaan et al., "Self-Refine: Iterative Refinement with Self-Feedback" (NeurIPS 2023) -- shows self-refinement helps on some tasks but quality degrades after 2-3 iterations; diminishing returns are consistent across tasks (MEDIUM confidence -- from training data)
-- Shinn et al., "Reflexion: Language Agents with Verbal Reinforcement Learning" (NeurIPS 2023) -- demonstrates that verbal feedback loops can be effective but require careful design of the feedback mechanism to avoid reward hacking (MEDIUM confidence -- from training data)
-- Pan et al., "Automatically Correcting Large Language Models" (2024) -- survey of LLM self-correction methods; finds that intrinsic self-correction (same model checking itself) is unreliable compared to external verification (MEDIUM confidence -- from training data)
-- Direct codebase analysis of `/Users/matt/src/pitcher-narratives/src/pitcher_narratives/report.py` -- anchor prompt, editor prompt, pipeline orchestration (HIGH confidence -- read directly)
-- Practical engineering experience with iterative LLM pipelines -- iteration caps, oscillation, context management patterns (MEDIUM confidence -- from training data, widely observed in practice)
+- Direct dataset analysis: `statcast_2026.parquet` -- 1,651 unique pitchers, 168 duplicate last-name families, 71 accented names, 10 suffixed names (HIGH confidence -- read directly from data)
+- Direct codebase analysis: `data.py`, `engine.py`, `context.py`, `report.py`, `cli.py`, all 6 test files (HIGH confidence -- read directly)
+- [Arize AI: Why AI Agents Break: A Field Analysis of Production Failures](https://arize.com/blog/common-ai-agent-failures/) -- tool hallucination, context overload, instruction drift (MEDIUM confidence -- web source, 2025)
+- [DEV Community: Why LLM Agents Break When You Give Them Tools](https://dev.to/terzioglub/why-llm-agents-break-when-you-give-them-tools-and-what-to-do-about-it-f5) -- tool composition failures, prevention strategies (MEDIUM confidence -- web source)
+- [DEV Community: 3 Patterns That Fix LLM API Calling](https://dev.to/docat0209/3-patterns-that-fix-llm-api-calling-stop-getting-hallucinated-parameters-4n3b) -- hallucinated parameters, schema simplification (MEDIUM confidence -- web source, 2026)
+- [ArXiv: Are We Asking the Right Questions? On Ambiguity in NL Queries for Tabular Data Analysis](https://arxiv.org/html/2511.04584) -- question ambiguity taxonomy, five dimensions of procedural/data specification (MEDIUM confidence -- academic, 2025)
+- [ArXiv: Reducing Tool Hallucination via Reliability Alignment](https://arxiv.org/html/2412.04141v1) -- tool selection vs. tool usage hallucination taxonomy (MEDIUM confidence -- academic, 2024)
+- [Fuzzy Name Matching (Compass True North)](https://medium.com/compass-true-north/fuzzy-name-matching-dd7593754f19) -- practical fuzzy matching patterns, false positive risk (LOW confidence -- blog)
+- [RapidFuzz Documentation](https://rapidfuzz.github.io/RapidFuzz/) -- API reference, preprocessing defaults, scoring functions (HIGH confidence -- official docs)
+- [Pydantic AI Tools Documentation](https://ai.pydantic.dev/tools/) -- tool registration patterns, RunContext, ModelRetry (HIGH confidence -- official docs)
+- [Pydantic AI Function Tools](https://ai.pydantic.dev/tools/) -- best practices for tool definitions, docstring extraction (HIGH confidence -- official docs)
+- [Elastic: Context Engineering vs Prompt Engineering](https://www.elastic.co/search-labs/blog/context-engineering-vs-prompt-engineering) -- when to use tools vs direct prompting (MEDIUM confidence -- vendor blog, 2025)
 
 ---
-*Pitfalls research for: LLM self-refinement / editor-anchor reflection loop*
-*Researched: 2026-03-27*
+*Pitfalls research for: Interactive Q&A over structured baseball data (v1.4 milestone)*
+*Researched: 2026-03-30*

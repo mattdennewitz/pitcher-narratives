@@ -1,381 +1,363 @@
-# Technology Stack: v1.3 Editor-Anchor Reflection Loop
+# Stack Research: v1.4 Interactive Pitcher Q&A
 
 **Project:** Pitcher Narratives
-**Milestone:** v1.3 -- Editor-Anchor Reflection Loop
-**Researched:** 2026-03-27
-**Scope:** Stack additions/changes ONLY for the reflection loop. Existing stack (Python 3.14, polars, pydantic-ai 1.72, multi-provider) is validated and unchanged.
+**Milestone:** v1.4 -- Interactive Pitcher Q&A
+**Researched:** 2026-03-30
+**Confidence:** HIGH
+**Scope:** Stack additions/changes ONLY for interactive Q&A features. Existing validated stack (Python 3.14, polars 1.39, pydantic-ai 1.72, multi-provider LLM, argparse CLI) is unchanged.
 
 ## Executive Summary
 
-No new dependencies are needed. The reflection loop is implementable entirely with existing pydantic-ai 1.72 primitives: `Agent.run_sync()` with `output_type` for structured anchor results, a plain Python `for` loop for iteration control, and Pydantic `BaseModel` for the anchor check's structured output. The critical decision is to use a **plain while-loop orchestrator** instead of `pydantic-graph` -- the loop topology is too simple to justify graph infrastructure, and keeping it in plain Python makes convergence logic, token tracking, and max-iteration caps trivially debuggable.
+One new dependency: **rapidfuzz** for pitcher name fuzzy matching. Everything else -- tool-calling agents, dependency injection, question-aware context assembly, and the new CLI entry point -- is implementable with existing pydantic-ai 1.72 primitives and argparse. The Q&A agent uses `@agent.tool` decorators with `RunContext[QADeps]` to give the LLM access to the data pipeline through typed tools. No CLI framework migration is needed; a third `[project.scripts]` entry point using the existing argparse pattern is the right approach.
 
-**Confidence:** HIGH -- all patterns verified against installed pydantic-ai 1.72.0 source code.
-
-## Stack Changes for v1.3
+## Stack Changes for v1.4
 
 ### New Dependencies
 
-**None.** Zero new packages required.
+| Library | Version | Purpose | Why This One |
+|---------|---------|---------|--------------|
+| rapidfuzz | >=3.14 | Fuzzy string matching for pitcher name resolution | C++ backend makes it 20-100x faster than thefuzz. MIT license (vs thefuzz's GPL). Drop-in compatible API. `process.extractOne` does exactly what we need: match "degrom" to "deGrom, Jacob" from ~1,651 pitcher names. |
 
 ### What Changes
 
-| Component | Current (v1.2) | Change for v1.3 | Why |
+| Component | Current (v1.3) | Change for v1.4 | Why |
 |-----------|----------------|------------------|-----|
-| Anchor check agent | `output_type=str`, text-parsed | `output_type=AnchorResult` (Pydantic model) | Structured output enables the loop to programmatically inspect warnings without text parsing |
-| Editor agent call | Single `run_sync` | Called in a loop with `user_prompt` carrying feedback | Enables revision based on anchor feedback |
-| Orchestration | Linear 5-phase | Phases 2+2.5 become a while-loop, phases 1/3/4 unchanged | Only the editor-anchor pair iterates |
-| `ReportResult` model | `anchor_warnings: list[str]` | Add `anchor_iterations: int`, `anchor_history: list[AnchorResult]` | Track convergence for diagnostics |
+| Dependencies | polars, pydantic-ai, python-dotenv | Add `rapidfuzz>=3.14` | Name resolution needs fuzzy matching; no built-in alternative |
+| Agent pattern | `Agent(model, output_type=str)` with no tools | `Agent(model, deps_type=QADeps, tools=[...])` with tool-calling | Q&A agent needs to look up pitcher data on demand |
+| CLI entry points | 2 (`pitcher-narratives`, `pitcher-scout`) | Add 3rd: `pitcher-ask` | Separate entry point keeps Q&A concerns isolated |
+| Data pipeline | Called once by CLI, result passed to report | Exposed as tool functions the LLM can invoke | Agent decides which data to fetch based on the question |
 
 ### What Does NOT Change
 
-- Phase 1 (Synthesizer): Unchanged. Runs once, produces synthesis.
-- Phase 3 (Hook Writer): Unchanged. Receives final capsule after loop converges.
-- Phase 4 (Fantasy Analyst): Unchanged. Receives final capsule after loop converges.
-- Agent creation (`_make_agents`): The anchor agent switches `output_type` but keeps the same model/settings.
-- Streaming of Phase 2: First iteration streams as before. Revision iterations are silent (no streaming).
-- All existing CLI flags and arguments.
+- **data.py**: All loading functions reused as-is. No modifications.
+- **engine.py**: All compute functions reused as-is. No modifications.
+- **context.py**: `PitcherContext` and `assemble_pitcher_context` reused. No modifications.
+- **report.py**: Existing 5-phase pipeline untouched. Q&A is a separate agent.
+- **scout.py / curator.py / scout_cli.py**: Unrelated features. Unchanged.
+- **cli.py**: Existing narrative CLI unchanged. Q&A gets its own module.
+- **pyproject.toml structure**: Same hatch build, same src layout.
 
 ## Key Technical Decisions
 
-### 1. Plain While-Loop, Not pydantic-graph
+### 1. rapidfuzz for Name Resolution (Not thefuzz, Not Manual)
 
-**Decision:** Use a plain Python `while` loop for the editor-anchor iteration. Do NOT use `pydantic-graph`.
+**Decision:** Use `rapidfuzz.process.extractOne` with `fuzz.WRatio` scorer and `score_cutoff=70`.
 
-**Why:**
+**Why rapidfuzz over thefuzz:**
+- **Performance**: C++ implementation, 20-100x faster than thefuzz's pure Python. Not critical for 1,651 names (both are instant), but it means zero motivation to ever consider caching or optimization.
+- **License**: MIT vs thefuzz's GPL-2.0. MIT is compatible with any project license.
+- **API**: Near-identical to thefuzz (`from rapidfuzz import fuzz, process`), so all thefuzz examples and tutorials apply.
+- **Maintenance**: rapidfuzz is actively maintained (v3.14.3 released Nov 2025). thefuzz's last meaningful update was renaming from fuzzywuzzy.
 
-The installed `pydantic-graph` (via pydantic-ai 1.72) provides a directed graph framework (`BaseNode`, `End`, `Graph`) where nodes define edges via return type annotations and the framework manages traversal. It is designed for complex multi-step workflows with branching, parallel execution (beta `Fork`/`Join` nodes), and state persistence.
+**Why not manual substring matching:**
+- Pitcher names have edge cases: "deGrom" vs "degrom", "Musgrove" vs "Musgrave", "Yamamoto" (multiple pitchers with same last name). Fuzzy matching handles these naturally; substring matching requires special-casing.
 
-The editor-anchor loop has exactly one topology: `editor -> anchor -> (editor or done)`. This is a while-loop. Using pydantic-graph for this would require:
-- Defining 3+ dataclass nodes (`EditorNode`, `AnchorNode`, `DoneNode`)
-- An async `run` method on each (pydantic-graph nodes are async-only)
-- A `GraphRunContext` with custom state dataclass
-- Graph instantiation and `.run()` call
-
-All of this to express `while not clean and iterations < max: revise()`. The graph infrastructure adds ~80 lines of boilerplate with zero functional benefit for a linear loop.
-
-**When pydantic-graph WOULD make sense:** If the pipeline later needs branching (e.g., "if anchor finds directional errors, go back to synthesizer; if it finds missed signals, go back to editor"), the graph topology becomes non-trivial and pydantic-graph earns its keep. That is not v1.3's scope.
-
-**Confidence:** HIGH -- verified by reading `pydantic_graph.nodes.BaseNode`, `pydantic_graph.graph.Graph`, and the beta graph builder source. The API is well-designed but targets a different complexity tier.
-
-### 2. Structured Output for Anchor Check (AnchorResult Model)
-
-**Decision:** Change the anchor check agent from `output_type=str` to `output_type=AnchorResult` where `AnchorResult` is a Pydantic model.
-
-**Why:** The current anchor check returns free text that gets split on newlines and checked for "CLEAN". This works for one-shot checking but breaks down for a feedback loop because:
-1. The editor needs to know WHICH warnings to address, with typed categories
-2. The loop needs a boolean `is_clean` to decide whether to continue
-3. Convergence tracking needs structured warning counts per iteration
-
-**Pattern (verified against pydantic-ai 1.72.0 source):**
-
-```python
-from pydantic import BaseModel, Field
-from typing import Literal
-
-class AnchorWarning(BaseModel):
-    """A single warning from the anchor check."""
-    category: Literal[
-        "MISSED_SIGNAL",
-        "UNSUPPORTED",
-        "DIRECTION_ERROR",
-        "OVERSTATED",
-    ]
-    detail: str = Field(description="One-line description of the issue")
-
-class AnchorResult(BaseModel):
-    """Structured output from the anchor check agent."""
-    is_clean: bool = Field(
-        description="True if the capsule is faithful to the synthesis with no issues"
-    )
-    warnings: list[AnchorWarning] = Field(
-        default_factory=list,
-        description="List of specific issues found. Empty if is_clean is True."
-    )
-```
-
-The anchor check agent then uses `output_type=AnchorResult`:
-
-```python
-anchor_checker = Agent(
-    model,
-    output_type=AnchorResult,
-    system_prompt=_ANCHOR_PROMPT,
-    model_settings=settings,
-    defer_model_check=True,
-)
-```
-
-pydantic-ai 1.72 handles this via tool-based structured output: it presents the Pydantic schema as a tool the LLM must call, validates the response, and retries on validation failure (up to `retries` count, default 1). This is the standard pydantic-ai pattern -- the same mechanism used for any `BaseModel` output type.
-
-**Anchor prompt adjustment:** The `_ANCHOR_PROMPT` must be updated to instruct the LLM to respond using the structured format. The current prompt already defines the categories (`[MISSED SIGNAL]`, `[UNSUPPORTED]`, etc.) which map directly to the `AnchorWarning.category` enum.
-
-**Confidence:** HIGH -- verified `Agent.__init__` accepts `output_type: OutputSpec[OutputDataT]`, and `run_sync` returns `AgentRunResult[OutputDataT]` where `.output` is the validated Pydantic model instance.
-
-### 3. Editor Revision via Fresh Prompt (Not message_history)
-
-**Decision:** Each editor revision is a fresh `run_sync` call with the anchor feedback injected into the user prompt. Do NOT use `message_history` for multi-turn conversation.
-
-**Why:**
-
-pydantic-ai 1.72's `run_sync` accepts `message_history: Sequence[ModelMessage]` which enables multi-turn conversations by passing `result.all_messages()` from a previous run. This seems like a natural fit for "revise your previous output." However, for this use case, a fresh prompt is better:
-
-1. **Token efficiency:** The editor's system prompt is ~3000 tokens. The synthesis is ~2000 tokens. A conversation history approach accumulates ALL previous editor outputs and anchor feedback as message history, meaning iteration 3 sends iteration 1's full output + anchor feedback + iteration 2's full output + anchor feedback + new prompt. With a fresh prompt, each iteration sends only: system prompt + synthesis + previous capsule + anchor warnings. The delta is significant: ~5K constant per iteration (fresh) vs ~5K + 3K per previous iteration (history).
-
-2. **Prompt clarity:** A fresh prompt with explicit instructions ("Here is your previous capsule. Here are the anchor check's findings. Revise the capsule to address these specific issues.") is clearer to the LLM than a multi-turn conversation where the model must infer what changed between turns.
-
-3. **Streaming control:** The first editor pass streams to stdout. Revision passes are silent. With `message_history`, the agent treats it as one continuous conversation and streaming behavior becomes harder to control per-iteration.
+**Name format in data:** Statcast uses `"Last, First"` format (e.g., `"deGrom, Jacob"`, `"Abbott, Andrew"`). The fuzzy matcher should handle both "Jacob deGrom" and "degrom" as input, matching against the full `"Last, First"` string with `utils.default_process` for case/punctuation normalization.
 
 **Pattern:**
 
 ```python
-def _build_editor_revision_message(
-    ctx: PitcherContext,
-    synthesis: str,
-    previous_capsule: str,
-    anchor_result: AnchorResult,
-) -> _UserPrompt:
-    """Build editor prompt for a revision pass."""
-    warnings_text = "\n".join(
-        f"- [{w.category}] {w.detail}" for w in anchor_result.warnings
-    )
-    return [
-        f"## Pitcher\n{ctx.pitcher_name} ({ctx.throws}HP, {ctx.role})\n\n"
-        f"## Key Findings From Data Analysis\n{synthesis}",
-        CachePoint(),
-        f"## Your Previous Capsule\n{previous_capsule}\n\n"
-        f"## Anchor Check Findings\n{warnings_text}\n\n"
-        "Revise the capsule to address these specific issues. "
-        "Preserve the parts that were not flagged. "
-        "Do not over-correct -- fix only what the anchor check identified.",
-    ]
+from rapidfuzz import fuzz, process
+
+def resolve_pitcher_name(query: str, names: dict[str, int]) -> tuple[int, str, float]:
+    """Resolve a fuzzy pitcher name query to (pitcher_id, canonical_name, score).
+
+    Args:
+        query: User input like "degrom" or "Jacob deGrom".
+        names: Mapping of "Last, First" -> pitcher_id from statcast data.
+
+    Returns:
+        Tuple of (pitcher_id, matched_name, match_score).
+
+    Raises:
+        ValueError: If no match above score_cutoff, or if ambiguous (multiple high matches).
+    """
+    result = process.extractOne(query, names.keys(), scorer=fuzz.WRatio, score_cutoff=70)
+    if result is None:
+        raise ValueError(f"No pitcher found matching '{query}'")
+    matched_name, score, _ = result
+    return names[matched_name], matched_name, score
 ```
 
-The `CachePoint()` after the synthesis is key: the synthesis and pitcher context are identical across all iterations, so pydantic-ai's prompt caching (via Anthropic's cache control) avoids re-processing those tokens. Only the revision-specific content after the cache point changes per iteration.
+**Ambiguity handling:** When `process.extract` returns multiple results above the cutoff with scores within 5 points of each other (e.g., "Yamamoto" matching both "Yamamoto, Yoshinobu" and "Yamamoto, Jordan"), the tool should return all matches and let the user disambiguate. This is a UI concern for the CLI, not a library concern.
 
-**Confidence:** HIGH -- verified `CachePoint` import in existing codebase, and `message_history` parameter signature in `run_sync`.
-
-### 4. Convergence Tracking with Dataclasses
-
-**Decision:** Track iteration state with a simple dataclass, not a separate tracking library.
+**Building the name lookup table:** The statcast parquet already has `pitcher` (ID) and `player_name` columns. Build the lookup once at startup:
 
 ```python
-from dataclasses import dataclass, field
-from pydantic_ai.usage import RunUsage
+def build_pitcher_lookup(parquet_path: Path) -> dict[str, int]:
+    """Build name->ID lookup from statcast parquet."""
+    df = pl.read_parquet(parquet_path, columns=["pitcher", "player_name"])
+    unique = df.unique(subset=["pitcher", "player_name"])
+    return dict(zip(unique["player_name"].to_list(), unique["pitcher"].to_list()))
+```
+
+This reads only 2 columns (fast, ~2MB vs full 145K-row parquet), and produces ~1,651 entries. Negligible memory.
+
+**Confidence:** HIGH -- rapidfuzz API verified against official docs and PyPI. Name format verified against actual statcast data.
+
+### 2. pydantic-ai Tool-Calling Agent for Q&A (Using Existing Primitives)
+
+**Decision:** Create a single `Agent[QADeps, str]` with `@agent.tool` decorators that expose data pipeline functions. The LLM decides which tools to call based on the user's question.
+
+**Why tool-calling over pre-assembled context:**
+- The existing narrative pipeline always assembles the FULL PitcherContext (~544 tokens) because the report needs everything. For Q&A, the user might ask "what's his fastball velocity?" which only needs the fastball summary -- sending the full context wastes tokens and dilutes the answer.
+- Tool-calling lets the LLM request only the data it needs. The tools are thin wrappers around existing `engine.py` compute functions.
+
+**Pattern (verified against installed pydantic-ai 1.72.0 source):**
+
+```python
+from dataclasses import dataclass
+from pydantic_ai import Agent, RunContext
+from pitcher_narratives.data import PitcherData
 
 @dataclass
-class ReflectionTrace:
-    """Tracks the editor-anchor reflection loop state."""
-    iterations: int = 0
-    max_iterations: int = 3
-    history: list[AnchorResult] = field(default_factory=list)
-    usage_per_iteration: list[RunUsage] = field(default_factory=list)
+class QADeps:
+    """Dependencies for the Q&A agent."""
+    pitcher_data: PitcherData
+    pitcher_name: str
 
-    @property
-    def converged(self) -> bool:
-        """True if the last anchor check was clean."""
-        return bool(self.history) and self.history[-1].is_clean
+qa_agent = Agent(
+    'openai:gpt-5.4-mini',
+    deps_type=QADeps,
+    output_type=str,
+    instructions="You are a baseball analyst answering questions about pitchers...",
+    defer_model_check=True,
+)
 
-    @property
-    def exhausted(self) -> bool:
-        """True if max iterations reached without convergence."""
-        return self.iterations >= self.max_iterations and not self.converged
+@qa_agent.tool
+def get_fastball_summary(ctx: RunContext[QADeps]) -> str:
+    """Get the pitcher's primary fastball quality metrics.
 
-    @property
-    def surviving_warnings(self) -> list[AnchorWarning]:
-        """Warnings from the final iteration (if not converged)."""
-        if self.converged or not self.history:
-            return []
-        return self.history[-1].warnings
+    Returns velocity, Pitching+ triad (P+, S+, L+), movement deltas,
+    and velocity trend vs season baseline.
+    """
+    from pitcher_narratives.engine import compute_fastball_summary
+    fb = compute_fastball_summary(ctx.deps.pitcher_data)
+    if fb is None:
+        return "No standard fastball identified for this pitcher."
+    # Return structured text the LLM can reason about
+    return (
+        f"Primary fastball: {fb.pitch_name} ({fb.pitch_type})\n"
+        f"Season velo: {fb.season_velo:.1f} / Recent: {fb.window_velo:.1f} ({fb.velo_delta})\n"
+        f"P+: {fb.season_p_plus:.0f} season / {fb.window_p_plus or '--'} recent ({fb.p_plus_delta})\n"
+        f"S+: {fb.season_s_plus:.0f} season / {fb.window_s_plus or '--'} recent ({fb.s_plus_delta})\n"
+        f"L+: {fb.season_l_plus:.0f} season / {fb.window_l_plus or '--'} recent ({fb.l_plus_delta})"
+    )
 
-    @property
-    def total_usage(self) -> RunUsage:
-        """Aggregate token usage across all iterations."""
-        total = RunUsage()
-        for u in self.usage_per_iteration:
-            total.incr(u)
-        return total
+@qa_agent.tool
+def get_arsenal_summary(ctx: RunContext[QADeps]) -> str:
+    """Get the pitcher's full arsenal with usage rates, P+/S+/L+ scores, and deltas."""
+    from pitcher_narratives.engine import compute_arsenal_summary
+    arsenal = compute_arsenal_summary(ctx.deps.pitcher_data)
+    # Format as text table
+    ...
+
+@qa_agent.tool
+def get_execution_metrics(ctx: RunContext[QADeps]) -> str:
+    """Get per-pitch execution metrics: CSW%, zone rate, chase rate, xWhiff, xSwing."""
+    ...
+
+@qa_agent.tool
+def get_workload_context(ctx: RunContext[QADeps]) -> str:
+    """Get recent appearances, pitch counts, rest days, and workload flags."""
+    ...
+
+# ... additional tools wrapping engine.py compute functions
 ```
 
-pydantic-ai's `RunUsage` class (verified in installed source) has an `incr()` method that accumulates token counts, making it trivial to sum usage across iterations. Each `AgentRunResult` exposes `.usage()` returning a `RunUsage` with `input_tokens`, `output_tokens`, `cache_read_tokens`, `cache_write_tokens`, and `requests` fields.
+**Key API details (verified in installed source):**
+- `@agent.tool`: First parameter must be `RunContext[QADeps]`. Remaining parameters become the tool schema sent to the LLM. For data lookup tools, there are no additional parameters -- the pitcher is implicit in `ctx.deps`.
+- `@agent.tool_plain`: For tools that do not need `RunContext`. Not needed here since all tools access `ctx.deps.pitcher_data`.
+- `ModelRetry`: Import from `pydantic_ai.exceptions`. Raise in a tool to tell the LLM to retry with different arguments. Useful if a tool receives invalid input.
+- Tool return type: Must be JSON-serializable. Returning `str` is simplest and gives the LLM natural-language data it can directly quote.
+- Docstrings are critical: pydantic-ai extracts the tool description from the docstring and sends it to the LLM as the tool's description. The LLM uses this to decide which tool to call.
 
-**Confidence:** HIGH -- `RunUsage.incr()` verified in installed pydantic_ai/usage.py.
-
-### 5. Max Iteration Cap: Default 3
-
-**Decision:** Default `max_iterations=3` for the reflection loop.
-
-**Why:**
-- Iteration 1: Initial anchor check. Most capsules pass or have 1-2 issues.
-- Iteration 2: Editor revises. Fixes most issues.
-- Iteration 3: Safety net for stubborn issues or regressions from revision.
-- Beyond 3: Diminishing returns. If the editor cannot fix an issue in 3 passes, it likely cannot fix it at all -- the issue may be a genuine tension between synthesis data and narrative framing.
-
-At ~5K input tokens + ~2K output tokens per editor+anchor iteration pair, 3 iterations adds at most ~21K tokens (~$0.06 at Sonnet 4.6 pricing) on top of the base pipeline cost. This is well within acceptable bounds.
-
-**Configurable:** Expose as a CLI flag (`--max-revisions N`) for power users. Default to 3.
-
-**Confidence:** MEDIUM -- the cap of 3 is a design judgment, not empirically validated. May need tuning after observing real loop behavior. Start at 3, instrument to measure.
-
-## Orchestration Pattern (Complete)
-
-The full reflection loop in the context of the existing pipeline:
+**Running the agent:**
 
 ```python
-def generate_report_streaming(
-    ctx: PitcherContext,
-    *,
-    provider: str = "openai",
-    thinking: ThinkingEffort = "high",
-    max_revisions: int = 3,
-    _model_override: Any = None,
-) -> ReportResult:
-    """Generate report with editor-anchor reflection loop."""
-    synthesizer, editor, hook_writer, fantasy_analyst, anchor_checker = _make_agents(provider, thinking)
+result = qa_agent.run_sync(
+    user_prompt=question,
+    deps=QADeps(pitcher_data=data, pitcher_name=name),
+)
+print(result.output)
+```
 
-    # Phase 1: Synthesis (unchanged)
-    synthesis = synthesizer.run_sync(
-        user_prompt=_build_synthesizer_message(ctx),
-        model=_model_override,
-    ).output
+**Confidence:** HIGH -- `Agent.__init__` signature, `@agent.tool` decorator, `RunContext` dataclass, and `run_sync` method all verified in installed pydantic-ai 1.72.0 source at `.venv/lib/python3.14/site-packages/pydantic_ai/`.
 
-    # Phase 2: Initial editor pass (streamed)
-    stream = editor.run_stream_sync(
-        user_prompt=_build_editor_message(ctx, synthesis),
-        model=_model_override,
+### 3. `instructions` Over `system_prompt` for the Q&A Agent
+
+**Decision:** Use the `instructions` parameter (not `system_prompt`) for the Q&A agent's system-level guidance.
+
+**Why:**
+- `instructions` are excluded from `message_history` when continuing conversations. This matters if we later add multi-turn Q&A: the instructions don't accumulate as duplicate system messages across turns.
+- `system_prompt` is retained in message history. For a single-shot Q&A agent (v1.4 scope), both work identically. But `instructions` is future-proof for multi-turn without any code change.
+- The existing report pipeline uses `system_prompt` because those agents never do multi-turn. For Q&A, the usage pattern is different.
+
+**Confidence:** HIGH -- behavior difference verified in pydantic-ai docs: "Instructions: Exclude previous agent instructions when `message_history` is provided; reevaluated per run."
+
+### 4. Separate CLI Module (Not Subcommand)
+
+**Decision:** Create `ask_cli.py` as a new module with its own `main()` and a new `[project.scripts]` entry point `pitcher-ask`. Do NOT convert existing CLIs to subcommands.
+
+**Why:**
+- The existing project has two separate entry points (`pitcher-narratives` and `pitcher-scout`) as independent argparse scripts. Adding a third follows the established pattern.
+- Converting to subcommands (e.g., `pitcher report`, `pitcher scout`, `pitcher ask`) would be a breaking change to the existing CLI interfaces that users may have scripted.
+- argparse is adequate. The Q&A CLI needs: pitcher name (positional), question (positional or `-q`), provider flag, thinking flag. That's 4 arguments. No framework migration needed.
+
+**Pattern:**
+
+```python
+# pyproject.toml addition
+[project.scripts]
+pitcher-narratives = "pitcher_narratives.cli:main"
+pitcher-scout = "pitcher_narratives.scout_cli:main"
+pitcher-ask = "pitcher_narratives.ask_cli:main"
+```
+
+```python
+# ask_cli.py
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Ask questions about a pitcher's recent performance",
     )
-    capsule = _collect_streamed_output(stream)  # prints to stdout
+    parser.add_argument("pitcher", help="Pitcher name (fuzzy matched)")
+    parser.add_argument("question", help="Question to ask about the pitcher")
+    parser.add_argument("--provider", choices=["openai", "claude", "gemini"], default="openai")
+    parser.add_argument("--thinking", choices=["minimal", "low", "medium", "high", "xhigh"], default="medium")
+    parser.add_argument("-w", "--window", type=int, default=30, help="Lookback window in days")
+    return parser.parse_args()
+```
 
-    # Phase 2.5: Reflection loop
-    trace = ReflectionTrace(max_iterations=max_revisions)
-    for _ in range(max_revisions):
-        # Anchor check
-        anchor_result = anchor_checker.run_sync(
-            user_prompt=_build_anchor_message(synthesis, capsule),
-            model=_model_override,
-        )
-        trace.iterations += 1
-        trace.history.append(anchor_result.output)
-        trace.usage_per_iteration.append(anchor_result.usage())
+**Confidence:** HIGH -- follows established project patterns exactly.
 
-        if anchor_result.output.is_clean:
-            break
+### 5. Tool Return Format: Structured Text (Not Pydantic Models)
 
-        # Editor revision (silent -- no streaming)
-        revision_result = editor.run_sync(
-            user_prompt=_build_editor_revision_message(
-                ctx, synthesis, capsule, anchor_result.output,
-            ),
-            model=_model_override,
-        )
-        capsule = revision_result.output
-        trace.usage_per_iteration.append(revision_result.usage())
+**Decision:** Q&A tools return `str` (formatted text), not Pydantic model instances or dicts.
 
-    # Phases 3 + 4: Downstream (unchanged, use final capsule)
-    hook = hook_writer.run_sync(...).output
-    fantasy = fantasy_analyst.run_sync(...).output
+**Why:**
+- The LLM needs to read the tool output and synthesize an answer. A formatted text string ("P+: 112 season / 118 recent (Rising)") is directly quotable and readable. A JSON dict (`{"season_p_plus": 112, "window_p_plus": 118, "delta": "Rising"}`) requires the LLM to reconstruct meaning from keys.
+- The existing `PitcherContext.to_prompt()` already proves that structured text is the right format for LLM consumption in this project.
+- Returning str avoids coupling tool output format to any specific schema. If engine.py evolves, the tool just updates its format string.
 
-    return ReportResult(
-        narrative=capsule,
-        social_hook=hook,
-        fantasy_insights=fantasy,
-        anchor_warnings=[
-            f"[{w.category}] {w.detail}"
-            for w in trace.surviving_warnings
-        ],
-        anchor_iterations=trace.iterations,
-    )
+**When to use structured returns:** If a future feature needs the LLM to pass tool output to another tool (chained tool calls), structured output would be better. For v1.4's single-agent Q&A, text is simpler and more effective.
+
+**Confidence:** HIGH -- validated by existing project's `to_prompt()` pattern.
+
+### 6. No Async Conversion Needed
+
+**Decision:** Continue using `run_sync` for the Q&A agent. Do not convert to async.
+
+**Why:**
+- The existing pipeline uses `run_sync` and `run_stream_sync` throughout. The Q&A agent is a CLI tool that blocks on a single LLM call. Async provides zero benefit here.
+- pydantic-ai's `run_sync` internally handles the async-to-sync bridge. No manual `asyncio.run()` needed.
+- The tool functions access polars DataFrames synchronously. Making them async would require wrapping every polars call in `asyncio.to_thread()` for no benefit.
+
+**Confidence:** HIGH -- consistent with existing project architecture.
+
+## Installation
+
+```bash
+# Add rapidfuzz to project dependencies
+uv add "rapidfuzz>=3.14"
+```
+
+In `pyproject.toml`:
+
+```toml
+dependencies = [
+    "polars>=1.39.3",
+    "pydantic-ai>=1.72.0",
+    "pydantic-ai-slim[google]>=1.72.0",
+    "python-dotenv>=1.2.2",
+    "rapidfuzz>=3.14",  # NEW for v1.4
+]
+
+[project.scripts]
+pitcher-narratives = "pitcher_narratives.cli:main"
+pitcher-scout = "pitcher_narratives.scout_cli:main"
+pitcher-ask = "pitcher_narratives.ask_cli:main"  # NEW for v1.4
 ```
 
 ## Alternatives Considered
 
 | Decision | Recommended | Alternative | Why Not |
 |----------|-------------|-------------|---------|
-| Loop orchestration | Plain while-loop | pydantic-graph `Graph` | Graph adds ~80 lines of async boilerplate for a topology that is literally `while not done`. Overkill. Consider if branching is added later. |
-| Loop orchestration | Plain while-loop | pydantic-graph beta `GraphBuilder` | Same problem. Beta API adds step/decision/fork/join abstractions designed for parallel execution and complex branching. Not this use case. |
-| Editor feedback | Fresh prompt per iteration | `message_history` conversation | Token accumulation across turns is wasteful. Fresh prompt with explicit revision instructions is clearer and cheaper. CachePoint reuse makes the constant part free. |
-| Anchor output | `output_type=AnchorResult` (Pydantic) | `output_type=str` with text parsing | Text parsing is fragile. Structured output enables programmatic loop control and typed warning categories. |
-| Anchor output | `output_type=AnchorResult` (Pydantic) | `output_type=str` with a second LLM call to parse | Two LLM calls for one check is wasteful. Structured output via pydantic-ai does it in one call with validation. |
-| Iteration tracking | Dataclass with RunUsage | Logfire/OpenTelemetry spans | Logfire is available transitively but adds observability complexity for a CLI tool. A dataclass is sufficient for v1.3. Instrument with OTel later if needed. |
+| Fuzzy matching | rapidfuzz | thefuzz (fuzzywuzzy) | GPL license, pure Python (slower), less actively maintained. Identical API -- easy to swap if needed. |
+| Fuzzy matching | rapidfuzz | polars string contains / regex | No fuzzy tolerance. "degrom" won't match "deGrom, Jacob" without exact substring logic. Breaks on typos. |
+| Fuzzy matching | rapidfuzz | Manual Levenshtein | Reinventing the wheel. rapidfuzz's `process.extractOne` handles scoring, cutoff, preprocessing, and ranking in one call. |
+| Agent pattern | Tool-calling agent | Pre-assembled full context | Wastes tokens on irrelevant data. A "what's his fastball velo?" question doesn't need platoon splits, TTO analysis, or first-pitch tendencies. |
+| Agent pattern | Tool-calling agent | Multiple specialized agents | Over-engineering. One agent with 6-8 tools covers all question types. Multiple agents need routing logic and add latency. |
+| CLI structure | Separate entry point | Subcommand migration | Breaking change to existing CLI. Three small independent scripts is simpler than one dispatcher. |
+| CLI framework | argparse | typer / click | Already in stdlib, already used by project, 4 arguments don't justify a new dependency. typer IS in the dep tree (transitive via pydantic-ai) but using it for one CLI while others use argparse creates inconsistency. |
+| Tool returns | str | dict / Pydantic model | LLM reads text better than JSON for answer synthesis. Existing to_prompt() pattern validates this approach. |
 
 ## What NOT to Add
 
 | Avoid | Why | Risk if Added |
 |-------|-----|---------------|
-| New dependencies | Everything needed is already in pydantic-ai 1.72 | Dependency bloat, version conflicts, maintenance burden |
-| pydantic-graph for the loop | Over-engineering a while-loop. Async boilerplate for a sync CLI. | 80+ lines of boilerplate, harder to debug, async/sync bridge complexity |
-| LangGraph / CrewAI / AutoGen | External multi-agent frameworks | Massive dependency trees, incompatible abstractions with existing pydantic-ai pipeline, learning curve for marginal benefit |
-| Custom retry/backoff library | pydantic-ai already handles LLM retries internally | Conflicting retry layers, doubled wait times |
-| Database/persistence for loop state | The loop runs in-memory in a single CLI invocation | Storage overhead for ephemeral state that lives <30 seconds |
-| Async conversion | The CLI is synchronous. `run_sync` is the correct API. | Would require async runtime setup (asyncio.run) throughout, for zero benefit in a CLI that blocks on LLM calls anyway |
-| Separate "revision" agent | Editor revises itself with feedback. No need for a third agent. | Extra model/prompt configuration, unclear responsibility boundary, more LLM calls |
+| LangChain / LlamaIndex | Massive dependency trees for a single-agent Q&A. pydantic-ai already does tool-calling natively. | 50+ transitive deps, version conflicts, abstraction layer mismatch |
+| Vector database (ChromaDB, Pinecone) | 1,651 pitchers with structured data. Fuzzy string matching on names is exact enough. Vector search is for unstructured document retrieval. | Complexity for zero benefit on structured tabular data |
+| Embedding model for name matching | Same reason. `process.extractOne` on 1,651 names runs in <1ms. Embedding similarity is slower and less interpretable. | API calls for name matching, latency, cost |
+| Conversation memory / persistence | v1.4 is single-shot Q&A. Multi-turn is out of scope. pydantic-ai's `message_history` can add this later with zero new deps. | Premature complexity |
+| typer / click / rich for CLI | argparse works. The Q&A CLI has 4-5 arguments. Rich terminal formatting is out of scope per PROJECT.md. | Inconsistency with existing CLIs, new dep for no benefit |
+| Async runtime | CLI blocks on one LLM call. `run_sync` is correct. | asyncio boilerplate for zero performance benefit |
+| Separate "router" agent | One agent can dispatch via tools. A router adds an extra LLM call to decide which agent to invoke. | Doubled latency, doubled cost, unnecessary for Q&A scope |
+| pydantic-graph for Q&A flow | Q&A is: resolve name -> load data -> call agent -> print. Linear. Not a graph. | Same objection as v1.3: boilerplate for a while-loop |
 
-## Integration with Existing Code
+## Version Compatibility
 
-### Files Modified
+| Package | Compatible With | Notes |
+|---------|-----------------|-------|
+| rapidfuzz >=3.14 | Python >=3.10 | Project requires 3.14+, well within range |
+| rapidfuzz >=3.14 | polars >=1.39 | No interaction (different domains) |
+| rapidfuzz >=3.14 | pydantic-ai >=1.72 | No interaction (different domains) |
+| pydantic-ai 1.72 | `@agent.tool` with `RunContext` | Verified in installed source -- full tool-calling support |
+| pydantic-ai 1.72 | `instructions` parameter | Verified -- excludes from message_history on subsequent runs |
+| pydantic-ai 1.72 | `ModelRetry` exception | Verified in `exceptions.py` -- tools can signal retry |
+
+## Integration Points
+
+### New Files
+
+| File | Purpose | Depends On |
+|------|---------|------------|
+| `ask_cli.py` | CLI entry point for `pitcher-ask` command | argparse, data.py, resolve.py, ask.py |
+| `resolve.py` | Pitcher name resolution (fuzzy matching) | rapidfuzz, data.py (for name lookup table) |
+| `ask.py` | Q&A agent definition with tools | pydantic-ai, data.py, engine.py |
+
+### Existing Files Modified
 
 | File | Change | Impact |
 |------|--------|--------|
-| `report.py` | Add `AnchorResult`/`AnchorWarning` models, `ReflectionTrace`, revision prompt builder, loop logic in `generate_report_streaming` | Primary change. ~100 lines added, ~20 lines modified. |
-| `report.py` | Anchor agent `output_type` changes from `str` to `AnchorResult` | Breaking change to `_make_agents` return types. Update type alias. |
-| `report.py` | `ReportResult` gets `anchor_iterations: int` field | Additive. Downstream consumers (cli.py) can optionally display it. |
-| `cli.py` | Add `--max-revisions` flag, display iteration count in output | ~10 lines. |
-| `tests/test_report.py` | Update tests for new anchor output type, add loop convergence tests | ~60 lines of new tests. |
+| `pyproject.toml` | Add `rapidfuzz>=3.14` dep, add `pitcher-ask` entry point | Minimal -- two lines |
 
-### Files NOT Modified
+### Existing Files NOT Modified
 
 | File | Why Unchanged |
 |------|---------------|
-| `data.py` | Data loading is unrelated to the reflection loop |
-| `engine.py` | Computation engine is unrelated |
-| `context.py` | Context assembly is unrelated |
-| `scout.py` | Scout scoring is unrelated |
-| `curator.py` | LLM curation is unrelated |
-| `pyproject.toml` | No new dependencies |
-
-### Testing Pattern
-
-The existing test suite uses `pydantic_ai.models.test.TestModel` for deterministic LLM testing. The reflection loop tests should follow the same pattern:
-
-```python
-from pydantic_ai.models.test import TestModel
-
-def test_reflection_loop_converges_on_clean():
-    """Loop exits after one iteration when anchor returns clean."""
-    # TestModel returns whatever output_type expects with default values
-    # For AnchorResult, that means is_clean=False, warnings=[]
-    # Override with custom_output_text or similar
-    ...
-
-def test_reflection_loop_caps_at_max_iterations():
-    """Loop stops after max_iterations even if not clean."""
-    ...
-
-def test_reflection_loop_passes_warnings_to_editor():
-    """Editor revision prompt contains anchor warnings."""
-    ...
-```
-
-**Confidence:** HIGH -- `TestModel` usage pattern verified in existing `tests/test_report.py`.
+| `data.py` | Functions reused as-is via tool wrappers. No changes to loading logic. |
+| `engine.py` | Compute functions called from tools. No interface changes. |
+| `context.py` | `assemble_pitcher_context` reusable if agent wants full context. No changes. |
+| `report.py` | Narrative pipeline is a separate feature. No interaction with Q&A. |
+| `cli.py` | Existing narrative CLI unchanged. |
+| `scout.py` / `curator.py` / `scout_cli.py` | Unrelated features. |
 
 ## Sources
 
-All findings verified against installed source code at:
-- `/Users/matt/src/pitcher-narratives/.venv/lib/python3.14/site-packages/pydantic_ai/` (v1.72.0)
-- `/Users/matt/src/pitcher-narratives/.venv/lib/python3.14/site-packages/pydantic_graph/` (v1.72.0)
-- `/Users/matt/src/pitcher-narratives/src/pitcher_narratives/report.py` (current pipeline)
-- `/Users/matt/src/pitcher-narratives/tests/test_report.py` (test patterns)
-
 | Source | What Verified | Confidence |
 |--------|---------------|------------|
-| `pydantic_ai/agent/abstract.py` | `run_sync` signature: `output_type`, `message_history`, `usage` parameters | HIGH |
-| `pydantic_ai/run.py` | `AgentRunResult.output`, `.usage()`, `.all_messages()` API | HIGH |
-| `pydantic_ai/usage.py` | `RunUsage.incr()` for accumulating token usage across iterations | HIGH |
-| `pydantic_ai/result.py` | `StreamedRunResultSync.all_messages()` for conversation history | HIGH |
-| `pydantic_graph/nodes.py` | `BaseNode`, `End`, `GraphRunContext` -- async-only, typed edges | HIGH |
-| `pydantic_graph/graph.py` | `Graph` class -- async `.run()`, state management | HIGH |
-| `pydantic_graph/beta/` | Fork/Join/Decision nodes -- parallel execution framework | HIGH |
-| `report.py` (current) | Existing 5-phase pipeline structure, `CachePoint` usage, `_make_agents` pattern | HIGH |
+| [RapidFuzz PyPI](https://pypi.org/project/RapidFuzz/) | v3.14.3 latest, MIT license, Python >=3.10 | HIGH |
+| [RapidFuzz GitHub](https://github.com/rapidfuzz/RapidFuzz) | API: `process.extractOne`, `fuzz.WRatio`, `score_cutoff` param | HIGH |
+| [pydantic-ai Tools docs](https://ai.pydantic.dev/tools/) | `@agent.tool`, `@agent.tool_plain`, docstring extraction, `ModelRetry` | HIGH |
+| [pydantic-ai Agent docs](https://ai.pydantic.dev/agent/) | `instructions` vs `system_prompt`, `run_sync`, `deps_type`, `message_history` | HIGH |
+| [pydantic-ai Dependencies docs](https://ai.pydantic.dev/dependencies/) | `RunContext[DepsType]`, dataclass deps pattern, runtime `deps=` passing | HIGH |
+| Installed source: `pydantic_ai/agent/__init__.py` | `tool()` decorator signature, `tool_plain()` signature | HIGH |
+| Installed source: `pydantic_ai/_run_context.py` | `RunContext` dataclass fields: `deps`, `model`, `usage`, `messages` | HIGH |
+| Installed source: `pydantic_ai/exceptions.py` | `ModelRetry` class definition and schema | HIGH |
+| Project source: `data.py` | `load_pitcher_data`, `PitcherData` dataclass, name format "Last, First" | HIGH |
+| Project source: `report.py` | Existing agent creation pattern, `_make_agents`, `CachePoint` usage | HIGH |
+| Project data: `statcast_2026.parquet` | 1,651 unique pitchers, "Last, First" name format confirmed | HIGH |
 
 ---
-*Stack research for: v1.3 Editor-Anchor Reflection Loop*
-*Researched: 2026-03-27*
+*Stack research for: v1.4 Interactive Pitcher Q&A*
+*Researched: 2026-03-30*
