@@ -181,7 +181,7 @@ Plans:
 **Plans**: 1 plan
 
 Plans:
-- [ ] 09-01-PLAN.md -- Analyst module with QADeps, PITCH_TYPE_MAP, tools, agent factory, and streaming function (TDD)
+- [x] 09-01-PLAN.md -- Analyst module with QADeps, PITCH_TYPE_MAP, tools, agent factory, and streaming function (TDD)
 
 ### Phase 10: Ask CLI
 **Goal**: Users have a complete command-line workflow for asking pitcher questions by name

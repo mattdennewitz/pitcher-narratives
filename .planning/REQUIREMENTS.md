@@ -14,12 +14,12 @@ Requirements for Interactive Pitcher Q&A milestone. Each maps to roadmap phases.
 
 ### Agent
 
-- [ ] **AGENT-01**: Tool-calling pydantic-ai agent answers questions using only provided pitcher data (no training-data hallucination)
-- [ ] **AGENT-02**: Agent has `get_pitcher_summary` tool returning full PitcherContext for broad questions
-- [ ] **AGENT-03**: Agent has `get_pitch_detail` tool returning focused arsenal/execution/platoon data for a specific pitch type
-- [ ] **AGENT-04**: Agent declines questions about data it doesn't have (predictions, fantasy advice, historical seasons, cross-pitcher comparisons)
-- [ ] **AGENT-05**: Pitch type extraction maps natural language ("knuckle curve", "slider") to Statcast codes (KC, SL)
-- [ ] **AGENT-06**: Agent streams answer to stdout as it generates
+- [x] **AGENT-01**: Tool-calling pydantic-ai agent answers questions using only provided pitcher data (no training-data hallucination)
+- [x] **AGENT-02**: Agent has `get_pitcher_summary` tool returning full PitcherContext for broad questions
+- [x] **AGENT-03**: Agent has `get_pitch_detail` tool returning focused arsenal/execution/platoon data for a specific pitch type
+- [x] **AGENT-04**: Agent declines questions about data it doesn't have (predictions, fantasy advice, historical seasons, cross-pitcher comparisons)
+- [x] **AGENT-05**: Pitch type extraction maps natural language ("knuckle curve", "slider") to Statcast codes (KC, SL)
+- [x] **AGENT-06**: Agent streams answer to stdout as it generates
 
 ### CLI
 
@@ -70,12 +70,12 @@ Which phases cover which requirements. Updated during roadmap creation.
 |-------------|-------|--------|
 | RESOLVE-01 | Phase 8 | Complete |
 | RESOLVE-02 | Phase 8 | Complete |
-| AGENT-01 | Phase 9 | Pending |
-| AGENT-02 | Phase 9 | Pending |
-| AGENT-03 | Phase 9 | Pending |
-| AGENT-04 | Phase 9 | Pending |
-| AGENT-05 | Phase 9 | Pending |
-| AGENT-06 | Phase 9 | Pending |
+| AGENT-01 | Phase 9 | Complete |
+| AGENT-02 | Phase 9 | Complete |
+| AGENT-03 | Phase 9 | Complete |
+| AGENT-04 | Phase 9 | Complete |
+| AGENT-05 | Phase 9 | Complete |
+| AGENT-06 | Phase 9 | Complete |
 | CLI-01 | Phase 10 | Pending |
 | CLI-02 | Phase 10 | Pending |
 
