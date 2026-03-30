@@ -3,7 +3,8 @@
 ## Milestones
 
 - v1.0 MVP - Phases 1-4 (shipped 2026-03-26)
-- v1.3 Editor-Anchor Reflection Loop - Phases 5-7 (in progress)
+- v1.3 Editor-Anchor Reflection Loop - Phases 5-7 (shipped 2026-03-28)
+- v1.4 Interactive Pitcher Q&A - Phases 8-10 (in progress)
 
 ## Phases
 
@@ -23,11 +24,20 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 </details>
 
-### v1.3 Editor-Anchor Reflection Loop
+<details>
+<summary>v1.3 Editor-Anchor Reflection Loop (Phases 5-7) - SHIPPED 2026-03-28</summary>
 
-- [ ] **Phase 5: Reflection Data Models** - AnchorResult/AnchorWarning Pydantic models, ReportResult metadata fields, revision prompt builder
-- [ ] **Phase 6: Loop Mechanics** - While-loop wiring anchor feedback to editor revisions with streaming control and downstream capsule handoff
+- [x] **Phase 5: Reflection Data Models** - AnchorResult/AnchorWarning Pydantic models, ReportResult metadata fields, revision prompt builder
+- [x] **Phase 6: Loop Mechanics** - While-loop wiring anchor feedback to editor revisions with streaming control and downstream capsule handoff
 - [x] **Phase 7: Revision UX & Validation** - Surface surviving warnings and iteration status to stderr, end-to-end loop validation
+
+</details>
+
+### v1.4 Interactive Pitcher Q&A
+
+- [ ] **Phase 8: Name Resolution** - Fuzzy pitcher name matching with disambiguation for ambiguous queries
+- [ ] **Phase 9: Analyst Agent & Tools** - Tool-calling pydantic-ai agent that answers pitcher questions grounded in data
+- [ ] **Phase 10: Ask CLI** - CLI entry point composing name resolution and analyst agent into `pitcher-ask`
 
 ## Phase Details
 
@@ -97,6 +107,9 @@ Plans:
 
 </details>
 
+<details>
+<summary>v1.3 Editor-Anchor Reflection Loop (Phases 5-7) - SHIPPED 2026-03-28</summary>
+
 ### Phase 5: Reflection Data Models
 **Goal**: The codebase has structured types for anchor check results, revision metadata, and a prompt builder that constructs targeted revision instructions from anchor warnings
 **Depends on**: Phase 4 (existing pipeline)
@@ -141,10 +154,44 @@ Plans:
 Plans:
 - [x] 07-01-PLAN.md -- Extract _print_revision_status helper, replace anchor block, unit + integration tests
 
+</details>
+
+### Phase 8: Name Resolution
+**Goal**: Users can identify pitchers by name instead of numeric ID, with clear feedback when names are ambiguous or unrecognized
+**Depends on**: Nothing (independent of other v1.4 phases; uses existing data files)
+**Requirements**: RESOLVE-01, RESOLVE-02
+**Success Criteria** (what must be TRUE):
+  1. Given an exact full name (e.g., "Dylan Cease"), the resolver returns the correct pitcher ID without prompting for disambiguation
+  2. Given a partial or last name that matches multiple pitchers (e.g., "Johnson"), the resolver returns a ranked list of candidates with names and IDs
+  3. Given a name that matches no pitcher in the dataset, the resolver returns a clear "not found" result (not a crash or empty response)
+**Plans**: TBD
+
+### Phase 9: Analyst Agent & Tools
+**Goal**: Users can ask natural-language questions about a pitcher and receive analytical answers grounded exclusively in the existing data pipeline
+**Depends on**: Phase 4 (existing PitcherContext pipeline; independent of Phase 8)
+**Requirements**: AGENT-01, AGENT-02, AGENT-03, AGENT-04, AGENT-05, AGENT-06
+**Success Criteria** (what must be TRUE):
+  1. Given a broad question (e.g., "How did Cease pitch last week?"), the agent calls `get_pitcher_summary` and produces an answer citing data from the full PitcherContext
+  2. Given a pitch-specific question (e.g., "Is his knuckle curve effective?"), the agent calls `get_pitch_detail` with the correct Statcast pitch code (KC) and produces an answer scoped to that pitch type
+  3. Given a question the data cannot answer (e.g., "Will he get a win tomorrow?" or "How does he compare to Corbin Burnes?"), the agent declines with an explanation of what data is available rather than hallucinating
+  4. The agent's answer streams token-by-token to stdout as it generates
+**Plans**: TBD
+
+### Phase 10: Ask CLI
+**Goal**: Users have a complete command-line workflow for asking pitcher questions by name
+**Depends on**: Phase 8, Phase 9
+**Requirements**: CLI-01, CLI-02
+**Success Criteria** (what must be TRUE):
+  1. Running `pitcher-ask "Why is Cease's knuckle curve bad?"` resolves "Cease" to a pitcher ID, runs the analyst agent, and streams an answer to stdout
+  2. Running `pitcher-ask --provider openai --thinking low "How is Yamamoto's fastball?"` uses the specified provider and thinking level
+  3. When the name is ambiguous, the CLI presents a disambiguation list and exits with a helpful message (no crash, no silent failure)
+  4. When no question is provided or the pitcher is not found, the CLI exits with a clear error message and nonzero exit code
+**Plans**: TBD
+
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 5 -> 6 -> 7
+Phases execute in numeric order: 8 -> 9 -> 10
 
 | Phase | Milestone | Plans Complete | Status | Completed |
 |-------|-----------|----------------|--------|-----------|
@@ -155,3 +202,6 @@ Phases execute in numeric order: 5 -> 6 -> 7
 | 5. Reflection Data Models | v1.3 | 2/2 | Complete | 2026-03-28 |
 | 6. Loop Mechanics | v1.3 | 1/1 | Complete | 2026-03-28 |
 | 7. Revision UX & Validation | v1.3 | 1/1 | Complete | 2026-03-28 |
+| 8. Name Resolution | v1.4 | 0/0 | Not started | - |
+| 9. Analyst Agent & Tools | v1.4 | 0/0 | Not started | - |
+| 10. Ask CLI | v1.4 | 0/0 | Not started | - |

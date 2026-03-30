@@ -2,11 +2,11 @@
 gsd_state_version: 1.0
 milestone: v1.4
 milestone_name: Interactive Pitcher Q&A
-status: Defining requirements
-stopped_at: null
+status: Ready to plan
+stopped_at: Roadmap created
 last_updated: "2026-03-30"
 progress:
-  total_phases: 0
+  total_phases: 3
   completed_phases: 0
   total_plans: 0
   completed_plans: 0
@@ -19,14 +19,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-30)
 
 **Core value:** Reports must read like a scout wrote them -- surfacing changes, adaptations, and execution trends rather than reciting numbers.
-**Current focus:** Milestone v1.4 — Interactive Pitcher Q&A
+**Current focus:** Phase 8 -- Name Resolution
 
 ## Current Position
 
-Phase: Not started (defining requirements)
-Plan: —
-Status: Defining requirements
-Last activity: 2026-03-30 — Milestone v1.4 started
+Phase: 8 of 10 (Name Resolution)
+Plan: 0 of TBD in current phase
+Status: Ready to plan
+Last activity: 2026-03-30 -- Roadmap created for v1.4
+
+Progress: [░░░░░░░░░░] 0%
 
 ## Performance Metrics
 
@@ -42,10 +44,10 @@ Last activity: 2026-03-30 — Milestone v1.4 started
 Decisions are logged in PROJECT.md Key Decisions table.
 Recent decisions affecting current work:
 
-- [v1.3]: Plain while-loop over pydantic-graph (async-only, overkill for 2-node cycle)
-- [v1.3]: Fresh prompt per revision (no message history -- avoids anchoring bias and token bloat)
-- [v1.3]: MAX_REVISIONS=2 default (3 total passes); configurable
-- [v1.3]: Streaming only on final capsule (revision passes run silently)
+- [v1.4]: Tool-calling agent pattern (AGENT-02/03 require tools, not pre-assembled context)
+- [v1.4]: rapidfuzz for name resolution (deterministic, fast, no LLM)
+- [v1.4]: Three new modules (resolver.py, analyst.py, ask_cli.py), zero modifications to existing code
+- [v1.4]: Phase 9 depends on existing PitcherContext (Phase 4), not on Phase 8's resolver
 
 ### Pending Todos
 
@@ -53,10 +55,10 @@ None yet.
 
 ### Blockers/Concerns
 
-None yet.
+- System prompt grounding strength needs iteration during Phase 9 (research flag: MEDIUM confidence on hallucination mitigation)
 
 ## Session Continuity
 
 Last session: 2026-03-30
-Stopped at: Milestone v1.4 started
+Stopped at: Roadmap created for v1.4
 Resume file: None
