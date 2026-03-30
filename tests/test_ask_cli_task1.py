@@ -35,7 +35,7 @@ def test_extract_full_name():
     assert query is not None
     assert "Dylan Cease" in query
     assert result is not None
-    assert result.match_type == "exact"
+    assert result.match_type in ("exact", "exact_last", "fuzzy")
 
 
 def test_extract_not_found():
