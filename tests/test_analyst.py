@@ -83,7 +83,7 @@ def test_get_pitcher_summary_returns_context(deps):
     mock_ctx = MagicMock()
     mock_ctx.deps = deps
 
-    result = get_pitcher_summary.function(mock_ctx)
+    result = get_pitcher_summary(mock_ctx)
     assert isinstance(result, str)
     assert deps.context.pitcher_name in result
     assert "Scouting Context" in result
@@ -101,7 +101,7 @@ def test_get_pitch_detail_filters_by_type(deps):
 
     # Use the first pitch in the arsenal
     first_pitch = deps.context.arsenal[0]
-    result = get_pitch_detail.function(mock_ctx, first_pitch.pitch_type)
+    result = get_pitch_detail(mock_ctx, first_pitch.pitch_type)
     assert isinstance(result, str)
     assert first_pitch.pitch_name in result
     assert "No data for" not in result
@@ -123,7 +123,7 @@ def test_get_pitch_detail_synonym_resolution(deps):
             break
 
     assert synonym_found is not None, "No synonym maps to an arsenal pitch"
-    result = get_pitch_detail.function(mock_ctx, synonym_found)
+    result = get_pitch_detail(mock_ctx, synonym_found)
     assert "No data for" not in result
 
 
@@ -134,7 +134,7 @@ def test_get_pitch_detail_missing_pitch(deps):
     mock_ctx = MagicMock()
     mock_ctx.deps = deps
 
-    result = get_pitch_detail.function(mock_ctx, "EP")
+    result = get_pitch_detail(mock_ctx, "EP")
     assert result.startswith("No data for")
     # Should list available pitches
     for a in deps.context.arsenal:
@@ -150,7 +150,7 @@ def test_get_pitch_detail_case_insensitive(deps):
 
     first_pitch = deps.context.arsenal[0]
     code_lower = first_pitch.pitch_type.lower()
-    result = get_pitch_detail.function(mock_ctx, code_lower)
+    result = get_pitch_detail(mock_ctx, code_lower)
     assert "No data for" not in result
     assert first_pitch.pitch_name in result
 
@@ -160,10 +160,12 @@ def test_get_pitch_detail_case_insensitive(deps):
 
 def test_agent_uses_instructions_not_system_prompt():
     """Agent uses instructions parameter, not system_prompt."""
-    # The module-level agent should have instructions set
-    assert _analyst_agent.instructions is not None
-    assert isinstance(_analyst_agent.instructions, str)
-    assert len(_analyst_agent.instructions) > 0
+    # pydantic-ai stores instructions in _instructions list, system_prompt in _system_prompts tuple
+    assert len(_analyst_agent._instructions) > 0
+    assert isinstance(_analyst_agent._instructions[0], str)
+    assert len(_analyst_agent._instructions[0]) > 0
+    # No system_prompt should be set
+    assert len(_analyst_agent._system_prompts) == 0
 
 
 def test_qadeps_has_required_fields():
