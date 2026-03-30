@@ -41,7 +41,16 @@ The report must read like a scout wrote it — surfacing *changes, adaptations, 
 
 ### Active
 
-(No active milestone — planning next)
+## Current Milestone: v1.4 Interactive Pitcher Q&A
+
+**Goal:** Let users ask natural language questions about pitchers and get analytical responses grounded in the existing data pipeline.
+
+**Target features:**
+- Pitcher name resolution (fuzzy name → pitcher ID from existing data)
+- Analyst agent with Q&A-focused system prompt (single-phase, grounded in data only)
+- New CLI entry point for asking questions
+- Question-aware context filtering (promote relevant pitch types / metrics)
+- Full reuse of existing data pipeline (data.py → engine.py → context.py)
 
 ### Out of Scope
 
@@ -119,4 +128,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-03-28 after v1.3 — Editor-Anchor Reflection Loop shipped*
+*Last updated: 2026-03-30 after v1.4 milestone started — Interactive Pitcher Q&A*

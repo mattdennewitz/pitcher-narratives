@@ -1,60 +1,39 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.3
-milestone_name: Editor-Anchor Reflection Loop
-status: v1.3 milestone complete
-stopped_at: Completed 07-01-PLAN.md
-last_updated: "2026-03-28T17:19:10.466Z"
+milestone: v1.4
+milestone_name: Interactive Pitcher Q&A
+status: Defining requirements
+stopped_at: null
+last_updated: "2026-03-30"
 progress:
-  total_phases: 7
-  completed_phases: 7
-  total_plans: 12
-  completed_plans: 12
+  total_phases: 0
+  completed_phases: 0
+  total_plans: 0
+  completed_plans: 0
 ---
 
 # Project State
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-03-27)
+See: .planning/PROJECT.md (updated 2026-03-30)
 
 **Core value:** Reports must read like a scout wrote them -- surfacing changes, adaptations, and execution trends rather than reciting numbers.
-**Current focus:** Phase 07 — Revision UX & Validation
+**Current focus:** Milestone v1.4 — Interactive Pitcher Q&A
 
 ## Current Position
 
-<<<<<<< Updated upstream
-Phase: 07
-Plan: Not started
-=======
-Phase: 07 (Revision UX & Validation) — EXECUTING
-Plan: 1 of 1
->>>>>>> Stashed changes
+Phase: Not started (defining requirements)
+Plan: —
+Status: Defining requirements
+Last activity: 2026-03-30 — Milestone v1.4 started
 
 ## Performance Metrics
 
-**Velocity:**
+**Velocity (from v1.3):**
 
-- Total plans completed: 0 (v1.3)
-- Average duration: --
-- Total execution time: 0 hours
-
-**By Phase:**
-
-| Phase | Plans | Total | Avg/Plan |
-|-------|-------|-------|----------|
-| - | - | - | - |
-
-**Recent Trend (from v1.0):**
-
-- Last 5 plans: 4min, 2min, 2min, 2min, 2min
+- Last 5 plans: 5min, 2min, 4min, 3min
 - Trend: Stable (~2-4 min/plan)
-
-*Updated after each plan completion*
-| Phase 05 P01 | 5min | 2 tasks | 3 files |
-| Phase 05 P02 | 2min | 1 tasks | 2 files |
-| Phase 06 P01 | 4min | 2 tasks | 2 files |
-| Phase 07 P01 | 3min | 2 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -63,17 +42,10 @@ Plan: 1 of 1
 Decisions are logged in PROJECT.md Key Decisions table.
 Recent decisions affecting current work:
 
-- [Research]: Plain while-loop over pydantic-graph (async-only, overkill for 2-node cycle)
-- [Research]: Fresh prompt per revision (no message history -- avoids anchoring bias and token bloat)
-- [Research]: MAX_REVISIONS=2 default (3 total passes); configurable
-- [Research]: Streaming only on final capsule (revision passes run silently)
-- [Research]: Fixed-size revision context (synthesis + current capsule + current warnings only)
-- [Phase 05]: Moved _make_agents and type aliases after model definitions to avoid NameError on forward-referenced AnchorResult
-- [Phase 05]: Used _AgentSet = tuple[_StrAgents, Agent[None, AnchorResult]] to separate str-output agents from structured anchor agent
-- [Phase 05]: Removed text OUTPUT FORMAT from anchor prompt; JSON schema via output_type replaces it
-- [Phase 05]: Revision prompt uses Data Analyst's Briefing / Current Capsule / Anchor Check Warnings structure with CachePoint for prefix caching
-- [Phase 06]: for/else loop over while loop -- Python for/else gives clean exhaustion handling with final anchor check in else clause
-- [Phase 07]: Used UNSUPPORTED category in multi-warning test instead of plan's NUMBER_DUMP (not in WarningCategory Literal)
+- [v1.3]: Plain while-loop over pydantic-graph (async-only, overkill for 2-node cycle)
+- [v1.3]: Fresh prompt per revision (no message history -- avoids anchoring bias and token bloat)
+- [v1.3]: MAX_REVISIONS=2 default (3 total passes); configurable
+- [v1.3]: Streaming only on final capsule (revision passes run silently)
 
 ### Pending Todos
 
@@ -81,15 +53,10 @@ None yet.
 
 ### Blockers/Concerns
 
-- [Research]: Revision prompt quality is the primary risk -- exact instruction tone must be tuned against real pitcher data after implementation
-- [Research]: Anchor calibration threshold unknown -- target 20-40% first-draft flag rate; if outside range, anchor prompt needs calibration examples
+None yet.
 
 ## Session Continuity
 
-<<<<<<< Updated upstream
-Last session: 2026-03-28T16:41:34Z
-=======
-Last session: 2026-03-28T16:42:34.933Z
->>>>>>> Stashed changes
-Stopped at: Completed 07-01-PLAN.md
+Last session: 2026-03-30
+Stopped at: Milestone v1.4 started
 Resume file: None
