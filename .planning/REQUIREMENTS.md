@@ -9,8 +9,8 @@ Requirements for Interactive Pitcher Q&A milestone. Each maps to roadmap phases.
 
 ### Name Resolution
 
-- [ ] **RESOLVE-01**: User can identify a pitcher by partial name, full name, or last name (fuzzy matching via rapidfuzz)
-- [ ] **RESOLVE-02**: User sees a disambiguation list when multiple pitchers match (e.g., "Johnson" -> candidates)
+- [x] **RESOLVE-01**: User can identify a pitcher by partial name, full name, or last name (fuzzy matching via rapidfuzz)
+- [x] **RESOLVE-02**: User sees a disambiguation list when multiple pitchers match (e.g., "Johnson" -> candidates)
 
 ### Agent
 
@@ -68,8 +68,8 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| RESOLVE-01 | Phase 8 | Pending |
-| RESOLVE-02 | Phase 8 | Pending |
+| RESOLVE-01 | Phase 8 | Complete |
+| RESOLVE-02 | Phase 8 | Complete |
 | AGENT-01 | Phase 9 | Pending |
 | AGENT-02 | Phase 9 | Pending |
 | AGENT-03 | Phase 9 | Pending |

@@ -167,7 +167,7 @@ Plans:
 **Plans**: 1 plan
 
 Plans:
-- [ ] 08-01-PLAN.md -- Resolver module with fuzzy matching and comprehensive tests
+- [x] 08-01-PLAN.md -- Resolver module with fuzzy matching and comprehensive tests
 
 ### Phase 9: Analyst Agent & Tools
 **Goal**: Users can ask natural-language questions about a pitcher and receive analytical answers grounded exclusively in the existing data pipeline
