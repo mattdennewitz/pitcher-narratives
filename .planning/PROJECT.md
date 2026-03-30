@@ -2,7 +2,7 @@
 
 ## What This Is
 
-A CLI tool that generates LLM-written scouting reports for MLB pitchers. Given a pitcher ID, it assembles pitch-level Statcast data and pre-computed Pitching+ aggregations, computes deltas and trend strings across a configurable lookback window, and runs a five-phase LLM pipeline (synthesizer → editor → anchor check → hook writer → fantasy analyst) with a self-correcting editor-anchor reflection loop to produce analytical narratives. Includes a standalone scout CLI that scores appearances for interestingness and optionally curates via LLM.
+A CLI tool that generates LLM-written scouting reports for MLB pitchers and answers natural-language questions about their performance. Given a pitcher ID or name, it assembles pitch-level Statcast data and pre-computed Pitching+ aggregations, computes deltas and trend strings across a configurable lookback window, and either runs a five-phase LLM pipeline (synthesizer → editor → anchor check → hook writer → fantasy analyst) with a self-correcting reflection loop for full reports, or routes questions to a tool-calling analyst agent for focused Q&A. Includes a standalone scout CLI that scores appearances for interestingness and optionally curates via LLM.
 
 ## Core Value
 
@@ -39,18 +39,16 @@ The report must read like a scout wrote it — surfacing *changes, adaptations, 
 - Downstream phases (hook, fantasy) receive final revised capsule — v1.3
 - ReportResult.revision_count tracks iteration history — v1.3
 
+- Fuzzy pitcher name resolution via rapidfuzz with 5-tier pipeline (exact, last-name, fuzzy-last, fuzzy-full, not-found) — v1.4
+- Tool-calling analyst agent with get_pitcher_summary and get_pitch_detail tools, grounded exclusively in provided data — v1.4
+- Static PITCH_TYPE_MAP covering all 12 Statcast codes + 26 common synonyms — v1.4
+- `pitcher-ask` CLI entry point composing name resolver and analyst agent into natural-language Q&A — v1.4
+- Disambiguation UX: numbered candidate list for ambiguous names — v1.4
+- Streaming Q&A output via run_stream_sync matching report pipeline UX — v1.4
+
 ### Active
 
-## Current Milestone: v1.4 Interactive Pitcher Q&A
-
-**Goal:** Let users ask natural language questions about pitchers and get analytical responses grounded in the existing data pipeline.
-
-**Target features:**
-- Pitcher name resolution (fuzzy name → pitcher ID from existing data)
-- Analyst agent with Q&A-focused system prompt (single-phase, grounded in data only)
-- New CLI entry point for asking questions
-- Question-aware context filtering (promote relevant pitch types / metrics)
-- Full reuse of existing data pipeline (data.py → engine.py → context.py)
+(No active milestone — planning next)
 
 ### Out of Scope
 
@@ -60,16 +58,19 @@ The report must read like a scout wrote it — surfacing *changes, adaptations, 
 - Real-time data ingestion — works against static parquet/CSV files
 - Team-level reports — individual pitcher reports only
 - Rich terminal formatting — plain text output for v1.0
+- Cross-pitcher comparison in Q&A — needs new data scanning layer, deferred to v1.5
+- Multi-turn conversational Q&A — session state management, different UX paradigm, deferred to v1.5
+- SQL generation from natural language — existing engine computes meaningful derived metrics
 
 ## Context
 
-### Current State (v1.3 shipped)
+### Current State (v1.4 shipped)
 
-**Modules:** data.py (loading), engine.py (computation), context.py (assembly), report.py (5-phase LLM pipeline + reflection loop + hallucination guard), scout.py (appearance scoring), curator.py (LLM curation), cli.py (narrative CLI + revision status UX), scout_cli.py (scout CLI).
+**Modules:** data.py (loading), engine.py (computation), context.py (assembly), report.py (5-phase LLM pipeline + reflection loop + hallucination guard), scout.py (appearance scoring), curator.py (LLM curation), cli.py (narrative CLI), scout_cli.py (scout CLI), resolver.py (fuzzy name resolution), analyst.py (tool-calling Q&A agent), ask_cli.py (Q&A CLI).
 
-**Tech stack:** Python 3.14, polars 1.39, pydantic-ai 1.72, multi-provider (OpenAI gpt-5.4-mini, Claude Sonnet 4.6, Gemini 3.1 Pro).
+**Tech stack:** Python 3.14, polars 1.39, pydantic-ai 1.72, rapidfuzz 3.14, nameparser 1.1, multi-provider (OpenAI gpt-5.4-mini, Claude Sonnet 4.6, Gemini 3.1 Pro).
 
-**Key v1.3 additions:** AnchorResult/AnchorWarning Pydantic models, MAX_REVISIONS=2 reflection loop, _build_revision_message() prompt builder, _print_revision_status() stderr output. 200 tests passing.
+**Key v1.4 additions:** resolver.py with 5-tier fuzzy matching pipeline (1,651 pitchers, 168 duplicate last-name families), analyst.py with tool-calling pydantic-ai agent (get_pitcher_summary, get_pitch_detail), ask_cli.py composing resolver + analyst into `pitcher-ask` command. 239 tests passing.
 
 ### Data Sources
 
@@ -109,6 +110,11 @@ The report must read like a scout wrote it — surfacing *changes, adaptations, 
 | Fresh prompt per revision (no history) | Avoids anchoring bias and token bloat | ✓ Good |
 | MAX_REVISIONS=2 (3 total passes) | Balances cost vs. quality; configurable constant | ✓ Good |
 | Streaming only on final capsule | Revision passes silent; no confusing duplicate output | ✓ Good |
+| Tool-calling agent for Q&A (not pre-assembled context) | Agent chooses which tools to call based on question; extensible to cross-pitcher tools in v1.5 | ✓ Good |
+| rapidfuzz for name resolution | Deterministic, fast (<5ms), no LLM cost; 70 score cutoff balances typo tolerance vs false positives | ✓ Good |
+| `instructions` param over `system_prompt` | Excludes from message history; multi-turn Q&A a future freebie | ✓ Good |
+| Separate CLI per concern (pitcher-ask) | Matches pitcher-narratives and pitcher-scout pattern; no subcommand pollution | ✓ Good |
+| Capitalization heuristic for name extraction | Prevents common words like "about" from fuzzy-matching pitcher names like "Abbott" | ✓ Good |
 
 ## Evolution
 
@@ -128,4 +134,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-03-30 after v1.4 milestone started — Interactive Pitcher Q&A*
+*Last updated: 2026-03-30 after v1.4 milestone — Interactive Pitcher Q&A shipped*
