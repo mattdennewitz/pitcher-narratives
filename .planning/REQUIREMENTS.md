@@ -1,32 +1,46 @@
-# Requirements: Pitcher Narratives v1.3
+# Requirements: Pitcher Narratives v1.4
 
-**Defined:** 2026-03-28
-**Core Value:** Reports must read like a scout wrote them — surfacing changes, adaptations, and execution trends rather than reciting numbers.
+**Defined:** 2026-03-30
+**Core Value:** The report must read like a scout wrote it — surfacing changes, adaptations, and execution trends rather than reciting numbers.
 
-## v1.3 Requirements
+## v1.4 Requirements
 
-### Loop Infrastructure
+Requirements for Interactive Pitcher Q&A milestone. Each maps to roadmap phases.
 
-- [x] **LOOP-01**: Editor-anchor loop iterates until anchor returns CLEAN or max revision cap (2) is reached
-- [x] **LOOP-02**: Revision prompt tells editor to fix specific flagged issues while preserving the rest of the capsule
-- [x] **LOOP-03**: Warnings that survive all iterations are passed through to stderr (same format as current anchor output)
-- [x] **LOOP-04**: Loop terminates immediately when anchor returns CLEAN (no unnecessary iterations)
+### Name Resolution
 
-### Data Model
+- [ ] **RESOLVE-01**: User can identify a pitcher by partial name, full name, or last name (fuzzy matching via rapidfuzz)
+- [ ] **RESOLVE-02**: User sees a disambiguation list when multiple pitchers match (e.g., "Johnson" → candidates)
 
-- [x] **MODEL-01**: Anchor check returns structured AnchorResult (Pydantic model with is_clean + typed warnings) instead of raw string
-- [x] **MODEL-02**: ReportResult includes revision_count (0 = passed first try, 1-2 = revised N times)
+### Agent
 
-### UX & Integration
+- [ ] **AGENT-01**: Tool-calling pydantic-ai agent answers questions using only provided pitcher data (no training-data hallucination)
+- [ ] **AGENT-02**: Agent has `get_pitcher_summary` tool returning full PitcherContext for broad questions
+- [ ] **AGENT-03**: Agent has `get_pitch_detail` tool returning focused arsenal/execution/platoon data for a specific pitch type
+- [ ] **AGENT-04**: Agent declines questions about data it doesn't have (predictions, fantasy advice, historical seasons, cross-pitcher comparisons)
+- [ ] **AGENT-05**: Pitch type extraction maps natural language ("knuckle curve", "slider") to Statcast codes (KC, SL)
+- [ ] **AGENT-06**: Agent streams answer to stdout as it generates
 
-- [x] **UX-01**: Loop runs by default on all narrative generations
-- [x] **UX-02**: Only the final capsule streams to stdout (revision passes run silently)
-- [x] **UX-03**: Stderr shows revision status ("Passed anchor check" or "Revised N times — [surviving warnings]")
-- [x] **UX-04**: Downstream phases (hook, fantasy) receive the final revised capsule
+### CLI
 
-## Future Requirements
+- [ ] **CLI-01**: User can ask a question via CLI entry point (e.g., `pitcher-ask "Why is Cease's knuckle curve bad?"`)
+- [ ] **CLI-02**: CLI supports `--provider` and `--thinking` flags matching existing report CLI
 
-### Quality Enhancements
+## v1.5 Requirements
+
+Deferred to future release. Tracked but not in current roadmap.
+
+### Cross-Pitcher Analysis
+
+- **CROSS-01**: Agent has `search_pitchers` tool to scan dataset with filters (e.g., S+ > 120, L+ < 80)
+- **CROSS-02**: Agent has `compare_metric` tool for side-by-side pitcher comparisons
+- **CROSS-03**: Agent has `get_leaderboard` tool to rank pitchers by any metric
+
+### Conversational Mode
+
+- **CONV-01**: Multi-turn Q&A with session state and message history
+
+### Quality Enhancements (from v1.3)
 
 - **QUAL-01**: Oscillation detection — terminate early when warnings cycle (disappear then reappear)
 - **QUAL-02**: Revision diff tracking — record what changed in each pass
@@ -36,34 +50,40 @@
 
 ## Out of Scope
 
+Explicitly excluded. Documented to prevent scope creep.
+
 | Feature | Reason |
 |---------|--------|
-| pydantic-graph state machine | Async-only, overkill for 2-node cycle — simple while loop is correct |
-| Message history for revision | Creates anchoring bias and doubles token cost — fresh prompt is cleaner |
-| Streaming revision passes | Confusing UX to stream then replace — only final capsule streams |
-| Expanding anchor scope across iterations | Moving goalposts guarantee non-convergence — anchor checks same criteria every pass |
-| Different model for anchor | Cost optimization deferred — same model ensures consistent severity |
+| SQL generation from natural language | Existing engine computes meaningful derived metrics — bypassing it loses pre-computed deltas and baselines |
+| Fantasy advice in Q&A answers | Speculative and ungrounded — use full report pipeline for fantasy analysis |
+| LLM-powered name resolution | Slow, expensive, unreliable — name resolution is a lookup problem, not a reasoning problem |
+| Historical season-over-season trends | Single-season 2026 data only per PROJECT.md constraints |
+| Question rewriting/rephrasing | Extra LLM call adds latency — analyst agent interprets questions directly |
+| Cross-pitcher comparison (v1.4) | Needs new data scanning layer — defer to v1.5 |
+| Multi-turn conversation (v1.4) | Session state management, different UX paradigm — defer to v1.5+ |
 
 ## Traceability
 
+Which phases cover which requirements. Updated during roadmap creation.
+
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| MODEL-01 | Phase 5 | Complete |
-| MODEL-02 | Phase 5 | Complete |
-| LOOP-02 | Phase 5 | Complete |
-| LOOP-01 | Phase 6 | Complete |
-| LOOP-04 | Phase 6 | Complete |
-| UX-01 | Phase 6 | Complete |
-| UX-02 | Phase 6 | Complete |
-| UX-04 | Phase 6 | Complete |
-| LOOP-03 | Phase 7 | Complete |
-| UX-03 | Phase 7 | Complete |
+| RESOLVE-01 | — | Pending |
+| RESOLVE-02 | — | Pending |
+| AGENT-01 | — | Pending |
+| AGENT-02 | — | Pending |
+| AGENT-03 | — | Pending |
+| AGENT-04 | — | Pending |
+| AGENT-05 | — | Pending |
+| AGENT-06 | — | Pending |
+| CLI-01 | — | Pending |
+| CLI-02 | — | Pending |
 
 **Coverage:**
-- v1.3 requirements: 10 total
-- Mapped to phases: 10
-- Unmapped: 0
+- v1.4 requirements: 10 total
+- Mapped to phases: 0
+- Unmapped: 10 ⚠️
 
 ---
-*Requirements defined: 2026-03-28*
-*Last updated: 2026-03-28 after roadmap creation*
+*Requirements defined: 2026-03-30*
+*Last updated: 2026-03-30 after initial definition*
