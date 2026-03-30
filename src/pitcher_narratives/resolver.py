@@ -139,15 +139,100 @@ def _build_name_table() -> _NameTable:
     return _name_table
 
 
+def _fuzzy_ranked(
+    scored_items: list[tuple[float, int, str]],
+) -> ResolveResult | None:
+    """Deduplicate, rank, and return a ResolveResult from fuzzy matches.
+
+    Args:
+        scored_items: List of (score, pitcher_id, original_name) tuples.
+
+    Returns:
+        ResolveResult if matches found, None if scored_items is empty.
+    """
+    if not scored_items:
+        return None
+
+    # Deduplicate by pitcher_id, keeping highest score
+    seen: dict[int, tuple[float, str]] = {}
+    for score, pid, original in scored_items:
+        if pid not in seen or score > seen[pid][0]:
+            seen[pid] = (score, original)
+
+    # Sort by score descending, then name ascending for determinism
+    ranked = sorted(seen.items(), key=lambda item: (-item[1][0], item[1][1]))
+
+    if len(ranked) == 1:
+        pid, (_, name) = ranked[0]
+        return ResolveResult(
+            pitcher_id=pid, pitcher_name=name, candidates=[], match_type="fuzzy"
+        )
+
+    # Check if top result is significantly ahead (>=5 points gap)
+    top_score = ranked[0][1][0]
+    second_score = ranked[1][1][0]
+    if top_score - second_score >= 5:
+        pid, (_, name) = ranked[0]
+        return ResolveResult(
+            pitcher_id=pid, pitcher_name=name, candidates=[], match_type="fuzzy"
+        )
+
+    # Multiple close results -> ambiguous
+    candidates = [(pid, info[1]) for pid, info in ranked[:_MAX_CANDIDATES]]
+    return ResolveResult(
+        pitcher_id=None,
+        pitcher_name=None,
+        candidates=candidates,
+        match_type="ambiguous",
+    )
+
+
+def _fuzzy_last_name_match(
+    query_last: str, unique_last_names: list[str], table: _NameTable
+) -> ResolveResult | None:
+    """Try fuzzy matching against the last-name index.
+
+    Args:
+        query_last: Normalized last-name query string.
+        unique_last_names: List of unique normalized last names.
+        table: The name table with last_index.
+
+    Returns:
+        ResolveResult if a match is found, None otherwise.
+    """
+    fuzzy_last = process.extract(
+        query_last,
+        unique_last_names,
+        scorer=fuzz.WRatio,
+        limit=_MAX_CANDIDATES,
+        score_cutoff=_SCORE_CUTOFF,
+    )
+    if not fuzzy_last:
+        return None
+
+    # Expand matched last names to full entries
+    scored: list[tuple[float, int, str]] = []
+    for match_last, score, _idx in fuzzy_last:
+        for pid, original in table.last_index[match_last]:
+            scored.append((score, pid, original))
+
+    return _fuzzy_ranked(scored)
+
+
 def resolve(query: str) -> ResolveResult:
     """Resolve a pitcher name to an MLB pitcher ID.
 
-    Runs a tiered pipeline:
+    Runs a tiered pipeline. For single-word queries, fuzzy last-name
+    matching runs before fuzzy full-name matching because short words
+    score poorly against long "first last" strings (Pitfall 2).
+
+    Tier order:
     1. Exact full-name match
     2. Exact last-name match (unique or ambiguous)
-    3. Fuzzy full-name match via rapidfuzz WRatio
-    4. Fuzzy last-name match via rapidfuzz WRatio
-    5. Not found
+    3. Fuzzy last-name match (single-word queries only)
+    4. Fuzzy full-name match
+    5. Fuzzy last-name match (multi-word queries only)
+    6. Not found
 
     Args:
         query: Pitcher name in any common format (e.g., "Dylan Cease",
@@ -194,7 +279,19 @@ def resolve(query: str) -> ResolveResult:
             match_type="ambiguous",
         )
 
-    # --- Tier 3: Fuzzy full-name match ---
+    # Precompute for fuzzy tiers
+    unique_last_names = list(set(table.last_index.keys()))
+    query_for_last = normalized if is_single_word else last_key
+
+    # --- Tier 3 (single-word only): Fuzzy last-name match ---
+    # Single words are almost certainly last names. WRatio on full "first last"
+    # strings penalizes short queries due to length mismatch (Pitfall 2).
+    if is_single_word:
+        result = _fuzzy_last_name_match(query_for_last, unique_last_names, table)
+        if result is not None:
+            return result
+
+    # --- Tier 4: Fuzzy full-name match ---
     fuzzy_full = process.extract(
         normalized,
         table.full_index.keys(),
@@ -203,99 +300,22 @@ def resolve(query: str) -> ResolveResult:
         score_cutoff=_SCORE_CUTOFF,
     )
     if fuzzy_full:
-        # Collect all matches with their scores
         scored: list[tuple[float, int, str]] = []
         for match_name, score, _idx in fuzzy_full:
             pid, original = table.full_index[match_name]
             scored.append((score, pid, original))
 
-        # Deduplicate by pitcher_id, keeping highest score
-        seen: dict[int, tuple[float, str]] = {}
-        for score, pid, original in scored:
-            if pid not in seen or score > seen[pid][0]:
-                seen[pid] = (score, original)
+        result = _fuzzy_ranked(scored)
+        if result is not None:
+            return result
 
-        # Sort by score descending, then name ascending
-        ranked = sorted(seen.items(), key=lambda item: (-item[1][0], item[1][1]))
+    # --- Tier 5 (multi-word only): Fuzzy last-name match ---
+    if not is_single_word:
+        result = _fuzzy_last_name_match(query_for_last, unique_last_names, table)
+        if result is not None:
+            return result
 
-        if len(ranked) == 1:
-            pid, (_, name) = ranked[0]
-            return ResolveResult(
-                pitcher_id=pid, pitcher_name=name, candidates=[], match_type="fuzzy"
-            )
-
-        # Check if top result is significantly ahead
-        top_score = ranked[0][1][0]
-        second_score = ranked[1][1][0]
-        if top_score - second_score >= 5:
-            pid, (_, name) = ranked[0]
-            return ResolveResult(
-                pitcher_id=pid, pitcher_name=name, candidates=[], match_type="fuzzy"
-            )
-
-        # Multiple close results -> ambiguous
-        candidates = [(pid, info[1]) for pid, info in ranked[:_MAX_CANDIDATES]]
-        return ResolveResult(
-            pitcher_id=None,
-            pitcher_name=None,
-            candidates=candidates,
-            match_type="ambiguous",
-        )
-
-    # --- Tier 4: Fuzzy last-name match ---
-    unique_last_names = list(set(table.last_index.keys()))
-    query_for_last = normalized if is_single_word else last_key
-
-    fuzzy_last = process.extract(
-        query_for_last,
-        unique_last_names,
-        scorer=fuzz.WRatio,
-        limit=_MAX_CANDIDATES,
-        score_cutoff=_SCORE_CUTOFF,
-    )
-    if fuzzy_last:
-        # Expand matched last names to full entries
-        scored_entries: list[tuple[float, int, str]] = []
-        for match_last, score, _idx in fuzzy_last:
-            for pid, original in table.last_index[match_last]:
-                scored_entries.append((score, pid, original))
-
-        # Deduplicate by pitcher_id, keeping highest score
-        seen_last: dict[int, tuple[float, str]] = {}
-        for score, pid, original in scored_entries:
-            if pid not in seen_last or score > seen_last[pid][0]:
-                seen_last[pid] = (score, original)
-
-        # Sort by score descending, then name ascending
-        ranked_last = sorted(
-            seen_last.items(), key=lambda item: (-item[1][0], item[1][1])
-        )
-
-        if len(ranked_last) == 1:
-            pid, (_, name) = ranked_last[0]
-            return ResolveResult(
-                pitcher_id=pid, pitcher_name=name, candidates=[], match_type="fuzzy"
-            )
-
-        # Check if top result is significantly ahead
-        top_score = ranked_last[0][1][0]
-        second_score = ranked_last[1][1][0]
-        if top_score - second_score >= 5:
-            pid, (_, name) = ranked_last[0]
-            return ResolveResult(
-                pitcher_id=pid, pitcher_name=name, candidates=[], match_type="fuzzy"
-            )
-
-        # Multiple close results -> ambiguous
-        candidates = [(pid, info[1]) for pid, info in ranked_last[:_MAX_CANDIDATES]]
-        return ResolveResult(
-            pitcher_id=None,
-            pitcher_name=None,
-            candidates=candidates,
-            match_type="ambiguous",
-        )
-
-    # --- Tier 5: Not found ---
+    # --- Tier 6: Not found ---
     return ResolveResult(
         pitcher_id=None, pitcher_name=None, candidates=[], match_type="not_found"
     )
