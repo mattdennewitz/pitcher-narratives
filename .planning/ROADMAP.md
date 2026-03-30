@@ -164,7 +164,10 @@ Plans:
   1. Given an exact full name (e.g., "Dylan Cease"), the resolver returns the correct pitcher ID without prompting for disambiguation
   2. Given a partial or last name that matches multiple pitchers (e.g., "Johnson"), the resolver returns a ranked list of candidates with names and IDs
   3. Given a name that matches no pitcher in the dataset, the resolver returns a clear "not found" result (not a crash or empty response)
-**Plans**: TBD
+**Plans**: 1 plan
+
+Plans:
+- [ ] 08-01-PLAN.md -- Resolver module with fuzzy matching and comprehensive tests
 
 ### Phase 9: Analyst Agent & Tools
 **Goal**: Users can ask natural-language questions about a pitcher and receive analytical answers grounded exclusively in the existing data pipeline
@@ -202,6 +205,6 @@ Phases execute in numeric order: 8 -> 9 -> 10
 | 5. Reflection Data Models | v1.3 | 2/2 | Complete | 2026-03-28 |
 | 6. Loop Mechanics | v1.3 | 1/1 | Complete | 2026-03-28 |
 | 7. Revision UX & Validation | v1.3 | 1/1 | Complete | 2026-03-28 |
-| 8. Name Resolution | v1.4 | 0/0 | Not started | - |
+| 8. Name Resolution | v1.4 | 0/1 | In progress | - |
 | 9. Analyst Agent & Tools | v1.4 | 0/0 | Not started | - |
 | 10. Ask CLI | v1.4 | 0/0 | Not started | - |
