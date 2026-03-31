@@ -99,6 +99,9 @@ class PitcherContext(BaseModel):
         # Execution table
         sections.append(self._render_execution_section())
 
+        # Model internals (S-variant probabilities and P-vs-S location impact)
+        sections.append(self._render_intermediates_section())
+
         # Release point mechanics
         sections.append(self._render_release_point_section())
 
@@ -373,6 +376,57 @@ class PitcherContext(BaseModel):
                 f"| {xswing} "
                 f"| {pctl} |"
             )
+        return "\n".join(lines)
+
+    def _render_intermediates_section(self) -> str:
+        """Render S-variant probabilities and P-vs-S location impact deltas.
+
+        Shows 4 key diagnostic metrics (xSwing, xWhiff, xSwSt, xRV100).
+        P-variants are already in the Execution section above -- this
+        section adds the S (stuff-only) variants and the location delta.
+        """
+        if not self.intermediates:
+            return ""
+
+        def _pct(v: float | None) -> str:
+            return f"{v * 100:.1f}%" if v is not None else "--"
+
+        def _rv(v: float | None) -> str:
+            return f"{v:.2f}" if v is not None else "--"
+
+        def _delta_pct(p: float | None, s: float | None) -> str:
+            if p is not None and s is not None:
+                return f"{(p - s) * 100:+.1f}pp"
+            return "--"
+
+        def _delta_rv(p: float | None, s: float | None) -> str:
+            if p is not None and s is not None:
+                return f"{(p - s):+.2f}"
+            return "--"
+
+        lines = ["## Model Internals: Location Impact"]
+        lines.append(
+            "| Pitch | xSwing S | delta | xWhiff S | delta "
+            "| xSwSt S | delta | xRV100 S | delta |"
+        )
+        lines.append(
+            "|-------|----------|-------|----------|-------"
+            "|---------|-------|----------|-------|"
+        )
+
+        for im in self.intermediates[:_MAX_PITCH_TYPES]:
+            lines.append(
+                f"| {im.pitch_name} ({im.pitch_type}) "
+                f"| {_pct(im.xswing_s)} "
+                f"| {_delta_pct(im.xswing_p, im.xswing_s)} "
+                f"| {_pct(im.xwhiff_s)} "
+                f"| {_delta_pct(im.xwhiff_p, im.xwhiff_s)} "
+                f"| {_pct(im.xswst_s)} "
+                f"| {_delta_pct(im.xswst_p, im.xswst_s)} "
+                f"| {_rv(im.xrv100_s)} "
+                f"| {_delta_rv(im.xrv100_p, im.xrv100_s)} |"
+            )
+
         return "\n".join(lines)
 
     def _render_release_point_section(self) -> str:
