@@ -265,3 +265,60 @@ def test_get_pitch_detail_existing_sections_preserved(deps):
     result = get_pitch_detail(mock_ctx, first_pitch.pitch_type)
     assert "Arsenal" in result
     assert "Execution" in result
+
+
+# -- ANLST-01/02/03: Prompt content tests ------------------------------------
+
+
+def test_prompt_references_intermediates():
+    """ANLST-01: Prompt references all 4 intermediate metric names as primary analytical tools."""
+    prompt = _analyst_agent._instructions[0]
+    assert "xWhiff" in prompt, "Prompt must reference xWhiff"
+    assert "xSwing" in prompt, "Prompt must reference xSwing"
+    assert "xSwSt" in prompt, "Prompt must reference xSwSt"
+    assert "xRV100" in prompt, "Prompt must reference xRV100"
+
+
+def test_prompt_internals_before_plus():
+    """ANLST-01: Framework leads with model internals; plus scores are summary grades."""
+    prompt = _analyst_agent._instructions[0]
+    # Old framing must be removed
+    assert "Pitching+ triad" not in prompt, (
+        "Prompt must not contain 'Pitching+ triad' (old framing)"
+    )
+    # Plus scores should be referred to as summary grades
+    assert "summary" in prompt.lower(), (
+        "Prompt must contain 'summary' in context of plus scores"
+    )
+    # Plus scores themselves must still appear
+    assert "P+" in prompt, "Prompt must still reference P+"
+
+
+def test_prompt_references_p_vs_s():
+    """ANLST-02: Prompt teaches P-variant vs S-variant comparison for location diagnosis."""
+    prompt = _analyst_agent._instructions[0]
+    # Must reference both variant concepts
+    has_s_variant = "S-variant" in prompt or "S variant" in prompt or "S+" in prompt
+    assert has_s_variant, "Prompt must reference S-variant concept"
+    has_p_variant = "P-variant" in prompt or "P variant" in prompt or "P-variant" in prompt
+    assert has_p_variant, "Prompt must reference P-variant concept"
+    # Must explicitly mention location in the variant context
+    assert "location" in prompt.lower(), "Prompt must reference location in P-vs-S context"
+
+
+def test_prompt_references_attribution():
+    """ANLST-03: Prompt teaches attribution decomposition with dominant-driver filtering."""
+    prompt = _analyst_agent._instructions[0]
+    # Must reference attribution concept
+    assert "attribution" in prompt.lower(), (
+        "Prompt must reference attribution (case-insensitive)"
+    )
+    # Must teach filtering to dominant drivers, not listing all 13
+    has_filtering = any(
+        term in prompt.lower()
+        for term in ("dominant", "2-3", "largest", "most")
+    )
+    assert has_filtering, (
+        "Prompt must teach filtering to dominant drivers "
+        "(expected one of: 'dominant', '2-3', 'largest', 'most')"
+    )
