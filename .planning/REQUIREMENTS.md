@@ -67,20 +67,20 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| DATA-01 | TBD | Pending |
-| DATA-02 | TBD | Pending |
-| DATA-03 | TBD | Pending |
-| ANLST-01 | TBD | Pending |
-| ANLST-02 | TBD | Pending |
-| ANLST-03 | TBD | Pending |
-| TOOL-01 | TBD | Pending |
-| TOOL-02 | TBD | Pending |
+| DATA-01 | Phase 11 | Pending |
+| DATA-02 | Phase 11 | Pending |
+| DATA-03 | Phase 12 | Pending |
+| ANLST-01 | Phase 14 | Pending |
+| ANLST-02 | Phase 14 | Pending |
+| ANLST-03 | Phase 14 | Pending |
+| TOOL-01 | Phase 13 | Pending |
+| TOOL-02 | Phase 13 | Pending |
 
 **Coverage:**
 - v1.5 requirements: 8 total
-- Mapped to phases: 0
-- Unmapped: 8 (pending roadmap)
+- Mapped to phases: 8
+- Unmapped: 0 ✓
 
 ---
 *Requirements defined: 2026-03-31*
-*Last updated: 2026-03-31 after initial definition*
+*Last updated: 2026-03-31 after roadmap creation*
