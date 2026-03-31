@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.5
 milestone_name: Model-Explainable Narratives
 status: executing
-stopped_at: Completed 12-01-PLAN.md
-last_updated: "2026-03-31T21:21:20Z"
-last_activity: 2026-03-31
+stopped_at: Completed 11-01-PLAN.md
+last_updated: "2026-03-31T20:47:54.714Z"
+last_activity: 2026-03-31 -- Phase 12 execution started
 progress:
   total_phases: 14
   completed_phases: 8
-  total_plans: 13
-  completed_plans: 14
+  total_plans: 15
+  completed_plans: 13
 ---
 
 # Project State
@@ -24,10 +24,17 @@ See: .planning/PROJECT.md (updated 2026-03-31)
 
 ## Current Position
 
-Phase: 12
-Plan: 1 of 2 complete
-Status: Phase 12 in progress — Plan 01 complete, Plan 02 pending
-Last activity: 2026-03-31
+<<<<<<< Updated upstream
+Phase: 12 (Component Attribution) — EXECUTING
+Plan: 1 of 2
+Status: Executing Phase 12
+Last activity: 2026-03-31 -- Phase 12 execution started
+=======
+Phase: 11 (Intermediate Probability Pipeline) — EXECUTING
+Plan: 1 of 1
+Status: Executing Phase 11
+Last activity: 2026-03-31 -- Phase 11 execution started
+>>>>>>> Stashed changes
 
 ## Accumulated Context
 
@@ -58,10 +65,9 @@ None yet.
 | Phase-Plan | Duration | Tasks | Files |
 |------------|----------|-------|-------|
 | 11-01      | 5min     | 2     | 3     |
-| 12-01      | 2min     | 1     | 1     |
 
 ## Session Continuity
 
-Last session: 2026-03-31T21:21:20Z
-Stopped at: Completed 12-01-PLAN.md
+Last session: 2026-03-31T19:52:28Z
+Stopped at: Completed 11-01-PLAN.md
 Resume file: None
