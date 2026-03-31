@@ -21,8 +21,8 @@ Requirements for Model-Explainable Narratives milestone. Each maps to roadmap ph
 
 ### Tool Interface
 
-- [ ] **TOOL-01**: get_pitcher_summary tool returns intermediate probabilities and P/S comparisons alongside existing plus scores
-- [ ] **TOOL-02**: get_pitch_detail tool returns component attribution breakdown (13 outcome contributions to xRV) for a specific pitch type
+- [x] **TOOL-01**: get_pitcher_summary tool returns intermediate probabilities and P/S comparisons alongside existing plus scores
+- [x] **TOOL-02**: get_pitch_detail tool returns component attribution breakdown (13 outcome contributions to xRV) for a specific pitch type
 
 ## Future Requirements
 
@@ -69,12 +69,12 @@ Which phases cover which requirements. Updated during roadmap creation.
 |-------------|-------|--------|
 | DATA-01 | Phase 11 | Complete |
 | DATA-02 | Phase 11 | Complete |
-| DATA-03 | Phase 12 | In Progress (data loaded, computation in 12-02) |
+| DATA-03 | Phase 12 | Complete |
 | ANLST-01 | Phase 14 | Pending |
 | ANLST-02 | Phase 14 | Pending |
 | ANLST-03 | Phase 14 | Pending |
-| TOOL-01 | Phase 13 | Pending |
-| TOOL-02 | Phase 13 | Pending |
+| TOOL-01 | Phase 13 | Complete |
+| TOOL-02 | Phase 13 | Complete |
 
 **Coverage:**
 - v1.5 requirements: 8 total

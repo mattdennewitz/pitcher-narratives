@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.5
 milestone_name: Model-Explainable Narratives
 status: executing
-stopped_at: Completed 12-02-PLAN.md
-last_updated: "2026-03-31T21:37:00.021Z"
+stopped_at: Completed 13-01-PLAN.md
+last_updated: "2026-03-31T21:54:18.000Z"
 last_activity: 2026-03-31
 progress:
   total_phases: 14
   completed_phases: 9
-  total_plans: 15
-  completed_plans: 15
+  total_plans: 16
+  completed_plans: 16
 ---
 
 # Project State
@@ -20,13 +20,13 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-31)
 
 **Core value:** Reports must read like a scout wrote them -- surfacing changes, adaptations, and execution trends rather than reciting numbers.
-**Current focus:** Phase 12 — Component Attribution
+**Current focus:** Phase 13 — Tool Interface Updates
 
 ## Current Position
 
 Phase: 13
-Plan: Not started
-Status: Ready to execute
+Plan: 01 (complete)
+Status: Phase 13 plan 01 complete
 Last activity: 2026-03-31
 
 ## Accumulated Context
@@ -45,6 +45,7 @@ Recent decisions affecting current work:
 - [Phase 11]: BBE_prob_P/S included in constants despite missing from CSVs -- future-proofs against agg regeneration
 - [Phase 11]: Default parameter binding for inner closure to satisfy ruff B023
 - [Phase 12]: Raw xRV100 (pre-mean-subtraction) for component attribution -- correct decomposition since league-average offset is constant
+- [Phase 13]: 4 diagnostic metrics (xSwing, xWhiff, xSwSt, xRV100) in summary intermediates; S-variants and deltas only to avoid Execution section duplication
 
 ### Pending Todos
 
@@ -61,9 +62,10 @@ None yet.
 | 11-01      | 5min     | 2     | 3     |
 | 12-01      | 2min     | 1     | 1     |
 | Phase 12 P02 | 4min | 2 tasks | 3 files |
+| 13-01      | 4min     | 2     | 4     |
 
 ## Session Continuity
 
-Last session: 2026-03-31T21:32:12.494Z
-Stopped at: Completed 12-02-PLAN.md
+Last session: 2026-03-31T21:54:18Z
+Stopped at: Completed 13-01-PLAN.md
 Resume file: None
