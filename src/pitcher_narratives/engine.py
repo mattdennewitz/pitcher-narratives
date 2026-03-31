@@ -28,6 +28,7 @@ __all__ = [
     "FirstPitchEntry",
     "FirstPitchWeaponry",
     "HardHitRate",
+    "IntermediateProbabilities",
     "PitchTypeSummary",
     "PlatoonMix",
     "PlatoonSplit",
@@ -44,6 +45,7 @@ __all__ = [
     "compute_fastball_summary",
     "compute_first_pitch_weaponry",
     "compute_hard_hit_rate",
+    "compute_intermediate_probabilities",
     "compute_platoon_mix",
     "compute_release_point_metrics",
     "compute_tto_analysis",
@@ -393,6 +395,21 @@ _PPLUS_METRICS = ("P+", "S+", "L+")
 _XMETRICS = ("xWhiff_P", "xSwing_P", "xRV100_P")
 """Expected-outcome metrics used in execution computations."""
 
+_INTERMEDIATE_P_COLS = (
+    "xSwing_P", "xWhiff_P", "xGOr_P", "xPUr_P", "xHR100_P",
+    "BBE_prob_P", "xSwSt_P", "xRV100_P",
+)
+"""P-variant intermediate probability columns (includes location)."""
+
+_INTERMEDIATE_S_COLS = (
+    "xSwing_S", "xWhiff_S", "xGOr_S", "xPUr_S", "xHR100_S",
+    "BBE_prob_S", "xSwSt_S", "xRV100_S",
+)
+"""S-variant intermediate probability columns (stuff-only)."""
+
+_INTERMEDIATE_COLS = _INTERMEDIATE_P_COLS + _INTERMEDIATE_S_COLS
+"""All intermediate probability columns (P and S variants)."""
+
 
 # ── Dataclasses ───────────────────────────────────────────────────────
 
@@ -586,6 +603,66 @@ class ExecutionMetrics:
 
     n_pitches: int
     """Number of pitches of this type in window."""
+
+    small_sample: bool
+    """True when n_pitches < _MIN_PITCHES."""
+
+    cold_start: bool
+    """True when window covers the full season."""
+
+
+@dataclass
+class IntermediateProbabilities:
+    """Per-pitch-type intermediate model probabilities (P and S variants).
+
+    P-variants include location; S-variants are stuff-only.
+    Location impact = P minus S for any metric.
+    """
+
+    pitch_type: str
+    """Pitch type code, e.g., 'FC'."""
+
+    pitch_name: str
+    """Human-readable name, e.g., 'Cutter'."""
+
+    # Window values (from pitcher_type_appearance grain)
+    xswing_p: float | None
+    xswing_s: float | None
+    xwhiff_p: float | None
+    xwhiff_s: float | None
+    xgor_p: float | None
+    xgor_s: float | None
+    xpur_p: float | None
+    xpur_s: float | None
+    xhr100_p: float | None
+    xhr100_s: float | None
+    bbe_prob_p: float | None
+    bbe_prob_s: float | None
+    xswst_p: float | None
+    xswst_s: float | None
+    xrv100_p: float | None
+    xrv100_s: float | None
+
+    # Season baseline values (from pitch_type_baseline)
+    season_xswing_p: float | None
+    season_xswing_s: float | None
+    season_xwhiff_p: float | None
+    season_xwhiff_s: float | None
+    season_xgor_p: float | None
+    season_xgor_s: float | None
+    season_xpur_p: float | None
+    season_xpur_s: float | None
+    season_xhr100_p: float | None
+    season_xhr100_s: float | None
+    season_bbe_prob_p: float | None
+    season_bbe_prob_s: float | None
+    season_xswst_p: float | None
+    season_xswst_s: float | None
+    season_xrv100_p: float | None
+    season_xrv100_s: float | None
+
+    n_pitches: int
+    """Number of pitches in window for this type."""
 
     small_sample: bool
     """True when n_pitches < _MIN_PITCHES."""
@@ -1457,6 +1534,97 @@ def compute_execution_metrics(data: PitcherData) -> list[ExecutionMetrics]:
         )
 
     # Sort by n_pitches descending
+    results.sort(key=lambda x: x.n_pitches, reverse=True)
+    return results
+
+
+def compute_intermediate_probabilities(data: PitcherData) -> list[IntermediateProbabilities]:
+    """Compute per-pitch-type intermediate probabilities for window and season.
+
+    Extracts P and S variants of all intermediate probability columns from
+    pitchingplus aggregation CSVs. Window values come from pitcher_type_appearance
+    (weighted by n_pitches). Season values come from pitch_type_baseline.
+
+    Args:
+        data: PitcherData bundle from data.load_pitcher_data.
+
+    Returns:
+        List of IntermediateProbabilities, one per pitch type, sorted by
+        n_pitches descending.
+    """
+    window_dates = _get_window_game_dates(data)
+    cold_start = _is_cold_start(data)
+    name_map = _build_name_map(data.statcast)
+
+    baseline = data.pitch_type_baseline.sort("n_pitches", descending=True)
+    pitch_types = baseline["pitch_type"].to_list()
+
+    results: list[IntermediateProbabilities] = []
+
+    for pt in pitch_types:
+        # Window values from appearance grain
+        metrics = _weighted_window_metrics(
+            data.agg_csvs["pitcher_type_appearance"],
+            _INTERMEDIATE_COLS,
+            _window_date_type_filter(window_dates, pt),
+        )
+
+        # Season values from baseline
+        bl_row = baseline.filter(pl.col("pitch_type") == pt)
+
+        def _bl(col: str, _row: pl.DataFrame = bl_row) -> float | None:
+            if _row.is_empty() or col not in _row.columns:
+                return None
+            val = _row[col][0]
+            return None if val is None else float(val)
+
+        n_pitches = int(metrics.get("n_pitches", 0))
+
+        results.append(IntermediateProbabilities(
+            pitch_type=pt,
+            pitch_name=name_map.get(pt, pt),
+            # Window P-variants
+            xswing_p=metrics.get("xSwing_P"),
+            xwhiff_p=metrics.get("xWhiff_P"),
+            xgor_p=metrics.get("xGOr_P"),
+            xpur_p=metrics.get("xPUr_P"),
+            xhr100_p=metrics.get("xHR100_P"),
+            bbe_prob_p=metrics.get("BBE_prob_P"),
+            xswst_p=metrics.get("xSwSt_P"),
+            xrv100_p=metrics.get("xRV100_P"),
+            # Window S-variants
+            xswing_s=metrics.get("xSwing_S"),
+            xwhiff_s=metrics.get("xWhiff_S"),
+            xgor_s=metrics.get("xGOr_S"),
+            xpur_s=metrics.get("xPUr_S"),
+            xhr100_s=metrics.get("xHR100_S"),
+            bbe_prob_s=metrics.get("BBE_prob_S"),
+            xswst_s=metrics.get("xSwSt_S"),
+            xrv100_s=metrics.get("xRV100_S"),
+            # Season P-variants
+            season_xswing_p=_bl("xSwing_P"),
+            season_xwhiff_p=_bl("xWhiff_P"),
+            season_xgor_p=_bl("xGOr_P"),
+            season_xpur_p=_bl("xPUr_P"),
+            season_xhr100_p=_bl("xHR100_P"),
+            season_bbe_prob_p=_bl("BBE_prob_P"),
+            season_xswst_p=_bl("xSwSt_P"),
+            season_xrv100_p=_bl("xRV100_P"),
+            # Season S-variants
+            season_xswing_s=_bl("xSwing_S"),
+            season_xwhiff_s=_bl("xWhiff_S"),
+            season_xgor_s=_bl("xGOr_S"),
+            season_xpur_s=_bl("xPUr_S"),
+            season_xhr100_s=_bl("xHR100_S"),
+            season_bbe_prob_s=_bl("BBE_prob_S"),
+            season_xswst_s=_bl("xSwSt_S"),
+            season_xrv100_s=_bl("xRV100_S"),
+            # Metadata
+            n_pitches=n_pitches,
+            small_sample=n_pitches < _MIN_PITCHES,
+            cold_start=cold_start,
+        ))
+
     results.sort(key=lambda x: x.n_pitches, reverse=True)
     return results
 
