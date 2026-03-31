@@ -190,3 +190,78 @@ def test_ask_question_streaming(ctx, data):
     )
     assert isinstance(result, str)
     assert len(result) > 0
+
+
+# -- TOOL-01/02: Intermediates and Attribution tests ---------------------------
+
+
+def test_get_pitch_detail_includes_attribution(deps):
+    """get_pitch_detail output for a known pitch type contains 'Component Attribution'."""
+    from unittest.mock import MagicMock
+
+    mock_ctx = MagicMock()
+    mock_ctx.deps = deps
+
+    first_pitch = deps.context.arsenal[0]
+    result = get_pitch_detail(mock_ctx, first_pitch.pitch_type)
+    assert "Component Attribution" in result
+
+
+def test_get_pitch_detail_attribution_has_outcomes(deps):
+    """Attribution section contains at least 5 outcome rows (from 13 canonical outcomes)."""
+    from unittest.mock import MagicMock
+
+    mock_ctx = MagicMock()
+    mock_ctx.deps = deps
+
+    first_pitch = deps.context.arsenal[0]
+    result = get_pitch_detail(mock_ctx, first_pitch.pitch_type)
+
+    # Count data rows in the attribution table (lines starting with | but not header/separator)
+    in_attribution = False
+    outcome_rows = 0
+    for line in result.split("\n"):
+        if "Component Attribution" in line:
+            in_attribution = True
+            continue
+        if in_attribution and line.startswith("## ") or (in_attribution and line.startswith("### ") and "Component" not in line):
+            break
+        if in_attribution and line.startswith("|") and "Outcome" not in line and "---" not in line:
+            outcome_rows += 1
+    assert outcome_rows >= 5, f"Found {outcome_rows} outcome rows, expected >= 5"
+
+
+def test_get_pitch_detail_includes_intermediates(deps):
+    """get_pitch_detail output for a known pitch type contains 'Location Impact'."""
+    from unittest.mock import MagicMock
+
+    mock_ctx = MagicMock()
+    mock_ctx.deps = deps
+
+    first_pitch = deps.context.arsenal[0]
+    result = get_pitch_detail(mock_ctx, first_pitch.pitch_type)
+    assert "Location Impact" in result
+
+
+def test_get_pitcher_summary_includes_intermediates(deps):
+    """get_pitcher_summary output contains 'Model Internals' (from to_prompt)."""
+    from unittest.mock import MagicMock
+
+    mock_ctx = MagicMock()
+    mock_ctx.deps = deps
+
+    result = get_pitcher_summary(mock_ctx)
+    assert "Model Internals" in result
+
+
+def test_get_pitch_detail_existing_sections_preserved(deps):
+    """get_pitch_detail still contains Arsenal and Execution sections."""
+    from unittest.mock import MagicMock
+
+    mock_ctx = MagicMock()
+    mock_ctx.deps = deps
+
+    first_pitch = deps.context.arsenal[0]
+    result = get_pitch_detail(mock_ctx, first_pitch.pitch_type)
+    assert "Arsenal" in result
+    assert "Execution" in result

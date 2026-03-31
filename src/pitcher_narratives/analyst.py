@@ -183,6 +183,8 @@ def get_pitch_detail(ctx: RunContext[QADeps], pitch_type: str) -> str:
     arsenal_match = [a for a in pc.arsenal if a.pitch_type == code]
     execution_match = [e for e in pc.execution if e.pitch_type == code]
     platoon_match = [s for s in pc.platoon_mix.splits if s.pitch_type == code]
+    attribution_match = [a for a in pc.attributions if a.pitch_type == code]
+    intermediates_match = [i for i in pc.intermediates if i.pitch_type == code]
 
     if not arsenal_match:
         available = [f"{a.pitch_name} ({a.pitch_type})" for a in pc.arsenal]
@@ -191,7 +193,14 @@ def get_pitch_detail(ctx: RunContext[QADeps], pitch_type: str) -> str:
             f"Available pitches: {', '.join(available)}"
         )
 
-    return _render_pitch_detail(code, arsenal_match, execution_match, platoon_match)
+    return _render_pitch_detail(
+        code,
+        arsenal_match,
+        execution_match,
+        platoon_match,
+        attribution_rows=attribution_match,
+        intermediates_rows=intermediates_match,
+    )
 
 
 def _render_pitch_detail(
@@ -199,6 +208,9 @@ def _render_pitch_detail(
     arsenal_rows: list[Any],
     execution_rows: list[Any],
     platoon_rows: list[Any],
+    *,
+    attribution_rows: list[Any] | None = None,
+    intermediates_rows: list[Any] | None = None,
 ) -> str:
     """Build focused markdown for a single pitch type.
 
@@ -207,9 +219,12 @@ def _render_pitch_detail(
         arsenal_rows: Matching PitchTypeSummary items.
         execution_rows: Matching ExecutionMetrics items.
         platoon_rows: Matching PlatoonSplit items.
+        attribution_rows: Matching ComponentAttribution items.
+        intermediates_rows: Matching IntermediateProbabilities items.
 
     Returns:
-        Markdown string (~200 tokens) with arsenal, execution, and platoon data.
+        Markdown string with arsenal, execution, platoon, intermediates,
+        and attribution data.
     """
     lines: list[str] = []
 
@@ -256,7 +271,54 @@ def _render_pitch_detail(
                     f"-- {s.usage_delta} {pp}"
                 )
 
+    # Intermediates section (P vs S location impact)
+    if intermediates_rows:
+        lines.append("")
+        lines.append("### Model Internals: Location Impact")
+        for im in intermediates_rows:
+            lines.append(_ps_line("xSwing", im.xswing_p, im.xswing_s))
+            lines.append(_ps_line("xWhiff", im.xwhiff_p, im.xwhiff_s))
+            lines.append(_ps_line("xSwSt", im.xswst_p, im.xswst_s))
+            lines.append(_ps_line_rv("xRV100", im.xrv100_p, im.xrv100_s))
+
+    # Attribution section (13-outcome xRV decomposition)
+    if attribution_rows:
+        lines.append("")
+        lines.append("### Component Attribution (xRV100 Decomposition)")
+        for attr in attribution_rows:
+            lines.append(f"Total raw xRV100: {attr.total_xrv100:.2f}")
+            lines.append("")
+            lines.append("| Outcome | Contribution | Share |")
+            lines.append("|---------|-------------|-------|")
+            for oc in attr.contributions:
+                share = (
+                    f"{(oc.contribution / attr.total_xrv100 * 100):+.1f}%"
+                    if attr.total_xrv100 != 0
+                    else f"{0:.1f}%"
+                )
+                lines.append(f"| {oc.outcome} | {oc.contribution:+.3f} | {share} |")
+
     return "\n".join(lines)
+
+
+def _ps_line(label: str, p: float | None, s: float | None) -> str:
+    """Format a P vs S comparison line for probability metrics."""
+    p_str = f"{p * 100:.1f}%" if p is not None else "--"
+    s_str = f"{s * 100:.1f}%" if s is not None else "--"
+    if p is not None and s is not None:
+        delta = (p - s) * 100
+        return f"- {label}: P {p_str}, S {s_str}, location delta {delta:+.1f}pp"
+    return f"- {label}: P {p_str}, S {s_str}"
+
+
+def _ps_line_rv(label: str, p: float | None, s: float | None) -> str:
+    """Format a P vs S comparison line for run-value metrics (xRV100 scale)."""
+    p_str = f"{p:.2f}" if p is not None else "--"
+    s_str = f"{s:.2f}" if s is not None else "--"
+    if p is not None and s is not None:
+        delta = p - s
+        return f"- {label}: P {p_str}, S {s_str}, location delta {delta:+.2f}"
+    return f"- {label}: P {p_str}, S {s_str}"
 
 
 # ═══════════════════════════════════════════════════════════════════════
