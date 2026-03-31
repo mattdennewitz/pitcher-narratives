@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.5
 milestone_name: Model-Explainable Narratives
 status: completed
-stopped_at: Completed 13-01-PLAN.md
-last_updated: "2026-03-31T21:59:37.011Z"
-last_activity: 2026-03-31
+stopped_at: Completed 14-01-PLAN.md
+last_updated: "2026-03-31T22:18:31.283Z"
+last_activity: 2026-03-31 -- Phase 14 execution complete
 progress:
   total_phases: 14
-  completed_phases: 10
-  total_plans: 16
-  completed_plans: 16
+  completed_phases: 11
+  total_plans: 17
+  completed_plans: 17
 ---
 
 # Project State
@@ -20,21 +20,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-31)
 
 **Core value:** Reports must read like a scout wrote them -- surfacing changes, adaptations, and execution trends rather than reciting numbers.
-**Current focus:** Phase 13 — Tool Interface Updates
+**Current focus:** Phase 14 — Analyst Prompt Rewrite (COMPLETE)
 
 ## Current Position
 
-<<<<<<< Updated upstream
-Phase: 14
-Plan: Not started
-Status: Phase 13 plan 01 complete
-Last activity: 2026-03-31
-=======
-Phase: 13 (Tool Interface Updates) — EXECUTING
-Plan: 1 of 1
-Status: Executing Phase 13
-Last activity: 2026-03-31 -- Phase 13 execution started
->>>>>>> Stashed changes
+Phase: 14 (Analyst Prompt Rewrite) — COMPLETE
+Plan: 1 of 1 (complete)
+Status: Phase 14 plan 01 complete
+Last activity: 2026-03-31 -- Phase 14 execution complete
 
 ## Accumulated Context
 
@@ -53,6 +46,8 @@ Recent decisions affecting current work:
 - [Phase 11]: Default parameter binding for inner closure to satisfy ruff B023
 - [Phase 12]: Raw xRV100 (pre-mean-subtraction) for component attribution -- correct decomposition since league-average offset is constant
 - [Phase 13]: 4 diagnostic metrics (xSwing, xWhiff, xSwSt, xRV100) in summary intermediates; S-variants and deltas only to avoid Execution section duplication
+- [Phase 14]: Model-internals-first 4-step prompt reasoning: intermediates -> P-vs-S -> attribution -> plus summary
+- [Phase 14]: SIGN CONVENTIONS section in prompt to prevent LLM misinterpretation of inverted run-value direction
 
 ### Pending Todos
 
@@ -70,9 +65,10 @@ None yet.
 | 12-01      | 2min     | 1     | 1     |
 | Phase 12 P02 | 4min | 2 tasks | 3 files |
 | 13-01      | 4min     | 2     | 4     |
+| Phase 14 P01 | 4min | 2 tasks | 2 files |
 
 ## Session Continuity
 
-Last session: 2026-03-31T21:54:18Z
-Stopped at: Completed 13-01-PLAN.md
+Last session: 2026-03-31T22:18:31.281Z
+Stopped at: Completed 14-01-PLAN.md
 Resume file: None

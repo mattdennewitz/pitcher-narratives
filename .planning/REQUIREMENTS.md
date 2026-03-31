@@ -15,9 +15,9 @@ Requirements for Model-Explainable Narratives milestone. Each maps to roadmap ph
 
 ### Analyst Intelligence
 
-- [ ] **ANLST-01**: Analyst system prompt frames reasoning around model internals (outcome probabilities, component attribution) rather than opaque plus grades
-- [ ] **ANLST-02**: Analyst diagnoses location impact by comparing P-variant vs S-variant probabilities (e.g., "swing rate drops 9% with location factored in")
-- [ ] **ANLST-03**: Analyst identifies which outcome class is the dominant run-value driver for a given pitch type (e.g., "whiffs contribute 1.4 runs saved per 100")
+- [x] **ANLST-01**: Analyst system prompt frames reasoning around model internals (outcome probabilities, component attribution) rather than opaque plus grades
+- [x] **ANLST-02**: Analyst diagnoses location impact by comparing P-variant vs S-variant probabilities (e.g., "swing rate drops 9% with location factored in")
+- [x] **ANLST-03**: Analyst identifies which outcome class is the dominant run-value driver for a given pitch type (e.g., "whiffs contribute 1.4 runs saved per 100")
 
 ### Tool Interface
 
@@ -70,9 +70,9 @@ Which phases cover which requirements. Updated during roadmap creation.
 | DATA-01 | Phase 11 | Complete |
 | DATA-02 | Phase 11 | Complete |
 | DATA-03 | Phase 12 | Complete |
-| ANLST-01 | Phase 14 | Pending |
-| ANLST-02 | Phase 14 | Pending |
-| ANLST-03 | Phase 14 | Pending |
+| ANLST-01 | Phase 14 | Complete |
+| ANLST-02 | Phase 14 | Complete |
+| ANLST-03 | Phase 14 | Complete |
 | TOOL-01 | Phase 13 | Complete |
 | TOOL-02 | Phase 13 | Complete |
 
