@@ -222,6 +222,10 @@ Plans:
   2. Per-pitch-type aggregations include both P and S variants, enabling location impact calculation (P minus S)
   3. Intermediate probabilities are accessible at the same aggregation grains as existing plus scores (pitcher+type, pitcher+type+appearance)
   4. Missing columns (if a CSV lacks intermediates) are handled gracefully without crashing the pipeline
+**Plans**: 1 plan
+
+Plans:
+- [ ] 11-01-PLAN.md -- IntermediateProbabilities dataclass, compute function, PitcherContext wiring (TDD)
 
 ### Phase 12: Component Attribution
 **Goal**: Each pitch type's xRV is decomposed into 13 additive outcome contributions, showing which outcomes (whiffs, HRs, ground outs, etc.) drive the overall score
