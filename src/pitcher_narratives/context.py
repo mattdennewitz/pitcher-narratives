@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict
 
 from pitcher_narratives.data import PitcherData
 from pitcher_narratives.engine import (
+    ComponentAttribution,
     ExecutionMetrics,
     FastballSummary,
     FirstPitchWeaponry,
@@ -24,6 +25,7 @@ from pitcher_narratives.engine import (
     VelocityArc,
     WorkloadContext,
     compute_arsenal_summary,
+    compute_component_attribution,
     compute_execution_metrics,
     compute_fastball_summary,
     compute_first_pitch_weaponry,
@@ -65,6 +67,8 @@ class PitcherContext(BaseModel):
     execution: list[ExecutionMetrics]
     intermediates: list[IntermediateProbabilities]
     """Per-pitch-type intermediate probabilities (P and S variants)."""
+    attributions: list[ComponentAttribution]
+    """Per-pitch-type xRV decomposition into 13 outcome contributions."""
     hard_hit_rate: HardHitRate
     release_point: ReleasePointMetrics
     workload: WorkloadContext
@@ -492,6 +496,7 @@ def assemble_pitcher_context(data: PitcherData) -> PitcherContext:
     first_pitch = compute_first_pitch_weaponry(data)
     execution = compute_execution_metrics(data)[:_MAX_PITCH_TYPES]
     intermediates = compute_intermediate_probabilities(data)[:_MAX_PITCH_TYPES]
+    attributions = compute_component_attribution(data)[:_MAX_PITCH_TYPES]
     hard_hit_rate = compute_hard_hit_rate(data)
     release_point = compute_release_point_metrics(data)
     workload = compute_workload_context(data)
@@ -513,6 +518,7 @@ def assemble_pitcher_context(data: PitcherData) -> PitcherContext:
         first_pitch=first_pitch,
         execution=execution,
         intermediates=intermediates,
+        attributions=attributions,
         hard_hit_rate=hard_hit_rate,
         release_point=release_point,
         workload=workload,

@@ -11,7 +11,7 @@ Requirements for Model-Explainable Narratives milestone. Each maps to roadmap ph
 
 - [x] **DATA-01**: Analyst context includes per-pitch-type intermediate probabilities (xSwing, xWhiff, xGOr, xPUr, xHR100, BBE_prob) from pitchingplus aggregations
 - [x] **DATA-02**: Analyst context includes P vs S variants of intermediates so location impact is quantifiable
-- [ ] **DATA-03**: xRV is decomposed into 13 outcome-level contributions (probability x run_value per outcome) per pitch type
+- [x] **DATA-03**: xRV is decomposed into 13 outcome-level contributions (probability x run_value per outcome) per pitch type
 
 ### Analyst Intelligence
 
