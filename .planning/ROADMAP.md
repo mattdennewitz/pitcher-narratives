@@ -265,6 +265,10 @@ Plans:
   2. Analyst diagnoses location impact by comparing P vs S variants (e.g., "swing rate drops 9% with location — hitters lay off this pitch in the zones he's throwing it")
   3. Analyst identifies the dominant run-value driver from component attribution (e.g., "whiffs contribute 1.4 runs saved per 100, but home runs give back 0.6")
   4. Plus scores (P+/S+/L+) are still referenced as summary grades, but the explanation focuses on what drives them
+**Plans**: 1 plan
+
+Plans:
+- [ ] 14-01-PLAN.md -- Rewrite _ANALYST_INSTRUCTIONS with model-internals-first reasoning (TDD)
 
 ## Progress
 
