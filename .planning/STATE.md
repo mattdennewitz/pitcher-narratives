@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.5
 milestone_name: Model-Explainable Narratives
 status: executing
-stopped_at: Completed 12-01-PLAN.md
-last_updated: "2026-03-31T21:21:20Z"
+stopped_at: Completed 12-02-PLAN.md
+last_updated: "2026-03-31T21:32:12.496Z"
 last_activity: 2026-03-31
 progress:
   total_phases: 14
-  completed_phases: 8
-  total_plans: 13
-  completed_plans: 14
+  completed_phases: 9
+  total_plans: 15
+  completed_plans: 15
 ---
 
 # Project State
@@ -25,8 +25,8 @@ See: .planning/PROJECT.md (updated 2026-03-31)
 ## Current Position
 
 Phase: 12
-Plan: 1 of 2 complete
-Status: Phase 12 in progress — Plan 01 complete, Plan 02 pending
+Plan: 2 of 2 complete
+Status: Ready to execute
 Last activity: 2026-03-31
 
 ## Accumulated Context
@@ -44,6 +44,7 @@ Recent decisions affecting current work:
 
 - [Phase 11]: BBE_prob_P/S included in constants despite missing from CSVs -- future-proofs against agg regeneration
 - [Phase 11]: Default parameter binding for inner closure to satisfy ruff B023
+- [Phase 12]: Raw xRV100 (pre-mean-subtraction) for component attribution -- correct decomposition since league-average offset is constant
 
 ### Pending Todos
 
@@ -59,9 +60,10 @@ None yet.
 |------------|----------|-------|-------|
 | 11-01      | 5min     | 2     | 3     |
 | 12-01      | 2min     | 1     | 1     |
+| Phase 12 P02 | 4min | 2 tasks | 3 files |
 
 ## Session Continuity
 
-Last session: 2026-03-31T21:21:20Z
-Stopped at: Completed 12-01-PLAN.md
+Last session: 2026-03-31T21:32:12.494Z
+Stopped at: Completed 12-02-PLAN.md
 Resume file: None
