@@ -112,8 +112,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--provider",
         choices=["openai", "claude", "gemini"],
-        default="claude",
-        help="LLM provider (default: claude)",
+        default="gemini",
+        help="LLM provider (default: gemini)",
     )
     parser.add_argument(
         "--thinking",
