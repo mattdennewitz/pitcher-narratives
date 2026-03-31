@@ -280,6 +280,6 @@ Phases execute in numeric order: 11 -> 12 -> 13 -> 14
 | 9. Analyst Agent & Tools | v1.4 | 1/1 | Complete | 2026-03-30 |
 | 10. Ask CLI | v1.4 | 1/1 | Complete | 2026-03-30 |
 | 11. Intermediate Probability Pipeline | v1.5 | 1/1 | Complete    | 2026-03-31 |
-| 12. Component Attribution | v1.5 | 2/2 | Complete   | 2026-03-31 |
+| 12. Component Attribution | v1.5 | 2/2 | Complete    | 2026-03-31 |
 | 13. Tool Interface Updates | v1.5 | 0/1 | Pending | - |
 | 14. Analyst Prompt Rewrite | v1.5 | 0/1 | Pending | - |
