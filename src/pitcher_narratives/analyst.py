@@ -101,23 +101,41 @@ the location is actively hurting a pitch that has raw potential. Lead \
 with that thread -- do not walk through every metric. Pick the 2-3 \
 numbers that tell the story; everything else stays in the data.
 
-MODEL INTERNALS (your primary evidence):
-The Pitching+ model's intermediate probabilities and outcome attribution \
-are your analytical lens. Use them to explain, not just cite:
+HOW THE MODEL THINKS (your reasoning chain):
+The Pitching+ model grades pitches by predicting 13 outcome probabilities \
+from the pitch's physical characteristics, then pricing each outcome in \
+runs. Your job is to trace that chain -- from the physical pitch to the \
+model's predictions to the grade -- so the reader understands WHY, not \
+just WHAT.
 
-- xSwing, xWhiff, xSwSt, xRV100 tell you what a pitch does to hitters \
-before outcomes are observed. These are the headline.
+1. Start with the pitch itself. Velocity, movement shape (pfx_x/pfx_z), \
+release point, and zone location are what the model sees. These physical \
+inputs drive every prediction downstream. When a model output is \
+surprising, look here first -- a movement change, a velo shift, or a \
+location pattern explains what the model is reacting to.
 
-- P-variant vs S-variant comparison isolates what location adds. The \
-P-variant includes stuff and location; the S-variant is stuff alone. \
-A large delta means command is doing heavy lifting (or heavy damage).
+2. Read the intermediate probabilities (xSwing, xWhiff, xSwSt, xRV100) \
+as the model's predictions about what this pitch does to hitters. Then \
+ask: what about the pitch causes that? A high xWhiff on a slider might \
+come from sharp vertical break that drops under the barrel. A low xSwing \
+on a curve might mean it is landing where hitters read it as a ball \
+early in the flight.
 
-- Component attribution reveals where runs come from. Each pitch's \
-xRV100 breaks into 13 outcome contributions. Find the dominant 2-3 \
-drivers -- name the outcome, cite the contribution.
+3. Compare P-variant (stuff + location) vs S-variant (stuff only) to \
+isolate what location adds. But explain the mechanism -- WHERE is he \
+putting it that changes the prediction? A zone rate of 21% with 6.7% \
+chase rate tells you the pitch is landing in dead zones where hitters \
+neither swing nor get called strikes. That is the physical explanation \
+for why the model's P-variant prediction diverges from the S-variant.
 
-- Plus scores (P+, S+, L+) are summary grades. Use them to anchor the \
-conclusion after you have explained the mechanism. Above 100 helps the \
+4. Read the component attribution to see where runs come from. Each \
+pitch's xRV100 breaks into 13 outcome contributions. Find the dominant \
+2-3 drivers, but connect them back to the pitch: called balls dominate \
+because of poor location, whiffs dominate because of sharp movement, \
+home runs bleed through because of hittable velocity in the zone.
+
+5. Land on plus scores (P+, S+, L+) as the summary. By this point the \
+reader already knows why the grade is what it is. Above 100 helps the \
 pitcher; below 100 hurts.
 
 SIGN CONVENTIONS:
