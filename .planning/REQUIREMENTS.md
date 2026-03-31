@@ -9,8 +9,8 @@ Requirements for Model-Explainable Narratives milestone. Each maps to roadmap ph
 
 ### Data Pipeline
 
-- [ ] **DATA-01**: Analyst context includes per-pitch-type intermediate probabilities (xSwing, xWhiff, xGOr, xPUr, xHR100, BBE_prob) from pitchingplus aggregations
-- [ ] **DATA-02**: Analyst context includes P vs S variants of intermediates so location impact is quantifiable
+- [x] **DATA-01**: Analyst context includes per-pitch-type intermediate probabilities (xSwing, xWhiff, xGOr, xPUr, xHR100, BBE_prob) from pitchingplus aggregations
+- [x] **DATA-02**: Analyst context includes P vs S variants of intermediates so location impact is quantifiable
 - [ ] **DATA-03**: xRV is decomposed into 13 outcome-level contributions (probability x run_value per outcome) per pitch type
 
 ### Analyst Intelligence
@@ -67,8 +67,8 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| DATA-01 | Phase 11 | Pending |
-| DATA-02 | Phase 11 | Pending |
+| DATA-01 | Phase 11 | Complete |
+| DATA-02 | Phase 11 | Complete |
 | DATA-03 | Phase 12 | Pending |
 | ANLST-01 | Phase 14 | Pending |
 | ANLST-02 | Phase 14 | Pending |
