@@ -1,32 +1,30 @@
-# Requirements: Pitcher Narratives v1.4
+# Requirements: Pitcher Narratives v1.5
 
-**Defined:** 2026-03-30
+**Defined:** 2026-03-31
 **Core Value:** The report must read like a scout wrote it -- surfacing changes, adaptations, and execution trends rather than reciting numbers.
 
-## v1.4 Requirements
-
-Requirements for Interactive Pitcher Q&A milestone. Each maps to roadmap phases.
-
-### Name Resolution
-
-- [x] **RESOLVE-01**: User can identify a pitcher by partial name, full name, or last name (fuzzy matching via rapidfuzz)
-- [x] **RESOLVE-02**: User sees a disambiguation list when multiple pitchers match (e.g., "Johnson" -> candidates)
-
-### Agent
-
-- [x] **AGENT-01**: Tool-calling pydantic-ai agent answers questions using only provided pitcher data (no training-data hallucination)
-- [x] **AGENT-02**: Agent has `get_pitcher_summary` tool returning full PitcherContext for broad questions
-- [x] **AGENT-03**: Agent has `get_pitch_detail` tool returning focused arsenal/execution/platoon data for a specific pitch type
-- [x] **AGENT-04**: Agent declines questions about data it doesn't have (predictions, fantasy advice, historical seasons, cross-pitcher comparisons)
-- [x] **AGENT-05**: Pitch type extraction maps natural language ("knuckle curve", "slider") to Statcast codes (KC, SL)
-- [x] **AGENT-06**: Agent streams answer to stdout as it generates
-
-### CLI
-
-- [x] **CLI-01**: User can ask a question via CLI entry point (e.g., `pitcher-ask "Why is Cease's knuckle curve bad?"`)
-- [x] **CLI-02**: CLI supports `--provider` and `--thinking` flags matching existing report CLI
-
 ## v1.5 Requirements
+
+Requirements for Model-Explainable Narratives milestone. Each maps to roadmap phases.
+
+### Data Pipeline
+
+- [ ] **DATA-01**: Analyst context includes per-pitch-type intermediate probabilities (xSwing, xWhiff, xGOr, xPUr, xHR100, BBE_prob) from pitchingplus aggregations
+- [ ] **DATA-02**: Analyst context includes P vs S variants of intermediates so location impact is quantifiable
+- [ ] **DATA-03**: xRV is decomposed into 13 outcome-level contributions (probability x run_value per outcome) per pitch type
+
+### Analyst Intelligence
+
+- [ ] **ANLST-01**: Analyst system prompt frames reasoning around model internals (outcome probabilities, component attribution) rather than opaque plus grades
+- [ ] **ANLST-02**: Analyst diagnoses location impact by comparing P-variant vs S-variant probabilities (e.g., "swing rate drops 9% with location factored in")
+- [ ] **ANLST-03**: Analyst identifies which outcome class is the dominant run-value driver for a given pitch type (e.g., "whiffs contribute 1.4 runs saved per 100")
+
+### Tool Interface
+
+- [ ] **TOOL-01**: get_pitcher_summary tool returns intermediate probabilities and P/S comparisons alongside existing plus scores
+- [ ] **TOOL-02**: get_pitch_detail tool returns component attribution breakdown (13 outcome contributions to xRV) for a specific pitch type
+
+## Future Requirements
 
 Deferred to future release. Tracked but not in current roadmap.
 
@@ -54,13 +52,14 @@ Explicitly excluded. Documented to prevent scope creep.
 
 | Feature | Reason |
 |---------|--------|
-| SQL generation from natural language | Existing engine computes meaningful derived metrics -- bypassing it loses pre-computed deltas and baselines |
-| Fantasy advice in Q&A answers | Speculative and ungrounded -- use full report pipeline for fantasy analysis |
-| LLM-powered name resolution | Slow, expensive, unreliable -- name resolution is a lookup problem, not a reasoning problem |
-| Historical season-over-season trends | Single-season 2026 data only per PROJECT.md constraints |
-| Question rewriting/rephrasing | Extra LLM call adds latency -- analyst agent interprets questions directly |
-| Cross-pitcher comparison (v1.4) | Needs new data scanning layer -- defer to v1.5 |
-| Multi-turn conversation (v1.4) | Session state management, different UX paradigm -- defer to v1.5+ |
+| SHAP/feature-level explanations | Requires adding SHAP computation to pitchingplus pipeline; component attribution answers "why" without it |
+| CatBoost feature importance export | Model debugging tool, not narrative generation |
+| Modifications to pitchingplus package | Read-only consumer; new computation happens in pitcher-narratives |
+| Per-pitch (non-aggregated) model outputs | Aggregated metrics are what narratives need; per-pitch is noise |
+| SQL generation from natural language | Existing engine computes meaningful derived metrics |
+| Fantasy advice in Q&A answers | Speculative and ungrounded -- use full report pipeline |
+| Cross-pitcher comparison | Needs new data scanning layer -- deferred to v1.6+ |
+| Multi-turn conversation | Session state management, different UX paradigm -- deferred to v1.6+ |
 
 ## Traceability
 
@@ -68,22 +67,20 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| RESOLVE-01 | Phase 8 | Complete |
-| RESOLVE-02 | Phase 8 | Complete |
-| AGENT-01 | Phase 9 | Complete |
-| AGENT-02 | Phase 9 | Complete |
-| AGENT-03 | Phase 9 | Complete |
-| AGENT-04 | Phase 9 | Complete |
-| AGENT-05 | Phase 9 | Complete |
-| AGENT-06 | Phase 9 | Complete |
-| CLI-01 | Phase 10 | Complete |
-| CLI-02 | Phase 10 | Complete |
+| DATA-01 | TBD | Pending |
+| DATA-02 | TBD | Pending |
+| DATA-03 | TBD | Pending |
+| ANLST-01 | TBD | Pending |
+| ANLST-02 | TBD | Pending |
+| ANLST-03 | TBD | Pending |
+| TOOL-01 | TBD | Pending |
+| TOOL-02 | TBD | Pending |
 
 **Coverage:**
-- v1.4 requirements: 10 total
-- Mapped to phases: 10
-- Unmapped: 0
+- v1.5 requirements: 8 total
+- Mapped to phases: 0
+- Unmapped: 8 (pending roadmap)
 
 ---
-*Requirements defined: 2026-03-30*
-*Last updated: 2026-03-30 after roadmap creation*
+*Requirements defined: 2026-03-31*
+*Last updated: 2026-03-31 after initial definition*
