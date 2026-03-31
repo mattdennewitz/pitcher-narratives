@@ -69,7 +69,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 |-------------|-------|--------|
 | DATA-01 | Phase 11 | Complete |
 | DATA-02 | Phase 11 | Complete |
-| DATA-03 | Phase 12 | Pending |
+| DATA-03 | Phase 12 | In Progress (data loaded, computation in 12-02) |
 | ANLST-01 | Phase 14 | Pending |
 | ANLST-02 | Phase 14 | Pending |
 | ANLST-03 | Phase 14 | Pending |
