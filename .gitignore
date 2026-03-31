@@ -12,3 +12,5 @@ aggs
 *~
 data-*.md
 .claude
+.DS_Store
+stderr*.txt
