@@ -18,6 +18,7 @@ from pitcher_narratives.engine import (
     FirstPitchEntry,
     FirstPitchWeaponry,
     HardHitRate,
+    IntermediateProbabilities,
     PitchTypeSummary,
     PlatoonMix,
     PlatoonSplit,
@@ -39,6 +40,7 @@ from pitcher_narratives.engine import (
     compute_fastball_summary,
     compute_first_pitch_weaponry,
     compute_hard_hit_rate,
+    compute_intermediate_probabilities,
     compute_platoon_mix,
     compute_release_point_metrics,
     compute_tto_analysis,
@@ -883,3 +885,95 @@ def test_release_point_ordering():
     # Verify descending order -- first entry should be FC (most-used pitch)
     if len(rp.pitch_types) >= 2:
         assert rp.pitch_types[0].pitch_type == "FC"
+
+
+# ── Intermediate Probabilities ───────────────────────────────────────
+
+
+def test_intermediate_probabilities_computed():
+    """compute_intermediate_probabilities returns typed results with real data."""
+    data = load_pitcher_data(TEST_PITCHER, window_days=30)
+    result = compute_intermediate_probabilities(data)
+    assert len(result) > 0
+    for item in result:
+        assert isinstance(item, IntermediateProbabilities)
+        assert isinstance(item.pitch_type, str) and item.pitch_type
+        assert isinstance(item.pitch_name, str) and item.pitch_name
+        assert item.n_pitches > 0
+    # At least one item should have non-None xswing_p or xwhiff_p
+    assert any(item.xswing_p is not None or item.xwhiff_p is not None for item in result)
+
+
+def test_intermediate_bbe_prob_none():
+    """BBE_prob columns do not exist in agg CSVs -- values must be None."""
+    data = load_pitcher_data(TEST_PITCHER, window_days=30)
+    result = compute_intermediate_probabilities(data)
+    for item in result:
+        assert item.bbe_prob_p is None
+        assert item.bbe_prob_s is None
+
+
+def test_intermediate_p_and_s_variants():
+    """P and S variants should both exist together for each metric."""
+    data = load_pitcher_data(TEST_PITCHER, window_days=30)
+    result = compute_intermediate_probabilities(data)
+    for item in result:
+        if item.xswing_p is not None:
+            assert item.xswing_s is not None
+        if item.xwhiff_p is not None:
+            assert item.xwhiff_s is not None
+        if item.xgor_p is not None:
+            assert item.xgor_s is not None
+        if item.xpur_p is not None:
+            assert item.xpur_s is not None
+        if item.xhr100_p is not None:
+            assert item.xhr100_s is not None
+        if item.xswst_p is not None:
+            assert item.xswst_s is not None
+        if item.xrv100_p is not None:
+            assert item.xrv100_s is not None
+
+
+def test_intermediate_location_impact():
+    """Location impact (P minus S) is computable for non-None pairs."""
+    data = load_pitcher_data(TEST_PITCHER, window_days=30)
+    result = compute_intermediate_probabilities(data)
+    # Find first item where both xswing_p and xswing_s are not None
+    found = False
+    for item in result:
+        if item.xswing_p is not None and item.xswing_s is not None:
+            delta = item.xswing_p - item.xswing_s
+            assert isinstance(delta, float)
+            import math
+            assert math.isfinite(delta)
+            found = True
+            break
+    assert found, "Expected at least one item with both xswing_p and xswing_s non-None"
+
+
+def test_intermediate_both_grains():
+    """Window and season values should both be populated."""
+    data = load_pitcher_data(TEST_PITCHER, window_days=30)
+    result = compute_intermediate_probabilities(data)
+    for item in result:
+        # Window values come from pitcher_type_appearance grain
+        # Season values come from pitch_type_baseline grain
+        pass
+    # At least one item should have both window and season xswing_p
+    assert any(
+        item.season_xswing_p is not None and item.xswing_p is not None
+        for item in result
+    ), "Expected at least one item with both season and window xswing_p"
+
+
+def test_intermediate_missing_columns_graceful():
+    """Missing columns (BBE_prob) produce None, not exceptions."""
+    data = load_pitcher_data(TEST_PITCHER, window_days=30)
+    result = compute_intermediate_probabilities(data)
+    # Function completed without exception (implicit)
+    # BBE_prob_P/S is the missing-column case
+    for item in result:
+        assert item.bbe_prob_p is None
+    # Result is a list, not None or empty
+    assert isinstance(result, list)
+    assert len(result) > 0
