@@ -188,7 +188,7 @@ def main() -> None:
     if args.pipeline:
         from pitcher_narratives.analyst import ask_question_pipeline
 
-        ask_question_pipeline(
+        result = ask_question_pipeline(
             args.question,
             ctx,
             pitcher_data,
@@ -196,6 +196,7 @@ def main() -> None:
             thinking=args.thinking,
             _model_override=model_override,
         )
+        print(f"\n---\n{result.stuff_summary}")
     else:
         from pitcher_narratives.analyst import ask_question_streaming
 

@@ -19,7 +19,7 @@ from pitcher_narratives.context import PitcherContext
 from pitcher_narratives.data import PitcherData
 from pitcher_narratives.report import PROVIDERS, THINKING_LEVELS
 
-__all__ = ["PITCH_TYPE_MAP", "QADeps", "ask_question_streaming", "ask_question_pipeline"]
+__all__ = ["PITCH_TYPE_MAP", "PipelineAnswer", "QADeps", "ask_question_streaming", "ask_question_pipeline"]
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -475,6 +475,14 @@ def ask_question_streaming(
 # MULTI-AGENT Q&A (PIPELINE APPROACH)
 # ═══════════════════════════════════════════════════════════════════════
 
+
+@dataclass
+class PipelineAnswer:
+    """Result from the multi-agent Q&A pipeline."""
+
+    answer: str
+    stuff_summary: str
+
 _ANSWERER_INSTRUCTIONS = """\
 You are a sabermetric scout answering a specific question about a pitcher. \
 You have four specialist analyses available as context — stuff, location, \
@@ -520,7 +528,7 @@ def ask_question_pipeline(
     provider: str = "gemini",
     thinking: ThinkingEffort = "high",
     _model_override: Any = None,
-) -> str:
+) -> PipelineAnswer:
     """Ask a question using the multi-agent specialist→answerer pipeline.
 
     Runs 5 specialists concurrently on the full context, then passes
@@ -536,7 +544,7 @@ def ask_question_pipeline(
         _model_override: Optional model override for testing.
 
     Returns:
-        The agent's complete response as a string.
+        PipelineAnswer with the streamed answer and stuff specialist output.
     """
     import asyncio
     import sys
@@ -586,6 +594,9 @@ def ask_question_pipeline(
                 print(delta, end="", flush=True)
                 chunks.append(delta)
         print()
-        return "".join(chunks)
+        return PipelineAnswer(
+            answer="".join(chunks),
+            stuff_summary=specialists.stuff,
+        )
 
     return asyncio.run(_run())
