@@ -408,6 +408,107 @@ async def _run_specialists(
     )
 
 
+async def _run_pipeline(
+    ctx: PitcherContext,
+    *,
+    provider: str = "gemini",
+    thinking: ThinkingEffort = "high",
+    _model_override: Any = None,
+) -> PipelineResult:
+    """Async core of the multi-agent pipeline.
+
+    Runs everything on a single event loop to avoid closed-loop errors
+    from httpx connections shared across phases.
+    """
+    (
+        stuff_agent, location_agent, runvalue_agent, trends_agent,
+        writer, anchor_checker, fantasy_analyst,
+    ) = _make_pipeline_agents(provider, thinking)
+
+    # Phase 1: Run specialists concurrently
+    print("Running specialists...", file=sys.stderr, flush=True)
+    specialists = await _run_specialists(
+        stuff_agent, location_agent, runvalue_agent, trends_agent,
+        ctx, _model_override,
+    )
+    print("Specialists complete. Composing narrative...", file=sys.stderr, flush=True)
+
+    # Phase 2: Writer composes from specialist outputs (streamed)
+    writer_input = _build_writer_input(
+        ctx, specialists.stuff, specialists.location,
+        specialists.runvalue, specialists.trends,
+    )
+    writer_kwargs: dict[str, Any] = {"user_prompt": writer_input}
+    if _model_override is not None:
+        writer_kwargs["model"] = _model_override
+
+    async with writer.run_stream(**writer_kwargs) as stream:
+        chunks: list[str] = []
+        async for delta in stream.stream_text(delta=True):
+            print(delta, end="", flush=True)
+            chunks.append(delta)
+    print()
+
+    capsule = "".join(chunks)
+
+    # Phase 2.5: Anchor check + revision loop
+    revision_count = 0
+    synthesis = (
+        f"STUFF:\n{specialists.stuff}\n\n"
+        f"LOCATION:\n{specialists.location}\n\n"
+        f"RUN VALUE:\n{specialists.runvalue}\n\n"
+        f"TRENDS:\n{specialists.trends}"
+    )
+
+    for _ in range(MAX_REVISIONS):
+        anchor_kwargs: dict[str, Any] = {
+            "user_prompt": _build_anchor_message(synthesis, capsule),
+        }
+        if _model_override is not None:
+            anchor_kwargs["model"] = _model_override
+
+        anchor_result = await anchor_checker.run(**anchor_kwargs)
+        anchor_check = anchor_result.output
+
+        if anchor_check.is_clean:
+            break
+
+        revision_kwargs: dict[str, Any] = {
+            "user_prompt": _build_revision_message(synthesis, capsule, anchor_check.warnings),
+        }
+        if _model_override is not None:
+            revision_kwargs["model"] = _model_override
+
+        revision_result = await writer.run(**revision_kwargs)
+        capsule = revision_result.output
+        revision_count += 1
+    else:
+        anchor_kwargs = {
+            "user_prompt": _build_anchor_message(synthesis, capsule),
+        }
+        if _model_override is not None:
+            anchor_kwargs["model"] = _model_override
+        anchor_result = await anchor_checker.run(**anchor_kwargs)
+        anchor_check = anchor_result.output
+
+    # Phase 3: Fantasy analyst
+    fantasy_kwargs: dict[str, Any] = {
+        "user_prompt": _build_fantasy_message(ctx, capsule),
+    }
+    if _model_override is not None:
+        fantasy_kwargs["model"] = _model_override
+
+    fantasy_result = await fantasy_analyst.run(**fantasy_kwargs)
+
+    return PipelineResult(
+        narrative=capsule,
+        specialists=specialists,
+        fantasy_insights=fantasy_result.output,
+        anchor_warnings=anchor_check.warnings,
+        revision_count=revision_count,
+    )
+
+
 def generate_pipeline_streaming(
     ctx: PitcherContext,
     *,
@@ -432,95 +533,6 @@ def generate_pipeline_streaming(
         PipelineResult with narrative, specialist outputs, fantasy insights,
         and anchor warnings.
     """
-    (
-        stuff_agent, location_agent, runvalue_agent, trends_agent,
-        writer, anchor_checker, fantasy_analyst,
-    ) = _make_pipeline_agents(provider, thinking)
-
-    # Phase 1: Run specialists concurrently
-    print("Running specialists...", file=sys.stderr, flush=True)
-    loop = asyncio.new_event_loop()
-    specialists = loop.run_until_complete(
-        _run_specialists(
-            stuff_agent, location_agent, runvalue_agent, trends_agent,
-            ctx, _model_override,
-        )
-    )
-    loop.close()
-    print("Specialists complete. Composing narrative...", file=sys.stderr, flush=True)
-
-    # Phase 2: Writer composes from specialist outputs (streamed)
-    writer_input = _build_writer_input(
-        ctx, specialists.stuff, specialists.location,
-        specialists.runvalue, specialists.trends,
-    )
-    writer_kwargs: dict[str, Any] = {"user_prompt": writer_input}
-    if _model_override is not None:
-        writer_kwargs["model"] = _model_override
-
-    stream = writer.run_stream_sync(**writer_kwargs)
-    chunks: list[str] = []
-    for delta in stream.stream_text(delta=True):
-        print(delta, end="", flush=True)
-        chunks.append(delta)
-    print()
-
-    capsule = "".join(chunks)
-
-    # Phase 2.5: Anchor check + revision loop
-    revision_count = 0
-    # Use specialist concatenation as the "synthesis" for anchor checking
-    synthesis = (
-        f"STUFF:\n{specialists.stuff}\n\n"
-        f"LOCATION:\n{specialists.location}\n\n"
-        f"RUN VALUE:\n{specialists.runvalue}\n\n"
-        f"TRENDS:\n{specialists.trends}"
-    )
-
-    for _ in range(MAX_REVISIONS):
-        anchor_kwargs: dict[str, Any] = {
-            "user_prompt": _build_anchor_message(synthesis, capsule),
-        }
-        if _model_override is not None:
-            anchor_kwargs["model"] = _model_override
-
-        anchor_result = anchor_checker.run_sync(**anchor_kwargs)
-        anchor_check = anchor_result.output
-
-        if anchor_check.is_clean:
-            break
-
-        revision_kwargs: dict[str, Any] = {
-            "user_prompt": _build_revision_message(synthesis, capsule, anchor_check.warnings),
-        }
-        if _model_override is not None:
-            revision_kwargs["model"] = _model_override
-
-        revision_result = writer.run_sync(**revision_kwargs)
-        capsule = revision_result.output
-        revision_count += 1
-    else:
-        anchor_kwargs = {
-            "user_prompt": _build_anchor_message(synthesis, capsule),
-        }
-        if _model_override is not None:
-            anchor_kwargs["model"] = _model_override
-        anchor_result = anchor_checker.run_sync(**anchor_kwargs)
-        anchor_check = anchor_result.output
-
-    # Phase 3: Fantasy analyst
-    fantasy_kwargs: dict[str, Any] = {
-        "user_prompt": _build_fantasy_message(ctx, capsule),
-    }
-    if _model_override is not None:
-        fantasy_kwargs["model"] = _model_override
-
-    fantasy_result = fantasy_analyst.run_sync(**fantasy_kwargs)
-
-    return PipelineResult(
-        narrative=capsule,
-        specialists=specialists,
-        fantasy_insights=fantasy_result.output,
-        anchor_warnings=anchor_check.warnings,
-        revision_count=revision_count,
+    return asyncio.run(
+        _run_pipeline(ctx, provider=provider, thinking=thinking, _model_override=_model_override)
     )
