@@ -161,6 +161,9 @@ def main() -> None:
             _model_override=model_override,
         )
 
+        # Print stuff summary from specialist
+        print(f"\n---\n{pipe_result.specialists.stuff}")
+
         # Print fantasy insights
         print(f"\n---\n{pipe_result.fantasy_insights}")
 
