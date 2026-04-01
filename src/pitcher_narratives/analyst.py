@@ -523,7 +523,7 @@ def ask_question_pipeline(
 ) -> str:
     """Ask a question using the multi-agent specialist→answerer pipeline.
 
-    Runs 4 specialists concurrently on the full context, then passes
+    Runs 5 specialists concurrently on the full context, then passes
     their outputs + the question to an answerer agent that streams
     a focused response.
 
@@ -542,17 +542,13 @@ def ask_question_pipeline(
     import sys
 
     from pitcher_narratives.pipeline import (
-        _build_location_input,
-        _build_runvalue_input,
-        _build_stuff_input,
-        _build_trend_input,
         _make_pipeline_agents,
         _run_specialists,
     )
 
     (
         stuff_agent, location_agent, runvalue_agent, trends_agent,
-        _writer, anchor_checker,
+        game_shape_agent, _writer, _anchor,
     ) = _make_pipeline_agents(provider, thinking)
 
     async def _run() -> str:
@@ -560,7 +556,7 @@ def ask_question_pipeline(
         print("Running specialists...", file=sys.stderr, flush=True)
         specialists = await _run_specialists(
             stuff_agent, location_agent, runvalue_agent, trends_agent,
-            context, _model_override,
+            game_shape_agent, context, _model_override,
         )
         print("Answering...", file=sys.stderr, flush=True)
 
@@ -580,7 +576,8 @@ def ask_question_pipeline(
             f"## Specialist Analysis: Stuff\n{specialists.stuff}\n\n"
             f"## Specialist Analysis: Location\n{specialists.location}\n\n"
             f"## Specialist Analysis: Run Value\n{specialists.runvalue}\n\n"
-            f"## Specialist Analysis: Trends\n{specialists.trends}"
+            f"## Specialist Analysis: Trends\n{specialists.trends}\n\n"
+            f"## Specialist Analysis: Game Shape\n{specialists.game_shape}"
         )
 
         chunks: list[str] = []

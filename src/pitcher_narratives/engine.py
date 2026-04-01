@@ -54,6 +54,8 @@ __all__ = [
     "compute_tto_analysis",
     "compute_velocity_arc",
     "compute_workload_context",
+    "LeagueBaseline",
+    "compute_league_baselines",
 ]
 
 # ── Constants ─────────────────────────────────────────────────────────
@@ -139,6 +141,83 @@ _DOUBLE_OUT_EVENTS = frozenset(
     }
 )
 """Events that produce two outs."""
+
+
+# ── League baselines ─────────────────────────────────────────────────
+
+@dataclass
+class LeagueBaseline:
+    """League-average physical profile for a single pitch type."""
+
+    pitch_type: str
+    pitch_name: str
+    n_pitches: int
+    avg_velo: float
+    avg_pfx_x: float
+    avg_pfx_z: float
+    zone_pct: float
+    chase_pct: float
+
+
+_league_baselines_cache: list[LeagueBaseline] | None = None
+
+
+def compute_league_baselines() -> list[LeagueBaseline]:
+    """Compute league-average velocity, movement, and zone/chase rates per pitch type.
+
+    Results are cached after first call. Only includes pitch types with
+    at least 100 pitches in the dataset.
+
+    Returns:
+        List of LeagueBaseline sorted by pitch count descending.
+    """
+    global _league_baselines_cache
+    if _league_baselines_cache is not None:
+        return _league_baselines_cache
+
+    from pitcher_narratives.data import PARQUET_PATH
+
+    df = pl.read_parquet(
+        PARQUET_PATH,
+        columns=["pitch_type", "pitch_name", "release_speed", "pfx_x", "pfx_z", "zone", "description"],
+    )
+    df = df.filter(pl.col("release_speed").is_not_null())
+
+    is_in_zone = pl.col("zone").is_between(1, 9)
+    is_swing = pl.col("description").is_in(list(_SWING_DESCRIPTIONS))
+
+    agg = (
+        df.group_by("pitch_type", "pitch_name")
+        .agg(
+            pl.len().alias("n"),
+            pl.col("release_speed").mean().alias("avg_velo"),
+            pl.col("pfx_x").mean().alias("avg_pfx_x"),
+            pl.col("pfx_z").mean().alias("avg_pfx_z"),
+            (is_in_zone.mean() * 100).alias("zone_pct"),
+            # Chase: swings on pitches outside zones 1-9
+            ((is_in_zone.not_() & is_swing).sum()
+             / (is_in_zone.not_()).sum() * 100).alias("chase_pct"),
+        )
+        .filter(pl.col("n") >= 100)
+        .sort("n", descending=True)
+    )
+
+    results = [
+        LeagueBaseline(
+            pitch_type=row["pitch_type"],
+            pitch_name=row["pitch_name"],
+            n_pitches=row["n"],
+            avg_velo=float(row["avg_velo"]),
+            avg_pfx_x=float(row["avg_pfx_x"]),
+            avg_pfx_z=float(row["avg_pfx_z"]),
+            zone_pct=float(row["zone_pct"]),
+            chase_pct=float(row["chase_pct"]),
+        )
+        for row in agg.iter_rows(named=True)
+    ]
+
+    _league_baselines_cache = results
+    return results
 
 
 # ── Delta string helpers (private) ────────────────────────────────────

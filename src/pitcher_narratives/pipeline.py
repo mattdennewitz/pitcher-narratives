@@ -1,13 +1,17 @@
 """Multi-agent specialist→writer report pipeline (v1.6 prototype).
 
 Architecture:
-  4 specialist agents run in parallel, each producing a focused micro-analysis:
+  5 specialist agents run in parallel, each producing a focused micro-analysis:
     - Stuff Explainer: velocity/movement → S+ grades via S-variant predictions
     - Location Analyst: P vs S divergence, zone/chase rates, location impact
     - Run Value Decomposer: 13-outcome attribution, dominant value drivers
-    - Trend Spotter: window vs season deltas, what's changing and direction
+    - Trend Spotter: window vs season deltas in velocity, movement, usage, grades
+    - Game Shape Analyst: TTO degradation, velocity arc, within-game mix shifts
 
-  Writer agent receives all 4 specialist blurbs + pitcher context, finds the
+  All specialists receive league-average baselines per pitch type so they
+  can contextualize a pitcher's characteristics against the league.
+
+  Writer agent receives all 5 specialist blurbs + pitcher context, finds the
   thread, and composes a unified capsule.
 
   Anchor check remains from the existing pipeline.
@@ -25,6 +29,7 @@ from pydantic_ai.models.google import GoogleModelSettings
 from pydantic_ai.settings import ModelSettings, ThinkingEffort
 
 from pitcher_narratives.context import PitcherContext
+from pitcher_narratives.engine import LeagueBaseline, compute_league_baselines
 from pitcher_narratives.report import (
     MAX_REVISIONS,
     PROVIDERS,
@@ -123,9 +128,7 @@ Look at:
 - Usage rate shifts (biggest increases/decreases)
 - Movement changes (pfx_x/pfx_z deltas)
 - Release point shifts
-- Workload context (consecutive days, rest, pitch counts)
 - Hard-hit rate shifts
-- TTO patterns for starters (stamina trajectory)
 
 Rules:
 - Lead with the single most important change.
@@ -135,6 +138,32 @@ when a delta is within the "steady" threshold.
 more hard contact = likely related).
 - One focused paragraph covering the key trends. Skip what's steady.
 - No projection or prediction — just what changed and by how much.
+- Do NOT analyze TTO patterns, velocity arcs, or within-game \
+progression — a separate specialist handles that.
+- Plain prose, no bullet lists."""
+
+_GAME_SHAPE_SPECIALIST_PROMPT = """\
+You are a game shape analyst. Your job is to describe how the pitcher's \
+effectiveness and approach change WITHIN a game — from first pitch to last.
+
+Look at:
+- TTO splits: how do velocity, P+, and pitch mix change by pass?
+- Velocity arc: does velocity hold, build, or drop within the outing?
+- Mix shifts by pass: does the pitcher abandon or introduce pitches \
+as the game progresses?
+- Platoon-specific TTO patterns: does the mix shift differently \
+against LHB vs RHB in later passes?
+- Workload context: pitch counts, rest days, consecutive days pitched.
+
+Rules:
+- Lead with the most notable within-game pattern.
+- Connect mix shifts to effectiveness: if he ramps the sinker in \
+pass 2, does that help or hurt?
+- Flag stamina signals: velo cliff, S+ drop, command loss in later \
+passes.
+- One focused paragraph. Skip what's unremarkable.
+- Do NOT analyze window-vs-season trends — a separate specialist \
+handles that.
 - Plain prose, no bullet lists."""
 
 
@@ -146,11 +175,12 @@ _WRITER_PROMPT = """\
 You are an elite, sabermetrically inclined baseball writer. You write \
 for front offices and data-driven fans.
 
-INPUT: Four specialist analyses of a pitcher's recent window:
+INPUT: Five specialist analyses of a pitcher's recent window:
 1. Stuff analysis — physical pitch characteristics and S+ grades
 2. Location analysis — P vs S location impact per pitch
 3. Run value decomposition — which outcomes drive each pitch's value
 4. Trend analysis — what has changed vs season baseline
+5. Game shape — how effectiveness changes within a game (TTO, velocity arc)
 
 Your job is to compose a single, unified 2-3 paragraph scouting capsule \
 from these building blocks. The specialists did the analysis; you do \
@@ -195,12 +225,46 @@ Do not invent metrics.
 
 
 # ═══════════════════════════════════════════════════════════════════════
+# LEAGUE BASELINES
+# ═══════════════════════════════════════════════════════════════════════
+
+def _render_league_baselines(pitch_types: list[str]) -> str:
+    """Render league-average baselines for the given pitch types.
+
+    Only includes pitch types present in the pitcher's arsenal so
+    specialists have relevant context without noise.
+    """
+    baselines = compute_league_baselines()
+    lookup = {b.pitch_type: b for b in baselines}
+
+    lines = ["## League Averages (2026, all pitchers)"]
+    for pt in pitch_types:
+        b = lookup.get(pt)
+        if b is None:
+            continue
+        lines.append(
+            f"- {b.pitch_name} ({b.pitch_type}): "
+            f"{b.avg_velo:.1f} mph, "
+            f"pfx_x {b.avg_pfx_x:.1f} in, pfx_z {b.avg_pfx_z:.1f} in, "
+            f"zone% {b.zone_pct:.1f}, chase% {b.chase_pct:.1f}"
+        )
+    return "\n".join(lines)
+
+
+# ═══════════════════════════════════════════════════════════════════════
 # DATA BUILDERS
 # ═══════════════════════════════════════════════════════════════════════
+
+def _pitch_types(ctx: PitcherContext) -> list[str]:
+    """Extract pitch type codes from the arsenal."""
+    return [p.pitch_type for p in ctx.arsenal]
+
 
 def _build_stuff_input(ctx: PitcherContext) -> str:
     """Build input for the stuff specialist from arsenal + intermediates."""
     lines = [f"## {ctx.pitcher_name} ({ctx.throws}HP, {ctx.role})\n"]
+    lines.append(_render_league_baselines(_pitch_types(ctx)))
+    lines.append("")
     lines.append("## Arsenal Physical Profile")
     for p in ctx.arsenal:
         sp = f"{p.window_s_plus:.0f}" if p.window_s_plus is not None else "--"
@@ -226,6 +290,8 @@ def _build_stuff_input(ctx: PitcherContext) -> str:
 def _build_location_input(ctx: PitcherContext) -> str:
     """Build input for the location specialist from intermediates + execution."""
     lines = [f"## {ctx.pitcher_name} ({ctx.throws}HP, {ctx.role})\n"]
+    lines.append(_render_league_baselines(_pitch_types(ctx)))
+    lines.append("")
     lines.append("## P vs S Location Impact")
     for im in ctx.intermediates:
         def _d(p: float | None, s: float | None) -> str:
@@ -261,6 +327,8 @@ def _build_location_input(ctx: PitcherContext) -> str:
 def _build_runvalue_input(ctx: PitcherContext) -> str:
     """Build input for the run value specialist from attributions."""
     lines = [f"## {ctx.pitcher_name} ({ctx.throws}HP, {ctx.role})\n"]
+    lines.append(_render_league_baselines(_pitch_types(ctx)))
+    lines.append("")
     lines.append("## Component Attribution (xRV100 Decomposition)")
     for attr in ctx.attributions:
         lines.append(f"\n### {attr.pitch_name} ({attr.pitch_type}) — total xRV100: {attr.total_xrv100:.2f}")
@@ -275,8 +343,33 @@ def _build_runvalue_input(ctx: PitcherContext) -> str:
 
 
 def _build_trend_input(ctx: PitcherContext) -> str:
-    """Build input for the trend specialist from full context."""
-    return ctx.to_prompt()
+    """Build input for the trend specialist — arsenal deltas, release point, hard-hit."""
+    baselines = _render_league_baselines(_pitch_types(ctx))
+    sections = [
+        f"## {ctx.pitcher_name} ({ctx.throws}HP, {ctx.role})\n",
+        baselines,
+        "",
+        ctx._render_fastball_section(),
+        ctx._render_arsenal_section(),
+        ctx._render_release_point_section(),
+        ctx._render_hard_hit_section(),
+    ]
+    return "\n\n".join(s for s in sections if s)
+
+
+def _build_game_shape_input(ctx: PitcherContext) -> str:
+    """Build input for the game shape specialist — TTO, velocity arc, workload."""
+    baselines = _render_league_baselines(_pitch_types(ctx))
+    sections = [
+        f"## {ctx.pitcher_name} ({ctx.throws}HP, {ctx.role})\n",
+        baselines,
+        "",
+        ctx._render_tto_section(),
+        ctx._render_fastball_section(),
+        ctx._render_appearances_section(),
+        ctx._render_role_section(),
+    ]
+    return "\n\n".join(s for s in sections if s)
 
 
 def _build_writer_input(
@@ -285,6 +378,7 @@ def _build_writer_input(
     location: str,
     runvalue: str,
     trends: str,
+    game_shape: str,
 ) -> str:
     """Compose all specialist outputs into writer input."""
     return (
@@ -292,7 +386,8 @@ def _build_writer_input(
         f"## Specialist Analysis 1: Stuff\n{stuff}\n\n"
         f"## Specialist Analysis 2: Location\n{location}\n\n"
         f"## Specialist Analysis 3: Run Value\n{runvalue}\n\n"
-        f"## Specialist Analysis 4: Trends\n{trends}"
+        f"## Specialist Analysis 4: Trends\n{trends}\n\n"
+        f"## Specialist Analysis 5: Game Shape\n{game_shape}"
     )
 
 
@@ -306,6 +401,7 @@ class SpecialistOutputs(BaseModel):
     location: str
     runvalue: str
     trends: str
+    game_shape: str
 
 
 class PipelineResult(BaseModel):
@@ -328,6 +424,7 @@ def _make_pipeline_agents(
     Agent[None, str],  # location
     Agent[None, str],  # runvalue
     Agent[None, str],  # trends
+    Agent[None, str],  # game_shape
     Agent[None, str],  # writer
     Agent[None, AnchorResult],  # anchor
 ]:
@@ -356,6 +453,7 @@ def _make_pipeline_agents(
         _str_agent(_LOCATION_SPECIALIST_PROMPT),
         _str_agent(_RUNVALUE_SPECIALIST_PROMPT),
         _str_agent(_TREND_SPECIALIST_PROMPT),
+        _str_agent(_GAME_SHAPE_SPECIALIST_PROMPT),
         _str_agent(_WRITER_PROMPT),
         Agent(model, output_type=AnchorResult, system_prompt=_ANCHOR_PROMPT,
               model_settings=settings, defer_model_check=True),
@@ -371,15 +469,17 @@ async def _run_specialists(
     location_agent: Agent[None, str],
     runvalue_agent: Agent[None, str],
     trends_agent: Agent[None, str],
+    game_shape_agent: Agent[None, str],
     ctx: PitcherContext,
     _model_override: Any = None,
 ) -> SpecialistOutputs:
-    """Run all 4 specialists concurrently."""
+    """Run all 5 specialists concurrently."""
     inputs = {
         "stuff": (stuff_agent, _build_stuff_input(ctx)),
         "location": (location_agent, _build_location_input(ctx)),
         "runvalue": (runvalue_agent, _build_runvalue_input(ctx)),
         "trends": (trends_agent, _build_trend_input(ctx)),
+        "game_shape": (game_shape_agent, _build_game_shape_input(ctx)),
     }
 
     async def _run(agent: Agent[None, str], prompt: str) -> str:
@@ -397,11 +497,13 @@ async def _run_specialists(
     results = await asyncio.gather(
         tasks["stuff"], tasks["location"],
         tasks["runvalue"], tasks["trends"],
+        tasks["game_shape"],
     )
 
     return SpecialistOutputs(
         stuff=results[0], location=results[1],
         runvalue=results[2], trends=results[3],
+        game_shape=results[4],
     )
 
 
@@ -419,21 +521,21 @@ async def _run_pipeline(
     """
     (
         stuff_agent, location_agent, runvalue_agent, trends_agent,
-        writer, anchor_checker,
+        game_shape_agent, writer, anchor_checker,
     ) = _make_pipeline_agents(provider, thinking)
 
     # Phase 1: Run specialists concurrently
     print("Running specialists...", file=sys.stderr, flush=True)
     specialists = await _run_specialists(
         stuff_agent, location_agent, runvalue_agent, trends_agent,
-        ctx, _model_override,
+        game_shape_agent, ctx, _model_override,
     )
     print("Specialists complete. Composing narrative...", file=sys.stderr, flush=True)
 
     # Phase 2: Writer composes from specialist outputs (streamed)
     writer_input = _build_writer_input(
         ctx, specialists.stuff, specialists.location,
-        specialists.runvalue, specialists.trends,
+        specialists.runvalue, specialists.trends, specialists.game_shape,
     )
     writer_kwargs: dict[str, Any] = {"user_prompt": writer_input}
     if _model_override is not None:
@@ -454,7 +556,8 @@ async def _run_pipeline(
         f"STUFF:\n{specialists.stuff}\n\n"
         f"LOCATION:\n{specialists.location}\n\n"
         f"RUN VALUE:\n{specialists.runvalue}\n\n"
-        f"TRENDS:\n{specialists.trends}"
+        f"TRENDS:\n{specialists.trends}\n\n"
+        f"GAME SHAPE:\n{specialists.game_shape}"
     )
 
     for _ in range(MAX_REVISIONS):
