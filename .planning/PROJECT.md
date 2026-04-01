@@ -46,17 +46,25 @@ The report must read like a scout wrote it — surfacing *changes, adaptations, 
 - Disambiguation UX: numbered candidate list for ambiguous names — v1.4
 - Streaming Q&A output via run_stream_sync matching report pipeline UX — v1.4
 
+- Intermediate probabilities (P and S variants) loaded from pitchingplus aggregation CSVs — v1.5
+- Component attribution: 13-outcome xRV decomposition per pitch type — v1.5
+- Analyst tools return intermediates, P/S comparisons, and attribution alongside plus scores — v1.5
+- Analyst prompt reasons from model internals (physical profile → stuff predictions → grade) — v1.5
+- Per-pitch-type velocity and movement (pfx_x/pfx_z) in arsenal data for Stuff+ explanation — v1.5
+- Stuff explainer phase replaces social hook: traces S+ grades to physical characteristics — v1.5
+
 ### Active
 
-## Current Milestone: v1.5 Model-Explainable Narratives
+## Current Milestone: v1.6 Multi-Agent Pipeline
 
-**Goal:** Invert the analyst from treating Pitching+ scores as opaque numbers to explaining *why* the model scores pitches the way it does, using intermediate probabilities and component attribution from the CatBoost pipeline.
+**Goal:** Replace the monolithic synthesizer→editor pipeline with specialist micro-analysts that each produce a focused insight paragraph, then hand those building blocks to a writer agent that composes the final narrative. Hypothesis: decomposed reasoning produces better-grounded, more mechanistic narratives than asking one agent to do everything.
 
 **Target features:**
-- Surface existing intermediate probabilities (xSwing, xWhiff, xGOr, xPUr, xHR100, BBE_prob) alongside plus scores
-- Compare P vs S variants to isolate location impact
-- Component attribution: decompose xRV into 13 outcome contributions (probability x run_value per outcome)
-- Update analyst system prompt to reason from model internals rather than opaque plus grades
+- Specialist agents: Stuff Explainer, Location Analyst, Run Value Decomposer, Trend Spotter
+- Each specialist receives only the data it needs and produces a short focused paragraph
+- Writer agent receives all specialist blurbs + raw context, finds the thread, writes the capsule
+- Anchor check remains as-is (verify narrative fidelity)
+- Fantasy analyst remains as-is (downstream from final capsule)
 
 ### Out of Scope
 
@@ -66,19 +74,19 @@ The report must read like a scout wrote it — surfacing *changes, adaptations, 
 - Real-time data ingestion — works against static parquet/CSV files
 - Team-level reports — individual pitcher reports only
 - Rich terminal formatting — plain text output for v1.0
-- Cross-pitcher comparison in Q&A — needs new data scanning layer, deferred to v1.6+
-- Multi-turn conversational Q&A — session state management, different UX paradigm, deferred to v1.6+
+- Cross-pitcher comparison in Q&A — needs new data scanning layer, deferred to v1.7+
+- Multi-turn conversational Q&A — session state management, different UX paradigm, deferred to v1.7+
 - SQL generation from natural language — existing engine computes meaningful derived metrics
 
 ## Context
 
-### Current State (v1.4 shipped)
+### Current State (v1.5 shipped)
 
 **Modules:** data.py (loading), engine.py (computation), context.py (assembly), report.py (5-phase LLM pipeline + reflection loop + hallucination guard), scout.py (appearance scoring), curator.py (LLM curation), cli.py (narrative CLI), scout_cli.py (scout CLI), resolver.py (fuzzy name resolution), analyst.py (tool-calling Q&A agent), ask_cli.py (Q&A CLI).
 
 **Tech stack:** Python 3.14, polars 1.39, pydantic-ai 1.72, rapidfuzz 3.14, nameparser 1.1, multi-provider (OpenAI gpt-5.4-mini, Claude Sonnet 4.6, Gemini 3.1 Pro).
 
-**Key v1.4 additions:** resolver.py with 5-tier fuzzy matching pipeline (1,651 pitchers, 168 duplicate last-name families), analyst.py with tool-calling pydantic-ai agent (get_pitcher_summary, get_pitch_detail), ask_cli.py composing resolver + analyst into `pitcher-ask` command. 239 tests passing.
+**Key v1.5 additions:** Intermediate probabilities (P/S variants), component attribution (13-outcome xRV decomposition), per-pitch velocity/movement in arsenal, stuff explainer phase replacing social hook, analyst prompt rewritten for physical-to-model reasoning chain. 265 tests passing.
 
 ### Data Sources
 
@@ -142,4 +150,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-03-31 after v1.5 milestone started — Model-Explainable Narratives*
+*Last updated: 2026-04-01 after v1.5 shipped, v1.6 started — Multi-Agent Pipeline*

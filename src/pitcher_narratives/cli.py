@@ -50,6 +50,11 @@ def parse_args() -> argparse.Namespace:
         default="medium",
         help="Thinking/reasoning effort level (default: medium)",
     )
+    parser.add_argument(
+        "--pipeline",
+        action="store_true",
+        help="Use multi-agent specialist→writer pipeline (v1.6 prototype)",
+    )
     return parser.parse_args()
 
 
@@ -146,25 +151,52 @@ def main() -> None:
         print(f"Error: {env_var} not set.", file=sys.stderr)
         sys.exit(1)
 
-    result = generate_report_streaming(
-        ctx,
-        provider=args.provider,
-        thinking=args.thinking,
-        _model_override=model_override,
-    )
+    if args.pipeline:
+        from pitcher_narratives.pipeline import generate_pipeline_streaming
 
-    # Print stuff summary
-    print(f"\n---\n{result.stuff_summary}")
+        pipe_result = generate_pipeline_streaming(
+            ctx,
+            provider=args.provider,
+            thinking=args.thinking,
+            _model_override=model_override,
+        )
 
-    # Print fantasy insights
-    print(f"\n---\n{result.fantasy_insights}")
+        # Print fantasy insights
+        print(f"\n---\n{pipe_result.fantasy_insights}")
 
-    # Post-generation checks
-    # 1. Revision loop status
-    _print_revision_status(result)
+        # Revision status (reuse same logic)
+        if pipe_result.revision_count == 0 and not pipe_result.anchor_warnings:
+            print("\nPassed anchor check", file=sys.stderr)
+        elif pipe_result.anchor_warnings:
+            print(f"\nRevised {pipe_result.revision_count} time(s) -- anchor check found issues:", file=sys.stderr)
+            for w in pipe_result.anchor_warnings:
+                print(f"  [{w.category}] {w.description}", file=sys.stderr)
+        else:
+            print(f"\nRevised {pipe_result.revision_count} time(s) -- anchor check passed", file=sys.stderr)
 
-    # 2. Hallucination check (regex scan of narrative)
-    hallucination_report = check_hallucinated_metrics(result.narrative)
+        # Hallucination check
+        hallucination_report = check_hallucinated_metrics(pipe_result.narrative)
+    else:
+        result = generate_report_streaming(
+            ctx,
+            provider=args.provider,
+            thinking=args.thinking,
+            _model_override=model_override,
+        )
+
+        # Print stuff summary
+        print(f"\n---\n{result.stuff_summary}")
+
+        # Print fantasy insights
+        print(f"\n---\n{result.fantasy_insights}")
+
+        # Post-generation checks
+        # 1. Revision loop status
+        _print_revision_status(result)
+
+        # Hallucination check
+        hallucination_report = check_hallucinated_metrics(result.narrative)
+
     if not hallucination_report.is_clean:
         if hallucination_report.unknown_metrics:
             print(

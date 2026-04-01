@@ -5,7 +5,8 @@
 - v1.0 MVP - Phases 1-4 (shipped 2026-03-26)
 - v1.3 Editor-Anchor Reflection Loop - Phases 5-7 (shipped 2026-03-28)
 - v1.4 Interactive Pitcher Q&A - Phases 8-10 (shipped 2026-03-30)
-- v1.5 Model-Explainable Narratives - Phases 11-14
+- v1.5 Model-Explainable Narratives - Phases 11-14 (shipped 2026-04-01)
+- v1.6 Multi-Agent Pipeline - Phase 15
 
 ## Phases
 
@@ -43,12 +44,19 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 </details>
 
-### v1.5 Model-Explainable Narratives
+<details>
+<summary>v1.5 Model-Explainable Narratives (Phases 11-14) - SHIPPED 2026-04-01</summary>
 
-- [ ] **Phase 11: Intermediate Probability Pipeline** - Load and surface existing intermediate probabilities (P and S variants) from pitchingplus aggregation CSVs
-- [ ] **Phase 12: Component Attribution** - Decompose xRV into 13 outcome-level contributions per pitch type
-- [ ] **Phase 13: Tool Interface Updates** - Update analyst tools to return intermediate probabilities, P/S comparisons, and component attribution
-- [ ] **Phase 14: Analyst Prompt Rewrite** - Rewrite system prompt to reason from model internals with P/S location diagnosis and outcome-dominant attribution
+- [x] **Phase 11: Intermediate Probability Pipeline** - Load and surface existing intermediate probabilities (P and S variants) from pitchingplus aggregation CSVs
+- [x] **Phase 12: Component Attribution** - Decompose xRV into 13 outcome-level contributions per pitch type
+- [x] **Phase 13: Tool Interface Updates** - Update analyst tools to return intermediate probabilities, P/S comparisons, and component attribution
+- [x] **Phase 14: Analyst Prompt Rewrite** - Rewrite system prompt to reason from model internals with P/S location diagnosis and outcome-dominant attribution
+
+</details>
+
+### v1.6 Multi-Agent Pipeline
+
+- [ ] **Phase 15: Specialist-Writer Architecture** - Replace monolithic synthesizer→editor with 4 specialist micro-analysts (stuff, location, run value, trends) feeding a writer agent that composes the final capsule
 
 ## Phase Details
 
@@ -270,10 +278,21 @@ Plans:
 Plans:
 - [x] 14-01-PLAN.md -- Rewrite _ANALYST_INSTRUCTIONS with model-internals-first reasoning (TDD)
 
+### Phase 15: Specialist-Writer Architecture
+**Goal**: The report pipeline produces better-grounded narratives by decomposing analysis into specialist micro-agents that each produce a focused insight, then composing those insights through a writer agent
+**Depends on**: Phase 14 (existing pipeline with model internals)
+**Requirements**: PIPE-01, PIPE-02, PIPE-03, PIPE-04
+**Success Criteria** (what must be TRUE):
+  1. Four specialist agents each produce a focused paragraph: Stuff Explainer (velocity/movement → S+), Location Analyst (P vs S divergence, zone/chase), Run Value Decomposer (attribution drivers), Trend Spotter (window vs season deltas)
+  2. Writer agent receives all specialist outputs and raw context, produces a unified capsule that reads like one person wrote it (not four blurbs stapled together)
+  3. Anchor check continues to verify narrative fidelity post-composition
+  4. Output quality is at least as good as the current monolithic pipeline on the same pitcher
+**Plans**: 0 plans (prototyping)
+
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 11 -> 12 -> 13 -> 14
+Phases execute in numeric order: 15
 
 | Phase | Milestone | Plans Complete | Status | Completed |
 |-------|-----------|----------------|--------|-----------|
@@ -287,7 +306,8 @@ Phases execute in numeric order: 11 -> 12 -> 13 -> 14
 | 8. Name Resolution | v1.4 | 1/1 | Complete | 2026-03-30 |
 | 9. Analyst Agent & Tools | v1.4 | 1/1 | Complete | 2026-03-30 |
 | 10. Ask CLI | v1.4 | 1/1 | Complete | 2026-03-30 |
-| 11. Intermediate Probability Pipeline | v1.5 | 1/1 | Complete    | 2026-03-31 |
-| 12. Component Attribution | v1.5 | 2/2 | Complete    | 2026-03-31 |
-| 13. Tool Interface Updates | v1.5 | 1/1 | Complete    | 2026-03-31 |
-| 14. Analyst Prompt Rewrite | v1.5 | 1/1 | Complete    | 2026-03-31 |
+| 11. Intermediate Probability Pipeline | v1.5 | 1/1 | Complete | 2026-03-31 |
+| 12. Component Attribution | v1.5 | 2/2 | Complete | 2026-03-31 |
+| 13. Tool Interface Updates | v1.5 | 1/1 | Complete | 2026-03-31 |
+| 14. Analyst Prompt Rewrite | v1.5 | 1/1 | Complete | 2026-03-31 |
+| 15. Specialist-Writer Architecture | v1.6 | 0/0 | In Progress | -- |
