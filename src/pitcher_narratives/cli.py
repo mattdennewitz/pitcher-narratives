@@ -164,9 +164,6 @@ def main() -> None:
         # Print stuff summary from specialist
         print(f"\n---\n{pipe_result.specialists.stuff}")
 
-        # Print fantasy insights
-        print(f"\n---\n{pipe_result.fantasy_insights}")
-
         # Revision status (reuse same logic)
         if pipe_result.revision_count == 0 and not pipe_result.anchor_warnings:
             print("\nPassed anchor check", file=sys.stderr)

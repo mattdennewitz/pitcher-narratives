@@ -10,7 +10,7 @@ Architecture:
   Writer agent receives all 4 specialist blurbs + pitcher context, finds the
   thread, and composes a unified capsule.
 
-  Anchor check + fantasy analyst remain from the existing pipeline.
+  Anchor check remains from the existing pipeline.
 """
 
 from __future__ import annotations
@@ -31,9 +31,9 @@ from pitcher_narratives.report import (
     AnchorResult,
     AnchorWarning,
     _ANCHOR_PROMPT,
-    _FANTASY_PROMPT,
+
     _build_anchor_message,
-    _build_fantasy_message,
+
     _build_revision_message,
 )
 
@@ -144,7 +144,7 @@ more hard contact = likely related).
 
 _WRITER_PROMPT = """\
 You are an elite, sabermetrically inclined baseball writer. You write \
-for front offices, advanced fantasy players, and data-driven fans.
+for front offices and data-driven fans.
 
 INPUT: Four specialist analyses of a pitcher's recent window:
 1. Stuff analysis — physical pitch characteristics and S+ grades
@@ -312,7 +312,6 @@ class PipelineResult(BaseModel):
     """Result from the multi-agent pipeline."""
     narrative: str
     specialists: SpecialistOutputs
-    fantasy_insights: str
     anchor_warnings: list[AnchorWarning]
     revision_count: int = 0
 
@@ -331,7 +330,6 @@ def _make_pipeline_agents(
     Agent[None, str],  # trends
     Agent[None, str],  # writer
     Agent[None, AnchorResult],  # anchor
-    Agent[None, str],  # fantasy
 ]:
     if provider not in PROVIDERS:
         raise ValueError(f"Unknown provider {provider!r}")
@@ -361,7 +359,6 @@ def _make_pipeline_agents(
         _str_agent(_WRITER_PROMPT),
         Agent(model, output_type=AnchorResult, system_prompt=_ANCHOR_PROMPT,
               model_settings=settings, defer_model_check=True),
-        _str_agent(_FANTASY_PROMPT),
     )
 
 
@@ -422,7 +419,7 @@ async def _run_pipeline(
     """
     (
         stuff_agent, location_agent, runvalue_agent, trends_agent,
-        writer, anchor_checker, fantasy_analyst,
+        writer, anchor_checker,
     ) = _make_pipeline_agents(provider, thinking)
 
     # Phase 1: Run specialists concurrently
@@ -491,19 +488,9 @@ async def _run_pipeline(
         anchor_result = await anchor_checker.run(**anchor_kwargs)
         anchor_check = anchor_result.output
 
-    # Phase 3: Fantasy analyst
-    fantasy_kwargs: dict[str, Any] = {
-        "user_prompt": _build_fantasy_message(ctx, capsule),
-    }
-    if _model_override is not None:
-        fantasy_kwargs["model"] = _model_override
-
-    fantasy_result = await fantasy_analyst.run(**fantasy_kwargs)
-
     return PipelineResult(
         narrative=capsule,
         specialists=specialists,
-        fantasy_insights=fantasy_result.output,
         anchor_warnings=anchor_check.warnings,
         revision_count=revision_count,
     )
@@ -521,7 +508,6 @@ def generate_pipeline_streaming(
     Phase 1: 4 specialists run concurrently (silent).
     Phase 2: Writer composes capsule from specialist outputs (streamed).
     Phase 2.5: Anchor check + revision loop.
-    Phase 3: Fantasy analyst (silent).
 
     Args:
         ctx: Assembled pitcher context.
@@ -530,8 +516,7 @@ def generate_pipeline_streaming(
         _model_override: Optional model override for testing.
 
     Returns:
-        PipelineResult with narrative, specialist outputs, fantasy insights,
-        and anchor warnings.
+        PipelineResult with narrative, specialist outputs, and anchor warnings.
     """
     return asyncio.run(
         _run_pipeline(ctx, provider=provider, thinking=thinking, _model_override=_model_override)
