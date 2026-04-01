@@ -143,3 +143,43 @@ def test_to_prompt_has_release_point(ctx):
     """to_prompt() output contains 'Release Point' section header."""
     prompt = ctx.to_prompt()
     assert "Release Point" in prompt
+
+
+# ── Intermediates in context ────────────────────────────────────────
+
+
+def test_to_prompt_includes_intermediates(ctx):
+    """to_prompt() output contains 'Model Internals' section header."""
+    prompt = ctx.to_prompt()
+    assert "Model Internals" in prompt
+
+
+def test_to_prompt_intermediates_has_ps_delta(ctx):
+    """to_prompt() intermediates section contains P-vs-S delta information."""
+    prompt = ctx.to_prompt()
+    assert "delta" in prompt.lower()
+
+
+def test_to_prompt_intermediates_respects_max_types(ctx):
+    """Intermediates section has at most 4 pitch type rows (token budget)."""
+    prompt = ctx.to_prompt()
+    # Find the intermediates table section and count data rows
+    in_section = False
+    row_count = 0
+    for line in prompt.split("\n"):
+        if "Model Internals" in line:
+            in_section = True
+            continue
+        if in_section and line.startswith("## "):
+            break  # next section
+        if in_section and line.startswith("|") and "Pitch" not in line and "---" not in line:
+            row_count += 1
+    assert row_count <= 4, f"Found {row_count} intermediates rows, expected <= 4"
+
+
+def test_to_prompt_no_intermediates_when_empty(ctx):
+    """to_prompt() with empty intermediates list omits section entirely."""
+    # Create a copy with empty intermediates
+    empty_ctx = ctx.model_copy(update={"intermediates": []})
+    prompt = empty_ctx.to_prompt()
+    assert "Model Internals" not in prompt

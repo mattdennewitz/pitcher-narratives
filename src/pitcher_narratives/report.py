@@ -332,21 +332,35 @@ about the pitcher's stuff, not about "looking at the data."
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# PHASE 3: THE HOOK WRITER (SOCIAL MEDIA)
+# PHASE 3: THE STUFF EXPLAINER (TECHNICAL SUMMARY)
 # ═══════════════════════════════════════════════════════════════════════
 
-_HOOK_PROMPT = """\
-You are a sharp, analytically-minded baseball writer crafting a single \
-headline or social post. Given key findings from a pitcher's latest \
-appearance, write ONE sentence — a headline, not a paragraph. It must \
-fit in a Bluesky post or X/Twitter post (under 280 characters).
+_STUFF_EXPLAINER_PROMPT = """\
+You are a sabermetric analyst writing a brief technical summary that \
+traces each pitch's Stuff+ (S+) grade back to its physical characteristics.
+
+For each pitch type in the arsenal, write one sentence that connects \
+velocity and movement shape (pfx_x/pfx_z) to the S+ grade via the \
+model's stuff-only predictions (xWhiff_S, xSwing_S, xRV100_S).
+
+The chain is: physical pitch → model prediction → S+ grade. Your job \
+is to make that chain legible in plain language.
+
+Examples of the voice:
+- "The knuckle curve sits 81 mph with only 0.3 inches of horizontal \
+break and -1.2 inches of vertical movement. That velocity/movement \
+combination doesn't generate enough deception on its own — the model \
+expects just a 30% whiff rate on stuff alone, which is why S+ grades \
+out at 84."
+- "The four-seam at 96.8 with 1.4 inches of ride generates a 37% \
+stuff-only swing rate — enough raw swing-and-miss for an S+ of 113."
 
 Rules:
-- One sentence. Period. No run-on sentences joined by dashes or semicolons.
-- Name the pitcher, name the pitch or metric, state the direction.
-- Write like a wire service headline: punchy, specific, authoritative.
-- No hashtags, no emojis, no hype words, no questions.
-- It must stand alone without any other context."""
+- Cover the 2-3 most notable pitches (best, worst, or most changed S+).
+- Cite velocity, movement values, and S-variant probabilities by name.
+- One short paragraph. No bullet lists.
+- No location analysis — this is stuff only.
+- No clichés, no hype, no hedging. Just the mechanism."""
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -433,7 +447,7 @@ class ReportResult(BaseModel):
     """Structured output from the multi-phase report pipeline."""
 
     narrative: str
-    social_hook: str
+    stuff_summary: str
     fantasy_insights: str
     anchor_warnings: list[AnchorWarning]
     revision_count: int = 0
@@ -476,7 +490,7 @@ def _make_agents(
     else:
         settings = ModelSettings(thinking=thinking)
 
-    str_prompts = (_SYNTHESIZER_PROMPT, _EDITOR_PROMPT, _HOOK_PROMPT, _FANTASY_PROMPT)
+    str_prompts = (_SYNTHESIZER_PROMPT, _EDITOR_PROMPT, _STUFF_EXPLAINER_PROMPT, _FANTASY_PROMPT)
     str_agents: _StrAgents = tuple(  # type: ignore[assignment]
         Agent(model, output_type=str, system_prompt=p, model_settings=settings, defer_model_check=True)
         for p in str_prompts
@@ -565,13 +579,35 @@ def _build_revision_message(
     ]
 
 
-def _build_hook_message(ctx: PitcherContext, capsule: str) -> _UserPrompt:
-    """Build the Phase 3 user message from the editor's capsule."""
+def _build_stuff_message(ctx: PitcherContext, capsule: str) -> _UserPrompt:
+    """Build the Phase 3 user message with arsenal physical data and intermediates."""
+    # Provide the physical profile + S-variant data the explainer needs
+    arsenal_lines: list[str] = []
+    for p in ctx.arsenal:
+        sp = f"{p.window_s_plus:.0f}" if p.window_s_plus is not None else "--"
+        arsenal_lines.append(
+            f"- {p.pitch_name} ({p.pitch_type}): "
+            f"{p.window_velo:.1f} mph, "
+            f"pfx_x {p.window_pfx_x:.1f} in, pfx_z {p.window_pfx_z:.1f} in, "
+            f"S+ {sp}"
+        )
+    intermediates_lines: list[str] = []
+    for im in ctx.intermediates:
+        xswing_s = f"{im.xswing_s * 100:.1f}%" if im.xswing_s is not None else "--"
+        xwhiff_s = f"{im.xwhiff_s * 100:.1f}%" if im.xwhiff_s is not None else "--"
+        xrv_s = f"{im.xrv100_s:.2f}" if im.xrv100_s is not None else "--"
+        intermediates_lines.append(
+            f"- {im.pitch_name} ({im.pitch_type}): "
+            f"xSwing_S {xswing_s}, xWhiff_S {xwhiff_s}, xRV100_S {xrv_s}"
+        )
     return [
         f"## Pitcher\n{ctx.pitcher_name} ({ctx.throws}HP, {ctx.role})\n\n"
+        f"## Arsenal Physical Profile\n" + "\n".join(arsenal_lines) + "\n\n"
+        f"## Stuff-Only Model Predictions (S-variant)\n" + "\n".join(intermediates_lines) + "\n\n"
         f"## Scouting Capsule\n{capsule}",
         CachePoint(),
-        "Write one social media hook (1-2 sentences). Focus on the single most notable change.",
+        "Write a brief technical summary explaining each notable pitch's S+ grade "
+        "through its velocity, movement, and stuff-only model predictions.",
     ]
 
 
@@ -602,7 +638,7 @@ def _build_all_phases(ctx: PitcherContext) -> list[tuple[str, str, _UserPrompt]]
             "PHASE 2.5: ANCHOR CHECK", _ANCHOR_PROMPT,
             _build_anchor_message(synth_placeholder, capsule_placeholder),
         ),
-        ("PHASE 3: HOOK WRITER", _HOOK_PROMPT, _build_hook_message(ctx, capsule_placeholder)),
+        ("PHASE 3: STUFF EXPLAINER", _STUFF_EXPLAINER_PROMPT, _build_stuff_message(ctx, capsule_placeholder)),
         ("PHASE 4: FANTASY ANALYST", _FANTASY_PROMPT, _build_fantasy_message(ctx, capsule_placeholder)),
     ]
 
@@ -649,7 +685,7 @@ def generate_report_streaming(
         If warnings are found, the editor revises silently (run_sync) and the
         anchor re-checks -- up to MAX_REVISIONS passes. Exits immediately when
         the anchor returns clean.
-    Phase 3 (Hook Writer): Distills the capsule into a 1-2 sentence social hook.
+    Phase 3 (Stuff Explainer): Traces each pitch's S+ grade to its physical profile.
     Phase 4 (Fantasy Analyst): Produces 3 fantasy baseball bullets from the capsule.
 
     Phases 3 and 4 receive the final capsule (post-revision if any), so they
@@ -664,9 +700,9 @@ def generate_report_streaming(
         _model_override: Optional model override for testing (e.g., TestModel).
 
     Returns:
-        ReportResult with narrative, social_hook, fantasy_insights, and anchor_warnings.
+        ReportResult with narrative, stuff_summary, fantasy_insights, and anchor_warnings.
     """
-    (synthesizer, editor, hook_writer, fantasy_analyst), anchor_checker = _make_agents(provider, thinking)
+    (synthesizer, editor, stuff_explainer, fantasy_analyst), anchor_checker = _make_agents(provider, thinking)
 
     synth_kwargs: dict[str, Any] = {"user_prompt": _build_synthesizer_message(ctx)}
     if _model_override is not None:
@@ -727,14 +763,14 @@ def generate_report_streaming(
         anchor_result = anchor_checker.run_sync(**anchor_kwargs)
         anchor_check = anchor_result.output
 
-    # Phase 3: Social media hook (silent) — derived from capsule, not synthesis
-    hook_kwargs: dict[str, Any] = {
-        "user_prompt": _build_hook_message(ctx, capsule),
+    # Phase 3: Stuff explainer (silent) — traces S+ grades to physical pitch characteristics
+    stuff_kwargs: dict[str, Any] = {
+        "user_prompt": _build_stuff_message(ctx, capsule),
     }
     if _model_override is not None:
-        hook_kwargs["model"] = _model_override
+        stuff_kwargs["model"] = _model_override
 
-    hook_result = hook_writer.run_sync(**hook_kwargs)
+    stuff_result = stuff_explainer.run_sync(**stuff_kwargs)
 
     # Phase 4: Fantasy analyst (silent) — derived from capsule, not synthesis
     fantasy_kwargs: dict[str, Any] = {
@@ -747,7 +783,7 @@ def generate_report_streaming(
 
     return ReportResult(
         narrative=capsule,
-        social_hook=hook_result.output,
+        stuff_summary=stuff_result.output,
         fantasy_insights=fantasy_result.output,
         anchor_warnings=anchor_check.warnings,
         revision_count=revision_count,

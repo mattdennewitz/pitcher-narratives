@@ -25,11 +25,12 @@ def _test_env(**extra: str) -> dict[str, str]:
     then removes API keys (tests shouldn't hit the real API) and applies
     any extra key-value pairs.
     """
-    strip = {"ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY"}
+    strip = {"ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY"}
     env = {k: v for k, v in os.environ.items() if k not in strip}
     # Set empty keys so load_dotenv() won't fill them from .env
     env.setdefault("ANTHROPIC_API_KEY", "")
     env.setdefault("OPENAI_API_KEY", "")
+    env.setdefault("GEMINI_API_KEY", "")
     env.update(extra)
     return env
 
@@ -68,10 +69,10 @@ def test_parse_window_flag(monkeypatch):
 
 
 def test_parse_defaults(monkeypatch):
-    """parse_args defaults: provider=claude, thinking=high, window=30."""
+    """parse_args defaults: provider=gemini, thinking=high, window=30."""
     monkeypatch.setattr(sys, "argv", ["ask_cli", "Q?"])
     args = parse_args()
-    assert args.provider == "claude"
+    assert args.provider == "gemini"
     assert args.thinking == "high"
     assert args.window == 30
 

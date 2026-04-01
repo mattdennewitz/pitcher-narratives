@@ -153,8 +153,8 @@ def main() -> None:
         _model_override=model_override,
     )
 
-    # Print social hook
-    print(f"\n---\n{result.social_hook}")
+    # Print stuff summary
+    print(f"\n---\n{result.stuff_summary}")
 
     # Print fantasy insights
     print(f"\n---\n{result.fantasy_insights}")

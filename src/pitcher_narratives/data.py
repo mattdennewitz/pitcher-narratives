@@ -16,6 +16,7 @@ from typing import cast
 import polars as pl
 
 __all__ = [
+    "RV_DF_PATH",
     "PitcherData",
     "classify_appearances",
     "compute_pitch_type_baseline",
@@ -23,6 +24,7 @@ __all__ = [
     "filter_to_window",
     "load_agg_csvs",
     "load_pitcher_data",
+    "load_run_values",
     "load_statcast",
 ]
 
@@ -31,6 +33,7 @@ _data_dir_override = os.environ.get("PITCHER_NARRATIVES_DATA_DIR")
 DATA_DIR = Path(_data_dir_override) if _data_dir_override else _DEFAULT_DATA_DIR
 PARQUET_PATH = DATA_DIR / "statcast_2026.parquet"
 AGGS_DIR = DATA_DIR / "aggs"
+RV_DF_PATH = AGGS_DIR / "RV_df.csv"
 
 # CSV filenames organized by grain
 _SEASON_CSVS = {
@@ -113,6 +116,16 @@ def load_statcast(pitcher_id: int) -> pl.DataFrame:
     if result.is_empty():
         raise ValueError(f"Pitcher {pitcher_id} not found")
     return result
+
+
+def load_run_values() -> pl.DataFrame:
+    """Load the outcome-level run values lookup table.
+
+    Returns:
+        DataFrame with columns: balls, strikes, model_classes, delta_run_exp.
+        156 rows: 12 counts x 13 outcomes.
+    """
+    return pl.read_csv(RV_DF_PATH)
 
 
 def load_agg_csvs(pitcher_id: int) -> dict[str, pl.DataFrame]:

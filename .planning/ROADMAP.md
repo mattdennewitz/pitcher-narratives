@@ -4,7 +4,8 @@
 
 - v1.0 MVP - Phases 1-4 (shipped 2026-03-26)
 - v1.3 Editor-Anchor Reflection Loop - Phases 5-7 (shipped 2026-03-28)
-- v1.4 Interactive Pitcher Q&A - Phases 8-10 (in progress)
+- v1.4 Interactive Pitcher Q&A - Phases 8-10 (shipped 2026-03-30)
+- v1.5 Model-Explainable Narratives - Phases 11-14
 
 ## Phases
 
@@ -33,11 +34,21 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 </details>
 
-### v1.4 Interactive Pitcher Q&A
+<details>
+<summary>v1.4 Interactive Pitcher Q&A (Phases 8-10) - SHIPPED 2026-03-30</summary>
 
-- [ ] **Phase 8: Name Resolution** - Fuzzy pitcher name matching with disambiguation for ambiguous queries
-- [ ] **Phase 9: Analyst Agent & Tools** - Tool-calling pydantic-ai agent that answers pitcher questions grounded in data
-- [ ] **Phase 10: Ask CLI** - CLI entry point composing name resolution and analyst agent into `pitcher-ask`
+- [x] **Phase 8: Name Resolution** - Fuzzy pitcher name matching with disambiguation for ambiguous queries
+- [x] **Phase 9: Analyst Agent & Tools** - Tool-calling pydantic-ai agent that answers pitcher questions grounded in data
+- [x] **Phase 10: Ask CLI** - CLI entry point composing name resolution and analyst agent into `pitcher-ask`
+
+</details>
+
+### v1.5 Model-Explainable Narratives
+
+- [ ] **Phase 11: Intermediate Probability Pipeline** - Load and surface existing intermediate probabilities (P and S variants) from pitchingplus aggregation CSVs
+- [ ] **Phase 12: Component Attribution** - Decompose xRV into 13 outcome-level contributions per pitch type
+- [ ] **Phase 13: Tool Interface Updates** - Update analyst tools to return intermediate probabilities, P/S comparisons, and component attribution
+- [ ] **Phase 14: Analyst Prompt Rewrite** - Rewrite system prompt to reason from model internals with P/S location diagnosis and outcome-dominant attribution
 
 ## Phase Details
 
@@ -156,6 +167,9 @@ Plans:
 
 </details>
 
+<details>
+<summary>v1.4 Interactive Pitcher Q&A (Phases 8-10) - SHIPPED 2026-03-30</summary>
+
 ### Phase 8: Name Resolution
 **Goal**: Users can identify pitchers by name instead of numeric ID, with clear feedback when names are ambiguous or unrecognized
 **Depends on**: Nothing (independent of other v1.4 phases; uses existing data files)
@@ -195,12 +209,71 @@ Plans:
 **Plans**: 1 plan
 
 Plans:
-- [x] 10-01-PLAN.md — CLI entry point composing resolver + analyst into pitcher-ask command (TDD)
+- [x] 10-01-PLAN.md -- CLI entry point composing resolver + analyst into pitcher-ask command (TDD)
+
+</details>
+
+### Phase 11: Intermediate Probability Pipeline
+**Goal**: The data pipeline loads and surfaces per-pitch-type intermediate probabilities (both P and S variants) from pitchingplus aggregation CSVs so downstream tools can expose them
+**Depends on**: Phase 9 (existing analyst agent and data pipeline)
+**Requirements**: DATA-01, DATA-02
+**Success Criteria** (what must be TRUE):
+  1. Data loading reads xSwing_P, xSwing_S, xWhiff_P, xWhiff_S, xGOr_P, xGOr_S, xPUr_P, xPUr_S, xHR100_P, xHR100_S, BBE_prob_P, BBE_prob_S columns from pitchingplus aggregation CSVs
+  2. Per-pitch-type aggregations include both P and S variants, enabling location impact calculation (P minus S)
+  3. Intermediate probabilities are accessible at the same aggregation grains as existing plus scores (pitcher+type, pitcher+type+appearance)
+  4. Missing columns (if a CSV lacks intermediates) are handled gracefully without crashing the pipeline
+**Plans**: 1 plan
+
+Plans:
+- [x] 11-01-PLAN.md -- IntermediateProbabilities dataclass, compute function, PitcherContext wiring (TDD)
+
+### Phase 12: Component Attribution
+**Goal**: Each pitch type's xRV is decomposed into 13 additive outcome contributions, showing which outcomes (whiffs, HRs, ground outs, etc.) drive the overall score
+**Depends on**: Phase 11 (intermediate probabilities loaded)
+**Requirements**: DATA-03
+**Success Criteria** (what must be TRUE):
+  1. For each pitch type, 13 outcome-level contributions are computed as (outcome_probability x run_value_for_count)
+  2. The 13 contributions sum to the total xRV (within floating-point tolerance)
+  3. Each contribution is labeled with its outcome name (e.g., "whiff", "home_run", "called_strike")
+  4. Attribution is available at pitcher+type and pitcher+type+appearance grain
+**Plans**: 2 plans
+
+Plans:
+- [x] 12-01-PLAN.md -- Data prerequisite: regenerate all_pitches.csv with all 13 outcome columns, copy RV_df.csv
+- [x] 12-02-PLAN.md -- ComponentAttribution dataclasses, compute function, PitcherContext wiring (TDD)
+
+### Phase 13: Tool Interface Updates
+**Goal**: The analyst agent's tools return intermediate probabilities, P/S comparisons, and component attribution alongside existing plus scores
+**Depends on**: Phase 11, Phase 12
+**Requirements**: TOOL-01, TOOL-02
+**Success Criteria** (what must be TRUE):
+  1. `get_pitcher_summary` tool output includes per-pitch-type intermediate probabilities with P and S variants
+  2. `get_pitch_detail` tool output includes the 13-outcome component attribution breakdown for the requested pitch type
+  3. P vs S delta is computed and presented (e.g., "xSwing_P: 42%, xSwing_S: 51%, location delta: -9%")
+  4. Existing tool output (plus scores, arsenal, execution metrics) is preserved — new data is additive
+**Plans**: 1 plan
+
+Plans:
+- [x] 13-01-PLAN.md -- Intermediates rendering in to_prompt, attribution + intermediates in get_pitch_detail
+
+### Phase 14: Analyst Prompt Rewrite
+**Goal**: The analyst reasons from model internals — diagnosing pitch quality through outcome probabilities and component attribution rather than citing opaque plus grades
+**Depends on**: Phase 13 (tools returning new data)
+**Requirements**: ANLST-01, ANLST-02, ANLST-03
+**Success Criteria** (what must be TRUE):
+  1. Analyst explains *why* a pitch scores well or poorly using intermediate probabilities (e.g., "38% whiff rate vs 25% league avg — the movement fools hitters")
+  2. Analyst diagnoses location impact by comparing P vs S variants (e.g., "swing rate drops 9% with location — hitters lay off this pitch in the zones he's throwing it")
+  3. Analyst identifies the dominant run-value driver from component attribution (e.g., "whiffs contribute 1.4 runs saved per 100, but home runs give back 0.6")
+  4. Plus scores (P+/S+/L+) are still referenced as summary grades, but the explanation focuses on what drives them
+**Plans**: 1 plan
+
+Plans:
+- [x] 14-01-PLAN.md -- Rewrite _ANALYST_INSTRUCTIONS with model-internals-first reasoning (TDD)
 
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 8 -> 9 -> 10
+Phases execute in numeric order: 11 -> 12 -> 13 -> 14
 
 | Phase | Milestone | Plans Complete | Status | Completed |
 |-------|-----------|----------------|--------|-----------|
@@ -211,6 +284,10 @@ Phases execute in numeric order: 8 -> 9 -> 10
 | 5. Reflection Data Models | v1.3 | 2/2 | Complete | 2026-03-28 |
 | 6. Loop Mechanics | v1.3 | 1/1 | Complete | 2026-03-28 |
 | 7. Revision UX & Validation | v1.3 | 1/1 | Complete | 2026-03-28 |
-| 8. Name Resolution | v1.4 | 1/1 | Complete | - |
-| 9. Analyst Agent & Tools | v1.4 | 0/1 | In progress | - |
-| 10. Ask CLI | v1.4 | 1/1 | Complete    | 2026-03-30 |
+| 8. Name Resolution | v1.4 | 1/1 | Complete | 2026-03-30 |
+| 9. Analyst Agent & Tools | v1.4 | 1/1 | Complete | 2026-03-30 |
+| 10. Ask CLI | v1.4 | 1/1 | Complete | 2026-03-30 |
+| 11. Intermediate Probability Pipeline | v1.5 | 1/1 | Complete    | 2026-03-31 |
+| 12. Component Attribution | v1.5 | 2/2 | Complete    | 2026-03-31 |
+| 13. Tool Interface Updates | v1.5 | 1/1 | Complete    | 2026-03-31 |
+| 14. Analyst Prompt Rewrite | v1.5 | 1/1 | Complete    | 2026-03-31 |

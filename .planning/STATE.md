@@ -1,43 +1,51 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.4
-milestone_name: Interactive Pitcher Q&A
-status: verifying
-stopped_at: Completed 10-01-PLAN.md
-last_updated: "2026-03-30T16:22:43.825Z"
-last_activity: 2026-03-30
+milestone: v1.5
+milestone_name: Model-Explainable Narratives
+status: completed
+stopped_at: Completed 14-01-PLAN.md
+last_updated: "2026-03-31T22:24:59.066Z"
+last_activity: 2026-03-31
 progress:
-  total_phases: 10
-  completed_phases: 10
-  total_plans: 15
-  completed_plans: 15
-  percent: 0
+  total_phases: 14
+  completed_phases: 11
+  total_plans: 17
+  completed_plans: 17
 ---
 
 # Project State
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-03-30)
+See: .planning/PROJECT.md (updated 2026-03-31)
 
 **Core value:** Reports must read like a scout wrote them -- surfacing changes, adaptations, and execution trends rather than reciting numbers.
-**Current focus:** Phase 10 — ask-cli
+<<<<<<< Updated upstream
+**Current focus:** Phase 14 — Analyst Prompt Rewrite (COMPLETE)
 
 ## Current Position
 
-Phase: 10
+Phase: 14
 Plan: Not started
-Status: Phase complete — ready for verification
-Last activity: 2026-03-30
+Status: Phase 14 plan 01 complete
+Last activity: 2026-03-31
+=======
+**Current focus:** Phase 14 — Analyst Prompt Rewrite
 
-Progress: [░░░░░░░░░░] 0%
+## Current Position
 
-## Performance Metrics
-
-**Velocity (from v1.3):**
-
-- Last 5 plans: 5min, 2min, 4min, 3min
-- Trend: Stable (~2-4 min/plan)
+<<<<<<< Updated upstream
+Phase: 14 (Analyst Prompt Rewrite) — EXECUTING
+Plan: 1 of 1
+Status: Executing Phase 14
+Last activity: 2026-03-31 -- Phase 14 execution started
+=======
+Phase: 13 (Tool Interface Updates) — EXECUTING
+Plan: 1 of 1
+Status: Executing Phase 13
+Last activity: 2026-03-31 -- Phase 13 execution started
+>>>>>>> Stashed changes
+>>>>>>> Stashed changes
 
 ## Accumulated Context
 
@@ -49,11 +57,15 @@ Recent decisions affecting current work:
 - [v1.4]: Tool-calling agent pattern (AGENT-02/03 require tools, not pre-assembled context)
 - [v1.4]: rapidfuzz for name resolution (deterministic, fast, no LLM)
 - [v1.4]: Three new modules (resolver.py, analyst.py, ask_cli.py), zero modifications to existing code
-- [v1.4]: Phase 9 depends on existing PitcherContext (Phase 4), not on Phase 8's resolver
-- [Phase 08]: Single-word queries try fuzzy last-name before full-name to avoid WRatio length-mismatch penalty
-- [Phase 09]: Agent.override() is a context manager, not a clone factory; pass model/settings at run call site instead
-- [Phase 10-ask-cli]: Default provider claude (not openai) per CONTEXT.md locked decision
-- [Phase 10-ask-cli]: Capitalization heuristic for fuzzy name extraction prevents false positives on common English words
+- [v1.5]: Component attribution (medium effort) over SHAP (high effort) — answers "why" using already-computed data without new ML infrastructure
+- [v1.5]: P vs S variant comparison to isolate location impact — scout-readable diagnostic
+
+- [Phase 11]: BBE_prob_P/S included in constants despite missing from CSVs -- future-proofs against agg regeneration
+- [Phase 11]: Default parameter binding for inner closure to satisfy ruff B023
+- [Phase 12]: Raw xRV100 (pre-mean-subtraction) for component attribution -- correct decomposition since league-average offset is constant
+- [Phase 13]: 4 diagnostic metrics (xSwing, xWhiff, xSwSt, xRV100) in summary intermediates; S-variants and deltas only to avoid Execution section duplication
+- [Phase 14]: Model-internals-first 4-step prompt reasoning: intermediates -> P-vs-S -> attribution -> plus summary
+- [Phase 14]: SIGN CONVENTIONS section in prompt to prevent LLM misinterpretation of inverted run-value direction
 
 ### Pending Todos
 
@@ -61,10 +73,20 @@ None yet.
 
 ### Blockers/Concerns
 
-- System prompt grounding strength needs iteration during Phase 9 (research flag: MEDIUM confidence on hallucination mitigation)
+- pitchingplus model internals at ~/src/pitchingplus/packages/plus — external dependency, changes there affect this project's data pipeline
+
+## Performance Metrics
+
+| Phase-Plan | Duration | Tasks | Files |
+|------------|----------|-------|-------|
+| 11-01      | 5min     | 2     | 3     |
+| 12-01      | 2min     | 1     | 1     |
+| Phase 12 P02 | 4min | 2 tasks | 3 files |
+| 13-01      | 4min     | 2     | 4     |
+| Phase 14 P01 | 4min | 2 tasks | 2 files |
 
 ## Session Continuity
 
-Last session: 2026-03-30T16:14:36.980Z
-Stopped at: Completed 10-01-PLAN.md
+Last session: 2026-03-31T22:18:31.281Z
+Stopped at: Completed 14-01-PLAN.md
 Resume file: None

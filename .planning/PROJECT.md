@@ -48,7 +48,15 @@ The report must read like a scout wrote it — surfacing *changes, adaptations, 
 
 ### Active
 
-(No active milestone — planning next)
+## Current Milestone: v1.5 Model-Explainable Narratives
+
+**Goal:** Invert the analyst from treating Pitching+ scores as opaque numbers to explaining *why* the model scores pitches the way it does, using intermediate probabilities and component attribution from the CatBoost pipeline.
+
+**Target features:**
+- Surface existing intermediate probabilities (xSwing, xWhiff, xGOr, xPUr, xHR100, BBE_prob) alongside plus scores
+- Compare P vs S variants to isolate location impact
+- Component attribution: decompose xRV into 13 outcome contributions (probability x run_value per outcome)
+- Update analyst system prompt to reason from model internals rather than opaque plus grades
 
 ### Out of Scope
 
@@ -58,8 +66,8 @@ The report must read like a scout wrote it — surfacing *changes, adaptations, 
 - Real-time data ingestion — works against static parquet/CSV files
 - Team-level reports — individual pitcher reports only
 - Rich terminal formatting — plain text output for v1.0
-- Cross-pitcher comparison in Q&A — needs new data scanning layer, deferred to v1.5
-- Multi-turn conversational Q&A — session state management, different UX paradigm, deferred to v1.5
+- Cross-pitcher comparison in Q&A — needs new data scanning layer, deferred to v1.6+
+- Multi-turn conversational Q&A — session state management, different UX paradigm, deferred to v1.6+
 - SQL generation from natural language — existing engine computes meaningful derived metrics
 
 ## Context
@@ -134,4 +142,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-03-30 after v1.4 milestone — Interactive Pitcher Q&A shipped*
+*Last updated: 2026-03-31 after v1.5 milestone started — Model-Explainable Narratives*

@@ -13,7 +13,7 @@ from typing import Any, cast
 
 import polars as pl
 
-from pitcher_narratives.data import AGGS_DIR, PitcherData
+from pitcher_narratives.data import AGGS_DIR, PitcherData, load_run_values
 
 
 def _float(val: Any) -> float:
@@ -23,11 +23,14 @@ def _float(val: Any) -> float:
 
 __all__ = [
     "AppearanceWorkload",
+    "ComponentAttribution",
     "ExecutionMetrics",
     "FastballSummary",
     "FirstPitchEntry",
     "FirstPitchWeaponry",
     "HardHitRate",
+    "IntermediateProbabilities",
+    "OutcomeContribution",
     "PitchTypeSummary",
     "PlatoonMix",
     "PlatoonSplit",
@@ -40,10 +43,12 @@ __all__ = [
     "VelocityArc",
     "WorkloadContext",
     "compute_arsenal_summary",
+    "compute_component_attribution",
     "compute_execution_metrics",
     "compute_fastball_summary",
     "compute_first_pitch_weaponry",
     "compute_hard_hit_rate",
+    "compute_intermediate_probabilities",
     "compute_platoon_mix",
     "compute_release_point_metrics",
     "compute_tto_analysis",
@@ -393,6 +398,35 @@ _PPLUS_METRICS = ("P+", "S+", "L+")
 _XMETRICS = ("xWhiff_P", "xSwing_P", "xRV100_P")
 """Expected-outcome metrics used in execution computations."""
 
+_INTERMEDIATE_P_COLS = (
+    "xSwing_P", "xWhiff_P", "xGOr_P", "xPUr_P", "xHR100_P",
+    "BBE_prob_P", "xSwSt_P", "xRV100_P",
+)
+"""P-variant intermediate probability columns (includes location)."""
+
+_INTERMEDIATE_S_COLS = (
+    "xSwing_S", "xWhiff_S", "xGOr_S", "xPUr_S", "xHR100_S",
+    "BBE_prob_S", "xSwSt_S", "xRV100_S",
+)
+"""S-variant intermediate probability columns (stuff-only)."""
+
+_INTERMEDIATE_COLS = _INTERMEDIATE_P_COLS + _INTERMEDIATE_S_COLS
+"""All intermediate probability columns (P and S variants)."""
+
+_OUTCOME_COLS_P = (
+    "HBP_P", "called_ball_P", "called_strike_P", "whiff_P", "foul_P",
+    "double_P", "ground_out_P", "home_run_P", "line_out_P",
+    "low_line_out_P", "pop_out_P", "single_P", "triple_P",
+)
+"""P-variant raw probability columns for the 13 model outcomes."""
+
+_OUTCOME_NAMES = (
+    "HBP", "called_ball", "called_strike", "whiff", "foul",
+    "double", "ground_out", "home_run", "line_out",
+    "low_line_out", "pop_out", "single", "triple",
+)
+"""Canonical outcome names matching model_classes in RV_df.csv."""
+
 
 # ── Dataclasses ───────────────────────────────────────────────────────
 
@@ -489,6 +523,25 @@ class PitchTypeSummary:
     season_l_plus: float
     window_l_plus: float | None
     l_plus_delta: str
+
+    season_velo: float
+    """Season average velocity (mph)."""
+    window_velo: float
+    """Window average velocity (mph)."""
+    velo_delta: str
+    """Qualitative velocity delta, e.g., 'Up 1.5 mph'."""
+
+    season_pfx_x: float
+    """Season average horizontal movement (inches)."""
+    window_pfx_x: float
+    """Window average horizontal movement (inches)."""
+    pfx_x_delta: str
+
+    season_pfx_z: float
+    """Season average vertical movement (inches)."""
+    window_pfx_z: float
+    """Window average vertical movement (inches)."""
+    pfx_z_delta: str
 
     n_pitches_season: int
     n_pitches_window: int
@@ -592,6 +645,102 @@ class ExecutionMetrics:
 
     cold_start: bool
     """True when window covers the full season."""
+
+
+@dataclass
+class IntermediateProbabilities:
+    """Per-pitch-type intermediate model probabilities (P and S variants).
+
+    P-variants include location; S-variants are stuff-only.
+    Location impact = P minus S for any metric.
+    """
+
+    pitch_type: str
+    """Pitch type code, e.g., 'FC'."""
+
+    pitch_name: str
+    """Human-readable name, e.g., 'Cutter'."""
+
+    # Window values (from pitcher_type_appearance grain)
+    xswing_p: float | None
+    xswing_s: float | None
+    xwhiff_p: float | None
+    xwhiff_s: float | None
+    xgor_p: float | None
+    xgor_s: float | None
+    xpur_p: float | None
+    xpur_s: float | None
+    xhr100_p: float | None
+    xhr100_s: float | None
+    bbe_prob_p: float | None
+    bbe_prob_s: float | None
+    xswst_p: float | None
+    xswst_s: float | None
+    xrv100_p: float | None
+    xrv100_s: float | None
+
+    # Season baseline values (from pitch_type_baseline)
+    season_xswing_p: float | None
+    season_xswing_s: float | None
+    season_xwhiff_p: float | None
+    season_xwhiff_s: float | None
+    season_xgor_p: float | None
+    season_xgor_s: float | None
+    season_xpur_p: float | None
+    season_xpur_s: float | None
+    season_xhr100_p: float | None
+    season_xhr100_s: float | None
+    season_bbe_prob_p: float | None
+    season_bbe_prob_s: float | None
+    season_xswst_p: float | None
+    season_xswst_s: float | None
+    season_xrv100_p: float | None
+    season_xrv100_s: float | None
+
+    n_pitches: int
+    """Number of pitches in window for this type."""
+
+    small_sample: bool
+    """True when n_pitches < _MIN_PITCHES."""
+
+    cold_start: bool
+    """True when window covers the full season."""
+
+
+@dataclass
+class OutcomeContribution:
+    """A single outcome's contribution to xRV100."""
+
+    outcome: str
+    """Outcome name, e.g., 'whiff', 'home_run', 'called_strike'."""
+
+    contribution: float
+    """mean(p_i * rv_i) * 100, same scale as xRV100."""
+
+
+@dataclass
+class ComponentAttribution:
+    """Per-pitch-type decomposition of xRV into 13 outcome contributions.
+
+    Each pitch type's xRV100 is broken into 13 additive outcome-level
+    contributions: contribution_i = mean(probability_i * delta_run_exp_i) * 100.
+    The 13 contributions sum to the raw xRV100 total (pre-mean-subtraction).
+    """
+
+    pitch_type: str
+    """Pitch type code, e.g., 'FC'."""
+
+    pitch_name: str
+    """Human-readable name, e.g., 'Cutter'."""
+
+    contributions: list[OutcomeContribution]
+    """13 items, sorted by |contribution| descending."""
+
+    total_xrv100: float
+    """Sum of all 13 contribution values."""
+
+    n_pitches: int
+    """Number of pitches used in the computation."""
 
 
 @dataclass
@@ -998,6 +1147,24 @@ def compute_arsenal_summary(data: PitcherData) -> list[PitchTypeSummary]:
         # ── Pitch name ───────────────────────────────────────────
         pitch_name = name_map.get(pt, pt)
 
+        # ── Velocity & movement ──────────────────────────────────
+        season_velo = _float(pt_season["release_speed"].mean())
+        window_velo = _float(pt_window["release_speed"].mean()) if n_window > 0 else season_velo
+
+        season_pfx_x = _float(pt_season["pfx_x"].mean())
+        window_pfx_x = _float(pt_window["pfx_x"].mean()) if n_window > 0 else season_pfx_x
+        season_pfx_z = _float(pt_season["pfx_z"].mean())
+        window_pfx_z = _float(pt_window["pfx_z"].mean()) if n_window > 0 else season_pfx_z
+
+        if cold_start:
+            velo_delta_str = _COLD_START_STRING
+            pfx_x_delta_str = _COLD_START_STRING
+            pfx_z_delta_str = _COLD_START_STRING
+        else:
+            velo_delta_str = _velo_delta_string(window_velo - season_velo)
+            pfx_x_delta_str = _movement_delta_string(window_pfx_x - season_pfx_x)
+            pfx_z_delta_str = _movement_delta_string(window_pfx_z - season_pfx_z)
+
         # ── Small sample ─────────────────────────────────────────
         small_sample = n_window < _MIN_PITCHES
 
@@ -1017,6 +1184,15 @@ def compute_arsenal_summary(data: PitcherData) -> list[PitchTypeSummary]:
                 season_l_plus=season_l_plus,
                 window_l_plus=window_l_plus,
                 l_plus_delta=l_plus_delta,
+                season_velo=season_velo,
+                window_velo=window_velo,
+                velo_delta=velo_delta_str,
+                season_pfx_x=season_pfx_x,
+                window_pfx_x=window_pfx_x,
+                pfx_x_delta=pfx_x_delta_str,
+                season_pfx_z=season_pfx_z,
+                window_pfx_z=window_pfx_z,
+                pfx_z_delta=pfx_z_delta_str,
                 n_pitches_season=n_season,
                 n_pitches_window=n_window,
                 small_sample=small_sample,
@@ -1457,6 +1633,97 @@ def compute_execution_metrics(data: PitcherData) -> list[ExecutionMetrics]:
         )
 
     # Sort by n_pitches descending
+    results.sort(key=lambda x: x.n_pitches, reverse=True)
+    return results
+
+
+def compute_intermediate_probabilities(data: PitcherData) -> list[IntermediateProbabilities]:
+    """Compute per-pitch-type intermediate probabilities for window and season.
+
+    Extracts P and S variants of all intermediate probability columns from
+    pitchingplus aggregation CSVs. Window values come from pitcher_type_appearance
+    (weighted by n_pitches). Season values come from pitch_type_baseline.
+
+    Args:
+        data: PitcherData bundle from data.load_pitcher_data.
+
+    Returns:
+        List of IntermediateProbabilities, one per pitch type, sorted by
+        n_pitches descending.
+    """
+    window_dates = _get_window_game_dates(data)
+    cold_start = _is_cold_start(data)
+    name_map = _build_name_map(data.statcast)
+
+    baseline = data.pitch_type_baseline.sort("n_pitches", descending=True)
+    pitch_types = baseline["pitch_type"].to_list()
+
+    results: list[IntermediateProbabilities] = []
+
+    for pt in pitch_types:
+        # Window values from appearance grain
+        metrics = _weighted_window_metrics(
+            data.agg_csvs["pitcher_type_appearance"],
+            _INTERMEDIATE_COLS,
+            _window_date_type_filter(window_dates, pt),
+        )
+
+        # Season values from baseline
+        bl_row = baseline.filter(pl.col("pitch_type") == pt)
+
+        def _bl(col: str, _row: pl.DataFrame = bl_row) -> float | None:
+            if _row.is_empty() or col not in _row.columns:
+                return None
+            val = _row[col][0]
+            return None if val is None else float(val)
+
+        n_pitches = int(metrics.get("n_pitches", 0))
+
+        results.append(IntermediateProbabilities(
+            pitch_type=pt,
+            pitch_name=name_map.get(pt, pt),
+            # Window P-variants
+            xswing_p=metrics.get("xSwing_P"),
+            xwhiff_p=metrics.get("xWhiff_P"),
+            xgor_p=metrics.get("xGOr_P"),
+            xpur_p=metrics.get("xPUr_P"),
+            xhr100_p=metrics.get("xHR100_P"),
+            bbe_prob_p=metrics.get("BBE_prob_P"),
+            xswst_p=metrics.get("xSwSt_P"),
+            xrv100_p=metrics.get("xRV100_P"),
+            # Window S-variants
+            xswing_s=metrics.get("xSwing_S"),
+            xwhiff_s=metrics.get("xWhiff_S"),
+            xgor_s=metrics.get("xGOr_S"),
+            xpur_s=metrics.get("xPUr_S"),
+            xhr100_s=metrics.get("xHR100_S"),
+            bbe_prob_s=metrics.get("BBE_prob_S"),
+            xswst_s=metrics.get("xSwSt_S"),
+            xrv100_s=metrics.get("xRV100_S"),
+            # Season P-variants
+            season_xswing_p=_bl("xSwing_P"),
+            season_xwhiff_p=_bl("xWhiff_P"),
+            season_xgor_p=_bl("xGOr_P"),
+            season_xpur_p=_bl("xPUr_P"),
+            season_xhr100_p=_bl("xHR100_P"),
+            season_bbe_prob_p=_bl("BBE_prob_P"),
+            season_xswst_p=_bl("xSwSt_P"),
+            season_xrv100_p=_bl("xRV100_P"),
+            # Season S-variants
+            season_xswing_s=_bl("xSwing_S"),
+            season_xwhiff_s=_bl("xWhiff_S"),
+            season_xgor_s=_bl("xGOr_S"),
+            season_xpur_s=_bl("xPUr_S"),
+            season_xhr100_s=_bl("xHR100_S"),
+            season_bbe_prob_s=_bl("BBE_prob_S"),
+            season_xswst_s=_bl("xSwSt_S"),
+            season_xrv100_s=_bl("xRV100_S"),
+            # Metadata
+            n_pitches=n_pitches,
+            small_sample=n_pitches < _MIN_PITCHES,
+            cold_start=cold_start,
+        ))
+
     results.sort(key=lambda x: x.n_pitches, reverse=True)
     return results
 
@@ -2017,3 +2284,120 @@ def compute_tto_analysis(data: PitcherData) -> TTOAnalysis:
     summary = "; ".join(summary_parts) if summary_parts else f"{len(splits)} passes through the order"
 
     return TTOAnalysis(splits=splits, available=True, summary=summary, mix_shifts=mix_shifts)
+
+
+# ── Component attribution ────────────────────────────────────────────
+
+
+def compute_component_attribution(
+    data: PitcherData,
+    game_pk: int | None = None,
+) -> list[ComponentAttribution]:
+    """Decompose xRV into 13 outcome-level contributions per pitch type.
+
+    For each pitch: contribution_i = p_i * delta_run_exp(outcome_i, balls, strikes).
+    Per pitch type: mean(contribution_i) * 100 for each of 13 outcomes.
+
+    The contributions sum to the RAW xRV100 (pre-mean-subtraction). This will
+    differ from the mean-subtracted xRV100_P in the CSVs by a constant
+    league-average offset.
+
+    Args:
+        data: PitcherData bundle from data.load_pitcher_data.
+        game_pk: If provided, compute for a single appearance only.
+            If None, compute season-level (all pitches for this pitcher).
+
+    Returns:
+        List of ComponentAttribution, one per pitch type, sorted by
+        n_pitches descending. Empty list if all_pitches CSV lacks
+        required outcome columns.
+    """
+    all_pitches = data.agg_csvs["all_pitches"]
+
+    # Check that all 13 outcome columns exist
+    if not all(col in all_pitches.columns for col in _OUTCOME_COLS_P):
+        return []
+
+    # Load run values lookup table
+    rv_df = load_run_values()
+
+    # Filter to specific appearance if requested
+    if game_pk is not None:
+        all_pitches = all_pitches.filter(pl.col("game_pk") == game_pk)
+        if all_pitches.is_empty():
+            return []
+
+    name_map = _build_name_map(data.statcast)
+
+    # Get pitch types sorted by count descending
+    type_counts = (
+        all_pitches.group_by("pitch_type")
+        .agg(pl.len().alias("count"))
+        .sort("count", descending=True)
+    )
+    pitch_types = type_counts["pitch_type"].to_list()
+
+    results: list[ComponentAttribution] = []
+
+    for pt in pitch_types:
+        pitches = all_pitches.filter(pl.col("pitch_type") == pt)
+        n_pitches = pitches.height
+        if n_pitches == 0:
+            continue
+
+        # Unpivot the 13 probability columns to long format
+        long = pitches.unpivot(
+            on=list(_OUTCOME_COLS_P),
+            index=["game_pk", "at_bat_number", "pitch_number", "balls", "strikes"],
+            variable_name="outcome_col",
+            value_name="probability",
+        ).with_columns(
+            pl.col("outcome_col").str.replace("_P$", "").alias("model_classes"),
+        )
+
+        # Join with run values on [balls, strikes, model_classes]
+        joined = long.join(
+            rv_df.select(["balls", "strikes", "model_classes", "delta_run_exp"]),
+            on=["balls", "strikes", "model_classes"],
+            how="inner",
+        )
+
+        # Compute per-pitch contribution = probability * delta_run_exp
+        joined = joined.with_columns(
+            (pl.col("probability") * pl.col("delta_run_exp")).alias("contribution"),
+        )
+
+        # Group by outcome and compute mean(contribution) * 100
+        outcome_means = (
+            joined.group_by("model_classes")
+            .agg(pl.col("contribution").mean().alias("mean_contribution"))
+            .with_columns(
+                (pl.col("mean_contribution") * 100).alias("contribution_xrv100"),
+            )
+        )
+
+        # Build list of OutcomeContribution, sorted by |contribution| descending
+        contributions: list[OutcomeContribution] = []
+        for row in outcome_means.iter_rows(named=True):
+            contributions.append(
+                OutcomeContribution(
+                    outcome=row["model_classes"],
+                    contribution=row["contribution_xrv100"],
+                )
+            )
+        contributions.sort(key=lambda c: abs(c.contribution), reverse=True)
+
+        total_xrv100 = sum(c.contribution for c in contributions)
+
+        results.append(
+            ComponentAttribution(
+                pitch_type=pt,
+                pitch_name=name_map.get(pt, pt),
+                contributions=contributions,
+                total_xrv100=total_xrv100,
+                n_pitches=n_pitches,
+            )
+        )
+
+    results.sort(key=lambda x: x.n_pitches, reverse=True)
+    return results

@@ -89,44 +89,94 @@ class QADeps:
 # ═══════════════════════════════════════════════════════════════════════
 
 _ANALYST_INSTRUCTIONS = """\
-You are an analytical baseball scout answering questions about a specific \
-pitcher. Your voice is pragmatic, specific, and grounded -- the same tone \
-as a scouting report written for a front office.
+You are a sabermetric scout answering questions about a specific pitcher. \
+You write the way an analyst talks to another analyst -- plain, specific, \
+conversational. Not the way a research paper reads.
 
-ANALYTICAL FRAMEWORK (Pitching+ triad):
-Your primary analytical lens is the Pitching+ system. Every pitch answer \
-should be structured around these three metrics:
-- **Stuff+ (S+)**: Raw physical quality -- velocity, movement, spin. \
-"Is the pitch itself good?" S+ 110 = elite shape/velo. S+ 85 = the \
-pitch doesn't have the physical characteristics to fool hitters.
-- **Location+ (L+)**: Command and placement. "Can he put it where it \
-needs to go?" L+ 110 = pinpoint. L+ 80 = he's struggling to locate it, \
-which means hitters can sit dead red or lay off pitches they know will \
-miss.
-- **Pitching+ (P+)**: The combined outcome. Stuff + command = results. \
-P+ 100 is league average. Below 100 means the pitch is hurting him. \
-Above 100 means it's helping.
+FIND THE THREAD:
+Before you write anything, decide what the story is. Maybe the pitch \
+generates whiffs but gives up damage when hitters connect. Maybe the \
+stuff is average but command turns it into something dangerous. Maybe \
+the location is actively hurting a pitch that has raw potential. Lead \
+with that thread -- do not walk through every metric. Pick the 2-3 \
+numbers that tell the story; everything else stays in the data.
 
-DIAGNOSTIC APPROACH:
-When a pitch is underperforming (P+ below 100), diagnose WHY using S+ \
-and L+ as the two independent causes:
-- Bad stuff, good command → the pitch itself doesn't have deceptive \
-enough shape/velocity, even when located well.
-- Good stuff, bad command → the raw pitch is fine but he can't locate \
-it, so hitters can take it out of the zone or sit on it in the zone.
-- Bad stuff AND bad command → double failure. The pitch doesn't fool \
-anyone and he can't put it where it needs to go.
+HOW THE MODEL THINKS (your reasoning chain):
+The Pitching+ model grades pitches by predicting 13 outcome probabilities \
+from the pitch's physical characteristics, then pricing each outcome in \
+runs. Your job is to trace that chain -- from the physical pitch to the \
+model's predictions to the grade -- so the reader understands WHY, not \
+just WHAT.
 
-Use execution metrics (CSW%, Zone%, Chase%, xRV100 percentile) as \
-EVIDENCE that supports the S+/L+ diagnosis, not as the primary frame. \
-For example: "His 77 L+ manifests as a 6.7% chase rate -- hitters \
-simply aren't expanding the zone for a pitch with this little deception."
+1. Start with the pitch itself. Velocity, movement shape (pfx_x/pfx_z), \
+release point, and zone location are what the model sees. These physical \
+inputs drive every prediction downstream. When a model output is \
+surprising, look here first -- a movement change, a velo shift, or a \
+location pattern explains what the model is reacting to.
+
+2. Explain Stuff+ (S+) through the physical profile. S+ is the model's \
+grade on the pitch's raw characteristics -- velocity and movement -- \
+ignoring location. An 83 mph curveball with modest break will grade \
+lower than a 79 mph curve with sharp 2-plane movement because the model \
+sees less swing-and-miss potential in the velocity/movement combination. \
+Read the S-variant probabilities (xSwing_S, xWhiff_S, xRV100_S) as what \
+the model expects from stuff alone. Then connect those predictions to \
+the physical inputs: what about the velocity and movement shape explains \
+why the model rates the stuff the way it does? A low xWhiff_S means the \
+movement profile does not generate enough swing-and-miss on its own. A \
+poor xRV100_S means the velocity/movement combination is hittable.
+
+3. Compare P-variant (stuff + location) vs S-variant (stuff only) to \
+isolate what location adds. But explain the mechanism -- WHERE is he \
+putting it that changes the prediction? A zone rate of 21% with 6.7% \
+chase rate tells you the pitch is landing in dead zones where hitters \
+neither swing nor get called strikes. That is the physical explanation \
+for why the model's P-variant prediction diverges from the S-variant.
+
+4. Read the component attribution to see where runs come from. Each \
+pitch's xRV100 breaks into 13 outcome contributions. Find the dominant \
+2-3 drivers, but connect them back to the pitch: called balls dominate \
+because of poor location, whiffs dominate because of sharp movement, \
+home runs bleed through because of hittable velocity in the zone.
+
+5. Land on plus scores (P+, S+, L+) as the summary. By this point the \
+reader already knows why the grade is what it is. Above 100 helps the \
+pitcher; below 100 hurts.
+
+SIGN CONVENTIONS:
+- Probability metrics (xSwing, xWhiff, xSwSt): higher = more of that \
+event. P > S means location increases the rate.
+- Run value (xRV100): more negative = better for pitcher. P < S means \
+location is helping.
+- Attribution: negative = pitcher benefits. Positive = costs runs.
+
+VOICE:
+- Start immediately with the pitcher's stuff. Your first sentence \
+should be about what is happening, not about "looking at the data."
+- Diagnose, do not just describe. Connect the outcome to the physical \
+input. Link the "what" to the "why."
+- Vary sentence length. Let a short sentence land a point. Then explain \
+in a longer one when the idea needs room.
+- Use conversational scouting language: stuff, feel, finding a groove, \
+keeping them off balance, getting tagged, working the edges.
+- No clichés ("electric stuff," "pitches to contact," "bulldog mentality").
+- No formulaic transitions ("Meanwhile," "However," "The stark gap \
+between"). Just start the next thought.
+- Never say "the data shows," "looking at the numbers," or "when we \
+examine." Just say what is happening and why.
+- Never use: "degradation," "binary," "physical characteristics," \
+"extreme variance," "profiles as," "metrics are grim," "dominant," \
+"massive spike."
+- No bullet lists or tables. Write prose. Cite numbers naturally \
+inside sentences.
+- Use execution metrics (CSW%, Zone%, Chase%) as supporting color, not \
+the headline.
 
 DATA GROUNDING RULES (absolute):
 1. Answer ONLY from the data returned by your tools. NEVER cite statistics \
 from your training data.
 2. When you call a tool, base your answer entirely on the tool's output. \
-If the data doesn't contain what the user asked about, say so and explain \
+If the data does not contain what the user asked about, say so and explain \
 what data IS available.
 3. If the user asks about a topic outside the data (predictions, fantasy \
 advice, historical seasons, cross-pitcher comparisons), explain that your \
@@ -134,12 +184,13 @@ data covers only this pitcher's recent performance window and describe \
 what you CAN answer.
 
 RESPONSE FORMAT:
-- For broad questions ("How is he pitching?"): 2-4 paragraphs covering \
-the most relevant signals from the data.
+- For broad questions ("How is he pitching?"): 2-3 paragraphs. Find the \
+thread, diagnose the mechanism, land the verdict. Call get_pitch_detail \
+on the most interesting pitch to get the attribution breakdown.
 - For specific pitch questions ("How's his slider?"): 1-2 focused \
-paragraphs on that pitch type.
-- Cite numbers naturally in prose -- don't build tables or bullet lists.
-- Lead with the P+ grade, then decompose into S+ and L+ to explain why.
+paragraphs. Always call get_pitch_detail for that pitch type first.
+- Lead with what happened -- the concrete change or signal -- not with \
+a theory about why.
 
 OUT OF SCOPE (decline gracefully):
 - Predictions or projections
@@ -183,6 +234,8 @@ def get_pitch_detail(ctx: RunContext[QADeps], pitch_type: str) -> str:
     arsenal_match = [a for a in pc.arsenal if a.pitch_type == code]
     execution_match = [e for e in pc.execution if e.pitch_type == code]
     platoon_match = [s for s in pc.platoon_mix.splits if s.pitch_type == code]
+    attribution_match = [a for a in pc.attributions if a.pitch_type == code]
+    intermediates_match = [i for i in pc.intermediates if i.pitch_type == code]
 
     if not arsenal_match:
         available = [f"{a.pitch_name} ({a.pitch_type})" for a in pc.arsenal]
@@ -191,7 +244,14 @@ def get_pitch_detail(ctx: RunContext[QADeps], pitch_type: str) -> str:
             f"Available pitches: {', '.join(available)}"
         )
 
-    return _render_pitch_detail(code, arsenal_match, execution_match, platoon_match)
+    return _render_pitch_detail(
+        code,
+        arsenal_match,
+        execution_match,
+        platoon_match,
+        attribution_rows=attribution_match,
+        intermediates_rows=intermediates_match,
+    )
 
 
 def _render_pitch_detail(
@@ -199,6 +259,9 @@ def _render_pitch_detail(
     arsenal_rows: list[Any],
     execution_rows: list[Any],
     platoon_rows: list[Any],
+    *,
+    attribution_rows: list[Any] | None = None,
+    intermediates_rows: list[Any] | None = None,
 ) -> str:
     """Build focused markdown for a single pitch type.
 
@@ -207,9 +270,12 @@ def _render_pitch_detail(
         arsenal_rows: Matching PitchTypeSummary items.
         execution_rows: Matching ExecutionMetrics items.
         platoon_rows: Matching PlatoonSplit items.
+        attribution_rows: Matching ComponentAttribution items.
+        intermediates_rows: Matching IntermediateProbabilities items.
 
     Returns:
-        Markdown string (~200 tokens) with arsenal, execution, and platoon data.
+        Markdown string with arsenal, execution, platoon, intermediates,
+        and attribution data.
     """
     lines: list[str] = []
 
@@ -217,7 +283,12 @@ def _render_pitch_detail(
     for a in arsenal_rows:
         lines.append(f"## {a.pitch_name} ({code}) Detail")
         lines.append("")
-        lines.append("### Arsenal")
+        lines.append("### Physical Profile")
+        lines.append(f"- Velocity: {a.window_velo:.1f} mph (season {a.season_velo:.1f}) -- {a.velo_delta}")
+        lines.append(f"- Horizontal movement (pfx_x): {a.window_pfx_x:.1f} in (season {a.season_pfx_x:.1f}) -- {a.pfx_x_delta}")
+        lines.append(f"- Vertical movement (pfx_z): {a.window_pfx_z:.1f} in (season {a.season_pfx_z:.1f}) -- {a.pfx_z_delta}")
+        lines.append("")
+        lines.append("### Grades")
         lines.append(f"- Usage: {a.window_usage_pct:.1f}% (season {a.season_usage_pct:.1f}%) -- {a.usage_delta}")
         wp = f"{a.window_p_plus:.0f}" if a.window_p_plus is not None else "--"
         ws = f"{a.window_s_plus:.0f}" if a.window_s_plus is not None else "--"
@@ -256,7 +327,54 @@ def _render_pitch_detail(
                     f"-- {s.usage_delta} {pp}"
                 )
 
+    # Intermediates section (P vs S location impact)
+    if intermediates_rows:
+        lines.append("")
+        lines.append("### Model Internals: Location Impact")
+        for im in intermediates_rows:
+            lines.append(_ps_line("xSwing", im.xswing_p, im.xswing_s))
+            lines.append(_ps_line("xWhiff", im.xwhiff_p, im.xwhiff_s))
+            lines.append(_ps_line("xSwSt", im.xswst_p, im.xswst_s))
+            lines.append(_ps_line_rv("xRV100", im.xrv100_p, im.xrv100_s))
+
+    # Attribution section (13-outcome xRV decomposition)
+    if attribution_rows:
+        lines.append("")
+        lines.append("### Component Attribution (xRV100 Decomposition)")
+        for attr in attribution_rows:
+            lines.append(f"Total raw xRV100: {attr.total_xrv100:.2f}")
+            lines.append("")
+            lines.append("| Outcome | Contribution | Share |")
+            lines.append("|---------|-------------|-------|")
+            for oc in attr.contributions:
+                share = (
+                    f"{(oc.contribution / attr.total_xrv100 * 100):+.1f}%"
+                    if attr.total_xrv100 != 0
+                    else f"{0:.1f}%"
+                )
+                lines.append(f"| {oc.outcome} | {oc.contribution:+.3f} | {share} |")
+
     return "\n".join(lines)
+
+
+def _ps_line(label: str, p: float | None, s: float | None) -> str:
+    """Format a P vs S comparison line for probability metrics."""
+    p_str = f"{p * 100:.1f}%" if p is not None else "--"
+    s_str = f"{s * 100:.1f}%" if s is not None else "--"
+    if p is not None and s is not None:
+        delta = (p - s) * 100
+        return f"- {label}: P {p_str}, S {s_str}, location delta {delta:+.1f}pp"
+    return f"- {label}: P {p_str}, S {s_str}"
+
+
+def _ps_line_rv(label: str, p: float | None, s: float | None) -> str:
+    """Format a P vs S comparison line for run-value metrics (xRV100 scale)."""
+    p_str = f"{p:.2f}" if p is not None else "--"
+    s_str = f"{s:.2f}" if s is not None else "--"
+    if p is not None and s is not None:
+        delta = p - s
+        return f"- {label}: P {p_str}, S {s_str}, location delta {delta:+.2f}"
+    return f"- {label}: P {p_str}, S {s_str}"
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -267,7 +385,7 @@ _settings_cache: dict[tuple[str, ThinkingEffort], tuple[str, ModelSettings]] = {
 
 
 def _make_analyst(
-    provider: str = "openai",
+    provider: str = "gemini",
     thinking: ThinkingEffort = "high",
 ) -> tuple[str, ModelSettings]:
     """Resolve (or return cached) model name and settings for the given provider.
@@ -317,7 +435,7 @@ def ask_question_streaming(
     context: PitcherContext,
     data: PitcherData,
     *,
-    provider: str = "openai",
+    provider: str = "gemini",
     thinking: ThinkingEffort = "high",
     _model_override: Any = None,
 ) -> str:

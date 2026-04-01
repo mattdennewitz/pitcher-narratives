@@ -190,3 +190,136 @@ def test_ask_question_streaming(ctx, data):
     )
     assert isinstance(result, str)
     assert len(result) > 0
+
+
+# -- TOOL-01/02: Intermediates and Attribution tests ---------------------------
+
+
+def test_get_pitch_detail_includes_attribution(deps):
+    """get_pitch_detail output for a known pitch type contains 'Component Attribution'."""
+    from unittest.mock import MagicMock
+
+    mock_ctx = MagicMock()
+    mock_ctx.deps = deps
+
+    first_pitch = deps.context.arsenal[0]
+    result = get_pitch_detail(mock_ctx, first_pitch.pitch_type)
+    assert "Component Attribution" in result
+
+
+def test_get_pitch_detail_attribution_has_outcomes(deps):
+    """Attribution section contains at least 5 outcome rows (from 13 canonical outcomes)."""
+    from unittest.mock import MagicMock
+
+    mock_ctx = MagicMock()
+    mock_ctx.deps = deps
+
+    first_pitch = deps.context.arsenal[0]
+    result = get_pitch_detail(mock_ctx, first_pitch.pitch_type)
+
+    # Count data rows in the attribution table (lines starting with | but not header/separator)
+    in_attribution = False
+    outcome_rows = 0
+    for line in result.split("\n"):
+        if "Component Attribution" in line:
+            in_attribution = True
+            continue
+        if in_attribution and line.startswith("## ") or (in_attribution and line.startswith("### ") and "Component" not in line):
+            break
+        if in_attribution and line.startswith("|") and "Outcome" not in line and "---" not in line:
+            outcome_rows += 1
+    assert outcome_rows >= 5, f"Found {outcome_rows} outcome rows, expected >= 5"
+
+
+def test_get_pitch_detail_includes_intermediates(deps):
+    """get_pitch_detail output for a known pitch type contains 'Location Impact'."""
+    from unittest.mock import MagicMock
+
+    mock_ctx = MagicMock()
+    mock_ctx.deps = deps
+
+    first_pitch = deps.context.arsenal[0]
+    result = get_pitch_detail(mock_ctx, first_pitch.pitch_type)
+    assert "Location Impact" in result
+
+
+def test_get_pitcher_summary_includes_intermediates(deps):
+    """get_pitcher_summary output contains 'Model Internals' (from to_prompt)."""
+    from unittest.mock import MagicMock
+
+    mock_ctx = MagicMock()
+    mock_ctx.deps = deps
+
+    result = get_pitcher_summary(mock_ctx)
+    assert "Model Internals" in result
+
+
+def test_get_pitch_detail_existing_sections_preserved(deps):
+    """get_pitch_detail still contains Physical Profile, Grades, and Execution sections."""
+    from unittest.mock import MagicMock
+
+    mock_ctx = MagicMock()
+    mock_ctx.deps = deps
+
+    first_pitch = deps.context.arsenal[0]
+    result = get_pitch_detail(mock_ctx, first_pitch.pitch_type)
+    assert "Physical Profile" in result
+    assert "Grades" in result
+    assert "Execution" in result
+
+
+# -- ANLST-01/02/03: Prompt content tests ------------------------------------
+
+
+def test_prompt_references_intermediates():
+    """ANLST-01: Prompt references all 4 intermediate metric names as primary analytical tools."""
+    prompt = _analyst_agent._instructions[0]
+    assert "xWhiff" in prompt, "Prompt must reference xWhiff"
+    assert "xSwing" in prompt, "Prompt must reference xSwing"
+    assert "xSwSt" in prompt, "Prompt must reference xSwSt"
+    assert "xRV100" in prompt, "Prompt must reference xRV100"
+
+
+def test_prompt_internals_before_plus():
+    """ANLST-01: Framework leads with model internals; plus scores are summary grades."""
+    prompt = _analyst_agent._instructions[0]
+    # Old framing must be removed
+    assert "Pitching+ triad" not in prompt, (
+        "Prompt must not contain 'Pitching+ triad' (old framing)"
+    )
+    # Plus scores should be referred to as summary grades
+    assert "summary" in prompt.lower(), (
+        "Prompt must contain 'summary' in context of plus scores"
+    )
+    # Plus scores themselves must still appear
+    assert "P+" in prompt, "Prompt must still reference P+"
+
+
+def test_prompt_references_p_vs_s():
+    """ANLST-02: Prompt teaches P-variant vs S-variant comparison for location diagnosis."""
+    prompt = _analyst_agent._instructions[0]
+    # Must reference both variant concepts
+    has_s_variant = "S-variant" in prompt or "S variant" in prompt or "S+" in prompt
+    assert has_s_variant, "Prompt must reference S-variant concept"
+    has_p_variant = "P-variant" in prompt or "P variant" in prompt or "P-variant" in prompt
+    assert has_p_variant, "Prompt must reference P-variant concept"
+    # Must explicitly mention location in the variant context
+    assert "location" in prompt.lower(), "Prompt must reference location in P-vs-S context"
+
+
+def test_prompt_references_attribution():
+    """ANLST-03: Prompt teaches attribution decomposition with dominant-driver filtering."""
+    prompt = _analyst_agent._instructions[0]
+    # Must reference attribution concept
+    assert "attribution" in prompt.lower(), (
+        "Prompt must reference attribution (case-insensitive)"
+    )
+    # Must teach filtering to dominant drivers, not listing all 13
+    has_filtering = any(
+        term in prompt.lower()
+        for term in ("dominant", "2-3", "largest", "most")
+    )
+    assert has_filtering, (
+        "Prompt must teach filtering to dominant drivers "
+        "(expected one of: 'dominant', '2-3', 'largest', 'most')"
+    )
