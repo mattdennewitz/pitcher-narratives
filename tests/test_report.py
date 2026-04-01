@@ -24,7 +24,7 @@ from pitcher_narratives.report import (
     WarningCategory,
     _build_editor_message,
     _build_fantasy_message,
-    _build_hook_message,
+    _build_stuff_message,
     _build_revision_message,
     _build_synthesizer_message,
     _make_agents,
@@ -268,7 +268,7 @@ def test_generate_report_returns_report_result(ctx):
     result = generate_report_streaming(ctx, _model_override=TestModel())
     assert isinstance(result, ReportResult)
     assert len(result.narrative) > 0
-    assert len(result.social_hook) > 0
+    assert len(result.stuff_summary) > 0
 
 
 def test_generate_report_uses_test_model(ctx):
@@ -438,23 +438,23 @@ def test_hook_writer_output_type_is_str():
     assert hook.output_type is str
 
 
-def test_hook_message_includes_pitcher_name(ctx):
-    """Hook message includes pitcher name."""
-    msg = _prompt_text(_build_hook_message(ctx, "test synthesis"))
+def test_stuff_message_includes_pitcher_name(ctx):
+    """Stuff message includes pitcher name."""
+    msg = _prompt_text(_build_stuff_message(ctx, "test synthesis"))
     assert ctx.pitcher_name in msg
 
 
-def test_hook_message_includes_synthesis(ctx):
-    """Hook message includes synthesis text."""
-    msg = _prompt_text(_build_hook_message(ctx, "Fastball velo down 1.5"))
+def test_stuff_message_includes_capsule(ctx):
+    """Stuff message includes capsule text."""
+    msg = _prompt_text(_build_stuff_message(ctx, "Fastball velo down 1.5"))
     assert "Fastball velo down 1.5" in msg
 
 
-def test_report_result_has_social_hook(ctx):
-    """ReportResult has non-empty narrative and social_hook fields."""
+def test_report_result_has_stuff_summary(ctx):
+    """ReportResult has non-empty narrative and stuff_summary fields."""
     result = generate_report_streaming(ctx, _model_override=TestModel())
     assert isinstance(result, ReportResult)
-    assert result.social_hook
+    assert result.stuff_summary
     assert result.narrative
 
 
@@ -516,7 +516,7 @@ def test_report_result_all_fields_populated(ctx):
     """ReportResult has all three fields populated."""
     result = generate_report_streaming(ctx, _model_override=TestModel())
     assert result.narrative
-    assert result.social_hook
+    assert result.stuff_summary
     assert result.fantasy_insights
 
 
@@ -567,20 +567,20 @@ def test_anchor_result_multiple_warnings():
 
 def test_report_result_revision_count_default():
     """ReportResult revision_count defaults to 0."""
-    r = ReportResult(narrative="n", social_hook="s", fantasy_insights="f", anchor_warnings=[])
+    r = ReportResult(narrative="n", stuff_summary="s", fantasy_insights="f", anchor_warnings=[])
     assert r.revision_count == 0
 
 
 def test_report_result_revision_count_explicit():
     """ReportResult revision_count can be set explicitly."""
-    r = ReportResult(narrative="n", social_hook="s", fantasy_insights="f", anchor_warnings=[], revision_count=2)
+    r = ReportResult(narrative="n", stuff_summary="s", fantasy_insights="f", anchor_warnings=[], revision_count=2)
     assert r.revision_count == 2
 
 
 def test_report_result_anchor_warnings_typed():
     """ReportResult anchor_warnings accepts AnchorWarning objects."""
     w = AnchorWarning(category="OVERSTATED", description="small sample")
-    r = ReportResult(narrative="n", social_hook="s", fantasy_insights="f", anchor_warnings=[w])
+    r = ReportResult(narrative="n", stuff_summary="s", fantasy_insights="f", anchor_warnings=[w])
     assert isinstance(r.anchor_warnings[0], AnchorWarning)
     assert r.anchor_warnings[0].category == "OVERSTATED"
 

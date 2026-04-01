@@ -193,7 +193,7 @@ def _make_result(
     """Build a minimal ReportResult for revision status tests."""
     return ReportResult(
         narrative="n",
-        social_hook="s",
+        stuff_summary="s",
         fantasy_insights="f",
         anchor_warnings=anchor_warnings or [],
         revision_count=revision_count,

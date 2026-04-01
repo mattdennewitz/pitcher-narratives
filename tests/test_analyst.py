@@ -255,7 +255,7 @@ def test_get_pitcher_summary_includes_intermediates(deps):
 
 
 def test_get_pitch_detail_existing_sections_preserved(deps):
-    """get_pitch_detail still contains Arsenal and Execution sections."""
+    """get_pitch_detail still contains Physical Profile, Grades, and Execution sections."""
     from unittest.mock import MagicMock
 
     mock_ctx = MagicMock()
@@ -263,7 +263,8 @@ def test_get_pitch_detail_existing_sections_preserved(deps):
 
     first_pitch = deps.context.arsenal[0]
     result = get_pitch_detail(mock_ctx, first_pitch.pitch_type)
-    assert "Arsenal" in result
+    assert "Physical Profile" in result
+    assert "Grades" in result
     assert "Execution" in result
 
 
