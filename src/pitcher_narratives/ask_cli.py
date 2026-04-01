@@ -121,6 +121,11 @@ def parse_args() -> argparse.Namespace:
         default="high",
         help="Thinking/reasoning effort level (default: high)",
     )
+    parser.add_argument(
+        "--pipeline",
+        action="store_true",
+        help="Use multi-agent specialist→answerer pipeline",
+    )
     return parser.parse_args()
 
 
@@ -169,7 +174,6 @@ def main() -> None:
         sys.exit(1)
 
     # Lazy imports for fast startup
-    from pitcher_narratives.analyst import ask_question_streaming
     from pitcher_narratives.context import assemble_pitcher_context
     from pitcher_narratives.data import load_pitcher_data
 
@@ -181,14 +185,28 @@ def main() -> None:
 
     ctx = assemble_pitcher_context(pitcher_data)
 
-    ask_question_streaming(
-        args.question,
-        ctx,
-        pitcher_data,
-        provider=args.provider,
-        thinking=args.thinking,
-        _model_override=model_override,
-    )
+    if args.pipeline:
+        from pitcher_narratives.analyst import ask_question_pipeline
+
+        ask_question_pipeline(
+            args.question,
+            ctx,
+            pitcher_data,
+            provider=args.provider,
+            thinking=args.thinking,
+            _model_override=model_override,
+        )
+    else:
+        from pitcher_narratives.analyst import ask_question_streaming
+
+        ask_question_streaming(
+            args.question,
+            ctx,
+            pitcher_data,
+            provider=args.provider,
+            thinking=args.thinking,
+            _model_override=model_override,
+        )
 
 
 if __name__ == "__main__":

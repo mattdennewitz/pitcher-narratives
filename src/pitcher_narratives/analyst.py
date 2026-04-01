@@ -19,7 +19,7 @@ from pitcher_narratives.context import PitcherContext
 from pitcher_narratives.data import PitcherData
 from pitcher_narratives.report import PROVIDERS, THINKING_LEVELS
 
-__all__ = ["PITCH_TYPE_MAP", "QADeps", "ask_question_streaming"]
+__all__ = ["PITCH_TYPE_MAP", "QADeps", "ask_question_streaming", "ask_question_pipeline"]
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -469,3 +469,126 @@ def ask_question_streaming(
         chunks.append(delta)
     print()
     return "".join(chunks)
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# MULTI-AGENT Q&A (PIPELINE APPROACH)
+# ═══════════════════════════════════════════════════════════════════════
+
+_ANSWERER_INSTRUCTIONS = """\
+You are a sabermetric scout answering a specific question about a pitcher. \
+You have four specialist analyses available as context — stuff, location, \
+run value decomposition, and trends. Use them as your evidence base.
+
+APPROACH:
+- Read the question carefully. Answer ONLY what was asked.
+- Draw from whichever specialist analyses are relevant. A question about \
+a specific pitch's stuff should lean on the stuff analysis. A question \
+about trends should lean on the trend analysis. A broad question should \
+synthesize across all four.
+- The specialist analyses are your ONLY source of truth. Do not invent \
+metrics or cite numbers not present in the analyses.
+
+VOICE:
+- Write like an analyst talking to another analyst. Plain, specific, \
+conversational.
+- Vary sentence length. Short sentences land points.
+- Use scouting language: stuff, feel, finding a groove, getting tagged.
+- No clichés, no formulaic transitions, no "the data shows."
+- Never use: "degradation," "binary," "profiles as," "dominant," \
+"elite," "massive spike."
+- Start immediately with the answer. No preamble.
+
+FORMAT:
+- For specific pitch questions: 1-2 focused paragraphs.
+- For broad questions: 2-3 paragraphs. Find the thread first.
+- No bullet lists or tables. Prose only.
+
+OUT OF SCOPE (decline gracefully):
+- Predictions or projections
+- Fantasy baseball advice
+- Historical season-over-season comparisons
+- Cross-pitcher comparisons
+"""
+
+
+def ask_question_pipeline(
+    question: str,
+    context: PitcherContext,
+    data: PitcherData,
+    *,
+    provider: str = "gemini",
+    thinking: ThinkingEffort = "high",
+    _model_override: Any = None,
+) -> str:
+    """Ask a question using the multi-agent specialist→answerer pipeline.
+
+    Runs 4 specialists concurrently on the full context, then passes
+    their outputs + the question to an answerer agent that streams
+    a focused response.
+
+    Args:
+        question: The user's question in natural language.
+        context: Assembled PitcherContext for the pitcher.
+        data: Loaded PitcherData for the pitcher.
+        provider: LLM provider key.
+        thinking: Thinking effort level.
+        _model_override: Optional model override for testing.
+
+    Returns:
+        The agent's complete response as a string.
+    """
+    import asyncio
+    import sys
+
+    from pitcher_narratives.pipeline import (
+        _build_location_input,
+        _build_runvalue_input,
+        _build_stuff_input,
+        _build_trend_input,
+        _make_pipeline_agents,
+        _run_specialists,
+    )
+
+    (
+        stuff_agent, location_agent, runvalue_agent, trends_agent,
+        _writer, anchor_checker,
+    ) = _make_pipeline_agents(provider, thinking)
+
+    async def _run() -> str:
+        # Phase 1: Run specialists concurrently
+        print("Running specialists...", file=sys.stderr, flush=True)
+        specialists = await _run_specialists(
+            stuff_agent, location_agent, runvalue_agent, trends_agent,
+            context, _model_override,
+        )
+        print("Answering...", file=sys.stderr, flush=True)
+
+        # Phase 2: Answerer composes from specialist outputs (streamed)
+        model_name, model_settings = _make_analyst(provider, thinking)
+        answerer = Agent(
+            _model_override if _model_override is not None else model_name,
+            output_type=str,
+            instructions=_ANSWERER_INSTRUCTIONS,
+            model_settings=model_settings,
+            defer_model_check=True,
+        )
+
+        answerer_input = (
+            f"## Question\n{question}\n\n"
+            f"## Pitcher: {context.pitcher_name} ({context.throws}HP, {context.role})\n\n"
+            f"## Specialist Analysis: Stuff\n{specialists.stuff}\n\n"
+            f"## Specialist Analysis: Location\n{specialists.location}\n\n"
+            f"## Specialist Analysis: Run Value\n{specialists.runvalue}\n\n"
+            f"## Specialist Analysis: Trends\n{specialists.trends}"
+        )
+
+        chunks: list[str] = []
+        async with answerer.run_stream(answerer_input) as stream:
+            async for delta in stream.stream_text(delta=True):
+                print(delta, end="", flush=True)
+                chunks.append(delta)
+        print()
+        return "".join(chunks)
+
+    return asyncio.run(_run())
