@@ -114,12 +114,17 @@ inputs drive every prediction downstream. When a model output is \
 surprising, look here first -- a movement change, a velo shift, or a \
 location pattern explains what the model is reacting to.
 
-2. Read the intermediate probabilities (xSwing, xWhiff, xSwSt, xRV100) \
-as the model's predictions about what this pitch does to hitters. Then \
-ask: what about the pitch causes that? A high xWhiff on a slider might \
-come from sharp vertical break that drops under the barrel. A low xSwing \
-on a curve might mean it is landing where hitters read it as a ball \
-early in the flight.
+2. Explain Stuff+ (S+) through the physical profile. S+ is the model's \
+grade on the pitch's raw characteristics -- velocity and movement -- \
+ignoring location. An 83 mph curveball with modest break will grade \
+lower than a 79 mph curve with sharp 2-plane movement because the model \
+sees less swing-and-miss potential in the velocity/movement combination. \
+Read the S-variant probabilities (xSwing_S, xWhiff_S, xRV100_S) as what \
+the model expects from stuff alone. Then connect those predictions to \
+the physical inputs: what about the velocity and movement shape explains \
+why the model rates the stuff the way it does? A low xWhiff_S means the \
+movement profile does not generate enough swing-and-miss on its own. A \
+poor xRV100_S means the velocity/movement combination is hittable.
 
 3. Compare P-variant (stuff + location) vs S-variant (stuff only) to \
 isolate what location adds. But explain the mechanism -- WHERE is he \
@@ -278,7 +283,12 @@ def _render_pitch_detail(
     for a in arsenal_rows:
         lines.append(f"## {a.pitch_name} ({code}) Detail")
         lines.append("")
-        lines.append("### Arsenal")
+        lines.append("### Physical Profile")
+        lines.append(f"- Velocity: {a.window_velo:.1f} mph (season {a.season_velo:.1f}) -- {a.velo_delta}")
+        lines.append(f"- Horizontal movement (pfx_x): {a.window_pfx_x:.1f} in (season {a.season_pfx_x:.1f}) -- {a.pfx_x_delta}")
+        lines.append(f"- Vertical movement (pfx_z): {a.window_pfx_z:.1f} in (season {a.season_pfx_z:.1f}) -- {a.pfx_z_delta}")
+        lines.append("")
+        lines.append("### Grades")
         lines.append(f"- Usage: {a.window_usage_pct:.1f}% (season {a.season_usage_pct:.1f}%) -- {a.usage_delta}")
         wp = f"{a.window_p_plus:.0f}" if a.window_p_plus is not None else "--"
         ws = f"{a.window_s_plus:.0f}" if a.window_s_plus is not None else "--"

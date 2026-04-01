@@ -342,20 +342,22 @@ class PitcherContext(BaseModel):
 
     def _render_arsenal_section(self) -> str:
         lines = ["## Arsenal"]
-        lines.append("| Pitch | Usage | Delta | P+ | S+ | L+ | P+ Delta |")
-        lines.append("|-------|-------|-------|----|----|----|---------  |")
+        lines.append("| Pitch | Velo | H-mov | V-mov | Usage | P+ | S+ | L+ | Deltas |")
+        lines.append("|-------|------|-------|-------|-------|----|----|----|---------  |")
         for p in self.arsenal[:_MAX_PITCH_TYPES]:
             wp = f"{p.window_p_plus:.0f}" if p.window_p_plus is not None else "--"
             ws = f"{p.window_s_plus:.0f}" if p.window_s_plus is not None else "--"
             wl = f"{p.window_l_plus:.0f}" if p.window_l_plus is not None else "--"
             lines.append(
                 f"| {p.pitch_name} ({p.pitch_type}) "
+                f"| {p.window_velo:.1f} "
+                f"| {p.window_pfx_x:.1f} "
+                f"| {p.window_pfx_z:.1f} "
                 f"| {p.window_usage_pct:.1f}% "
-                f"| {p.usage_delta} "
                 f"| {wp} "
                 f"| {ws} "
                 f"| {wl} "
-                f"| {p.p_plus_delta} ({p.s_plus_delta}, {p.l_plus_delta}) |"
+                f"| P+ {p.p_plus_delta}, S+ {p.s_plus_delta}, L+ {p.l_plus_delta} |"
             )
         return "\n".join(lines)
 

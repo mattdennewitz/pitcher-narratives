@@ -524,6 +524,25 @@ class PitchTypeSummary:
     window_l_plus: float | None
     l_plus_delta: str
 
+    season_velo: float
+    """Season average velocity (mph)."""
+    window_velo: float
+    """Window average velocity (mph)."""
+    velo_delta: str
+    """Qualitative velocity delta, e.g., 'Up 1.5 mph'."""
+
+    season_pfx_x: float
+    """Season average horizontal movement (inches)."""
+    window_pfx_x: float
+    """Window average horizontal movement (inches)."""
+    pfx_x_delta: str
+
+    season_pfx_z: float
+    """Season average vertical movement (inches)."""
+    window_pfx_z: float
+    """Window average vertical movement (inches)."""
+    pfx_z_delta: str
+
     n_pitches_season: int
     n_pitches_window: int
     small_sample: bool
@@ -1128,6 +1147,24 @@ def compute_arsenal_summary(data: PitcherData) -> list[PitchTypeSummary]:
         # ── Pitch name ───────────────────────────────────────────
         pitch_name = name_map.get(pt, pt)
 
+        # ── Velocity & movement ──────────────────────────────────
+        season_velo = _float(pt_season["release_speed"].mean())
+        window_velo = _float(pt_window["release_speed"].mean()) if n_window > 0 else season_velo
+
+        season_pfx_x = _float(pt_season["pfx_x"].mean())
+        window_pfx_x = _float(pt_window["pfx_x"].mean()) if n_window > 0 else season_pfx_x
+        season_pfx_z = _float(pt_season["pfx_z"].mean())
+        window_pfx_z = _float(pt_window["pfx_z"].mean()) if n_window > 0 else season_pfx_z
+
+        if cold_start:
+            velo_delta_str = _COLD_START_STRING
+            pfx_x_delta_str = _COLD_START_STRING
+            pfx_z_delta_str = _COLD_START_STRING
+        else:
+            velo_delta_str = _velo_delta_string(window_velo - season_velo)
+            pfx_x_delta_str = _movement_delta_string(window_pfx_x - season_pfx_x)
+            pfx_z_delta_str = _movement_delta_string(window_pfx_z - season_pfx_z)
+
         # ── Small sample ─────────────────────────────────────────
         small_sample = n_window < _MIN_PITCHES
 
@@ -1147,6 +1184,15 @@ def compute_arsenal_summary(data: PitcherData) -> list[PitchTypeSummary]:
                 season_l_plus=season_l_plus,
                 window_l_plus=window_l_plus,
                 l_plus_delta=l_plus_delta,
+                season_velo=season_velo,
+                window_velo=window_velo,
+                velo_delta=velo_delta_str,
+                season_pfx_x=season_pfx_x,
+                window_pfx_x=window_pfx_x,
+                pfx_x_delta=pfx_x_delta_str,
+                season_pfx_z=season_pfx_z,
+                window_pfx_z=window_pfx_z,
+                pfx_z_delta=pfx_z_delta_str,
                 n_pitches_season=n_season,
                 n_pitches_window=n_window,
                 small_sample=small_sample,

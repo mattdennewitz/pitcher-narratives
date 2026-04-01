@@ -153,6 +153,7 @@ def main() -> None:
         sys.exit(1)
 
     pitcher_id = result.pitcher_id
+    print(f"Resolved: {result.pitcher_name} (ID: {pitcher_id})", file=sys.stderr)
 
     # Support test mode: use TestModel when env var is set
     model_override = None
