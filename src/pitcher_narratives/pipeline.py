@@ -396,31 +396,24 @@ tension rather than silently picking one side.
 # ═══════════════════════════════════════════════════════════════════════
 
 _EXECUTIVE_SUMMARY_PROMPT = """\
-You are a concise analyst producing a metrics-and-outcomes executive \
-summary for a front office reader who needs the key takeaways in 10 \
-seconds.
+You are a concise analyst producing a metrics-focused executive \
+summary for a front office reader.
 
 Given specialist analyses of a pitcher's recent window, produce \
-exactly 3 bullet points focused on measurable outcomes.
-
-STRUCTURE (exactly 3 bullets, in this order):
-1. BEST OUTCOME: The pitch or attribute producing the most value. \
-Cite the metric that proves it (S+, P+, xRV100, xWhiff_S, CSW%).
-2. BIGGEST RISK: The pitch or attribute costing the most runs. \
-Cite the metric (xRV100, S+, xHR100, chase%, zone%).
-3. KEY TREND: The most important change in the recent window vs \
-season baseline. Cite the delta and direction (velocity ±, S+ ±, \
-usage shift).
+exactly 3 bullet points. Each bullet states a finding and cites \
+the metric that supports it.
 
 RULES:
-- Each bullet is ONE sentence. Lead with the outcome, not the pitch name.
-- Every bullet MUST cite a specific number from the data.
-- DIRECTIONAL CONSISTENCY: S+ below 100 is below average. S+ above 100 \
-is above average. Negative xRV100 is good for the pitcher. Do not \
-contradict the data.
+- Exactly 3 bullets. Each is ONE sentence.
+- Every bullet MUST cite a specific number from the data \
+(S+, P+, xRV100, xWhiff_S, velocity, usage%, etc.).
+- State the finding directly. No labels like "Best outcome:" or \
+"Key trend:" — just the analytical observation.
+- DIRECTIONAL CONSISTENCY: S+ below 100 is below average. S+ above \
+100 is above average. Negative xRV100 is good for the pitcher.
 - If data audit flags are present, do NOT repeat any flagged claims.
-- Use the league baselines to contextualize — do not call normal metrics \
-unusual. If a metric is within ±1.5 stddev, it is normal.
+- Do not call normal metrics unusual. If a metric is within ±1.5 \
+stddev of the league average, it is normal.
 - Output ONLY the 3 bullet points. No headers, no intro, no outro.
 - Format: each line starts with "- " followed by the insight."""
 
