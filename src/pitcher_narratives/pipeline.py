@@ -664,14 +664,18 @@ async def _audit_and_revise_specialists(
 
     # Phase 1.5a: Audit all 5 in parallel
     async def _audit_one(name: str) -> tuple[str, AuditResult]:
-        audit_input = _build_specialist_audit_input(
-            ground_truths[name], outputs[name],
-        )
-        kwargs: dict[str, Any] = {"user_prompt": audit_input}
-        if _model_override is not None:
-            kwargs["model"] = _model_override
-        result = await auditor.run(**kwargs)
-        return name, result.output
+        try:
+            audit_input = _build_specialist_audit_input(
+                ground_truths[name], outputs[name],
+            )
+            kwargs: dict[str, Any] = {"user_prompt": audit_input}
+            if _model_override is not None:
+                kwargs["model"] = _model_override
+            result = await auditor.run(**kwargs)
+            return name, result.output
+        except Exception:
+            log.warning("Audit failed for %s specialist, treating as clean.", name, exc_info=True)
+            return name, AuditResult(flags=[])
 
     audit_tasks = [_audit_one(name) for name in specialist_names]
     audit_results = await asyncio.gather(*audit_tasks)
@@ -695,15 +699,19 @@ async def _audit_and_revise_specialists(
     log.info("Revising %d flagged specialist(s)...", len(flagged))
 
     async def _revise_one(name: str, flags: list[AuditFlag]) -> tuple[str, str]:
-        revision_input = _build_specialist_revision_input(
-            ground_truths[name], outputs[name], flags,
-        )
-        agent = specialist_agents[name]
-        kwargs: dict[str, Any] = {"user_prompt": revision_input}
-        if _model_override is not None:
-            kwargs["model"] = _model_override
-        result = await agent.run(**kwargs)
-        return name, result.output
+        try:
+            revision_input = _build_specialist_revision_input(
+                ground_truths[name], outputs[name], flags,
+            )
+            agent = specialist_agents[name]
+            kwargs: dict[str, Any] = {"user_prompt": revision_input}
+            if _model_override is not None:
+                kwargs["model"] = _model_override
+            result = await agent.run(**kwargs)
+            return name, result.output
+        except Exception:
+            log.warning("Revision failed for %s specialist, keeping original.", name, exc_info=True)
+            return name, outputs[name]
 
     revision_tasks = [
         _revise_one(name, flags) for name, flags in flagged.items()
