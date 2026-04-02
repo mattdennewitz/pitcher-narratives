@@ -41,7 +41,13 @@ from pydantic_ai.models.google import GoogleModelSettings
 from pydantic_ai.settings import ModelSettings, ThinkingEffort
 
 from pitcher_narratives.context import PitcherContext
-from pitcher_narratives.engine import LeagueBaseline, compute_league_baselines
+from pitcher_narratives.engine import (
+    LeagueBaseline,
+    compute_league_baselines,
+    format_s_variant_comparisons,
+    outlier_tag,
+    render_league_baselines,
+)
 from pitcher_narratives.report import (
     MAX_REVISIONS,
     PROVIDERS,
@@ -418,61 +424,8 @@ class ExecutiveSummary(BaseModel):
     bullets: list[str]
 
 
-# ═══════════════════════════════════════════════════════════════════════
-# LEAGUE BASELINES
-# ═══════════════════════════════════════════════════════════════════════
 
-def _render_league_baselines(pitch_types: list[str]) -> str:
-    """Render league-average baselines with normal ranges and S-variant benchmarks.
-
-    Includes standard deviations so agents can determine whether a pitcher's
-    metrics are outliers or within the normal range for that pitch type.
-    Also includes league-average S-variant predictions so agents have
-    ground truth for what "average" looks like in model output space.
-    """
-    baselines = compute_league_baselines()
-    lookup = {b.pitch_type: b for b in baselines}
-
-    lines = [
-        "## League Baselines (2026, all pitchers)",
-        "Use these baselines to determine whether a metric is an outlier or normal.",
-        "A metric within ±1.5 stddev of the league average is NORMAL for that pitch type.",
-        "",
-    ]
-    for pt in pitch_types:
-        b = lookup.get(pt)
-        if b is None:
-            continue
-        # Physical profile with normal ranges
-        lines.append(
-            f"### {b.pitch_name} ({b.pitch_type})"
-        )
-        lines.append(
-            f"- Velocity: {b.avg_velo:.1f} mph (stddev {b.velo_std:.1f}, "
-            f"normal range {b.avg_velo - 1.5 * b.velo_std:.1f}–{b.avg_velo + 1.5 * b.velo_std:.1f})"
-        )
-        lines.append(
-            f"- Horizontal movement (pfx_x): {b.avg_pfx_x:.1f} in "
-            f"(stddev {b.pfx_x_std:.1f})"
-        )
-        lines.append(
-            f"- Vertical movement (pfx_z): {b.avg_pfx_z:.1f} in "
-            f"(stddev {b.pfx_z_std:.1f})"
-        )
-        lines.append(
-            f"- Zone%: {b.zone_pct:.1f}, Chase%: {b.chase_pct:.1f}"
-        )
-        # S-variant benchmarks
-        if b.avg_s_plus is not None:
-            xswing = f"{b.avg_xswing_s * 100:.1f}%" if b.avg_xswing_s is not None else "--"
-            xwhiff = f"{b.avg_xwhiff_s * 100:.1f}%" if b.avg_xwhiff_s is not None else "--"
-            xrv = f"{b.avg_xrv100_s:.2f}" if b.avg_xrv100_s is not None else "--"
-            lines.append(
-                f"- S-variant league avg: S+ {b.avg_s_plus:.0f}, "
-                f"xSwing_S {xswing}, xWhiff_S {xwhiff}, xRV100_S {xrv}"
-            )
-        lines.append("")
-    return "\n".join(lines)
+# render_league_baselines and outlier_tag are imported from engine.py
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -482,17 +435,6 @@ def _render_league_baselines(pitch_types: list[str]) -> str:
 def _pitch_types(ctx: PitcherContext) -> list[str]:
     """Extract pitch type codes from the arsenal."""
     return [p.pitch_type for p in ctx.arsenal]
-
-
-def _outlier_tag(value: float, avg: float, std: float) -> str:
-    """Return OUTLIER or NORMAL tag based on z-score from league average."""
-    if std == 0:
-        return "NORMAL"
-    z = (value - avg) / std
-    if abs(z) > 1.5:
-        direction = "above" if z > 0 else "below"
-        return f"OUTLIER ({direction} avg, z={z:+.1f})"
-    return f"NORMAL (z={z:+.1f})"
 
 
 def _build_stuff_input(ctx: PitcherContext) -> str:
@@ -506,7 +448,7 @@ def _build_stuff_input(ctx: PitcherContext) -> str:
     baseline_lookup = {b.pitch_type: b for b in baselines}
 
     lines = [f"## {ctx.pitcher_name} ({ctx.throws}HP, {ctx.role})\n"]
-    lines.append(_render_league_baselines(_pitch_types(ctx)))
+    lines.append(render_league_baselines(_pitch_types(ctx)))
     lines.append("")
     lines.append("## Arsenal Physical Profile (with league comparison)")
     lines.append("Each metric shows: value (delta from league avg) [NORMAL/OUTLIER tag]")
@@ -516,11 +458,11 @@ def _build_stuff_input(ctx: PitcherContext) -> str:
         b = baseline_lookup.get(p.pitch_type)
         if b is not None:
             velo_delta = p.window_velo - b.avg_velo
-            velo_tag = _outlier_tag(p.window_velo, b.avg_velo, b.velo_std)
+            velo_tag = outlier_tag(p.window_velo, b.avg_velo, b.velo_std)
             pfx_x_delta = p.window_pfx_x - b.avg_pfx_x
-            pfx_x_tag = _outlier_tag(p.window_pfx_x, b.avg_pfx_x, b.pfx_x_std)
+            pfx_x_tag = outlier_tag(p.window_pfx_x, b.avg_pfx_x, b.pfx_x_std)
             pfx_z_delta = p.window_pfx_z - b.avg_pfx_z
-            pfx_z_tag = _outlier_tag(p.window_pfx_z, b.avg_pfx_z, b.pfx_z_std)
+            pfx_z_tag = outlier_tag(p.window_pfx_z, b.avg_pfx_z, b.pfx_z_std)
             lines.append(
                 f"- {p.pitch_name} ({p.pitch_type}):\n"
                 f"    Velocity: {p.window_velo:.1f} mph ({velo_delta:+.1f} vs league avg) [{velo_tag}]\n"
@@ -540,30 +482,7 @@ def _build_stuff_input(ctx: PitcherContext) -> str:
     lines.append("\n## Stuff-Only Model Predictions (S-variant, with league comparison)")
     for im in ctx.intermediates:
         b = baseline_lookup.get(im.pitch_type)
-        xswing_s = f"{im.xswing_s * 100:.1f}%" if im.xswing_s is not None else "--"
-        xwhiff_s = f"{im.xwhiff_s * 100:.1f}%" if im.xwhiff_s is not None else "--"
-        xrv_s = f"{im.xrv100_s:.2f}" if im.xrv100_s is not None else "--"
-
-        # Add league comparison for S-variant predictions
-        comparisons = []
-        if b is not None and im.xswing_s is not None and b.avg_xswing_s is not None:
-            d = (im.xswing_s - b.avg_xswing_s) * 100
-            comparisons.append(f"xSwing_S {xswing_s} ({d:+.1f}pp vs league)")
-        else:
-            comparisons.append(f"xSwing_S {xswing_s}")
-
-        if b is not None and im.xwhiff_s is not None and b.avg_xwhiff_s is not None:
-            d = (im.xwhiff_s - b.avg_xwhiff_s) * 100
-            comparisons.append(f"xWhiff_S {xwhiff_s} ({d:+.1f}pp vs league)")
-        else:
-            comparisons.append(f"xWhiff_S {xwhiff_s}")
-
-        if b is not None and im.xrv100_s is not None and b.avg_xrv100_s is not None:
-            d = im.xrv100_s - b.avg_xrv100_s
-            comparisons.append(f"xRV100_S {xrv_s} ({d:+.2f} vs league)")
-        else:
-            comparisons.append(f"xRV100_S {xrv_s}")
-
+        comparisons = format_s_variant_comparisons(b, im.xswing_s, im.xwhiff_s, im.xrv100_s)
         lines.append(f"- {im.pitch_name} ({im.pitch_type}): {', '.join(comparisons)}")
 
     return "\n".join(lines)
@@ -572,7 +491,7 @@ def _build_stuff_input(ctx: PitcherContext) -> str:
 def _build_location_input(ctx: PitcherContext) -> str:
     """Build input for the location specialist from intermediates + execution."""
     lines = [f"## {ctx.pitcher_name} ({ctx.throws}HP, {ctx.role})\n"]
-    lines.append(_render_league_baselines(_pitch_types(ctx)))
+    lines.append(render_league_baselines(_pitch_types(ctx)))
     lines.append("")
     lines.append("## P vs S Location Impact")
     for im in ctx.intermediates:
@@ -609,7 +528,7 @@ def _build_location_input(ctx: PitcherContext) -> str:
 def _build_runvalue_input(ctx: PitcherContext) -> str:
     """Build input for the run value specialist from attributions."""
     lines = [f"## {ctx.pitcher_name} ({ctx.throws}HP, {ctx.role})\n"]
-    lines.append(_render_league_baselines(_pitch_types(ctx)))
+    lines.append(render_league_baselines(_pitch_types(ctx)))
     lines.append("")
     lines.append("## Component Attribution (xRV100 Decomposition)")
     for attr in ctx.attributions:
@@ -626,7 +545,7 @@ def _build_runvalue_input(ctx: PitcherContext) -> str:
 
 def _build_trend_input(ctx: PitcherContext) -> str:
     """Build input for the trend specialist — arsenal deltas, release point, hard-hit."""
-    baselines = _render_league_baselines(_pitch_types(ctx))
+    baselines = render_league_baselines(_pitch_types(ctx))
     sections = [
         f"## {ctx.pitcher_name} ({ctx.throws}HP, {ctx.role})\n",
         baselines,
@@ -641,7 +560,7 @@ def _build_trend_input(ctx: PitcherContext) -> str:
 
 def _build_game_shape_input(ctx: PitcherContext) -> str:
     """Build input for the game shape specialist — TTO, velocity arc, workload."""
-    baselines = _render_league_baselines(_pitch_types(ctx))
+    baselines = render_league_baselines(_pitch_types(ctx))
     sections = [
         f"## {ctx.pitcher_name} ({ctx.throws}HP, {ctx.role})\n",
         baselines,
@@ -704,16 +623,6 @@ def _build_specialist_revision_input(
         "Keep all unflagged material unchanged. Preserve the same "
         "format and length."
     )
-
-
-# Mapping from specialist name to data builder + specialist prompt
-_SPECIALIST_REGISTRY: list[tuple[str, str]] = [
-    ("stuff", "stuff"),
-    ("location", "location"),
-    ("runvalue", "runvalue"),
-    ("trends", "trends"),
-    ("game_shape", "game_shape"),
-]
 
 
 def _get_specialist_input(name: str, ctx: PitcherContext) -> str:

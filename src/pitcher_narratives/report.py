@@ -31,7 +31,12 @@ from pydantic_ai.models.google import GoogleModelSettings
 from pydantic_ai.settings import ModelSettings, ThinkingEffort
 
 from pitcher_narratives.context import PitcherContext
-from pitcher_narratives.engine import compute_league_baselines
+from pitcher_narratives.engine import (
+    compute_league_baselines,
+    format_s_variant_comparisons,
+    outlier_tag,
+    render_league_baselines,
+)
 
 __all__ = [
     "MAX_REVISIONS",
@@ -564,45 +569,6 @@ _UserPrompt = list[str | CachePoint]
 """Type alias for user prompts with cache breakpoints."""
 
 
-def _render_report_baselines(pitch_types: list[str]) -> str:
-    """Render league baselines with normal ranges for the narrative engine.
-
-    Same enriched format as the pipeline engine — stddev ranges and
-    S-variant benchmarks so agents can ground claims in data.
-    """
-    baselines = compute_league_baselines()
-    lookup = {b.pitch_type: b for b in baselines}
-
-    lines = [
-        "## League Baselines (2026, all pitchers)",
-        "Use these to determine whether a metric is an outlier or normal.",
-        "A metric within ±1.5 stddev of the league average is NORMAL for that pitch type.",
-        "",
-    ]
-    for pt in pitch_types:
-        b = lookup.get(pt)
-        if b is None:
-            continue
-        lines.append(f"### {b.pitch_name} ({b.pitch_type})")
-        lines.append(
-            f"- Velocity: {b.avg_velo:.1f} mph (stddev {b.velo_std:.1f}, "
-            f"normal range {b.avg_velo - 1.5 * b.velo_std:.1f}–{b.avg_velo + 1.5 * b.velo_std:.1f})"
-        )
-        lines.append(f"- Horizontal movement (pfx_x): {b.avg_pfx_x:.1f} in (stddev {b.pfx_x_std:.1f})")
-        lines.append(f"- Vertical movement (pfx_z): {b.avg_pfx_z:.1f} in (stddev {b.pfx_z_std:.1f})")
-        lines.append(f"- Zone%: {b.zone_pct:.1f}, Chase%: {b.chase_pct:.1f}")
-        if b.avg_s_plus is not None:
-            xswing = f"{b.avg_xswing_s * 100:.1f}%" if b.avg_xswing_s is not None else "--"
-            xwhiff = f"{b.avg_xwhiff_s * 100:.1f}%" if b.avg_xwhiff_s is not None else "--"
-            xrv = f"{b.avg_xrv100_s:.2f}" if b.avg_xrv100_s is not None else "--"
-            lines.append(
-                f"- S-variant league avg: S+ {b.avg_s_plus:.0f}, "
-                f"xSwing_S {xswing}, xWhiff_S {xwhiff}, xRV100_S {xrv}"
-            )
-        lines.append("")
-    return "\n".join(lines)
-
-
 def _build_synthesizer_message(ctx: PitcherContext) -> _UserPrompt:
     """Build the Phase 1 user message with league baselines and role guidance.
 
@@ -611,7 +577,7 @@ def _build_synthesizer_message(ctx: PitcherContext) -> _UserPrompt:
     """
     guidance = _SP_SYNTH_GUIDANCE if ctx.role == "SP" else _RP_SYNTH_GUIDANCE
     pitch_types = [p.pitch_type for p in ctx.arsenal]
-    baselines = _render_report_baselines(pitch_types)
+    baselines = render_league_baselines(pitch_types)
     return [
         f"## Role-Specific Focus\n{guidance}",
         CachePoint(),
@@ -671,21 +637,10 @@ def _build_revision_message(
     ]
 
 
-def _outlier_tag(value: float, avg: float, std: float) -> str:
-    """Return OUTLIER or NORMAL tag based on z-score from league average."""
-    if std == 0:
-        return "NORMAL"
-    z = (value - avg) / std
-    if abs(z) > 1.5:
-        direction = "above" if z > 0 else "below"
-        return f"OUTLIER ({direction} avg, z={z:+.1f})"
-    return f"NORMAL (z={z:+.1f})"
-
-
 def _build_stuff_message(ctx: PitcherContext, capsule: str) -> _UserPrompt:
     """Build the Phase 3 user message with pre-computed outlier annotations."""
     pitch_types = [p.pitch_type for p in ctx.arsenal]
-    rendered_baselines = _render_report_baselines(pitch_types)
+    rendered_baselines = render_league_baselines(pitch_types)
     league_baselines = compute_league_baselines()
     baseline_lookup = {b.pitch_type: b for b in league_baselines}
 
@@ -695,11 +650,11 @@ def _build_stuff_message(ctx: PitcherContext, capsule: str) -> _UserPrompt:
         b = baseline_lookup.get(p.pitch_type)
         if b is not None:
             velo_d = p.window_velo - b.avg_velo
-            velo_t = _outlier_tag(p.window_velo, b.avg_velo, b.velo_std)
+            velo_t = outlier_tag(p.window_velo, b.avg_velo, b.velo_std)
             pfx_x_d = p.window_pfx_x - b.avg_pfx_x
-            pfx_x_t = _outlier_tag(p.window_pfx_x, b.avg_pfx_x, b.pfx_x_std)
+            pfx_x_t = outlier_tag(p.window_pfx_x, b.avg_pfx_x, b.pfx_x_std)
             pfx_z_d = p.window_pfx_z - b.avg_pfx_z
-            pfx_z_t = _outlier_tag(p.window_pfx_z, b.avg_pfx_z, b.pfx_z_std)
+            pfx_z_t = outlier_tag(p.window_pfx_z, b.avg_pfx_z, b.pfx_z_std)
             arsenal_lines.append(
                 f"- {p.pitch_name} ({p.pitch_type}):\n"
                 f"    Velocity: {p.window_velo:.1f} mph ({velo_d:+.1f} vs avg) [{velo_t}]\n"
@@ -717,27 +672,7 @@ def _build_stuff_message(ctx: PitcherContext, capsule: str) -> _UserPrompt:
     intermediates_lines: list[str] = []
     for im in ctx.intermediates:
         b = baseline_lookup.get(im.pitch_type)
-        xswing_s = f"{im.xswing_s * 100:.1f}%" if im.xswing_s is not None else "--"
-        xwhiff_s = f"{im.xwhiff_s * 100:.1f}%" if im.xwhiff_s is not None else "--"
-        xrv_s = f"{im.xrv100_s:.2f}" if im.xrv100_s is not None else "--"
-
-        parts = []
-        if b and im.xswing_s is not None and b.avg_xswing_s is not None:
-            d = (im.xswing_s - b.avg_xswing_s) * 100
-            parts.append(f"xSwing_S {xswing_s} ({d:+.1f}pp vs league)")
-        else:
-            parts.append(f"xSwing_S {xswing_s}")
-        if b and im.xwhiff_s is not None and b.avg_xwhiff_s is not None:
-            d = (im.xwhiff_s - b.avg_xwhiff_s) * 100
-            parts.append(f"xWhiff_S {xwhiff_s} ({d:+.1f}pp vs league)")
-        else:
-            parts.append(f"xWhiff_S {xwhiff_s}")
-        if b and im.xrv100_s is not None and b.avg_xrv100_s is not None:
-            d = im.xrv100_s - b.avg_xrv100_s
-            parts.append(f"xRV100_S {xrv_s} ({d:+.2f} vs league)")
-        else:
-            parts.append(f"xRV100_S {xrv_s}")
-
+        parts = format_s_variant_comparisons(b, im.xswing_s, im.xwhiff_s, im.xrv100_s)
         intermediates_lines.append(f"- {im.pitch_name} ({im.pitch_type}): {', '.join(parts)}")
 
     return [

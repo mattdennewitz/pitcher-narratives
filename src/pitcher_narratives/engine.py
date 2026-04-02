@@ -56,6 +56,9 @@ __all__ = [
     "compute_workload_context",
     "LeagueBaseline",
     "compute_league_baselines",
+    "format_s_variant_comparisons",
+    "outlier_tag",
+    "render_league_baselines",
 ]
 
 # ── Constants ─────────────────────────────────────────────────────────
@@ -278,6 +281,94 @@ def compute_league_baselines() -> list[LeagueBaseline]:
 
     _league_baselines_cache = results
     return results
+
+
+def outlier_tag(value: float, avg: float, std: float) -> str:
+    """Return OUTLIER or NORMAL tag based on z-score from league average."""
+    if std == 0:
+        return "NORMAL"
+    z = (value - avg) / std
+    if abs(z) > 1.5:
+        direction = "above" if z > 0 else "below"
+        return f"OUTLIER ({direction} avg, z={z:+.1f})"
+    return f"NORMAL (z={z:+.1f})"
+
+
+def render_league_baselines(pitch_types: list[str]) -> str:
+    """Render league-average baselines with normal ranges and S-variant benchmarks.
+
+    Includes standard deviations so agents can determine whether a pitcher's
+    metrics are outliers or within the normal range for that pitch type.
+    """
+    baselines = compute_league_baselines()
+    lookup = {b.pitch_type: b for b in baselines}
+
+    lines = [
+        "## League Baselines (2026, all pitchers)",
+        "Use these baselines to determine whether a metric is an outlier or normal.",
+        "A metric within ±1.5 stddev of the league average is NORMAL for that pitch type.",
+        "",
+    ]
+    for pt in pitch_types:
+        b = lookup.get(pt)
+        if b is None:
+            continue
+        lines.append(f"### {b.pitch_name} ({b.pitch_type})")
+        lines.append(
+            f"- Velocity: {b.avg_velo:.1f} mph (stddev {b.velo_std:.1f}, "
+            f"normal range {b.avg_velo - 1.5 * b.velo_std:.1f}–{b.avg_velo + 1.5 * b.velo_std:.1f})"
+        )
+        lines.append(f"- Horizontal movement (pfx_x): {b.avg_pfx_x:.1f} in (stddev {b.pfx_x_std:.1f})")
+        lines.append(f"- Vertical movement (pfx_z): {b.avg_pfx_z:.1f} in (stddev {b.pfx_z_std:.1f})")
+        lines.append(f"- Zone%: {b.zone_pct:.1f}, Chase%: {b.chase_pct:.1f}")
+        if b.avg_s_plus is not None:
+            xswing = f"{b.avg_xswing_s * 100:.1f}%" if b.avg_xswing_s is not None else "--"
+            xwhiff = f"{b.avg_xwhiff_s * 100:.1f}%" if b.avg_xwhiff_s is not None else "--"
+            xrv = f"{b.avg_xrv100_s:.2f}" if b.avg_xrv100_s is not None else "--"
+            lines.append(
+                f"- S-variant league avg: S+ {b.avg_s_plus:.0f}, "
+                f"xSwing_S {xswing}, xWhiff_S {xwhiff}, xRV100_S {xrv}"
+            )
+        lines.append("")
+    return "\n".join(lines)
+
+
+def format_s_variant_comparisons(
+    baseline: LeagueBaseline | None,
+    xswing_s: float | None,
+    xwhiff_s: float | None,
+    xrv100_s: float | None,
+) -> list[str]:
+    """Format S-variant predictions with league comparison deltas.
+
+    Returns a list of formatted strings like:
+        ["xSwing_S 37.0% (-7.5pp vs league)", "xWhiff_S 31.2% (-7.6pp vs league)", ...]
+    """
+    parts: list[str] = []
+    b = baseline
+
+    xswing_str = f"{xswing_s * 100:.1f}%" if xswing_s is not None else "--"
+    if b and xswing_s is not None and b.avg_xswing_s is not None:
+        d = (xswing_s - b.avg_xswing_s) * 100
+        parts.append(f"xSwing_S {xswing_str} ({d:+.1f}pp vs league)")
+    else:
+        parts.append(f"xSwing_S {xswing_str}")
+
+    xwhiff_str = f"{xwhiff_s * 100:.1f}%" if xwhiff_s is not None else "--"
+    if b and xwhiff_s is not None and b.avg_xwhiff_s is not None:
+        d = (xwhiff_s - b.avg_xwhiff_s) * 100
+        parts.append(f"xWhiff_S {xwhiff_str} ({d:+.1f}pp vs league)")
+    else:
+        parts.append(f"xWhiff_S {xwhiff_str}")
+
+    xrv_str = f"{xrv100_s:.2f}" if xrv100_s is not None else "--"
+    if b and xrv100_s is not None and b.avg_xrv100_s is not None:
+        d = xrv100_s - b.avg_xrv100_s
+        parts.append(f"xRV100_S {xrv_str} ({d:+.2f} vs league)")
+    else:
+        parts.append(f"xRV100_S {xrv_str}")
+
+    return parts
 
 
 # ── Delta string helpers (private) ────────────────────────────────────
