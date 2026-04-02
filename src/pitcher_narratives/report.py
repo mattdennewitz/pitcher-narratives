@@ -1,4 +1,4 @@
-"""Five-phase report generation pipeline.
+"""Four-phase report generation pipeline.
 
 Phase 1 (Synthesizer): Extracts signal from noise — structured bullet
 points of key findings, deltas, and trends. No narrative.
@@ -11,11 +11,11 @@ to the synthesis. If warnings are found, the editor revises silently and the
 anchor re-checks -- up to MAX_REVISIONS passes. Only the final capsule
 proceeds to downstream phases.
 
-Phase 3 (Hook Writer): Distills the editor's capsule into a 1-2
-sentence social media hook for front-office audiences.
+Phase 3 (Stuff Explainer): Traces each pitch's S+ grade to its physical
+profile via stuff-only model predictions.
 
-Phase 4 (Fantasy Analyst): Produces 3 fantasy baseball insights
-from the capsule with specific metric citations.
+Phase 3+ (Executive Summary): 3 metrics-focused bullet points from the
+synthesis.
 """
 
 from __future__ import annotations
@@ -229,7 +229,7 @@ Additional focus for this reliever:
 
 _EDITOR_PROMPT = """\
 You are an elite, sabermetrically inclined baseball writer. You write \
-for front offices, advanced fantasy players, and data-driven fans. Your \
+for front offices and data-driven fans. Your \
 tone is pragmatic, cautious, and highly analytical. You do not use clichés.
 
 INPUT: A structured briefing document from your data analyst containing \
@@ -388,34 +388,6 @@ Rules:
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# PHASE 4: THE FANTASY ANALYST
-# ═══════════════════════════════════════════════════════════════════════
-
-_FANTASY_PROMPT = """\
-You are a fantasy baseball analyst who writes like a news wire. Your \
-audience is competitive league managers scanning for actionable intel. \
-Given key findings from a pitcher's latest appearance, write exactly 3 \
-bullet points — Axios-style: short, declarative, news-first.
-
-Voice and perspective:
-- Write as an analyst reporting news, not as a manager issuing roster moves.
-- Lead with the fact or trend, then explain why it matters for fantasy.
-- Frame implications as things to monitor ("keep an eye on," "worth watching") \
-rather than directives ("pick him up," "move him to the bench").
-- Cite one specific metric per bullet (P+, velocity delta, usage shift, \
-platoon split, workload flag).
-- No run-on sentences. No semicolons joining two thoughts. One idea per \
-bullet.
-
-What matters for fantasy: ownership changes, streaming value, matchup \
-dependency, injury/workload red flags, category impact (Ks, ERA, WHIP).
-
-Format: exactly 3 lines, each starting with "- ". Plain text — no bold, \
-no labels, no prefixes. Just the insight. Nothing else — no intro, no \
-summary, no headers."""
-
-
-# ═══════════════════════════════════════════════════════════════════════
 # EXECUTIVE SUMMARY
 # ═══════════════════════════════════════════════════════════════════════
 
@@ -499,7 +471,6 @@ class ReportResult(BaseModel):
     narrative: str
     executive_summary: list[str] = []
     stuff_summary: str
-    fantasy_insights: str
     anchor_warnings: list[AnchorWarning]
     revision_count: int = 0
     """Number of revision passes (0 = passed first try)."""
@@ -509,7 +480,7 @@ class ReportResult(BaseModel):
 # AGENT FACTORY
 # ═══════════════════════════════════════════════════════════════════════
 
-_StrAgents = tuple[Agent[None, str], Agent[None, str], Agent[None, str], Agent[None, str], Agent[None, str]]
+_StrAgents = tuple[Agent[None, str], Agent[None, str], Agent[None, str], Agent[None, str]]
 _AgentSet = tuple[_StrAgents, Agent[None, AnchorResult]]
 _agent_cache: dict[tuple[str, ThinkingEffort], _AgentSet] = {}
 
@@ -520,8 +491,8 @@ def _make_agents(
 ) -> _AgentSet:
     """Create (or return cached) pipeline agents with role-specific temperatures.
 
-    Temperature split: synthesizer/stuff=0.3 (data precision),
-    editor/fantasy=0.7 (prose quality), anchor=0.1 (fact-checking).
+    Temperature split: synthesizer/stuff/summary=0.3 (data precision),
+    editor=0.7 (prose quality), anchor=0.1 (fact-checking).
     """
     key = (provider, thinking)
     if key in _agent_cache:
@@ -544,15 +515,14 @@ def _make_agents(
         else:
             return ModelSettings(thinking=thinking, temperature=temperature)
 
-    analyst_settings = _settings(0.3)   # synthesizer + stuff explainer
-    writer_settings = _settings(0.7)    # editor + fantasy
+    analyst_settings = _settings(0.3)   # synthesizer + stuff explainer + summary
+    writer_settings = _settings(0.7)    # editor
     checker_settings = _settings(0.1)   # anchor
 
     str_prompts_and_settings = [
         (_SYNTHESIZER_PROMPT, analyst_settings),
         (_EDITOR_PROMPT, writer_settings),
         (_STUFF_EXPLAINER_PROMPT, analyst_settings),
-        (_FANTASY_PROMPT, writer_settings),
         (_EXECUTIVE_SUMMARY_PROMPT, analyst_settings),
     ]
     str_agents: _StrAgents = tuple(  # type: ignore[assignment]
@@ -701,24 +671,13 @@ def _build_stuff_message(ctx: PitcherContext, capsule: str) -> _UserPrompt:
     ]
 
 
-def _build_fantasy_message(ctx: PitcherContext, capsule: str) -> _UserPrompt:
-    """Build the Phase 4 user message from the editor's capsule."""
-    return [
-        f"## Pitcher\n{ctx.pitcher_name} ({ctx.throws}HP, {ctx.role})\n\n"
-        f"## Scouting Capsule\n{capsule}",
-        CachePoint(),
-        "Write exactly 3 bullet points of fantasy baseball insights. "
-        "Each bullet should flag what to watch and cite a specific metric or trend.",
-    ]
-
-
 def _render_user_prompt(parts: _UserPrompt) -> str:
     """Render a user prompt (with CachePoints) as readable text."""
     return "\n".join("  ── [cache breakpoint] ──" if isinstance(p, CachePoint) else p for p in parts)
 
 
 def _build_all_phases(ctx: PitcherContext) -> list[tuple[str, str, _UserPrompt]]:
-    """Build (label, system_prompt, user_prompt) for all 5 phases."""
+    """Build (label, system_prompt, user_prompt) for all phases."""
     synth_placeholder = "<synthesis output would go here>"
     capsule_placeholder = "<editor capsule would go here>"
     return [
@@ -729,7 +688,6 @@ def _build_all_phases(ctx: PitcherContext) -> list[tuple[str, str, _UserPrompt]]
             _build_anchor_message(synth_placeholder, capsule_placeholder),
         ),
         ("PHASE 3: STUFF EXPLAINER", _STUFF_EXPLAINER_PROMPT, _build_stuff_message(ctx, capsule_placeholder)),
-        ("PHASE 4: FANTASY ANALYST", _FANTASY_PROMPT, _build_fantasy_message(ctx, capsule_placeholder)),
     ]
 
 
@@ -776,10 +734,11 @@ def generate_report_streaming(
         anchor re-checks -- up to MAX_REVISIONS passes. Exits immediately when
         the anchor returns clean.
     Phase 3 (Stuff Explainer): Traces each pitch's S+ grade to its physical profile.
-    Phase 4 (Fantasy Analyst): Produces 3 fantasy baseball bullets from the capsule.
+    Phase 3+ (Executive Summary): 3 metrics-focused bullet points.
 
-    Phases 3 and 4 receive the final capsule (post-revision if any), so they
-    inherit the editor's plausibility filters and any anchor-driven corrections.
+    Phase 3 and summary receive the final capsule (post-revision if any), so
+    they inherit the editor's plausibility filters and any anchor-driven
+    corrections.
 
     Only Phase 2 first draft is streamed to stdout. Revision passes run silently.
 
@@ -790,9 +749,9 @@ def generate_report_streaming(
         _model_override: Optional model override for testing (e.g., TestModel).
 
     Returns:
-        ReportResult with narrative, stuff_summary, fantasy_insights, and anchor_warnings.
+        ReportResult with narrative, stuff_summary, and anchor_warnings.
     """
-    (synthesizer, editor, stuff_explainer, fantasy_analyst, summary_agent), anchor_checker = _make_agents(provider, thinking)
+    (synthesizer, editor, stuff_explainer, summary_agent), anchor_checker = _make_agents(provider, thinking)
 
     # Phase 1: Silent synthesis
     synth_result = synthesizer.run_sync(**_agent_kwargs(_build_synthesizer_message(ctx), _model_override))
@@ -832,9 +791,8 @@ def generate_report_streaming(
         )
         anchor_check = anchor_result.output
 
-    # Phase 3 + 4 + Summary: Run concurrently (all depend on capsule, not each other)
+    # Phase 3 + Summary: Run after capsule is finalized
     stuff_result = stuff_explainer.run_sync(**_agent_kwargs(_build_stuff_message(ctx, capsule), _model_override))
-    fantasy_result = fantasy_analyst.run_sync(**_agent_kwargs(_build_fantasy_message(ctx, capsule), _model_override))
     summary_result = summary_agent.run_sync(**_agent_kwargs(f"## Synthesis\n{synthesis}", _model_override))
 
     # Parse bullet lines from raw summary output
@@ -848,7 +806,6 @@ def generate_report_streaming(
         narrative=capsule,
         executive_summary=summary_bullets,
         stuff_summary=stuff_result.output,
-        fantasy_insights=fantasy_result.output,
         anchor_warnings=anchor_check.warnings,
         revision_count=revision_count,
     )

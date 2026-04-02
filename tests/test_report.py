@@ -13,7 +13,6 @@ from pitcher_narratives.data import load_pitcher_data
 from pitcher_narratives.report import (
     MAX_REVISIONS,
     _EDITOR_PROMPT,
-    _FANTASY_PROMPT,
     _RP_SYNTH_GUIDANCE,
     _SP_SYNTH_GUIDANCE,
     _SYNTHESIZER_PROMPT,
@@ -23,7 +22,6 @@ from pitcher_narratives.report import (
     ReportResult,
     WarningCategory,
     _build_editor_message,
-    _build_fantasy_message,
     _build_stuff_message,
     _build_revision_message,
     _build_synthesizer_message,
@@ -53,15 +51,15 @@ def ctx():
 
 def test_synthesizer_model_matches_provider():
     """Synthesizer agent uses the correct model for each provider."""
-    (synth, _, _, _, _), _ = _make_agents(provider="claude")
+    (synth, _, _, _), _ = _make_agents(provider="claude")
     assert "claude-sonnet-4-6" in str(synth.model)
-    (synth_oai, _, _, _, _), _ = _make_agents(provider="openai")
+    (synth_oai, _, _, _), _ = _make_agents(provider="openai")
     assert "gpt-5.4-mini" in str(synth_oai.model)
 
 
 def test_synthesizer_output_type_is_str():
     """Synthesizer output_type is str."""
-    (synth, _, _, _, _), _ = _make_agents()
+    (synth, _, _, _), _ = _make_agents()
     assert synth.output_type is str
 
 
@@ -98,7 +96,7 @@ def test_synthesizer_prompt_balanced_gains_and_drops():
 
 def test_editor_model_matches_provider():
     """Editor agent uses the correct model for the provider."""
-    (_, ed, _, _, _), _ = _make_agents(provider="claude")
+    (_, ed, _, _), _ = _make_agents(provider="claude")
     assert "claude-sonnet-4-6" in str(ed.model)
 
 
@@ -428,13 +426,13 @@ def test_hallucination_guard_hardhit_pct_still_known():
 
 def test_hook_writer_model_matches_provider():
     """Hook writer agent uses the correct model for the provider."""
-    (_, _, hook, _, _), _ = _make_agents(provider="claude")
+    (_, _, hook, _), _ = _make_agents(provider="claude")
     assert "claude-sonnet-4-6" in str(hook.model)
 
 
 def test_hook_writer_output_type_is_str():
     """Hook writer output_type is str."""
-    (_, _, hook, _, _), _ = _make_agents()
+    (_, _, hook, _), _ = _make_agents()
     assert hook.output_type is str
 
 
@@ -468,56 +466,11 @@ def test_report_result_narrative_matches_editor_output(ctx):
 # -- Phase 4: Fantasy analyst agent tests ----------------------------------------
 
 
-def test_fantasy_analyst_model_matches_provider():
-    """Fantasy analyst agent uses the correct model for the provider."""
-    (_, _, _, fantasy, _), _ = _make_agents(provider="claude")
-    assert "claude-sonnet-4-6" in str(fantasy.model)
-
-
-def test_fantasy_analyst_output_type_is_str():
-    """Fantasy analyst output_type is str."""
-    (_, _, _, fantasy, _), _ = _make_agents()
-    assert fantasy.output_type is str
-
-
-def test_fantasy_prompt_requires_three_bullets():
-    """Fantasy prompt requires exactly 3 bullet points."""
-    prompt_lower = _FANTASY_PROMPT.lower()
-    assert "3" in _FANTASY_PROMPT or "three" in prompt_lower
-    assert "bullet" in prompt_lower
-
-
-def test_fantasy_prompt_news_first_style():
-    """Fantasy prompt uses news-wire voice, not command-style verdicts."""
-    assert "axios" in _FANTASY_PROMPT.lower()
-    assert "news" in _FANTASY_PROMPT.lower()
-
-
-def test_fantasy_message_includes_pitcher_name(ctx):
-    """Fantasy message includes pitcher name."""
-    msg = _prompt_text(_build_fantasy_message(ctx, "test synthesis"))
-    assert ctx.pitcher_name in msg
-
-
-def test_fantasy_message_includes_synthesis(ctx):
-    """Fantasy message includes synthesis text."""
-    msg = _prompt_text(_build_fantasy_message(ctx, "Fastball velo down 1.5"))
-    assert "Fastball velo down 1.5" in msg
-
-
-def test_report_result_has_fantasy_insights(ctx):
-    """ReportResult has non-empty fantasy_insights field."""
-    result = generate_report_streaming(ctx, _model_override=TestModel())
-    assert isinstance(result, ReportResult)
-    assert result.fantasy_insights
-
-
 def test_report_result_all_fields_populated(ctx):
-    """ReportResult has all three fields populated."""
+    """ReportResult has narrative and stuff_summary populated."""
     result = generate_report_streaming(ctx, _model_override=TestModel())
     assert result.narrative
     assert result.stuff_summary
-    assert result.fantasy_insights
 
 
 # -- Anchor check model tests ---------------------------------------------------
@@ -567,20 +520,20 @@ def test_anchor_result_multiple_warnings():
 
 def test_report_result_revision_count_default():
     """ReportResult revision_count defaults to 0."""
-    r = ReportResult(narrative="n", stuff_summary="s", fantasy_insights="f", anchor_warnings=[])
+    r = ReportResult(narrative="n", stuff_summary="s", anchor_warnings=[])
     assert r.revision_count == 0
 
 
 def test_report_result_revision_count_explicit():
     """ReportResult revision_count can be set explicitly."""
-    r = ReportResult(narrative="n", stuff_summary="s", fantasy_insights="f", anchor_warnings=[], revision_count=2)
+    r = ReportResult(narrative="n", stuff_summary="s", anchor_warnings=[], revision_count=2)
     assert r.revision_count == 2
 
 
 def test_report_result_anchor_warnings_typed():
     """ReportResult anchor_warnings accepts AnchorWarning objects."""
     w = AnchorWarning(category="OVERSTATED", description="small sample")
-    r = ReportResult(narrative="n", stuff_summary="s", fantasy_insights="f", anchor_warnings=[w])
+    r = ReportResult(narrative="n", stuff_summary="s", anchor_warnings=[w])
     assert isinstance(r.anchor_warnings[0], AnchorWarning)
     assert r.anchor_warnings[0].category == "OVERSTATED"
 

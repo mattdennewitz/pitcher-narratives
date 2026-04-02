@@ -42,8 +42,8 @@ IMPORTANT:
 Only select the outliers.
 - Be pragmatic and cautious, not breathless. Scale your conviction to \
 the sample.
-- Write for fans and fantasy managers who want to know what to watch, \
-not what to do.
+- Write for front offices and data-driven fans who want to know what \
+to watch, not what to do.
 - Use conversational scouting language. No clinical jargon.
 
 For each selection, use this exact format:
@@ -51,7 +51,7 @@ For each selection, use this exact format:
 **[Pitcher Name]**: [One sentence: the core "why"]
 
 - Signal: [The specific S+, L+, velo, or usage numbers that matter]
-- Narrative: [2 sentences — why should a fan or fantasy manager care \
+- Narrative: [2 sentences — why should a front-office reader care \
 about this specific outing? Frame as observation, not advice.]
 - Conviction: [Low / Medium / High] — [One sentence: is this a \
 sustainable physical change or a one-day outlier?]

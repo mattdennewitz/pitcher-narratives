@@ -195,9 +195,6 @@ def main() -> None:
         # Stuff analysis
         print(f"\n\n# Stuff Analysis\n\n{result.stuff_summary}")
 
-        # Fantasy insights
-        print(f"\n\n# Fantasy Insights\n\n{result.fantasy_insights}")
-
         # Anchor check
         print("\n\n# Anchor Check\n")
         if result.revision_count == 0 and not result.anchor_warnings:
