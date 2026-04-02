@@ -186,6 +186,13 @@ def main() -> None:
     ctx = assemble_pitcher_context(pitcher_data)
 
     if args.pipeline:
+        from pitcher_narratives.pipeline import write_pipeline_data_file
+
+        data_file = write_pipeline_data_file(
+            ctx, pitcher_id, args.provider, question=args.question,
+        )
+        print(f"Wrote prompt data to {data_file}", file=sys.stderr)
+
         from pitcher_narratives.analyst import ask_question_pipeline
 
         result = ask_question_pipeline(
@@ -207,7 +214,20 @@ def main() -> None:
 
         print(f"\n---\n{result.stuff_summary}")
     else:
-        from pitcher_narratives.analyst import ask_question_streaming
+        from pitcher_narratives.analyst import _ANALYST_INSTRUCTIONS, ask_question_streaming
+        from pathlib import Path
+
+        # Write prompt data for single-agent path
+        data_sections = [
+            f"{'═' * 72}\nANALYST AGENT\n{'═' * 72}\n",
+            f"## System Prompt\n\n{_ANALYST_INSTRUCTIONS}\n",
+            f"## User Question\n\n{args.question}\n",
+            f"## Tool: get_pitcher_summary\n\n[Returns full pitcher context with league baselines]\n",
+            f"## Tool: get_pitch_detail\n\n[Returns per-pitch detail on demand]\n",
+        ]
+        data_file = f"data-{pitcher_id}-{args.provider}-ask-single.md"
+        Path(data_file).write_text("\n".join(data_sections))
+        print(f"Wrote prompt data to {data_file}", file=sys.stderr)
 
         ask_question_streaming(
             args.question,

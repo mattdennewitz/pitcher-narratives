@@ -152,7 +152,10 @@ def main() -> None:
         sys.exit(1)
 
     if args.pipeline:
-        from pitcher_narratives.pipeline import generate_pipeline_streaming
+        from pitcher_narratives.pipeline import generate_pipeline_streaming, write_pipeline_data_file
+
+        data_file = write_pipeline_data_file(ctx, args.pitcher, args.provider)
+        print(f"Wrote prompt data to {data_file}", file=sys.stderr)
 
         pipe_result = generate_pipeline_streaming(
             ctx,

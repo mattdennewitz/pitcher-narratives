@@ -52,7 +52,10 @@ from pitcher_narratives.report import (
     _build_revision_message,
 )
 
-__all__ = ["AuditFlag", "AuditResult", "ExecutiveSummary", "PipelineResult", "generate_pipeline_streaming"]
+__all__ = [
+    "AuditFlag", "AuditResult", "ExecutiveSummary", "PipelineResult",
+    "generate_pipeline_streaming", "write_pipeline_data_file",
+]
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -704,6 +707,101 @@ def _build_audit_input(
         f"### Trend Specialist\n{specialists.trends}\n\n"
         f"### Game Shape Specialist\n{specialists.game_shape}"
     )
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# PROMPT DATA FILE (for traceability)
+# ═══════════════════════════════════════════════════════════════════════
+
+def write_pipeline_data_file(
+    ctx: PitcherContext,
+    pitcher_id: int,
+    provider: str,
+    *,
+    question: str | None = None,
+) -> str:
+    """Write all pipeline prompts to a data file for end-to-end tracing.
+
+    Dumps every system prompt and user message that would be sent to the
+    LLM at each phase of the pipeline. For the ask pipeline, also includes
+    the user's question and the answerer prompt.
+
+    Args:
+        ctx: Assembled pitcher context.
+        pitcher_id: MLB pitcher ID for the filename.
+        provider: LLM provider key for the filename.
+        question: If provided, includes the ask-pipeline answerer phase.
+
+    Returns:
+        Path to the written file.
+    """
+    from pathlib import Path
+
+    sep = "═" * 72
+    sections: list[str] = []
+
+    # Phase 1: Specialist prompts + inputs
+    specialist_phases = [
+        ("SPECIALIST 1: STUFF", _STUFF_SPECIALIST_PROMPT, _build_stuff_input(ctx)),
+        ("SPECIALIST 2: LOCATION", _LOCATION_SPECIALIST_PROMPT, _build_location_input(ctx)),
+        ("SPECIALIST 3: RUN VALUE", _RUNVALUE_SPECIALIST_PROMPT, _build_runvalue_input(ctx)),
+        ("SPECIALIST 4: TRENDS", _TREND_SPECIALIST_PROMPT, _build_trend_input(ctx)),
+        ("SPECIALIST 5: GAME SHAPE", _GAME_SHAPE_SPECIALIST_PROMPT, _build_game_shape_input(ctx)),
+    ]
+    for label, system, user in specialist_phases:
+        sections.append(f"\n{sep}\n{label}\n{sep}\n")
+        sections.append(f"## System Prompt\n\n{system}\n")
+        sections.append(f"## User Message\n\n{user}\n")
+
+    # Phase 1.5: Data auditor (user message uses placeholder since specialist output isn't known yet)
+    sections.append(f"\n{sep}\nDATA AUDITOR\n{sep}\n")
+    sections.append(f"## System Prompt\n\n{_DATA_AUDITOR_PROMPT}\n")
+    sections.append(
+        "## User Message\n\n"
+        "[Receives: ground truth data (same as stuff specialist input) + "
+        "all 5 specialist outputs for validation]\n"
+    )
+
+    if question is not None:
+        # Ask pipeline: answerer phase
+        from pitcher_narratives.analyst import _ANSWERER_INSTRUCTIONS
+
+        sections.append(f"\n{sep}\nANSWERER\n{sep}\n")
+        sections.append(f"## System Prompt\n\n{_ANSWERER_INSTRUCTIONS}\n")
+        sections.append(
+            f"## User Message\n\n"
+            f"## Question\n{question}\n\n"
+            f"## Pitcher: {ctx.pitcher_name} ({ctx.throws}HP, {ctx.role})\n\n"
+            f"[Receives: all 5 specialist outputs + any audit flags]\n"
+        )
+    else:
+        # Narrative pipeline: writer + anchor + executive summary
+        sections.append(f"\n{sep}\nWRITER\n{sep}\n")
+        sections.append(f"## System Prompt\n\n{_WRITER_PROMPT}\n")
+        sections.append(
+            "## User Message\n\n"
+            "[Receives: all 5 specialist outputs + any audit flags]\n"
+        )
+
+        sections.append(f"\n{sep}\nEXECUTIVE SUMMARY\n{sep}\n")
+        sections.append(f"## System Prompt\n\n{_EXECUTIVE_SUMMARY_PROMPT}\n")
+        sections.append(
+            "## User Message\n\n"
+            "[Receives: same input as writer]\n"
+        )
+
+        from pitcher_narratives.report import _ANCHOR_PROMPT
+        sections.append(f"\n{sep}\nANCHOR CHECK\n{sep}\n")
+        sections.append(f"## System Prompt\n\n{_ANCHOR_PROMPT}\n")
+        sections.append(
+            "## User Message\n\n"
+            "[Receives: concatenated specialist outputs + writer capsule]\n"
+        )
+
+    mode = "ask" if question else "pipeline"
+    filename = f"data-{pitcher_id}-{provider}-{mode}.md"
+    Path(filename).write_text("\n".join(sections))
+    return filename
 
 
 # ═══════════════════════════════════════════════════════════════════════
