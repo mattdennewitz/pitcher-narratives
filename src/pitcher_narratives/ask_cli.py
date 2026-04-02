@@ -196,6 +196,15 @@ def main() -> None:
             thinking=args.thinking,
             _model_override=model_override,
         )
+
+        # Print audit flags
+        if result.audit_flags:
+            print(f"\nData audit flagged {len(result.audit_flags)} issue(s):", file=sys.stderr)
+            for f in result.audit_flags:
+                print(f"  [{f.category}] {f.specialist}: {f.claim}", file=sys.stderr)
+        else:
+            print("\nData audit: clean", file=sys.stderr)
+
         print(f"\n---\n{result.stuff_summary}")
     else:
         from pitcher_narratives.analyst import ask_question_streaming

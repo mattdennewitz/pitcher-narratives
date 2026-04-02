@@ -161,8 +161,23 @@ def main() -> None:
             _model_override=model_override,
         )
 
+        # Print executive summary
+        if pipe_result.executive_summary:
+            print("\n## Executive Summary")
+            for bullet in pipe_result.executive_summary:
+                print(f"- {bullet}")
+
         # Print stuff summary from specialist
         print(f"\n---\n{pipe_result.specialists.stuff}")
+
+        # Audit flag status
+        if pipe_result.audit_flags:
+            print(f"\nData audit flagged {len(pipe_result.audit_flags)} issue(s):", file=sys.stderr)
+            for f in pipe_result.audit_flags:
+                print(f"  [{f.category}] {f.specialist}: {f.claim}", file=sys.stderr)
+                print(f"    → {f.data_shows}", file=sys.stderr)
+        else:
+            print("\nData audit: clean", file=sys.stderr)
 
         # Revision status (reuse same logic)
         if pipe_result.revision_count == 0 and not pipe_result.anchor_warnings:
@@ -183,6 +198,12 @@ def main() -> None:
             thinking=args.thinking,
             _model_override=model_override,
         )
+
+        # Print executive summary
+        if result.executive_summary:
+            print("\n## Executive Summary")
+            for bullet in result.executive_summary:
+                print(f"- {bullet}")
 
         # Print stuff summary
         print(f"\n---\n{result.stuff_summary}")

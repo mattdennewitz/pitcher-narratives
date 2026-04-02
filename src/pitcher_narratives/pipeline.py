@@ -1,20 +1,30 @@
-"""Multi-agent specialist→writer report pipeline (v1.6 prototype).
+"""Multi-agent specialist→auditor→writer report pipeline (v1.6 prototype).
 
 Architecture:
-  5 specialist agents run in parallel, each producing a focused micro-analysis:
+  Phase 1: 5 specialist agents run in parallel, each producing a focused
+  micro-analysis with league baselines (including stddev and S-variant
+  benchmarks) injected for grounding:
     - Stuff Explainer: velocity/movement → S+ grades via S-variant predictions
     - Location Analyst: P vs S divergence, zone/chase rates, location impact
     - Run Value Decomposer: 13-outcome attribution, dominant value drivers
     - Trend Spotter: window vs season deltas in velocity, movement, usage, grades
     - Game Shape Analyst: TTO degradation, velocity arc, within-game mix shifts
 
-  All specialists receive league-average baselines per pitch type so they
-  can contextualize a pitcher's characteristics against the league.
+  Phase 1.5: Data auditor validates specialist prose against the raw data
+  and league baselines. Flags metric contradictions, directional errors,
+  sign inconsistencies, unreconciled strengths, and hallucinated causation.
 
-  Writer agent receives all 5 specialist blurbs + pitcher context, finds the
-  thread, and composes a unified capsule.
+  Phase 2: Writer composes a unified capsule from specialist outputs.
+  Audit flags (if any) are injected so the writer avoids repeating
+  flagged claims.
 
-  Anchor check remains from the existing pipeline.
+  Phase 2.5: Anchor check + revision loop.
+
+Anti-hallucination guardrails:
+  - Specialists receive normal ranges (±1.5 stddev) and are forbidden from
+    citing metrics as outliers when they fall within the normal range.
+  - Directional consistency enforced: S+ below 100 → xRV100 positive, etc.
+  - Temperature split: specialists=0.3, writer=0.7, auditor/anchor=0.1.
 """
 
 from __future__ import annotations
@@ -42,7 +52,7 @@ from pitcher_narratives.report import (
     _build_revision_message,
 )
 
-__all__ = ["PipelineResult", "generate_pipeline_streaming"]
+__all__ = ["AuditFlag", "AuditResult", "ExecutiveSummary", "PipelineResult", "generate_pipeline_streaming"]
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -54,16 +64,64 @@ You are a pitch physics analyst. Your job is to explain each pitch's \
 raw stuff quality by tracing from physical characteristics to the \
 model's stuff-only grade.
 
-For each pitch type in the arsenal, explain why the Stuff+ (S+) grade \
-is what it is by connecting velocity and movement shape (pfx_x/pfx_z) \
-to the S-variant model predictions (xSwing_S, xWhiff_S, xRV100_S).
+HOW TO READ THE DATA:
+The Arsenal Physical Profile has pre-computed league comparisons for \
+every metric. Each metric shows:
+  value (delta from league avg) [NORMAL or OUTLIER tag with z-score]
+The NORMAL/OUTLIER tags are computed from actual league data. Trust \
+them. If a metric says [NORMAL], treat it as unremarkable for that \
+pitch type — do not describe it as slow, weak, or unusual.
 
-The chain is: physical pitch → model prediction → S+ grade.
+INTERPRETATION RULES (these are absolute — override any intuition):
+- RESPECT THE TAGS: If a metric is tagged [NORMAL], you MUST NOT cite \
+it as a primary driver of a poor (or good) grade. Many factors beyond \
+velocity drive S+ — movement shape, movement *interaction* (horizontal \
+× vertical), spin characteristics, and how the pitch tunnels off the \
+fastball. When velocity is NORMAL, look to these other factors to \
+explain the grade.
+- SECONDARY PITCH CONTEXT: Offspeed and breaking pitches (curveballs, \
+sliders, changeups, splitters) derive value from deception, movement \
+shape, and tunneling — NOT primarily from velocity. An 81 mph knuckle \
+curve and an 84 mph knuckle curve can have wildly different S+ grades \
+based on movement profile alone. Do not default to velocity explanations \
+for secondary pitches unless it is a genuine [OUTLIER].
+- MOVEMENT CONTEXT: More vertical break (more negative pfx_z) on a \
+curveball/slider is typically a POSITIVE attribute. More horizontal \
+movement on a sweeper is positive. Check the S-variant league \
+comparisons: if xWhiff_S is below league avg, the movement shape is \
+not generating enough deception regardless of velocity.
+- DIRECTIONAL CONSISTENCY: S+ below 100 means the pitch grades below \
+average and xRV100_S should be positive (costly to the pitcher). S+ \
+above 100 means above average and xRV100_S should be negative (saves \
+runs). If these signs don't align in the data, flag the discrepancy \
+rather than forcing a narrative.
+- xWHIFF RECONCILIATION: If xWhiff_S ≥ 25%, this is a meaningful whiff \
+rate. You MUST reconcile this success before labeling a pitch as \
+"detrimental" or "poor." A pitch that generates whiffs has value even \
+if other metrics are weak.
+- CITATION REQUIREMENT: Every behavioral claim MUST cite the specific \
+metric that supports it. Examples of behavioral claims that need data:
+  × "hitters can identify the shape easily" → MUST cite xSwing_S
+  × "practically an automatic take" → MUST cite xSwing_S
+  × "generates swing-and-miss" → MUST cite xWhiff_S
+  × "hittable" → MUST cite xRV100_S or batted ball data
+  If you cannot cite a specific metric from the data provided, do not \
+  make the claim.
+- NO HALLUCINATED CAUSATION: Do not invent reasons for a S+ grade that \
+are not supported by the data provided. If the physical profile looks \
+average but S+ is extreme, say so honestly rather than fabricating an \
+explanation. "The model sees something in the movement interaction \
+that the raw averages don't capture" is more honest than inventing \
+a story about velocity.
 
-Rules:
-- Cover every pitch in the arsenal, prioritizing the most interesting \
-(extreme S+, surprising grades given the physical profile).
-- Cite velocity, movement values, and S-variant probabilities.
+OUTPUT FORMAT:
+- For each pitch type, explain why the S+ grade is what it is by \
+connecting velocity and movement shape to the S-variant predictions.
+- The chain is: physical pitch → model prediction → S+ grade.
+- Cover every pitch, prioritizing the most interesting (extreme S+, \
+surprising grades given the physical profile).
+- Use the pre-computed deltas and tags from the data. Do not recompute. \
+Example: "81.3 mph (-1.6 vs league avg, NORMAL for knuckle curves)."
 - Explain the mechanism: why does that velocity/movement combination \
 produce that whiff rate or swing rate?
 - No location analysis — this is stuff only.
@@ -85,6 +143,17 @@ Key data points:
 - xSwing P vs S: does location increase or decrease swing likelihood?
 - xWhiff P vs S: does location improve or hurt whiff rate?
 - xRV100 P vs S: net location impact in run value terms.
+
+INTERPRETATION RULES:
+- Compare zone% and chase% against the league baselines provided. \
+Only flag a rate as high/low if it deviates meaningfully from the \
+league average for that pitch type.
+- DIRECTIONAL CONSISTENCY: L+ above 0 means location helps. The \
+P-variant xRV100 should be more negative (better) than S-variant. \
+If the data contradicts this, note the discrepancy honestly.
+- Cite deltas from league average for zone% and chase% when claiming \
+a rate is unusual.
+- Do not invent location patterns not supported by the data.
 
 Rules:
 - Cover every pitch, prioritizing the most extreme location impacts.
@@ -108,6 +177,16 @@ through because of hittable velocity in the zone.
 Sign convention:
 - Negative contribution = pitcher benefits (saves runs)
 - Positive contribution = costs the pitcher runs
+
+INTERPRETATION RULES:
+- DIRECTIONAL CONSISTENCY: If total xRV100 is negative (good), the \
+pitch saves runs overall. Do not describe a pitch with negative xRV100 \
+as "detrimental" or "costly." If total xRV100 is positive (bad), do \
+not describe it as "effective."
+- When connecting outcomes to physical characteristics, check those \
+claims against the league baselines. Do not say "hittable velocity" \
+if the velocity is normal for that pitch type.
+- Only cite the data provided. Do not invent outcome contributions.
 
 Rules:
 - Cover every pitch, prioritizing the most lopsided attributions.
@@ -168,6 +247,81 @@ handles that.
 
 
 # ═══════════════════════════════════════════════════════════════════════
+# DATA AUDITOR PROMPT
+# ═══════════════════════════════════════════════════════════════════════
+
+_DATA_AUDITOR_PROMPT = """\
+You are a data auditor for a baseball analytics pipeline. You receive \
+specialist analyses alongside the raw data those analyses were based on. \
+Your job is to flag every instance where the prose contradicts, \
+misrepresents, or hallucinates beyond the data.
+
+CHECK FOR THESE SPECIFIC PROBLEMS:
+
+1. METRIC_CONTRADICTION: The prose characterizes a metric as high/low, \
+good/bad, but the league baselines show it is within the normal range \
+(±1.5 stddev). Example: calling 81 mph "slow" for a curveball when \
+league avg is 80.5 mph with 2.3 stddev.
+
+2. DIRECTION_ERROR: The prose says a metric is bad but the data shows \
+it is good (or vice versa). Example: calling -1.2 inches of vertical \
+break "detrimental" on a curveball when more depth than average is a \
+positive attribute.
+
+3. SIGN_INCONSISTENCY: S+ and xRV100_S point in opposite directions \
+in the prose. If S+ < 100 (below average stuff), xRV100_S should be \
+positive (costs runs). If S+ > 100, xRV100_S should be negative \
+(saves runs). Flag when the prose narrative doesn't reflect this.
+
+4. UNRECONCILED_STRENGTH: The prose labels a pitch as "detrimental" or \
+"poor" without acknowledging a meaningful strength in the data. \
+Example: a pitch with 30% xWhiff_S (meaningful whiff generation) \
+being called "highly detrimental" without reconciling the whiff success.
+
+5. HALLUCINATED_CAUSATION: The prose invents a causal mechanism not \
+supported by the data. Example: "the slow speed allows hitters to \
+identify the shape easily" when the velocity is league-average and no \
+pitch-identification data was provided. Also flag when a [NORMAL]-tagged \
+metric is cited as a primary driver of a grade.
+
+6. FABRICATED_DATA: The prose cites a specific number that does not \
+appear in the input data.
+
+7. UNCITED_BEHAVIORAL_CLAIM: The prose makes a claim about hitter \
+behavior (e.g., "hitters take it," "automatic take," "easy to lay off") \
+without citing the specific metric (xSwing_S, xWhiff_S, CSW%) that \
+supports the claim.
+
+For each problem, report:
+- Which specialist output contains the problem
+- The specific claim that is wrong
+- What the data actually shows
+- A suggested correction
+
+If everything checks out, return an empty list."""
+
+
+class AuditFlag(BaseModel):
+    """A single data audit flag."""
+
+    category: str
+    specialist: str
+    claim: str
+    data_shows: str
+    suggested_fix: str
+
+
+class AuditResult(BaseModel):
+    """Structured output from the data auditor agent."""
+
+    flags: list[AuditFlag]
+
+    @property
+    def is_clean(self) -> bool:
+        return len(self.flags) == 0
+
+
+# ═══════════════════════════════════════════════════════════════════════
 # WRITER PROMPT
 # ═══════════════════════════════════════════════════════════════════════
 
@@ -220,8 +374,46 @@ conversational.
 CONSTRAINTS:
 - Use ONLY data from the specialist analyses and the context provided. \
 Do not invent metrics.
+- DIRECTIONAL CONSISTENCY: If a specialist says a pitch is effective \
+(negative xRV100, S+ above 100, strong whiff rate), do not flip the \
+narrative to negative. If a specialist says a pitch is weak, do not \
+spin it as a strength. Preserve the direction of each specialist's \
+assessment.
+- If specialists contradict each other on a pitch, acknowledge the \
+tension rather than silently picking one side.
 - No bullet points, no headers, no tables. Prose only.
 - Scale confidence to sample size. Small windows get tentative language."""
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# EXECUTIVE SUMMARY PROMPT
+# ═══════════════════════════════════════════════════════════════════════
+
+_EXECUTIVE_SUMMARY_PROMPT = """\
+You are a concise analyst producing an executive summary for a front \
+office reader who needs the key takeaways in 15 seconds.
+
+Given five specialist analyses of a pitcher's recent window, produce \
+exactly 3-5 bullet points that capture the most important signals.
+
+RULES:
+- Each bullet is ONE sentence, max 25 words.
+- Lead each bullet with the signal, not the explanation.
+- Cite exactly one metric per bullet (S+, P+, xRV100, velocity, usage%).
+- Cover at least: the best pitch, the biggest concern, and the key trend.
+- If data audit flags are present, do NOT repeat any flagged claims.
+- DIRECTIONAL CONSISTENCY: S+ below 100 is below average. S+ above 100 \
+is above average. Do not contradict the data.
+- Use the league baselines to contextualize — do not call normal metrics \
+unusual.
+- Output ONLY the bullet points. No headers, no intro, no outro.
+- Format: each line starts with "- " followed by the insight."""
+
+
+class ExecutiveSummary(BaseModel):
+    """Structured executive summary bullet points."""
+
+    bullets: list[str]
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -229,25 +421,55 @@ Do not invent metrics.
 # ═══════════════════════════════════════════════════════════════════════
 
 def _render_league_baselines(pitch_types: list[str]) -> str:
-    """Render league-average baselines for the given pitch types.
+    """Render league-average baselines with normal ranges and S-variant benchmarks.
 
-    Only includes pitch types present in the pitcher's arsenal so
-    specialists have relevant context without noise.
+    Includes standard deviations so agents can determine whether a pitcher's
+    metrics are outliers or within the normal range for that pitch type.
+    Also includes league-average S-variant predictions so agents have
+    ground truth for what "average" looks like in model output space.
     """
     baselines = compute_league_baselines()
     lookup = {b.pitch_type: b for b in baselines}
 
-    lines = ["## League Averages (2026, all pitchers)"]
+    lines = [
+        "## League Baselines (2026, all pitchers)",
+        "Use these baselines to determine whether a metric is an outlier or normal.",
+        "A metric within ±1.5 stddev of the league average is NORMAL for that pitch type.",
+        "",
+    ]
     for pt in pitch_types:
         b = lookup.get(pt)
         if b is None:
             continue
+        # Physical profile with normal ranges
         lines.append(
-            f"- {b.pitch_name} ({b.pitch_type}): "
-            f"{b.avg_velo:.1f} mph, "
-            f"pfx_x {b.avg_pfx_x:.1f} in, pfx_z {b.avg_pfx_z:.1f} in, "
-            f"zone% {b.zone_pct:.1f}, chase% {b.chase_pct:.1f}"
+            f"### {b.pitch_name} ({b.pitch_type})"
         )
+        lines.append(
+            f"- Velocity: {b.avg_velo:.1f} mph (stddev {b.velo_std:.1f}, "
+            f"normal range {b.avg_velo - 1.5 * b.velo_std:.1f}–{b.avg_velo + 1.5 * b.velo_std:.1f})"
+        )
+        lines.append(
+            f"- Horizontal movement (pfx_x): {b.avg_pfx_x:.1f} in "
+            f"(stddev {b.pfx_x_std:.1f})"
+        )
+        lines.append(
+            f"- Vertical movement (pfx_z): {b.avg_pfx_z:.1f} in "
+            f"(stddev {b.pfx_z_std:.1f})"
+        )
+        lines.append(
+            f"- Zone%: {b.zone_pct:.1f}, Chase%: {b.chase_pct:.1f}"
+        )
+        # S-variant benchmarks
+        if b.avg_s_plus is not None:
+            xswing = f"{b.avg_xswing_s * 100:.1f}%" if b.avg_xswing_s is not None else "--"
+            xwhiff = f"{b.avg_xwhiff_s * 100:.1f}%" if b.avg_xwhiff_s is not None else "--"
+            xrv = f"{b.avg_xrv100_s:.2f}" if b.avg_xrv100_s is not None else "--"
+            lines.append(
+                f"- S-variant league avg: S+ {b.avg_s_plus:.0f}, "
+                f"xSwing_S {xswing}, xWhiff_S {xwhiff}, xRV100_S {xrv}"
+            )
+        lines.append("")
     return "\n".join(lines)
 
 
@@ -260,30 +482,88 @@ def _pitch_types(ctx: PitcherContext) -> list[str]:
     return [p.pitch_type for p in ctx.arsenal]
 
 
+def _outlier_tag(value: float, avg: float, std: float) -> str:
+    """Return OUTLIER or NORMAL tag based on z-score from league average."""
+    if std == 0:
+        return "NORMAL"
+    z = (value - avg) / std
+    if abs(z) > 1.5:
+        direction = "above" if z > 0 else "below"
+        return f"OUTLIER ({direction} avg, z={z:+.1f})"
+    return f"NORMAL (z={z:+.1f})"
+
+
 def _build_stuff_input(ctx: PitcherContext) -> str:
-    """Build input for the stuff specialist from arsenal + intermediates."""
+    """Build input for the stuff specialist with pre-computed outlier annotations.
+
+    Each metric is annotated with its delta from league average and an
+    explicit NORMAL/OUTLIER tag so the LLM does not need to compute
+    z-scores itself.
+    """
+    baselines = compute_league_baselines()
+    baseline_lookup = {b.pitch_type: b for b in baselines}
+
     lines = [f"## {ctx.pitcher_name} ({ctx.throws}HP, {ctx.role})\n"]
     lines.append(_render_league_baselines(_pitch_types(ctx)))
     lines.append("")
-    lines.append("## Arsenal Physical Profile")
+    lines.append("## Arsenal Physical Profile (with league comparison)")
+    lines.append("Each metric shows: value (delta from league avg) [NORMAL/OUTLIER tag]")
+    lines.append("")
     for p in ctx.arsenal:
         sp = f"{p.window_s_plus:.0f}" if p.window_s_plus is not None else "--"
-        lines.append(
-            f"- {p.pitch_name} ({p.pitch_type}): "
-            f"{p.window_velo:.1f} mph ({p.velo_delta}), "
-            f"pfx_x {p.window_pfx_x:.1f} in ({p.pfx_x_delta}), "
-            f"pfx_z {p.window_pfx_z:.1f} in ({p.pfx_z_delta}), "
-            f"S+ {sp} (season {p.season_s_plus:.0f}, {p.s_plus_delta})"
-        )
-    lines.append("\n## Stuff-Only Model Predictions (S-variant)")
+        b = baseline_lookup.get(p.pitch_type)
+        if b is not None:
+            velo_delta = p.window_velo - b.avg_velo
+            velo_tag = _outlier_tag(p.window_velo, b.avg_velo, b.velo_std)
+            pfx_x_delta = p.window_pfx_x - b.avg_pfx_x
+            pfx_x_tag = _outlier_tag(p.window_pfx_x, b.avg_pfx_x, b.pfx_x_std)
+            pfx_z_delta = p.window_pfx_z - b.avg_pfx_z
+            pfx_z_tag = _outlier_tag(p.window_pfx_z, b.avg_pfx_z, b.pfx_z_std)
+            lines.append(
+                f"- {p.pitch_name} ({p.pitch_type}):\n"
+                f"    Velocity: {p.window_velo:.1f} mph ({velo_delta:+.1f} vs league avg) [{velo_tag}]\n"
+                f"    pfx_x: {p.window_pfx_x:.1f} in ({pfx_x_delta:+.1f} vs avg) [{pfx_x_tag}]\n"
+                f"    pfx_z: {p.window_pfx_z:.1f} in ({pfx_z_delta:+.1f} vs avg) [{pfx_z_tag}]\n"
+                f"    S+: {sp} (season {p.season_s_plus:.0f}, {p.s_plus_delta})"
+            )
+        else:
+            lines.append(
+                f"- {p.pitch_name} ({p.pitch_type}): "
+                f"{p.window_velo:.1f} mph ({p.velo_delta}), "
+                f"pfx_x {p.window_pfx_x:.1f} in ({p.pfx_x_delta}), "
+                f"pfx_z {p.window_pfx_z:.1f} in ({p.pfx_z_delta}), "
+                f"S+ {sp} (season {p.season_s_plus:.0f}, {p.s_plus_delta})"
+            )
+
+    lines.append("\n## Stuff-Only Model Predictions (S-variant, with league comparison)")
     for im in ctx.intermediates:
+        b = baseline_lookup.get(im.pitch_type)
         xswing_s = f"{im.xswing_s * 100:.1f}%" if im.xswing_s is not None else "--"
         xwhiff_s = f"{im.xwhiff_s * 100:.1f}%" if im.xwhiff_s is not None else "--"
         xrv_s = f"{im.xrv100_s:.2f}" if im.xrv100_s is not None else "--"
-        lines.append(
-            f"- {im.pitch_name} ({im.pitch_type}): "
-            f"xSwing_S {xswing_s}, xWhiff_S {xwhiff_s}, xRV100_S {xrv_s}"
-        )
+
+        # Add league comparison for S-variant predictions
+        comparisons = []
+        if b is not None and im.xswing_s is not None and b.avg_xswing_s is not None:
+            d = (im.xswing_s - b.avg_xswing_s) * 100
+            comparisons.append(f"xSwing_S {xswing_s} ({d:+.1f}pp vs league)")
+        else:
+            comparisons.append(f"xSwing_S {xswing_s}")
+
+        if b is not None and im.xwhiff_s is not None and b.avg_xwhiff_s is not None:
+            d = (im.xwhiff_s - b.avg_xwhiff_s) * 100
+            comparisons.append(f"xWhiff_S {xwhiff_s} ({d:+.1f}pp vs league)")
+        else:
+            comparisons.append(f"xWhiff_S {xwhiff_s}")
+
+        if b is not None and im.xrv100_s is not None and b.avg_xrv100_s is not None:
+            d = im.xrv100_s - b.avg_xrv100_s
+            comparisons.append(f"xRV100_S {xrv_s} ({d:+.2f} vs league)")
+        else:
+            comparisons.append(f"xRV100_S {xrv_s}")
+
+        lines.append(f"- {im.pitch_name} ({im.pitch_type}): {', '.join(comparisons)}")
+
     return "\n".join(lines)
 
 
@@ -379,15 +659,50 @@ def _build_writer_input(
     runvalue: str,
     trends: str,
     game_shape: str,
+    audit_flags: list[AuditFlag] | None = None,
 ) -> str:
-    """Compose all specialist outputs into writer input."""
+    """Compose all specialist outputs into writer input.
+
+    If audit flags are present, includes them so the writer knows which
+    specialist claims to distrust or correct.
+    """
+    parts = [
+        f"## Pitcher: {ctx.pitcher_name} ({ctx.throws}HP, {ctx.role})\n",
+        f"## Specialist Analysis 1: Stuff\n{stuff}\n",
+        f"## Specialist Analysis 2: Location\n{location}\n",
+        f"## Specialist Analysis 3: Run Value\n{runvalue}\n",
+        f"## Specialist Analysis 4: Trends\n{trends}\n",
+        f"## Specialist Analysis 5: Game Shape\n{game_shape}",
+    ]
+    if audit_flags:
+        flag_lines = ["## DATA AUDIT FLAGS (these specialist claims have been flagged as inaccurate)"]
+        flag_lines.append("IMPORTANT: Do NOT repeat flagged claims. Use the suggested correction instead.\n")
+        for f in audit_flags:
+            flag_lines.append(
+                f"- [{f.category}] in {f.specialist}: \"{f.claim}\" "
+                f"→ Data shows: {f.data_shows}. Correction: {f.suggested_fix}"
+            )
+        parts.append("\n\n" + "\n".join(flag_lines))
+    return "\n\n".join(parts)
+
+
+def _build_audit_input(
+    ctx: PitcherContext,
+    specialists: "SpecialistOutputs",
+) -> str:
+    """Build auditor input: raw ground truth data + specialist prose to check."""
+    baselines = _render_league_baselines(_pitch_types(ctx))
+    raw_data = _build_stuff_input(ctx)  # reuse stuff input as ground truth
+
     return (
-        f"## Pitcher: {ctx.pitcher_name} ({ctx.throws}HP, {ctx.role})\n\n"
-        f"## Specialist Analysis 1: Stuff\n{stuff}\n\n"
-        f"## Specialist Analysis 2: Location\n{location}\n\n"
-        f"## Specialist Analysis 3: Run Value\n{runvalue}\n\n"
-        f"## Specialist Analysis 4: Trends\n{trends}\n\n"
-        f"## Specialist Analysis 5: Game Shape\n{game_shape}"
+        f"## GROUND TRUTH DATA\n{raw_data}\n\n"
+        f"{baselines}\n\n"
+        f"## SPECIALIST OUTPUT TO AUDIT\n\n"
+        f"### Stuff Specialist\n{specialists.stuff}\n\n"
+        f"### Location Specialist\n{specialists.location}\n\n"
+        f"### Run Value Specialist\n{specialists.runvalue}\n\n"
+        f"### Trend Specialist\n{specialists.trends}\n\n"
+        f"### Game Shape Specialist\n{specialists.game_shape}"
     )
 
 
@@ -407,8 +722,10 @@ class SpecialistOutputs(BaseModel):
 class PipelineResult(BaseModel):
     """Result from the multi-agent pipeline."""
     narrative: str
+    executive_summary: list[str] = []
     specialists: SpecialistOutputs
-    anchor_warnings: list[AnchorWarning]
+    audit_flags: list[AuditFlag] = []
+    anchor_warnings: list[AnchorWarning] = []
     revision_count: int = 0
 
 
@@ -426,37 +743,53 @@ def _make_pipeline_agents(
     Agent[None, str],  # trends
     Agent[None, str],  # game_shape
     Agent[None, str],  # writer
+    Agent[None, AuditResult],  # auditor
     Agent[None, AnchorResult],  # anchor
+    Agent[None, str],  # executive summary
 ]:
     if provider not in PROVIDERS:
         raise ValueError(f"Unknown provider {provider!r}")
     model = PROVIDERS[provider]
 
-    if provider == "gemini":
-        gemini_level = "high" if thinking in ("high", "xhigh") else "low"
-        settings: ModelSettings = GoogleModelSettings(
-            google_thinking_config={"thinking_level": gemini_level},
-            temperature=1.0,
-            max_tokens=16384,
-        )
-    elif provider == "claude":
-        settings = ModelSettings(thinking=thinking, max_tokens=16384)
-    else:
-        settings = ModelSettings(thinking=thinking)
+    # Split temperature by role: specialists need precision, writer needs voice,
+    # auditor/anchor need maximum determinism.
+    def _settings(temperature: float) -> ModelSettings:
+        if provider == "gemini":
+            gemini_level = "high" if thinking in ("high", "xhigh") else "low"
+            return GoogleModelSettings(
+                google_thinking_config={"thinking_level": gemini_level},
+                temperature=temperature,
+                max_tokens=16384,
+            )
+        elif provider == "claude":
+            return ModelSettings(thinking=thinking, temperature=temperature, max_tokens=16384)
+        else:
+            return ModelSettings(thinking=thinking, temperature=temperature)
 
-    def _str_agent(prompt: str) -> Agent[None, str]:
+    specialist_settings = _settings(0.3)
+    writer_settings = _settings(0.7)
+    checker_settings = _settings(0.1)
+
+    def _specialist(prompt: str) -> Agent[None, str]:
         return Agent(model, output_type=str, system_prompt=prompt,
-                     model_settings=settings, defer_model_check=True)
+                     model_settings=specialist_settings, defer_model_check=True)
+
+    def _writer(prompt: str) -> Agent[None, str]:
+        return Agent(model, output_type=str, system_prompt=prompt,
+                     model_settings=writer_settings, defer_model_check=True)
 
     return (
-        _str_agent(_STUFF_SPECIALIST_PROMPT),
-        _str_agent(_LOCATION_SPECIALIST_PROMPT),
-        _str_agent(_RUNVALUE_SPECIALIST_PROMPT),
-        _str_agent(_TREND_SPECIALIST_PROMPT),
-        _str_agent(_GAME_SHAPE_SPECIALIST_PROMPT),
-        _str_agent(_WRITER_PROMPT),
+        _specialist(_STUFF_SPECIALIST_PROMPT),
+        _specialist(_LOCATION_SPECIALIST_PROMPT),
+        _specialist(_RUNVALUE_SPECIALIST_PROMPT),
+        _specialist(_TREND_SPECIALIST_PROMPT),
+        _specialist(_GAME_SHAPE_SPECIALIST_PROMPT),
+        _writer(_WRITER_PROMPT),
+        Agent(model, output_type=AuditResult, system_prompt=_DATA_AUDITOR_PROMPT,
+              model_settings=checker_settings, defer_model_check=True),
         Agent(model, output_type=AnchorResult, system_prompt=_ANCHOR_PROMPT,
-              model_settings=settings, defer_model_check=True),
+              model_settings=checker_settings, defer_model_check=True),
+        _specialist(_EXECUTIVE_SUMMARY_PROMPT),
     )
 
 
@@ -516,12 +849,14 @@ async def _run_pipeline(
 ) -> PipelineResult:
     """Async core of the multi-agent pipeline.
 
-    Runs everything on a single event loop to avoid closed-loop errors
-    from httpx connections shared across phases.
+    Phase 1: 5 specialists run concurrently.
+    Phase 1.5: Data auditor validates specialist outputs against ground truth.
+    Phase 2: Writer composes capsule (with audit flags if any).
+    Phase 2.5: Anchor check + revision loop.
     """
     (
         stuff_agent, location_agent, runvalue_agent, trends_agent,
-        game_shape_agent, writer, anchor_checker,
+        game_shape_agent, writer, auditor, anchor_checker, summary_agent,
     ) = _make_pipeline_agents(provider, thinking)
 
     # Phase 1: Run specialists concurrently
@@ -530,16 +865,47 @@ async def _run_pipeline(
         stuff_agent, location_agent, runvalue_agent, trends_agent,
         game_shape_agent, ctx, _model_override,
     )
-    print("Specialists complete. Composing narrative...", file=sys.stderr, flush=True)
+    print("Specialists complete.", file=sys.stderr, flush=True)
 
-    # Phase 2: Writer composes from specialist outputs (streamed)
+    # Phase 1.5: Data auditor validates specialist prose against ground truth
+    print("Auditing specialist outputs...", file=sys.stderr, flush=True)
+    audit_input = _build_audit_input(ctx, specialists)
+    audit_kwargs: dict[str, Any] = {"user_prompt": audit_input}
+    if _model_override is not None:
+        audit_kwargs["model"] = _model_override
+
+    audit_result = await auditor.run(**audit_kwargs)
+    audit_check = audit_result.output
+
+    if audit_check.is_clean:
+        print("Audit clean. Composing narrative...", file=sys.stderr, flush=True)
+    else:
+        n_flags = len(audit_check.flags)
+        print(
+            f"Audit found {n_flags} flag(s). Passing to writer for correction...",
+            file=sys.stderr, flush=True,
+        )
+
+    # Phase 2: Writer + Executive Summary run concurrently
+    # Both consume the same specialist outputs; summary doesn't need to
+    # wait for the writer, so we run them in parallel.
     writer_input = _build_writer_input(
         ctx, specialists.stuff, specialists.location,
         specialists.runvalue, specialists.trends, specialists.game_shape,
+        audit_flags=audit_check.flags if not audit_check.is_clean else None,
     )
     writer_kwargs: dict[str, Any] = {"user_prompt": writer_input}
     if _model_override is not None:
         writer_kwargs["model"] = _model_override
+
+    # Build summary input (same specialist data + audit flags)
+    summary_input = writer_input  # same context as writer
+    summary_kwargs: dict[str, Any] = {"user_prompt": summary_input}
+    if _model_override is not None:
+        summary_kwargs["model"] = _model_override
+
+    # Run summary in background while writer streams
+    summary_task = asyncio.create_task(summary_agent.run(**summary_kwargs))
 
     async with writer.run_stream(**writer_kwargs) as stream:
         chunks: list[str] = []
@@ -549,6 +915,16 @@ async def _run_pipeline(
     print()
 
     capsule = "".join(chunks)
+
+    # Await executive summary
+    summary_result = await summary_task
+    summary_raw = summary_result.output
+    # Parse bullet lines from raw output
+    summary_bullets = [
+        line.lstrip("- ").strip()
+        for line in summary_raw.strip().splitlines()
+        if line.strip().startswith("- ")
+    ]
 
     # Phase 2.5: Anchor check + revision loop
     revision_count = 0
@@ -593,7 +969,9 @@ async def _run_pipeline(
 
     return PipelineResult(
         narrative=capsule,
+        executive_summary=summary_bullets,
         specialists=specialists,
+        audit_flags=audit_check.flags,
         anchor_warnings=anchor_check.warnings,
         revision_count=revision_count,
     )
@@ -606,10 +984,11 @@ def generate_pipeline_streaming(
     thinking: ThinkingEffort = "high",
     _model_override: Any = None,
 ) -> PipelineResult:
-    """Generate a report using the specialist→writer multi-agent pipeline.
+    """Generate a report using the specialist→auditor→writer multi-agent pipeline.
 
-    Phase 1: 4 specialists run concurrently (silent).
-    Phase 2: Writer composes capsule from specialist outputs (streamed).
+    Phase 1: 5 specialists run concurrently (silent).
+    Phase 1.5: Data auditor validates specialist outputs against ground truth.
+    Phase 2: Writer composes capsule from specialist outputs + audit flags (streamed).
     Phase 2.5: Anchor check + revision loop.
 
     Args:

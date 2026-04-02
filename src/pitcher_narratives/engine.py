@@ -147,23 +147,42 @@ _DOUBLE_OUT_EVENTS = frozenset(
 
 @dataclass
 class LeagueBaseline:
-    """League-average physical profile for a single pitch type."""
+    """League-average physical profile and S-variant benchmarks for a pitch type.
+
+    Physical metrics (velo, movement, zone/chase) come from the Statcast parquet.
+    S-variant benchmarks (S+, xSwing_S, xWhiff_S, xRV100_S) come from the
+    pitcher_type CSV aggregated across all pitchers, weighted by n_pitches.
+    """
 
     pitch_type: str
     pitch_name: str
     n_pitches: int
+    # Physical averages
     avg_velo: float
     avg_pfx_x: float
     avg_pfx_z: float
     zone_pct: float
     chase_pct: float
+    # Physical standard deviations (for outlier detection)
+    velo_std: float
+    pfx_x_std: float
+    pfx_z_std: float
+    # S-variant benchmarks (league averages weighted by n_pitches)
+    avg_s_plus: float | None = None
+    avg_xswing_s: float | None = None
+    avg_xwhiff_s: float | None = None
+    avg_xrv100_s: float | None = None
 
 
 _league_baselines_cache: list[LeagueBaseline] | None = None
 
 
 def compute_league_baselines() -> list[LeagueBaseline]:
-    """Compute league-average velocity, movement, and zone/chase rates per pitch type.
+    """Compute league-average velocity, movement, zone/chase, and S-variant benchmarks.
+
+    Physical metrics and standard deviations come from the Statcast parquet.
+    S-variant benchmarks (S+, xSwing_S, xWhiff_S, xRV100_S) are weighted
+    averages from the pitcher_type CSV across all pitchers.
 
     Results are cached after first call. Only includes pitch types with
     at least 100 pitches in the dataset.
@@ -191,8 +210,11 @@ def compute_league_baselines() -> list[LeagueBaseline]:
         .agg(
             pl.len().alias("n"),
             pl.col("release_speed").mean().alias("avg_velo"),
+            pl.col("release_speed").std().alias("velo_std"),
             pl.col("pfx_x").mean().alias("avg_pfx_x"),
+            pl.col("pfx_x").std().alias("pfx_x_std"),
             pl.col("pfx_z").mean().alias("avg_pfx_z"),
+            pl.col("pfx_z").std().alias("pfx_z_std"),
             (is_in_zone.mean() * 100).alias("zone_pct"),
             # Chase: swings on pitches outside zones 1-9
             ((is_in_zone.not_() & is_swing).sum()
@@ -202,19 +224,57 @@ def compute_league_baselines() -> list[LeagueBaseline]:
         .sort("n", descending=True)
     )
 
-    results = [
-        LeagueBaseline(
-            pitch_type=row["pitch_type"],
-            pitch_name=row["pitch_name"],
-            n_pitches=row["n"],
-            avg_velo=float(row["avg_velo"]),
-            avg_pfx_x=float(row["avg_pfx_x"]),
-            avg_pfx_z=float(row["avg_pfx_z"]),
-            zone_pct=float(row["zone_pct"]),
-            chase_pct=float(row["chase_pct"]),
+    # --- S-variant benchmarks from pitcher_type CSV ---
+    s_variant_lookup: dict[str, dict[str, float]] = {}
+    pitcher_type_path = AGGS_DIR / "2026-pitcher_type.csv"
+    if pitcher_type_path.exists():
+        pt_df = pl.read_csv(pitcher_type_path)
+        # Weighted average across all pitchers per pitch type
+        s_agg = (
+            pt_df.filter(pl.col("n_pitches") >= 10)
+            .group_by("pitch_type")
+            .agg(
+                (pl.col("S+") * pl.col("n_pitches")).sum()
+                / pl.col("n_pitches").sum(),
+                (pl.col("xSwing_S") * pl.col("n_pitches")).sum()
+                / pl.col("n_pitches").sum(),
+                (pl.col("xWhiff_S") * pl.col("n_pitches")).sum()
+                / pl.col("n_pitches").sum(),
+                (pl.col("xRV100_S") * pl.col("n_pitches")).sum()
+                / pl.col("n_pitches").sum(),
+            )
         )
-        for row in agg.iter_rows(named=True)
-    ]
+        for row in s_agg.iter_rows(named=True):
+            s_variant_lookup[row["pitch_type"]] = {
+                "avg_s_plus": float(row["S+"]),
+                "avg_xswing_s": float(row["xSwing_S"]),
+                "avg_xwhiff_s": float(row["xWhiff_S"]),
+                "avg_xrv100_s": float(row["xRV100_S"]),
+            }
+
+    results = []
+    for row in agg.iter_rows(named=True):
+        pt = row["pitch_type"]
+        s_data = s_variant_lookup.get(pt, {})
+        results.append(
+            LeagueBaseline(
+                pitch_type=pt,
+                pitch_name=row["pitch_name"],
+                n_pitches=row["n"],
+                avg_velo=float(row["avg_velo"]),
+                avg_pfx_x=float(row["avg_pfx_x"]),
+                avg_pfx_z=float(row["avg_pfx_z"]),
+                zone_pct=float(row["zone_pct"]),
+                chase_pct=float(row["chase_pct"]),
+                velo_std=float(row["velo_std"]) if row["velo_std"] is not None else 0.0,
+                pfx_x_std=float(row["pfx_x_std"]) if row["pfx_x_std"] is not None else 0.0,
+                pfx_z_std=float(row["pfx_z_std"]) if row["pfx_z_std"] is not None else 0.0,
+                avg_s_plus=s_data.get("avg_s_plus"),
+                avg_xswing_s=s_data.get("avg_xswing_s"),
+                avg_xwhiff_s=s_data.get("avg_xwhiff_s"),
+                avg_xrv100_s=s_data.get("avg_xrv100_s"),
+            )
+        )
 
     _league_baselines_cache = results
     return results

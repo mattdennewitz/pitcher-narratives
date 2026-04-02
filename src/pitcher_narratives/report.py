@@ -31,6 +31,7 @@ from pydantic_ai.models.google import GoogleModelSettings
 from pydantic_ai.settings import ModelSettings, ThinkingEffort
 
 from pitcher_narratives.context import PitcherContext
+from pitcher_narratives.engine import compute_league_baselines
 
 __all__ = [
     "MAX_REVISIONS",
@@ -322,6 +323,13 @@ happening — start with what IS.
 STRICT CONSTRAINTS:
 - Rely entirely on the data provided in the input. Do not hallucinate \
 metrics or trends.
+- DIRECTIONAL CONSISTENCY: If the synthesis says a pitch is effective \
+(S+ above 100, negative xRV100), do not flip the narrative to negative. \
+If the synthesis says a pitch is weak, do not spin it positive. \
+Preserve the direction of each assessment.
+- If the synthesis shows a pitch has a meaningful strength (e.g., \
+xWhiff ≥ 25%), you must reconcile that strength before labeling the \
+pitch as poor or detrimental.
 - Ignore traditional outcome stats like Wins and basic ERA unless \
 provided as context. Base analysis on underlying metrics.
 - No bullet points. No headers. No introductory fluff.
@@ -346,14 +354,17 @@ model's stuff-only predictions (xWhiff_S, xSwing_S, xRV100_S).
 The chain is: physical pitch → model prediction → S+ grade. Your job \
 is to make that chain legible in plain language.
 
-Examples of the voice:
-- "The knuckle curve sits 81 mph with only 0.3 inches of horizontal \
-break and -1.2 inches of vertical movement. That velocity/movement \
-combination doesn't generate enough deception on its own — the model \
-expects just a 30% whiff rate on stuff alone, which is why S+ grades \
-out at 84."
-- "The four-seam at 96.8 with 1.4 inches of ride generates a 37% \
-stuff-only swing rate — enough raw swing-and-miss for an S+ of 113."
+INTERPRETATION RULES (use the League Baselines provided):
+- Compare every metric to the league baseline for that pitch type. \
+Cite the delta from average when claiming a metric is unusual.
+- If a pitch's velocity is within ±1.5 stddev of the league average, \
+it is NORMAL — do not cite velocity as a primary reason for a poor S+.
+- More vertical break on curveballs/sliders is typically POSITIVE. \
+Check the sign convention before calling a deviation good or bad.
+- DIRECTIONAL CONSISTENCY: S+ below 100 → xRV100_S positive (costly). \
+S+ above 100 → xRV100_S negative (saves runs). Do not contradict this.
+- If xWhiff_S ≥ 25%, reconcile this strength before calling the pitch \
+weak.
 
 Rules:
 - Cover the 2-3 most notable pitches (best, worst, or most changed S+).
@@ -389,6 +400,30 @@ dependency, injury/workload red flags, category impact (Ks, ERA, WHIP).
 Format: exactly 3 lines, each starting with "- ". Plain text — no bold, \
 no labels, no prefixes. Just the insight. Nothing else — no intro, no \
 summary, no headers."""
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# EXECUTIVE SUMMARY
+# ═══════════════════════════════════════════════════════════════════════
+
+_EXECUTIVE_SUMMARY_PROMPT = """\
+You are a concise analyst producing an executive summary for a front \
+office reader who needs the key takeaways in 15 seconds.
+
+Given a structured data synthesis of a pitcher's recent window, produce \
+exactly 3-5 bullet points that capture the most important signals.
+
+RULES:
+- Each bullet is ONE sentence, max 25 words.
+- Lead each bullet with the signal, not the explanation.
+- Cite exactly one metric per bullet (S+, P+, xRV100, velocity, usage%).
+- Cover at least: the best pitch, the biggest concern, and the key trend.
+- DIRECTIONAL CONSISTENCY: S+ below 100 is below average. S+ above 100 \
+is above average. Do not contradict the data.
+- Use the league baselines to contextualize — do not call normal metrics \
+unusual.
+- Output ONLY the bullet points. No headers, no intro, no outro.
+- Format: each line starts with "- " followed by the insight."""
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -447,6 +482,7 @@ class ReportResult(BaseModel):
     """Structured output from the multi-phase report pipeline."""
 
     narrative: str
+    executive_summary: list[str] = []
     stuff_summary: str
     fantasy_insights: str
     anchor_warnings: list[AnchorWarning]
@@ -458,7 +494,7 @@ class ReportResult(BaseModel):
 # AGENT FACTORY
 # ═══════════════════════════════════════════════════════════════════════
 
-_StrAgents = tuple[Agent[None, str], Agent[None, str], Agent[None, str], Agent[None, str]]
+_StrAgents = tuple[Agent[None, str], Agent[None, str], Agent[None, str], Agent[None, str], Agent[None, str]]
 _AgentSet = tuple[_StrAgents, Agent[None, AnchorResult]]
 _agent_cache: dict[tuple[str, ThinkingEffort], _AgentSet] = {}
 
@@ -467,7 +503,11 @@ def _make_agents(
     provider: str = "openai",
     thinking: ThinkingEffort = "high",
 ) -> _AgentSet:
-    """Create (or return cached) pipeline agents for the given provider and thinking level."""
+    """Create (or return cached) pipeline agents with role-specific temperatures.
+
+    Temperature split: synthesizer/stuff=0.3 (data precision),
+    editor/fantasy=0.7 (prose quality), anchor=0.1 (fact-checking).
+    """
     key = (provider, thinking)
     if key in _agent_cache:
         return _agent_cache[key]
@@ -476,28 +516,37 @@ def _make_agents(
         raise ValueError(f"Unknown provider {provider!r}, expected one of: {', '.join(PROVIDERS)}")
     model = PROVIDERS[provider]
 
-    if provider == "gemini":
-        # Gemini 3 uses GoogleModelSettings with thinking_level ('low' or 'high')
-        gemini_level = "high" if thinking in ("high", "xhigh") else "low"
-        settings: ModelSettings = GoogleModelSettings(
-            google_thinking_config={"thinking_level": gemini_level},
-            temperature=1.0,
-            max_tokens=16384,
-        )
-    elif provider == "claude":
-        # Anthropic's default max_tokens (4096) is too low when thinking is enabled
-        settings = ModelSettings(thinking=thinking, max_tokens=16384)
-    else:
-        settings = ModelSettings(thinking=thinking)
+    def _settings(temperature: float) -> ModelSettings:
+        if provider == "gemini":
+            gemini_level = "high" if thinking in ("high", "xhigh") else "low"
+            return GoogleModelSettings(
+                google_thinking_config={"thinking_level": gemini_level},
+                temperature=temperature,
+                max_tokens=16384,
+            )
+        elif provider == "claude":
+            return ModelSettings(thinking=thinking, temperature=temperature, max_tokens=16384)
+        else:
+            return ModelSettings(thinking=thinking, temperature=temperature)
 
-    str_prompts = (_SYNTHESIZER_PROMPT, _EDITOR_PROMPT, _STUFF_EXPLAINER_PROMPT, _FANTASY_PROMPT)
+    analyst_settings = _settings(0.3)   # synthesizer + stuff explainer
+    writer_settings = _settings(0.7)    # editor + fantasy
+    checker_settings = _settings(0.1)   # anchor
+
+    str_prompts_and_settings = [
+        (_SYNTHESIZER_PROMPT, analyst_settings),
+        (_EDITOR_PROMPT, writer_settings),
+        (_STUFF_EXPLAINER_PROMPT, analyst_settings),
+        (_FANTASY_PROMPT, writer_settings),
+        (_EXECUTIVE_SUMMARY_PROMPT, analyst_settings),
+    ]
     str_agents: _StrAgents = tuple(  # type: ignore[assignment]
-        Agent(model, output_type=str, system_prompt=p, model_settings=settings, defer_model_check=True)
-        for p in str_prompts
+        Agent(model, output_type=str, system_prompt=p, model_settings=s, defer_model_check=True)
+        for p, s in str_prompts_and_settings
     )
     anchor_agent = Agent(
         model, output_type=AnchorResult, system_prompt=_ANCHOR_PROMPT,
-        model_settings=settings, defer_model_check=True,
+        model_settings=checker_settings, defer_model_check=True,
     )
     result: _AgentSet = (str_agents, anchor_agent)
     _agent_cache[key] = result
@@ -513,17 +562,58 @@ _UserPrompt = list[str | CachePoint]
 """Type alias for user prompts with cache breakpoints."""
 
 
-def _build_synthesizer_message(ctx: PitcherContext) -> _UserPrompt:
-    """Build the Phase 1 user message with cache breakpoint after role guidance.
+def _render_report_baselines(pitch_types: list[str]) -> str:
+    """Render league baselines with normal ranges for the narrative engine.
 
-    Role guidance is stable across all pitchers of the same role (SP/RP),
-    so caching it avoids re-processing ~120 tokens per pitcher.
+    Same enriched format as the pipeline engine — stddev ranges and
+    S-variant benchmarks so agents can ground claims in data.
+    """
+    baselines = compute_league_baselines()
+    lookup = {b.pitch_type: b for b in baselines}
+
+    lines = [
+        "## League Baselines (2026, all pitchers)",
+        "Use these to determine whether a metric is an outlier or normal.",
+        "A metric within ±1.5 stddev of the league average is NORMAL for that pitch type.",
+        "",
+    ]
+    for pt in pitch_types:
+        b = lookup.get(pt)
+        if b is None:
+            continue
+        lines.append(f"### {b.pitch_name} ({b.pitch_type})")
+        lines.append(
+            f"- Velocity: {b.avg_velo:.1f} mph (stddev {b.velo_std:.1f}, "
+            f"normal range {b.avg_velo - 1.5 * b.velo_std:.1f}–{b.avg_velo + 1.5 * b.velo_std:.1f})"
+        )
+        lines.append(f"- Horizontal movement (pfx_x): {b.avg_pfx_x:.1f} in (stddev {b.pfx_x_std:.1f})")
+        lines.append(f"- Vertical movement (pfx_z): {b.avg_pfx_z:.1f} in (stddev {b.pfx_z_std:.1f})")
+        lines.append(f"- Zone%: {b.zone_pct:.1f}, Chase%: {b.chase_pct:.1f}")
+        if b.avg_s_plus is not None:
+            xswing = f"{b.avg_xswing_s * 100:.1f}%" if b.avg_xswing_s is not None else "--"
+            xwhiff = f"{b.avg_xwhiff_s * 100:.1f}%" if b.avg_xwhiff_s is not None else "--"
+            xrv = f"{b.avg_xrv100_s:.2f}" if b.avg_xrv100_s is not None else "--"
+            lines.append(
+                f"- S-variant league avg: S+ {b.avg_s_plus:.0f}, "
+                f"xSwing_S {xswing}, xWhiff_S {xwhiff}, xRV100_S {xrv}"
+            )
+        lines.append("")
+    return "\n".join(lines)
+
+
+def _build_synthesizer_message(ctx: PitcherContext) -> _UserPrompt:
+    """Build the Phase 1 user message with league baselines and role guidance.
+
+    Includes league-average baselines so the synthesizer can ground claims
+    about velocity, movement, and S-variant metrics against league norms.
     """
     guidance = _SP_SYNTH_GUIDANCE if ctx.role == "SP" else _RP_SYNTH_GUIDANCE
+    pitch_types = [p.pitch_type for p in ctx.arsenal]
+    baselines = _render_report_baselines(pitch_types)
     return [
         f"## Role-Specific Focus\n{guidance}",
         CachePoint(),
-        f"## Pitcher Data\n{ctx.to_prompt()}",
+        f"{baselines}\n\n## Pitcher Data\n{ctx.to_prompt()}",
     ]
 
 
@@ -579,35 +669,90 @@ def _build_revision_message(
     ]
 
 
+def _outlier_tag(value: float, avg: float, std: float) -> str:
+    """Return OUTLIER or NORMAL tag based on z-score from league average."""
+    if std == 0:
+        return "NORMAL"
+    z = (value - avg) / std
+    if abs(z) > 1.5:
+        direction = "above" if z > 0 else "below"
+        return f"OUTLIER ({direction} avg, z={z:+.1f})"
+    return f"NORMAL (z={z:+.1f})"
+
+
 def _build_stuff_message(ctx: PitcherContext, capsule: str) -> _UserPrompt:
-    """Build the Phase 3 user message with arsenal physical data and intermediates."""
-    # Provide the physical profile + S-variant data the explainer needs
+    """Build the Phase 3 user message with pre-computed outlier annotations."""
+    pitch_types = [p.pitch_type for p in ctx.arsenal]
+    rendered_baselines = _render_report_baselines(pitch_types)
+    league_baselines = compute_league_baselines()
+    baseline_lookup = {b.pitch_type: b for b in league_baselines}
+
     arsenal_lines: list[str] = []
     for p in ctx.arsenal:
         sp = f"{p.window_s_plus:.0f}" if p.window_s_plus is not None else "--"
-        arsenal_lines.append(
-            f"- {p.pitch_name} ({p.pitch_type}): "
-            f"{p.window_velo:.1f} mph, "
-            f"pfx_x {p.window_pfx_x:.1f} in, pfx_z {p.window_pfx_z:.1f} in, "
-            f"S+ {sp}"
-        )
+        b = baseline_lookup.get(p.pitch_type)
+        if b is not None:
+            velo_d = p.window_velo - b.avg_velo
+            velo_t = _outlier_tag(p.window_velo, b.avg_velo, b.velo_std)
+            pfx_x_d = p.window_pfx_x - b.avg_pfx_x
+            pfx_x_t = _outlier_tag(p.window_pfx_x, b.avg_pfx_x, b.pfx_x_std)
+            pfx_z_d = p.window_pfx_z - b.avg_pfx_z
+            pfx_z_t = _outlier_tag(p.window_pfx_z, b.avg_pfx_z, b.pfx_z_std)
+            arsenal_lines.append(
+                f"- {p.pitch_name} ({p.pitch_type}):\n"
+                f"    Velocity: {p.window_velo:.1f} mph ({velo_d:+.1f} vs avg) [{velo_t}]\n"
+                f"    pfx_x: {p.window_pfx_x:.1f} in ({pfx_x_d:+.1f} vs avg) [{pfx_x_t}]\n"
+                f"    pfx_z: {p.window_pfx_z:.1f} in ({pfx_z_d:+.1f} vs avg) [{pfx_z_t}]\n"
+                f"    S+: {sp}"
+            )
+        else:
+            arsenal_lines.append(
+                f"- {p.pitch_name} ({p.pitch_type}): "
+                f"{p.window_velo:.1f} mph, pfx_x {p.window_pfx_x:.1f} in, "
+                f"pfx_z {p.window_pfx_z:.1f} in, S+ {sp}"
+            )
+
     intermediates_lines: list[str] = []
     for im in ctx.intermediates:
+        b = baseline_lookup.get(im.pitch_type)
         xswing_s = f"{im.xswing_s * 100:.1f}%" if im.xswing_s is not None else "--"
         xwhiff_s = f"{im.xwhiff_s * 100:.1f}%" if im.xwhiff_s is not None else "--"
         xrv_s = f"{im.xrv100_s:.2f}" if im.xrv100_s is not None else "--"
-        intermediates_lines.append(
-            f"- {im.pitch_name} ({im.pitch_type}): "
-            f"xSwing_S {xswing_s}, xWhiff_S {xwhiff_s}, xRV100_S {xrv_s}"
-        )
+
+        parts = []
+        if b and im.xswing_s is not None and b.avg_xswing_s is not None:
+            d = (im.xswing_s - b.avg_xswing_s) * 100
+            parts.append(f"xSwing_S {xswing_s} ({d:+.1f}pp vs league)")
+        else:
+            parts.append(f"xSwing_S {xswing_s}")
+        if b and im.xwhiff_s is not None and b.avg_xwhiff_s is not None:
+            d = (im.xwhiff_s - b.avg_xwhiff_s) * 100
+            parts.append(f"xWhiff_S {xwhiff_s} ({d:+.1f}pp vs league)")
+        else:
+            parts.append(f"xWhiff_S {xwhiff_s}")
+        if b and im.xrv100_s is not None and b.avg_xrv100_s is not None:
+            d = im.xrv100_s - b.avg_xrv100_s
+            parts.append(f"xRV100_S {xrv_s} ({d:+.2f} vs league)")
+        else:
+            parts.append(f"xRV100_S {xrv_s}")
+
+        intermediates_lines.append(f"- {im.pitch_name} ({im.pitch_type}): {', '.join(parts)}")
+
     return [
         f"## Pitcher\n{ctx.pitcher_name} ({ctx.throws}HP, {ctx.role})\n\n"
-        f"## Arsenal Physical Profile\n" + "\n".join(arsenal_lines) + "\n\n"
-        f"## Stuff-Only Model Predictions (S-variant)\n" + "\n".join(intermediates_lines) + "\n\n"
+        f"{rendered_baselines}\n\n"
+        f"## Arsenal Physical Profile (with league comparison)\n"
+        f"Each metric shows: value (delta from avg) [NORMAL/OUTLIER tag]\n"
+        + "\n".join(arsenal_lines) + "\n\n"
+        f"## Stuff-Only Model Predictions (S-variant, with league comparison)\n"
+        + "\n".join(intermediates_lines) + "\n\n"
         f"## Scouting Capsule\n{capsule}",
         CachePoint(),
         "Write a brief technical summary explaining each notable pitch's S+ grade "
-        "through its velocity, movement, and stuff-only model predictions.",
+        "through its velocity, movement, and stuff-only model predictions. "
+        "If a metric is tagged NORMAL, do not cite it as a driver of the grade. "
+        "Every behavioral claim (e.g., 'hitters take it', 'generates swings') "
+        "must cite the specific metric (xSwing_S, xWhiff_S) that supports it.",
     ]
 
 
@@ -702,7 +847,7 @@ def generate_report_streaming(
     Returns:
         ReportResult with narrative, stuff_summary, fantasy_insights, and anchor_warnings.
     """
-    (synthesizer, editor, stuff_explainer, fantasy_analyst), anchor_checker = _make_agents(provider, thinking)
+    (synthesizer, editor, stuff_explainer, fantasy_analyst, summary_agent), anchor_checker = _make_agents(provider, thinking)
 
     synth_kwargs: dict[str, Any] = {"user_prompt": _build_synthesizer_message(ctx)}
     if _model_override is not None:
@@ -763,26 +908,36 @@ def generate_report_streaming(
         anchor_result = anchor_checker.run_sync(**anchor_kwargs)
         anchor_check = anchor_result.output
 
-    # Phase 3: Stuff explainer (silent) — traces S+ grades to physical pitch characteristics
+    # Phase 3 + 4 + Summary: Run concurrently (all depend on capsule, not each other)
     stuff_kwargs: dict[str, Any] = {
         "user_prompt": _build_stuff_message(ctx, capsule),
     }
-    if _model_override is not None:
-        stuff_kwargs["model"] = _model_override
-
-    stuff_result = stuff_explainer.run_sync(**stuff_kwargs)
-
-    # Phase 4: Fantasy analyst (silent) — derived from capsule, not synthesis
     fantasy_kwargs: dict[str, Any] = {
         "user_prompt": _build_fantasy_message(ctx, capsule),
     }
+    # Summary agent gets the synthesis (structured data) for grounded bullets
+    summary_kwargs: dict[str, Any] = {
+        "user_prompt": f"## Synthesis\n{synthesis}",
+    }
     if _model_override is not None:
+        stuff_kwargs["model"] = _model_override
         fantasy_kwargs["model"] = _model_override
+        summary_kwargs["model"] = _model_override
 
+    stuff_result = stuff_explainer.run_sync(**stuff_kwargs)
     fantasy_result = fantasy_analyst.run_sync(**fantasy_kwargs)
+    summary_result = summary_agent.run_sync(**summary_kwargs)
+
+    # Parse bullet lines from raw summary output
+    summary_bullets = [
+        line.lstrip("- ").strip()
+        for line in summary_result.output.strip().splitlines()
+        if line.strip().startswith("- ")
+    ]
 
     return ReportResult(
         narrative=capsule,
+        executive_summary=summary_bullets,
         stuff_summary=stuff_result.output,
         fantasy_insights=fantasy_result.output,
         anchor_warnings=anchor_check.warnings,
