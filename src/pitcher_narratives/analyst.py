@@ -603,6 +603,7 @@ def ask_question_pipeline(
     import sys
 
     from pitcher_narratives.pipeline import (
+        _agent_kwargs,
         _audit_and_revise_specialists,
         _build_writer_input,
         _make_pipeline_agents,
@@ -660,12 +661,11 @@ def ask_question_pipeline(
             context, specialists.stuff, specialists.location,
             specialists.runvalue, specialists.trends, specialists.game_shape,
         )
-        summary_kwargs: dict[str, Any] = {"user_prompt": summary_input}
-        if _model_override is not None:
-            summary_kwargs["model"] = _model_override
 
         # Run summary in background while answerer streams
-        summary_task = asyncio.create_task(summary_agent.run(**summary_kwargs))
+        summary_task = asyncio.create_task(
+            summary_agent.run(**_agent_kwargs(summary_input, _model_override))
+        )
 
         chunks: list[str] = []
         async with answerer.run_stream(answerer_input) as stream:

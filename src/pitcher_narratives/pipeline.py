@@ -68,6 +68,14 @@ __all__ = [
 log = logging.getLogger("pitcher_narratives.pipeline")
 
 
+def _agent_kwargs(prompt: Any, _model_override: Any = None) -> dict[str, Any]:
+    """Build kwargs for an agent.run() call, optionally injecting a model override."""
+    kwargs: dict[str, Any] = {"user_prompt": prompt}
+    if _model_override is not None:
+        kwargs["model"] = _model_override
+    return kwargs
+
+
 # ═══════════════════════════════════════════════════════════════════════
 # SPECIALIST PROMPTS
 # ═══════════════════════════════════════════════════════════════════════
@@ -668,10 +676,7 @@ async def _audit_and_revise_specialists(
             audit_input = _build_specialist_audit_input(
                 ground_truths[name], outputs[name],
             )
-            kwargs: dict[str, Any] = {"user_prompt": audit_input}
-            if _model_override is not None:
-                kwargs["model"] = _model_override
-            result = await auditor.run(**kwargs)
+            result = await auditor.run(**_agent_kwargs(audit_input, _model_override))
             return name, result.output
         except Exception:
             log.warning("Audit failed for %s specialist, treating as clean.", name, exc_info=True)
@@ -704,10 +709,7 @@ async def _audit_and_revise_specialists(
                 ground_truths[name], outputs[name], flags,
             )
             agent = specialist_agents[name]
-            kwargs: dict[str, Any] = {"user_prompt": revision_input}
-            if _model_override is not None:
-                kwargs["model"] = _model_override
-            result = await agent.run(**kwargs)
+            result = await agent.run(**_agent_kwargs(revision_input, _model_override))
             return name, result.output
         except Exception:
             log.warning("Revision failed for %s specialist, keeping original.", name, exc_info=True)
@@ -935,10 +937,7 @@ async def _run_specialists(
     }
 
     async def _run(agent: Agent[None, str], prompt: str) -> str:
-        kwargs: dict[str, Any] = {"user_prompt": prompt}
-        if _model_override is not None:
-            kwargs["model"] = _model_override
-        result = await agent.run(**kwargs)
+        result = await agent.run(**_agent_kwargs(prompt, _model_override))
         return result.output
 
     tasks = {
@@ -1003,18 +1002,12 @@ async def _run_pipeline(
         ctx, specialists.stuff, specialists.location,
         specialists.runvalue, specialists.trends, specialists.game_shape,
     )
-    writer_kwargs: dict[str, Any] = {"user_prompt": writer_input}
-    if _model_override is not None:
-        writer_kwargs["model"] = _model_override
+    writer_kwargs = _agent_kwargs(writer_input, _model_override)
 
-    # Build summary input (same specialist data + audit flags)
-    summary_input = writer_input  # same context as writer
-    summary_kwargs: dict[str, Any] = {"user_prompt": summary_input}
-    if _model_override is not None:
-        summary_kwargs["model"] = _model_override
-
-    # Run summary in background while writer streams
-    summary_task = asyncio.create_task(summary_agent.run(**summary_kwargs))
+    # Run summary in background while writer streams (same input as writer)
+    summary_task = asyncio.create_task(
+        summary_agent.run(**_agent_kwargs(writer_input, _model_override))
+    )
 
     async with writer.run_stream(**writer_kwargs) as stream:
         chunks: list[str] = []
@@ -1049,34 +1042,24 @@ async def _run_pipeline(
     )
 
     for _ in range(MAX_REVISIONS):
-        anchor_kwargs: dict[str, Any] = {
-            "user_prompt": _build_anchor_message(synthesis, capsule),
-        }
-        if _model_override is not None:
-            anchor_kwargs["model"] = _model_override
-
-        anchor_result = await anchor_checker.run(**anchor_kwargs)
+        anchor_result = await anchor_checker.run(
+            **_agent_kwargs(_build_anchor_message(synthesis, capsule), _model_override)
+        )
         anchor_check = anchor_result.output
 
         if anchor_check.is_clean:
             break
 
-        revision_kwargs: dict[str, Any] = {
-            "user_prompt": _build_revision_message(synthesis, capsule, anchor_check.warnings),
-        }
-        if _model_override is not None:
-            revision_kwargs["model"] = _model_override
-
-        revision_result = await writer.run(**revision_kwargs)
+        revision_result = await writer.run(
+            **_agent_kwargs(_build_revision_message(synthesis, capsule, anchor_check.warnings), _model_override)
+        )
         capsule = revision_result.output
         revision_count += 1
     else:
-        anchor_kwargs = {
-            "user_prompt": _build_anchor_message(synthesis, capsule),
-        }
-        if _model_override is not None:
-            anchor_kwargs["model"] = _model_override
-        anchor_result = await anchor_checker.run(**anchor_kwargs)
+        # Exhausted MAX_REVISIONS without a clean pass — final check for surviving warnings
+        anchor_result = await anchor_checker.run(
+            **_agent_kwargs(_build_anchor_message(synthesis, capsule), _model_override)
+        )
         anchor_check = anchor_result.output
 
     return PipelineResult(

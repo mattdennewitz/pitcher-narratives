@@ -53,6 +53,14 @@ __all__ = [
     "write_data_file",
 ]
 
+def _agent_kwargs(prompt: Any, _model_override: Any = None) -> dict[str, Any]:
+    """Build kwargs for an agent.run() call, optionally injecting a model override."""
+    kwargs: dict[str, Any] = {"user_prompt": prompt}
+    if _model_override is not None:
+        kwargs["model"] = _model_override
+    return kwargs
+
+
 THINKING_LEVELS: list[ThinkingEffort] = ["minimal", "low", "medium", "high", "xhigh"]
 PROVIDERS = {
     "openai": "openai:gpt-5.4-mini",
@@ -786,22 +794,12 @@ def generate_report_streaming(
     """
     (synthesizer, editor, stuff_explainer, fantasy_analyst, summary_agent), anchor_checker = _make_agents(provider, thinking)
 
-    synth_kwargs: dict[str, Any] = {"user_prompt": _build_synthesizer_message(ctx)}
-    if _model_override is not None:
-        synth_kwargs["model"] = _model_override
-
     # Phase 1: Silent synthesis
-    synth_result = synthesizer.run_sync(**synth_kwargs)
+    synth_result = synthesizer.run_sync(**_agent_kwargs(_build_synthesizer_message(ctx), _model_override))
     synthesis = synth_result.output
 
     # Phase 2: Streamed editorial
-    editor_kwargs: dict[str, Any] = {
-        "user_prompt": _build_editor_message(ctx, synthesis),
-    }
-    if _model_override is not None:
-        editor_kwargs["model"] = _model_override
-
-    stream = editor.run_stream_sync(**editor_kwargs)
+    stream = editor.run_stream_sync(**_agent_kwargs(_build_editor_message(ctx, synthesis), _model_override))
     chunks: list[str] = []
     for delta in stream.stream_text(delta=True):
         print(delta, end="", flush=True)
@@ -813,57 +811,31 @@ def generate_report_streaming(
     # Phase 2.5: Anchor check + revision loop
     revision_count = 0
     for _ in range(MAX_REVISIONS):
-        anchor_kwargs: dict[str, Any] = {
-            "user_prompt": _build_anchor_message(synthesis, capsule),
-        }
-        if _model_override is not None:
-            anchor_kwargs["model"] = _model_override
-
-        anchor_result = anchor_checker.run_sync(**anchor_kwargs)
+        anchor_result = anchor_checker.run_sync(
+            **_agent_kwargs(_build_anchor_message(synthesis, capsule), _model_override)
+        )
         anchor_check = anchor_result.output
 
         if anchor_check.is_clean:
             break
 
         # Revise silently (no streaming)
-        revision_kwargs: dict[str, Any] = {
-            "user_prompt": _build_revision_message(synthesis, capsule, anchor_check.warnings),
-        }
-        if _model_override is not None:
-            revision_kwargs["model"] = _model_override
-
-        revision_result = editor.run_sync(**revision_kwargs)
+        revision_result = editor.run_sync(
+            **_agent_kwargs(_build_revision_message(synthesis, capsule, anchor_check.warnings), _model_override)
+        )
         capsule = revision_result.output
         revision_count += 1
     else:
-        # Exhausted MAX_REVISIONS -- final anchor check for surviving warnings
-        anchor_kwargs = {
-            "user_prompt": _build_anchor_message(synthesis, capsule),
-        }
-        if _model_override is not None:
-            anchor_kwargs["model"] = _model_override
-        anchor_result = anchor_checker.run_sync(**anchor_kwargs)
+        # Exhausted MAX_REVISIONS — final anchor check for surviving warnings
+        anchor_result = anchor_checker.run_sync(
+            **_agent_kwargs(_build_anchor_message(synthesis, capsule), _model_override)
+        )
         anchor_check = anchor_result.output
 
     # Phase 3 + 4 + Summary: Run concurrently (all depend on capsule, not each other)
-    stuff_kwargs: dict[str, Any] = {
-        "user_prompt": _build_stuff_message(ctx, capsule),
-    }
-    fantasy_kwargs: dict[str, Any] = {
-        "user_prompt": _build_fantasy_message(ctx, capsule),
-    }
-    # Summary agent gets the synthesis (structured data) for grounded bullets
-    summary_kwargs: dict[str, Any] = {
-        "user_prompt": f"## Synthesis\n{synthesis}",
-    }
-    if _model_override is not None:
-        stuff_kwargs["model"] = _model_override
-        fantasy_kwargs["model"] = _model_override
-        summary_kwargs["model"] = _model_override
-
-    stuff_result = stuff_explainer.run_sync(**stuff_kwargs)
-    fantasy_result = fantasy_analyst.run_sync(**fantasy_kwargs)
-    summary_result = summary_agent.run_sync(**summary_kwargs)
+    stuff_result = stuff_explainer.run_sync(**_agent_kwargs(_build_stuff_message(ctx, capsule), _model_override))
+    fantasy_result = fantasy_analyst.run_sync(**_agent_kwargs(_build_fantasy_message(ctx, capsule), _model_override))
+    summary_result = summary_agent.run_sync(**_agent_kwargs(f"## Synthesis\n{synthesis}", _model_override))
 
     # Parse bullet lines from raw summary output
     summary_bullets = [
