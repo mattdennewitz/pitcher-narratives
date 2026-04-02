@@ -523,6 +523,7 @@ class PipelineAnswer:
 
     answer: str
     stuff_summary: str
+    executive_summary: list[str] | None = None
     audit_flags: list[Any] | None = None
 
 _ANSWERER_INSTRUCTIONS = """\
@@ -604,13 +605,14 @@ def ask_question_pipeline(
     from pitcher_narratives.pipeline import (
         AuditResult,
         _build_audit_input,
+        _build_writer_input,
         _make_pipeline_agents,
         _run_specialists,
     )
 
     (
         stuff_agent, location_agent, runvalue_agent, trends_agent,
-        game_shape_agent, _writer, auditor, _anchor, _summary,
+        game_shape_agent, _writer, auditor, _anchor, summary_agent,
     ) = _make_pipeline_agents(provider, thinking)
 
     async def _run() -> PipelineAnswer:
@@ -665,15 +667,38 @@ def ask_question_pipeline(
             parts.append("\n\n" + "\n".join(flag_lines))
         answerer_input = "\n\n".join(parts)
 
+        # Build summary input (same specialist data as the writer would get)
+        summary_input = _build_writer_input(
+            context, specialists.stuff, specialists.location,
+            specialists.runvalue, specialists.trends, specialists.game_shape,
+            audit_flags=audit_check.flags if not audit_check.is_clean else None,
+        )
+        summary_kwargs: dict[str, Any] = {"user_prompt": summary_input}
+        if _model_override is not None:
+            summary_kwargs["model"] = _model_override
+
+        # Run summary in background while answerer streams
+        summary_task = asyncio.create_task(summary_agent.run(**summary_kwargs))
+
         chunks: list[str] = []
         async with answerer.run_stream(answerer_input) as stream:
             async for delta in stream.stream_text(delta=True):
                 print(delta, end="", flush=True)
                 chunks.append(delta)
         print()
+
+        # Await and parse summary bullets
+        summary_result = await summary_task
+        summary_bullets = [
+            line.lstrip("- ").strip()
+            for line in summary_result.output.strip().splitlines()
+            if line.strip().startswith("- ")
+        ]
+
         return PipelineAnswer(
             answer="".join(chunks),
             stuff_summary=specialists.stuff,
+            executive_summary=summary_bullets or None,
             audit_flags=audit_check.flags if not audit_check.is_clean else None,
         )
 
