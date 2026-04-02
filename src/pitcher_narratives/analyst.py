@@ -609,28 +609,25 @@ def ask_question_pipeline(
         _run_specialists,
     )
 
-    (
-        stuff_agent, location_agent, runvalue_agent, trends_agent,
-        game_shape_agent, _writer, auditor, _anchor, summary_agent,
-    ) = _make_pipeline_agents(provider, thinking)
+    agents = _make_pipeline_agents(provider, thinking)
 
     async def _run() -> PipelineAnswer:
         # Phase 1: Run specialists concurrently
         log.info("Running specialists...")
         raw_specialists = await _run_specialists(
-            stuff_agent, location_agent, runvalue_agent, trends_agent,
-            game_shape_agent, context, _model_override,
+            agents.stuff, agents.location, agents.runvalue, agents.trends,
+            agents.game_shape, context, _model_override,
         )
 
         # Phase 1.5: Per-specialist audit + revision loop
         log.info("Auditing...")
         specialist_agents = {
-            "stuff": stuff_agent, "location": location_agent,
-            "runvalue": runvalue_agent, "trends": trends_agent,
-            "game_shape": game_shape_agent,
+            "stuff": agents.stuff, "location": agents.location,
+            "runvalue": agents.runvalue, "trends": agents.trends,
+            "game_shape": agents.game_shape,
         }
         specialists, audit_flags = await _audit_and_revise_specialists(
-            raw_specialists, specialist_agents, auditor, context, _model_override,
+            raw_specialists, specialist_agents, agents.auditor, context, _model_override,
         )
         log.info("Answering...")
 
@@ -663,7 +660,7 @@ def ask_question_pipeline(
 
         # Run summary in background while answerer streams
         summary_task = asyncio.create_task(
-            summary_agent.run(**_agent_kwargs(summary_input, _model_override))
+            agents.summary.run(**_agent_kwargs(summary_input, _model_override))
         )
 
         chunks: list[str] = []

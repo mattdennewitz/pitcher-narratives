@@ -32,7 +32,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any
+from typing import Any, NamedTuple
 
 from pydantic import BaseModel
 from pydantic_ai import Agent
@@ -853,20 +853,24 @@ class PipelineResult(BaseModel):
 # AGENT FACTORY
 # ═══════════════════════════════════════════════════════════════════════
 
+class PipelineAgents(NamedTuple):
+    """All agents used by the multi-agent pipeline."""
+
+    stuff: Agent[None, str]
+    location: Agent[None, str]
+    runvalue: Agent[None, str]
+    trends: Agent[None, str]
+    game_shape: Agent[None, str]
+    writer: Agent[None, str]
+    auditor: Agent[None, AuditResult]
+    anchor: Agent[None, AnchorResult]
+    summary: Agent[None, str]
+
+
 def _make_pipeline_agents(
     provider: str = "gemini",
     thinking: ThinkingEffort = "high",
-) -> tuple[
-    Agent[None, str],  # stuff
-    Agent[None, str],  # location
-    Agent[None, str],  # runvalue
-    Agent[None, str],  # trends
-    Agent[None, str],  # game_shape
-    Agent[None, str],  # writer
-    Agent[None, AuditResult],  # auditor
-    Agent[None, AnchorResult],  # anchor
-    Agent[None, str],  # executive summary
-]:
+) -> PipelineAgents:
     if provider not in PROVIDERS:
         raise ValueError(f"Unknown provider {provider!r}")
     model = PROVIDERS[provider]
@@ -898,18 +902,18 @@ def _make_pipeline_agents(
         return Agent(model, output_type=str, system_prompt=prompt,
                      model_settings=writer_settings, defer_model_check=True)
 
-    return (
-        _specialist(_STUFF_SPECIALIST_PROMPT),
-        _specialist(_LOCATION_SPECIALIST_PROMPT),
-        _specialist(_RUNVALUE_SPECIALIST_PROMPT),
-        _specialist(_TREND_SPECIALIST_PROMPT),
-        _specialist(_GAME_SHAPE_SPECIALIST_PROMPT),
-        _writer(_WRITER_PROMPT),
-        Agent(model, output_type=AuditResult, system_prompt=_DATA_AUDITOR_PROMPT,
-              model_settings=checker_settings, defer_model_check=True),
-        Agent(model, output_type=AnchorResult, system_prompt=_ANCHOR_PROMPT,
-              model_settings=checker_settings, defer_model_check=True),
-        _specialist(_EXECUTIVE_SUMMARY_PROMPT),
+    return PipelineAgents(
+        stuff=_specialist(_STUFF_SPECIALIST_PROMPT),
+        location=_specialist(_LOCATION_SPECIALIST_PROMPT),
+        runvalue=_specialist(_RUNVALUE_SPECIALIST_PROMPT),
+        trends=_specialist(_TREND_SPECIALIST_PROMPT),
+        game_shape=_specialist(_GAME_SHAPE_SPECIALIST_PROMPT),
+        writer=_writer(_WRITER_PROMPT),
+        auditor=Agent(model, output_type=AuditResult, system_prompt=_DATA_AUDITOR_PROMPT,
+                      model_settings=checker_settings, defer_model_check=True),
+        anchor=Agent(model, output_type=AnchorResult, system_prompt=_ANCHOR_PROMPT,
+                     model_settings=checker_settings, defer_model_check=True),
+        summary=_specialist(_EXECUTIVE_SUMMARY_PROMPT),
     )
 
 
@@ -971,28 +975,25 @@ async def _run_pipeline(
     Phase 2: Writer composes capsule (with audit flags if any).
     Phase 2.5: Anchor check + revision loop.
     """
-    (
-        stuff_agent, location_agent, runvalue_agent, trends_agent,
-        game_shape_agent, writer, auditor, anchor_checker, summary_agent,
-    ) = _make_pipeline_agents(provider, thinking)
+    agents = _make_pipeline_agents(provider, thinking)
 
     # Phase 1: Run specialists concurrently
     log.info("Running specialists...")
     raw_specialists = await _run_specialists(
-        stuff_agent, location_agent, runvalue_agent, trends_agent,
-        game_shape_agent, ctx, _model_override,
+        agents.stuff, agents.location, agents.runvalue, agents.trends,
+        agents.game_shape, ctx, _model_override,
     )
     log.info("Specialists complete.")
 
     # Phase 1.5: Per-specialist audit + revision loop
     log.info("Auditing specialist outputs...")
     specialist_agents = {
-        "stuff": stuff_agent, "location": location_agent,
-        "runvalue": runvalue_agent, "trends": trends_agent,
-        "game_shape": game_shape_agent,
+        "stuff": agents.stuff, "location": agents.location,
+        "runvalue": agents.runvalue, "trends": agents.trends,
+        "game_shape": agents.game_shape,
     }
     specialists, audit_flags = await _audit_and_revise_specialists(
-        raw_specialists, specialist_agents, auditor, ctx, _model_override,
+        raw_specialists, specialist_agents, agents.auditor, ctx, _model_override,
     )
 
     # Phase 2: Writer + Executive Summary run concurrently
@@ -1005,10 +1006,10 @@ async def _run_pipeline(
 
     # Run summary in background while writer streams (same input as writer)
     summary_task = asyncio.create_task(
-        summary_agent.run(**_agent_kwargs(writer_input, _model_override))
+        agents.summary.run(**_agent_kwargs(writer_input, _model_override))
     )
 
-    async with writer.run_stream(**writer_kwargs) as stream:
+    async with agents.writer.run_stream(**writer_kwargs) as stream:
         chunks: list[str] = []
         async for delta in stream.stream_text(delta=True):
             print(delta, end="", flush=True)
@@ -1041,7 +1042,7 @@ async def _run_pipeline(
     )
 
     for _ in range(MAX_REVISIONS):
-        anchor_result = await anchor_checker.run(
+        anchor_result = await agents.anchor.run(
             **_agent_kwargs(_build_anchor_message(synthesis, capsule), _model_override)
         )
         anchor_check = anchor_result.output
@@ -1049,14 +1050,14 @@ async def _run_pipeline(
         if anchor_check.is_clean:
             break
 
-        revision_result = await writer.run(
+        revision_result = await agents.writer.run(
             **_agent_kwargs(_build_revision_message(synthesis, capsule, anchor_check.warnings), _model_override)
         )
         capsule = revision_result.output
         revision_count += 1
     else:
         # Exhausted MAX_REVISIONS without a clean pass — final check for surviving warnings
-        anchor_result = await anchor_checker.run(
+        anchor_result = await agents.anchor.run(
             **_agent_kwargs(_build_anchor_message(synthesis, capsule), _model_override)
         )
         anchor_check = anchor_result.output
