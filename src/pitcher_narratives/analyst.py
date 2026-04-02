@@ -600,7 +600,6 @@ def ask_question_pipeline(
         PipelineAnswer with the streamed answer, stuff summary, and audit flags.
     """
     import asyncio
-    import sys
 
     from pitcher_narratives.pipeline import (
         _agent_kwargs,
