@@ -1025,15 +1025,18 @@ async def _run_pipeline(
 
     capsule = "".join(chunks)
 
-    # Await executive summary
-    summary_result = await summary_task
-    summary_raw = summary_result.output
-    # Parse bullet lines from raw output
-    summary_bullets = [
-        line.lstrip("- ").strip()
-        for line in summary_raw.strip().splitlines()
-        if line.strip().startswith("- ")
-    ]
+    # Await executive summary — non-critical, don't crash if it fails
+    try:
+        summary_result = await summary_task
+        summary_raw = summary_result.output
+        summary_bullets = [
+            line.lstrip("- ").strip()
+            for line in summary_raw.strip().splitlines()
+            if line.strip().startswith("- ")
+        ]
+    except Exception:
+        log.warning("Executive summary agent failed, skipping.", exc_info=True)
+        summary_bullets = []
 
     # Phase 2.5: Anchor check + revision loop
     revision_count = 0

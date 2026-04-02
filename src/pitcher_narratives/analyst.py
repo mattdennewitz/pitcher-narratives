@@ -674,13 +674,17 @@ def ask_question_pipeline(
                 chunks.append(delta)
         print()
 
-        # Await and parse summary bullets
-        summary_result = await summary_task
-        summary_bullets = [
-            line.lstrip("- ").strip()
-            for line in summary_result.output.strip().splitlines()
-            if line.strip().startswith("- ")
-        ]
+        # Await and parse summary bullets — non-critical, don't crash if it fails
+        try:
+            summary_result = await summary_task
+            summary_bullets = [
+                line.lstrip("- ").strip()
+                for line in summary_result.output.strip().splitlines()
+                if line.strip().startswith("- ")
+            ]
+        except Exception:
+            log.warning("Executive summary agent failed, skipping.", exc_info=True)
+            summary_bullets = []
 
         return PipelineAnswer(
             answer="".join(chunks),
