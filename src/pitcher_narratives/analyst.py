@@ -603,8 +603,7 @@ def ask_question_pipeline(
     import sys
 
     from pitcher_narratives.pipeline import (
-        AuditResult,
-        _build_audit_input,
+        _audit_and_revise_specialists,
         _build_writer_input,
         _make_pipeline_agents,
         _run_specialists,
@@ -618,25 +617,24 @@ def ask_question_pipeline(
     async def _run() -> PipelineAnswer:
         # Phase 1: Run specialists concurrently
         log.info("Running specialists...")
-        specialists = await _run_specialists(
+        raw_specialists = await _run_specialists(
             stuff_agent, location_agent, runvalue_agent, trends_agent,
             game_shape_agent, context, _model_override,
         )
 
-        # Phase 1.5: Data auditor validates specialist outputs
+        # Phase 1.5: Per-specialist audit + revision loop
         log.info("Auditing...")
-        audit_input = _build_audit_input(context, specialists)
-        audit_kwargs: dict[str, Any] = {"user_prompt": audit_input}
-        if _model_override is not None:
-            audit_kwargs["model"] = _model_override
-        audit_result = await auditor.run(**audit_kwargs)
-        audit_check: AuditResult = audit_result.output
-
-        if not audit_check.is_clean:
-            log.info("Audit flagged %d issue(s).", len(audit_check.flags))
+        specialist_agents = {
+            "stuff": stuff_agent, "location": location_agent,
+            "runvalue": runvalue_agent, "trends": trends_agent,
+            "game_shape": game_shape_agent,
+        }
+        specialists, audit_flags = await _audit_and_revise_specialists(
+            raw_specialists, specialist_agents, auditor, context, _model_override,
+        )
         log.info("Answering...")
 
-        # Phase 2: Answerer composes from specialist outputs (streamed)
+        # Phase 2: Answerer composes from clean specialist outputs (streamed)
         model_name, model_settings = _make_analyst(provider, thinking)
         answerer = Agent(
             _model_override if _model_override is not None else model_name,
@@ -646,8 +644,8 @@ def ask_question_pipeline(
             defer_model_check=True,
         )
 
-        # Build answerer input with audit flags if present
-        parts = [
+        # Answerer gets clean specialist outputs — no flags section needed
+        answerer_input = "\n\n".join([
             f"## Question\n{question}\n",
             f"## Pitcher: {context.pitcher_name} ({context.throws}HP, {context.role})\n",
             f"## Specialist Analysis: Stuff\n{specialists.stuff}\n",
@@ -655,23 +653,12 @@ def ask_question_pipeline(
             f"## Specialist Analysis: Run Value\n{specialists.runvalue}\n",
             f"## Specialist Analysis: Trends\n{specialists.trends}\n",
             f"## Specialist Analysis: Game Shape\n{specialists.game_shape}",
-        ]
-        if not audit_check.is_clean:
-            flag_lines = ["## DATA AUDIT FLAGS (these specialist claims are inaccurate)"]
-            flag_lines.append("Do NOT repeat flagged claims. Use the suggested correction.\n")
-            for f in audit_check.flags:
-                flag_lines.append(
-                    f"- [{f.category}] in {f.specialist}: \"{f.claim}\" "
-                    f"→ Data shows: {f.data_shows}. Correction: {f.suggested_fix}"
-                )
-            parts.append("\n\n" + "\n".join(flag_lines))
-        answerer_input = "\n\n".join(parts)
+        ])
 
-        # Build summary input (same specialist data as the writer would get)
+        # Build summary input from clean specialist outputs
         summary_input = _build_writer_input(
             context, specialists.stuff, specialists.location,
             specialists.runvalue, specialists.trends, specialists.game_shape,
-            audit_flags=audit_check.flags if not audit_check.is_clean else None,
         )
         summary_kwargs: dict[str, Any] = {"user_prompt": summary_input}
         if _model_override is not None:
@@ -699,7 +686,7 @@ def ask_question_pipeline(
             answer="".join(chunks),
             stuff_summary=specialists.stuff,
             executive_summary=summary_bullets or None,
-            audit_flags=audit_check.flags if not audit_check.is_clean else None,
+            audit_flags=audit_flags or None,
         )
 
     return asyncio.run(_run())

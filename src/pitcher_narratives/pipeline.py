@@ -10,19 +10,20 @@ Architecture:
     - Trend Spotter: window vs season deltas in velocity, movement, usage, grades
     - Game Shape Analyst: TTO degradation, velocity arc, within-game mix shifts
 
-  Phase 1.5: Data auditor validates specialist prose against the raw data
-  and league baselines. Flags metric contradictions, directional errors,
-  sign inconsistencies, unreconciled strengths, and hallucinated causation.
+  Phase 1.5: Per-specialist audit + revision loop. Each specialist's output
+  is audited independently (5 audits run in parallel) against the raw data
+  and league baselines. Flagged specialists are re-run with their original
+  input + audit corrections to produce clean output. The writer never sees
+  flawed prose — only corrected versions.
 
-  Phase 2: Writer composes a unified capsule from specialist outputs.
-  Audit flags (if any) are injected so the writer avoids repeating
-  flagged claims.
+  Phase 2: Writer composes a unified capsule from clean specialist outputs.
+  Executive summary agent runs concurrently with writer.
 
   Phase 2.5: Anchor check + revision loop.
 
 Anti-hallucination guardrails:
-  - Specialists receive normal ranges (±1.5 stddev) and are forbidden from
-    citing metrics as outliers when they fall within the normal range.
+  - Specialists receive pre-computed NORMAL/OUTLIER tags on every metric.
+  - Per-specialist audit loop catches and corrects errors before synthesis.
   - Directional consistency enforced: S+ below 100 → xRV100 positive, etc.
   - Temperature split: specialists=0.3, writer=0.7, auditor/anchor=0.1.
 """
@@ -258,48 +259,41 @@ handles that.
 
 _DATA_AUDITOR_PROMPT = """\
 You are a data auditor for a baseball analytics pipeline. You receive \
-specialist analyses alongside the raw data those analyses were based on. \
+ONE specialist's analysis alongside the raw data it was based on. \
 Your job is to flag every instance where the prose contradicts, \
 misrepresents, or hallucinates beyond the data.
 
 CHECK FOR THESE SPECIFIC PROBLEMS:
 
 1. METRIC_CONTRADICTION: The prose characterizes a metric as high/low, \
-good/bad, but the league baselines show it is within the normal range \
-(±1.5 stddev). Example: calling 81 mph "slow" for a curveball when \
-league avg is 80.5 mph with 2.3 stddev.
+good/bad, but the data shows it is within the normal range \
+(±1.5 stddev) or tagged [NORMAL]. Example: calling 81 mph "slow" \
+for a curveball when the data tags it [NORMAL (z=-0.4)].
 
 2. DIRECTION_ERROR: The prose says a metric is bad but the data shows \
-it is good (or vice versa). Example: calling -1.2 inches of vertical \
-break "detrimental" on a curveball when more depth than average is a \
-positive attribute.
+it is good (or vice versa). Example: calling more vertical break on \
+a curveball "detrimental" when more depth is typically positive.
 
 3. SIGN_INCONSISTENCY: S+ and xRV100_S point in opposite directions \
-in the prose. If S+ < 100 (below average stuff), xRV100_S should be \
-positive (costs runs). If S+ > 100, xRV100_S should be negative \
-(saves runs). Flag when the prose narrative doesn't reflect this.
+in the prose. If S+ < 100, xRV100_S should be positive (costs runs). \
+If S+ > 100, xRV100_S should be negative (saves runs).
 
 4. UNRECONCILED_STRENGTH: The prose labels a pitch as "detrimental" or \
 "poor" without acknowledging a meaningful strength in the data. \
-Example: a pitch with 30% xWhiff_S (meaningful whiff generation) \
-being called "highly detrimental" without reconciling the whiff success.
+Example: xWhiff_S ≥ 25% being ignored when calling a pitch poor.
 
 5. HALLUCINATED_CAUSATION: The prose invents a causal mechanism not \
-supported by the data. Example: "the slow speed allows hitters to \
-identify the shape easily" when the velocity is league-average and no \
-pitch-identification data was provided. Also flag when a [NORMAL]-tagged \
-metric is cited as a primary driver of a grade.
+supported by the data. Also flag when a [NORMAL]-tagged metric is \
+cited as a primary driver of a grade.
 
 6. FABRICATED_DATA: The prose cites a specific number that does not \
 appear in the input data.
 
-7. UNCITED_BEHAVIORAL_CLAIM: The prose makes a claim about hitter \
-behavior (e.g., "hitters take it," "automatic take," "easy to lay off") \
-without citing the specific metric (xSwing_S, xWhiff_S, CSW%) that \
-supports the claim.
+7. UNCITED_BEHAVIORAL_CLAIM: A claim about hitter behavior (e.g., \
+"hitters take it," "automatic take") without citing the specific \
+metric (xSwing_S, xWhiff_S, CSW%) that supports it.
 
-For each problem, report:
-- Which specialist output contains the problem
+For each problem found, report:
 - The specific claim that is wrong
 - What the data actually shows
 - A suggested correction
@@ -311,7 +305,7 @@ class AuditFlag(BaseModel):
     """A single data audit flag."""
 
     category: str
-    specialist: str
+    specialist: str = ""
     claim: str
     data_shows: str
     suggested_fix: str
@@ -667,50 +661,155 @@ def _build_writer_input(
     runvalue: str,
     trends: str,
     game_shape: str,
-    audit_flags: list[AuditFlag] | None = None,
 ) -> str:
     """Compose all specialist outputs into writer input.
 
-    If audit flags are present, includes them so the writer knows which
-    specialist claims to distrust or correct.
+    Specialist outputs should already be clean (post-audit revision),
+    so no audit flags are needed here.
     """
-    parts = [
+    return "\n\n".join([
         f"## Pitcher: {ctx.pitcher_name} ({ctx.throws}HP, {ctx.role})\n",
         f"## Specialist Analysis 1: Stuff\n{stuff}\n",
         f"## Specialist Analysis 2: Location\n{location}\n",
         f"## Specialist Analysis 3: Run Value\n{runvalue}\n",
         f"## Specialist Analysis 4: Trends\n{trends}\n",
         f"## Specialist Analysis 5: Game Shape\n{game_shape}",
-    ]
-    if audit_flags:
-        flag_lines = ["## DATA AUDIT FLAGS (these specialist claims have been flagged as inaccurate)"]
-        flag_lines.append("IMPORTANT: Do NOT repeat flagged claims. Use the suggested correction instead.\n")
-        for f in audit_flags:
-            flag_lines.append(
-                f"- [{f.category}] in {f.specialist}: \"{f.claim}\" "
-                f"→ Data shows: {f.data_shows}. Correction: {f.suggested_fix}"
-            )
-        parts.append("\n\n" + "\n".join(flag_lines))
-    return "\n\n".join(parts)
+    ])
 
 
-def _build_audit_input(
-    ctx: PitcherContext,
-    specialists: "SpecialistOutputs",
+def _build_specialist_audit_input(ground_truth: str, specialist_output: str) -> str:
+    """Build auditor input for a single specialist."""
+    return (
+        f"## GROUND TRUTH DATA\n{ground_truth}\n\n"
+        f"## SPECIALIST OUTPUT TO AUDIT\n{specialist_output}"
+    )
+
+
+def _build_specialist_revision_input(
+    original_input: str,
+    specialist_output: str,
+    flags: list[AuditFlag],
 ) -> str:
-    """Build auditor input: raw ground truth data + specialist prose to check."""
-    baselines = _render_league_baselines(_pitch_types(ctx))
-    raw_data = _build_stuff_input(ctx)  # reuse stuff input as ground truth
+    """Build a revision prompt for a specialist to fix its own flagged issues."""
+    formatted = "\n".join(
+        f"- [{f.category}] \"{f.claim}\" → Data shows: {f.data_shows}. "
+        f"Fix: {f.suggested_fix}"
+        for f in flags
+    )
+    return (
+        f"## Original Data\n{original_input}\n\n"
+        f"## Your Previous Analysis\n{specialist_output}\n\n"
+        f"## Issues Found by Data Auditor\n{formatted}\n\n"
+        "Revise your analysis to correct ONLY the flagged issues. "
+        "Keep all unflagged material unchanged. Preserve the same "
+        "format and length."
+    )
+
+
+# Mapping from specialist name to data builder + specialist prompt
+_SPECIALIST_REGISTRY: list[tuple[str, str]] = [
+    ("stuff", "stuff"),
+    ("location", "location"),
+    ("runvalue", "runvalue"),
+    ("trends", "trends"),
+    ("game_shape", "game_shape"),
+]
+
+
+def _get_specialist_input(name: str, ctx: PitcherContext) -> str:
+    """Get the data input for a named specialist."""
+    builders = {
+        "stuff": _build_stuff_input,
+        "location": _build_location_input,
+        "runvalue": _build_runvalue_input,
+        "trends": _build_trend_input,
+        "game_shape": _build_game_shape_input,
+    }
+    return builders[name](ctx)
+
+
+async def _audit_and_revise_specialists(
+    specialists: "SpecialistOutputs",
+    specialist_agents: dict[str, "Agent[None, str]"],
+    auditor: "Agent[None, AuditResult]",
+    ctx: PitcherContext,
+    _model_override: Any = None,
+) -> tuple["SpecialistOutputs", list[AuditFlag]]:
+    """Audit each specialist's output independently, revise any with flags.
+
+    Phase 1.5a: Run 5 per-specialist audits concurrently.
+    Phase 1.5b: For any flagged specialist, re-run with audit feedback.
+
+    Returns:
+        Tuple of (clean SpecialistOutputs, all collected AuditFlags).
+    """
+    specialist_names = ["stuff", "location", "runvalue", "trends", "game_shape"]
+    outputs: dict[str, str] = {
+        name: getattr(specialists, name) for name in specialist_names
+    }
+
+    # Build ground truth input per specialist
+    ground_truths = {
+        name: _get_specialist_input(name, ctx) for name in specialist_names
+    }
+
+    # Phase 1.5a: Audit all 5 in parallel
+    async def _audit_one(name: str) -> tuple[str, AuditResult]:
+        audit_input = _build_specialist_audit_input(
+            ground_truths[name], outputs[name],
+        )
+        kwargs: dict[str, Any] = {"user_prompt": audit_input}
+        if _model_override is not None:
+            kwargs["model"] = _model_override
+        result = await auditor.run(**kwargs)
+        return name, result.output
+
+    audit_tasks = [_audit_one(name) for name in specialist_names]
+    audit_results = await asyncio.gather(*audit_tasks)
+
+    # Collect all flags, tag with specialist name
+    all_flags: list[AuditFlag] = []
+    flagged: dict[str, list[AuditFlag]] = {}
+    for name, audit_result in audit_results:
+        if not audit_result.is_clean:
+            for flag in audit_result.flags:
+                flag.specialist = name
+                all_flags.append(flag)
+            flagged[name] = audit_result.flags
+            log.info("Audit flagged %s: %d issue(s)", name, len(audit_result.flags))
+
+    if not flagged:
+        log.info("All specialists passed audit.")
+        return specialists, all_flags
+
+    # Phase 1.5b: Revise flagged specialists in parallel
+    log.info("Revising %d flagged specialist(s)...", len(flagged))
+
+    async def _revise_one(name: str, flags: list[AuditFlag]) -> tuple[str, str]:
+        revision_input = _build_specialist_revision_input(
+            ground_truths[name], outputs[name], flags,
+        )
+        agent = specialist_agents[name]
+        kwargs: dict[str, Any] = {"user_prompt": revision_input}
+        if _model_override is not None:
+            kwargs["model"] = _model_override
+        result = await agent.run(**kwargs)
+        return name, result.output
+
+    revision_tasks = [
+        _revise_one(name, flags) for name, flags in flagged.items()
+    ]
+    revisions = await asyncio.gather(*revision_tasks)
+
+    # Apply revisions
+    clean_outputs = dict(outputs)
+    for name, revised_text in revisions:
+        clean_outputs[name] = revised_text
+        log.info("Revised %s specialist.", name)
 
     return (
-        f"## GROUND TRUTH DATA\n{raw_data}\n\n"
-        f"{baselines}\n\n"
-        f"## SPECIALIST OUTPUT TO AUDIT\n\n"
-        f"### Stuff Specialist\n{specialists.stuff}\n\n"
-        f"### Location Specialist\n{specialists.location}\n\n"
-        f"### Run Value Specialist\n{specialists.runvalue}\n\n"
-        f"### Trend Specialist\n{specialists.trends}\n\n"
-        f"### Game Shape Specialist\n{specialists.game_shape}"
+        SpecialistOutputs(**clean_outputs),
+        all_flags,
     )
 
 
@@ -964,34 +1063,28 @@ async def _run_pipeline(
 
     # Phase 1: Run specialists concurrently
     log.info("Running specialists...")
-    specialists = await _run_specialists(
+    raw_specialists = await _run_specialists(
         stuff_agent, location_agent, runvalue_agent, trends_agent,
         game_shape_agent, ctx, _model_override,
     )
     log.info("Specialists complete.")
 
-    # Phase 1.5: Data auditor validates specialist prose against ground truth
+    # Phase 1.5: Per-specialist audit + revision loop
     log.info("Auditing specialist outputs...")
-    audit_input = _build_audit_input(ctx, specialists)
-    audit_kwargs: dict[str, Any] = {"user_prompt": audit_input}
-    if _model_override is not None:
-        audit_kwargs["model"] = _model_override
-
-    audit_result = await auditor.run(**audit_kwargs)
-    audit_check = audit_result.output
-
-    if audit_check.is_clean:
-        log.info("Audit clean. Composing narrative...")
-    else:
-        log.info("Audit found %d flag(s). Passing to writer for correction...", len(audit_check.flags))
+    specialist_agents = {
+        "stuff": stuff_agent, "location": location_agent,
+        "runvalue": runvalue_agent, "trends": trends_agent,
+        "game_shape": game_shape_agent,
+    }
+    specialists, audit_flags = await _audit_and_revise_specialists(
+        raw_specialists, specialist_agents, auditor, ctx, _model_override,
+    )
 
     # Phase 2: Writer + Executive Summary run concurrently
-    # Both consume the same specialist outputs; summary doesn't need to
-    # wait for the writer, so we run them in parallel.
+    # Writer gets clean specialist outputs (flagged claims already revised).
     writer_input = _build_writer_input(
         ctx, specialists.stuff, specialists.location,
         specialists.runvalue, specialists.trends, specialists.game_shape,
-        audit_flags=audit_check.flags if not audit_check.is_clean else None,
     )
     writer_kwargs: dict[str, Any] = {"user_prompt": writer_input}
     if _model_override is not None:
@@ -1070,7 +1163,7 @@ async def _run_pipeline(
         narrative=capsule,
         executive_summary=summary_bullets,
         specialists=specialists,
-        audit_flags=audit_check.flags,
+        audit_flags=audit_flags,
         anchor_warnings=anchor_check.warnings,
         revision_count=revision_count,
     )
