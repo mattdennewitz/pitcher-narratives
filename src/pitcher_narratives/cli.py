@@ -7,6 +7,7 @@ and generates an LLM-powered scouting report via streaming output.
 from __future__ import annotations
 
 import argparse
+import logging
 import os
 import sys
 from typing import TYPE_CHECKING
@@ -15,7 +16,8 @@ from dotenv import load_dotenv
 
 if TYPE_CHECKING:
     from pitcher_narratives.data import PitcherData
-    from pitcher_narratives.report import ReportResult
+
+log = logging.getLogger("pitcher_narratives")
 
 
 def parse_args() -> argparse.Namespace:
@@ -59,62 +61,39 @@ def parse_args() -> argparse.Namespace:
 
 
 def _print_verbose_summary(data: PitcherData) -> None:
-    """Print pitcher name, game dates, and pitch counts to stderr."""
+    """Log pitcher name, game dates, and pitch counts."""
     appearances = data.appearances.sort("game_date")
-    print(
-        f"\n{data.pitcher_name} (ID: {data.pitcher_id}, {data.throws}HP)",
-        file=sys.stderr,
-    )
-    print(f"{'Date':<12} {'Pitches':>7}  Role", file=sys.stderr)
-    print(f"{'─' * 12} {'─' * 7}  {'─' * 4}", file=sys.stderr)
+    log.info("%s (ID: %s, %sHP)", data.pitcher_name, data.pitcher_id, data.throws)
+    log.info("%-12s %7s  Role", "Date", "Pitches")
+    log.info("%s %s  %s", "─" * 12, "─" * 7, "─" * 4)
     for row in appearances.iter_rows(named=True):
-        print(
-            f"{row['game_date']!s:<12} {row['n_pitches']:>7}  {row['role']}",
-            file=sys.stderr,
-        )
+        log.info("%-12s %7d  %s", row["game_date"], row["n_pitches"], row["role"])
     total = appearances["n_pitches"].sum()
-    print(f"{'─' * 12} {'─' * 7}", file=sys.stderr)
-    print(
-        f"{'Total':<12} {total:>7}  ({len(appearances)} appearances)\n",
-        file=sys.stderr,
-    )
+    log.info("%s %s", "─" * 12, "─" * 7)
+    log.info("%-12s %7d  (%d appearances)", "Total", total, len(appearances))
 
 
-def _print_revision_status(result: ReportResult) -> None:
-    """Print revision loop outcome to stderr.
-
-    Three outcomes:
-    - First-try clean (revision_count=0, no warnings): "Passed anchor check"
-    - Revised and converged (revision_count>0, no warnings): "Revised N time(s) -- anchor check passed"
-    - Exhausted with warnings (revision_count>0, has warnings): count + warning lines
-    """
-    if result.revision_count == 0 and not result.anchor_warnings:
-        print("\nPassed anchor check", file=sys.stderr)
-    elif result.anchor_warnings:
-        print(
-            f"\nRevised {result.revision_count} time(s) -- anchor check found issues:",
-            file=sys.stderr,
-        )
-        for w in result.anchor_warnings:
-            print(f"  [{w.category}] {w.description}", file=sys.stderr)
-    else:
-        print(
-            f"\nRevised {result.revision_count} time(s) -- anchor check passed",
-            file=sys.stderr,
-        )
+def _setup_logging() -> None:
+    """Configure logging for pitcher_narratives to stderr."""
+    handler = logging.StreamHandler(sys.stderr)
+    handler.setFormatter(logging.Formatter("%(name)s: %(message)s"))
+    root = logging.getLogger("pitcher_narratives")
+    root.addHandler(handler)
+    root.setLevel(logging.INFO)
 
 
 def main() -> None:
     """Entry point: load pitcher data, assemble context, generate report."""
     load_dotenv()
     args = parse_args()
+    _setup_logging()
 
     from pitcher_narratives.data import load_pitcher_data
 
     try:
         pitcher_data = load_pitcher_data(args.pitcher, args.window)
     except ValueError as e:
-        print(str(e), file=sys.stderr)
+        log.error("%s", e)
         sys.exit(1)
 
     if args.verbose:
@@ -131,7 +110,7 @@ def main() -> None:
     ctx = assemble_pitcher_context(pitcher_data)
 
     data_file = write_data_file(ctx, args.pitcher, args.provider)
-    print(f"Wrote prompt data to {data_file}", file=sys.stderr)
+    log.info("Wrote prompt data to %s", data_file)
 
     if args.print_prompts:
         print_prompts(ctx)
@@ -148,15 +127,17 @@ def main() -> None:
     _API_KEYS = {"openai": "OPENAI_API_KEY", "claude": "ANTHROPIC_API_KEY", "gemini": "GEMINI_API_KEY"}
     if model_override is None and not os.environ.get(_API_KEYS[args.provider]):
         env_var = _API_KEYS[args.provider]
-        print(f"Error: {env_var} not set.", file=sys.stderr)
+        log.error("%s not set.", env_var)
         sys.exit(1)
 
     if args.pipeline:
         from pitcher_narratives.pipeline import generate_pipeline_streaming, write_pipeline_data_file
 
         data_file = write_pipeline_data_file(ctx, args.pitcher, args.provider)
-        print(f"Wrote prompt data to {data_file}", file=sys.stderr)
+        log.info("Wrote prompt data to %s", data_file)
 
+        # The narrative streams to stdout during this call
+        print("# Scouting Report\n")
         pipe_result = generate_pipeline_streaming(
             ctx,
             provider=args.provider,
@@ -164,37 +145,40 @@ def main() -> None:
             _model_override=model_override,
         )
 
-        # Print executive summary
+        # Executive summary
         if pipe_result.executive_summary:
-            print("\n## Executive Summary")
+            print("\n\n# Executive Summary\n")
             for bullet in pipe_result.executive_summary:
                 print(f"- {bullet}")
 
-        # Print stuff summary from specialist
-        print(f"\n---\n{pipe_result.specialists.stuff}")
+        # Stuff analysis
+        print(f"\n\n# Stuff Analysis\n\n{pipe_result.specialists.stuff}")
 
-        # Audit flag status
+        # Data audit
+        print("\n\n# Data Audit\n")
         if pipe_result.audit_flags:
-            print(f"\nData audit flagged {len(pipe_result.audit_flags)} issue(s):", file=sys.stderr)
             for f in pipe_result.audit_flags:
-                print(f"  [{f.category}] {f.specialist}: {f.claim}", file=sys.stderr)
-                print(f"    → {f.data_shows}", file=sys.stderr)
+                print(f"- **[{f.category}]** {f.specialist}: {f.claim}")
+                print(f"  - Data shows: {f.data_shows}")
         else:
-            print("\nData audit: clean", file=sys.stderr)
+            print("Clean — no issues found.")
 
-        # Revision status (reuse same logic)
+        # Anchor check
+        print("\n\n# Anchor Check\n")
         if pipe_result.revision_count == 0 and not pipe_result.anchor_warnings:
-            print("\nPassed anchor check", file=sys.stderr)
+            print("Passed on first draft.")
         elif pipe_result.anchor_warnings:
-            print(f"\nRevised {pipe_result.revision_count} time(s) -- anchor check found issues:", file=sys.stderr)
+            print(f"Revised {pipe_result.revision_count} time(s) — remaining issues:")
             for w in pipe_result.anchor_warnings:
-                print(f"  [{w.category}] {w.description}", file=sys.stderr)
+                print(f"- **[{w.category}]** {w.description}")
         else:
-            print(f"\nRevised {pipe_result.revision_count} time(s) -- anchor check passed", file=sys.stderr)
+            print(f"Revised {pipe_result.revision_count} time(s) — passed.")
 
         # Hallucination check
         hallucination_report = check_hallucinated_metrics(pipe_result.narrative)
     else:
+        # The narrative streams to stdout during this call
+        print("# Scouting Report\n")
         result = generate_report_streaming(
             ctx,
             provider=args.provider,
@@ -202,37 +186,42 @@ def main() -> None:
             _model_override=model_override,
         )
 
-        # Print executive summary
+        # Executive summary
         if result.executive_summary:
-            print("\n## Executive Summary")
+            print("\n\n# Executive Summary\n")
             for bullet in result.executive_summary:
                 print(f"- {bullet}")
 
-        # Print stuff summary
-        print(f"\n---\n{result.stuff_summary}")
+        # Stuff analysis
+        print(f"\n\n# Stuff Analysis\n\n{result.stuff_summary}")
 
-        # Print fantasy insights
-        print(f"\n---\n{result.fantasy_insights}")
+        # Fantasy insights
+        print(f"\n\n# Fantasy Insights\n\n{result.fantasy_insights}")
 
-        # Post-generation checks
-        # 1. Revision loop status
-        _print_revision_status(result)
+        # Anchor check
+        print("\n\n# Anchor Check\n")
+        if result.revision_count == 0 and not result.anchor_warnings:
+            print("Passed on first draft.")
+        elif result.anchor_warnings:
+            print(f"Revised {result.revision_count} time(s) — remaining issues:")
+            for w in result.anchor_warnings:
+                print(f"- **[{w.category}]** {w.description}")
+        else:
+            print(f"Revised {result.revision_count} time(s) — passed.")
 
         # Hallucination check
         hallucination_report = check_hallucinated_metrics(result.narrative)
 
+    # Hallucination check (shared across both paths)
     if not hallucination_report.is_clean:
+        print("\n\n# Hallucination Check\n")
         if hallucination_report.unknown_metrics:
-            print(
-                f"\nWARNING: Unknown metrics referenced: {', '.join(hallucination_report.unknown_metrics)}",
-                file=sys.stderr,
-            )
+            print(f"Unknown metrics referenced: {', '.join(hallucination_report.unknown_metrics)}")
         if hallucination_report.outcome_stat_warnings:
             print(
-                f"\nNOTE: Traditional outcome stats referenced "
+                f"Traditional outcome stats referenced "
                 f"(prompt warns against these): "
-                f"{', '.join(hallucination_report.outcome_stat_warnings)}",
-                file=sys.stderr,
+                f"{', '.join(hallucination_report.outcome_stat_warnings)}"
             )
 
 

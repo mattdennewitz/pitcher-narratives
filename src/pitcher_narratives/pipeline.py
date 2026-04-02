@@ -30,6 +30,7 @@ Anti-hallucination guardrails:
 from __future__ import annotations
 
 import asyncio
+import logging
 import sys
 from typing import Any
 
@@ -56,6 +57,8 @@ __all__ = [
     "AuditFlag", "AuditResult", "ExecutiveSummary", "PipelineResult",
     "generate_pipeline_streaming", "write_pipeline_data_file",
 ]
+
+log = logging.getLogger("pitcher_narratives.pipeline")
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -958,15 +961,15 @@ async def _run_pipeline(
     ) = _make_pipeline_agents(provider, thinking)
 
     # Phase 1: Run specialists concurrently
-    print("Running specialists...", file=sys.stderr, flush=True)
+    log.info("Running specialists...")
     specialists = await _run_specialists(
         stuff_agent, location_agent, runvalue_agent, trends_agent,
         game_shape_agent, ctx, _model_override,
     )
-    print("Specialists complete.", file=sys.stderr, flush=True)
+    log.info("Specialists complete.")
 
     # Phase 1.5: Data auditor validates specialist prose against ground truth
-    print("Auditing specialist outputs...", file=sys.stderr, flush=True)
+    log.info("Auditing specialist outputs...")
     audit_input = _build_audit_input(ctx, specialists)
     audit_kwargs: dict[str, Any] = {"user_prompt": audit_input}
     if _model_override is not None:
@@ -976,13 +979,9 @@ async def _run_pipeline(
     audit_check = audit_result.output
 
     if audit_check.is_clean:
-        print("Audit clean. Composing narrative...", file=sys.stderr, flush=True)
+        log.info("Audit clean. Composing narrative...")
     else:
-        n_flags = len(audit_check.flags)
-        print(
-            f"Audit found {n_flags} flag(s). Passing to writer for correction...",
-            file=sys.stderr, flush=True,
-        )
+        log.info("Audit found %d flag(s). Passing to writer for correction...", len(audit_check.flags))
 
     # Phase 2: Writer + Executive Summary run concurrently
     # Both consume the same specialist outputs; summary doesn't need to

@@ -7,6 +7,7 @@ loads data, and streams an answer from the analyst agent.
 from __future__ import annotations
 
 import argparse
+import logging
 import os
 import re
 import sys
@@ -14,6 +15,8 @@ import sys
 from dotenv import load_dotenv
 
 __all__ = ["main", "parse_args"]
+
+log = logging.getLogger("pitcher_narratives")
 
 _API_KEYS = {
     "openai": "OPENAI_API_KEY",
@@ -129,10 +132,20 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def _setup_logging() -> None:
+    """Configure logging for pitcher_narratives to stderr."""
+    handler = logging.StreamHandler(sys.stderr)
+    handler.setFormatter(logging.Formatter("%(name)s: %(message)s"))
+    root = logging.getLogger("pitcher_narratives")
+    root.addHandler(handler)
+    root.setLevel(logging.INFO)
+
+
 def main() -> None:
     """Entry point: parse question, resolve pitcher, load data, stream answer."""
     load_dotenv()
     args = parse_args()
+    _setup_logging()
 
     if not args.question:
         print(
@@ -145,20 +158,17 @@ def main() -> None:
     query, result = _extract_pitcher_name(args.question)
 
     if result is None:
-        print(f"No pitcher found matching '{args.question}'", file=sys.stderr)
+        log.error("No pitcher found matching '%s'", args.question)
         sys.exit(1)
 
     if result.match_type == "ambiguous":
-        print(
-            "Multiple pitchers matched. Use a more specific name.",
-            file=sys.stderr,
-        )
+        log.error("Multiple pitchers matched. Use a more specific name.")
         for i, (pid, name) in enumerate(result.candidates, 1):
-            print(f"  {i}. {name} (ID: {pid})", file=sys.stderr)
+            log.error("  %d. %s (ID: %s)", i, name, pid)
         sys.exit(1)
 
     pitcher_id = result.pitcher_id
-    print(f"Resolved: {result.pitcher_name} (ID: {pitcher_id})", file=sys.stderr)
+    log.info("Resolved: %s (ID: %s)", result.pitcher_name, pitcher_id)
 
     # Support test mode: use TestModel when env var is set
     model_override = None
@@ -170,7 +180,7 @@ def main() -> None:
     # Pre-flight API key check -- fail fast instead of hanging on missing key
     if model_override is None and not os.environ.get(_API_KEYS[args.provider]):
         env_var = _API_KEYS[args.provider]
-        print(f"Error: {env_var} not set.", file=sys.stderr)
+        log.error("%s not set.", env_var)
         sys.exit(1)
 
     # Lazy imports for fast startup
@@ -180,7 +190,7 @@ def main() -> None:
     try:
         pitcher_data = load_pitcher_data(pitcher_id, args.window)
     except ValueError as e:
-        print(str(e), file=sys.stderr)
+        log.error("%s", e)
         sys.exit(1)
 
     ctx = assemble_pitcher_context(pitcher_data)
@@ -191,11 +201,13 @@ def main() -> None:
         data_file = write_pipeline_data_file(
             ctx, pitcher_id, args.provider, question=args.question,
         )
-        print(f"Wrote prompt data to {data_file}", file=sys.stderr)
+        log.info("Wrote prompt data to %s", data_file)
 
         from pitcher_narratives.analyst import ask_question_pipeline
 
-        result = ask_question_pipeline(
+        # The answer streams to stdout during this call
+        print("# Answer\n")
+        pipeline_result = ask_question_pipeline(
             args.question,
             ctx,
             pitcher_data,
@@ -204,15 +216,17 @@ def main() -> None:
             _model_override=model_override,
         )
 
-        # Print audit flags
-        if result.audit_flags:
-            print(f"\nData audit flagged {len(result.audit_flags)} issue(s):", file=sys.stderr)
-            for f in result.audit_flags:
-                print(f"  [{f.category}] {f.specialist}: {f.claim}", file=sys.stderr)
+        # Data audit
+        print("\n\n# Data Audit\n")
+        if pipeline_result.audit_flags:
+            for f in pipeline_result.audit_flags:
+                print(f"- **[{f.category}]** {f.specialist}: {f.claim}")
+                print(f"  - Data shows: {f.data_shows}")
         else:
-            print("\nData audit: clean", file=sys.stderr)
+            print("Clean — no issues found.")
 
-        print(f"\n---\n{result.stuff_summary}")
+        # Stuff analysis
+        print(f"\n\n# Stuff Analysis\n\n{pipeline_result.stuff_summary}")
     else:
         from pitcher_narratives.analyst import _ANALYST_INSTRUCTIONS, ask_question_streaming
         from pathlib import Path
@@ -227,8 +241,10 @@ def main() -> None:
         ]
         data_file = f"data-{pitcher_id}-{args.provider}-ask-single.md"
         Path(data_file).write_text("\n".join(data_sections))
-        print(f"Wrote prompt data to {data_file}", file=sys.stderr)
+        log.info("Wrote prompt data to %s", data_file)
 
+        # The answer streams to stdout during this call
+        print("# Answer\n")
         ask_question_streaming(
             args.question,
             ctx,

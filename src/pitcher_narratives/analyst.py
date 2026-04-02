@@ -8,6 +8,7 @@ PitcherContext data via RunContext[QADeps] dependency injection.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import Any
 
@@ -21,6 +22,8 @@ from pitcher_narratives.engine import compute_league_baselines
 from pitcher_narratives.report import PROVIDERS, THINKING_LEVELS
 
 __all__ = ["PITCH_TYPE_MAP", "PipelineAnswer", "QADeps", "ask_question_streaming", "ask_question_pipeline"]
+
+log = logging.getLogger("pitcher_narratives.analyst")
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -612,14 +615,14 @@ def ask_question_pipeline(
 
     async def _run() -> PipelineAnswer:
         # Phase 1: Run specialists concurrently
-        print("Running specialists...", file=sys.stderr, flush=True)
+        log.info("Running specialists...")
         specialists = await _run_specialists(
             stuff_agent, location_agent, runvalue_agent, trends_agent,
             game_shape_agent, context, _model_override,
         )
 
         # Phase 1.5: Data auditor validates specialist outputs
-        print("Auditing...", file=sys.stderr, flush=True)
+        log.info("Auditing...")
         audit_input = _build_audit_input(context, specialists)
         audit_kwargs: dict[str, Any] = {"user_prompt": audit_input}
         if _model_override is not None:
@@ -628,9 +631,8 @@ def ask_question_pipeline(
         audit_check: AuditResult = audit_result.output
 
         if not audit_check.is_clean:
-            n = len(audit_check.flags)
-            print(f"Audit flagged {n} issue(s).", file=sys.stderr, flush=True)
-        print("Answering...", file=sys.stderr, flush=True)
+            log.info("Audit flagged %d issue(s).", len(audit_check.flags))
+        log.info("Answering...")
 
         # Phase 2: Answerer composes from specialist outputs (streamed)
         model_name, model_settings = _make_analyst(provider, thinking)
