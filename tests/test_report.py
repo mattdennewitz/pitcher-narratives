@@ -53,15 +53,15 @@ def ctx():
 
 def test_synthesizer_model_matches_provider():
     """Synthesizer agent uses the correct model for each provider."""
-    (synth, _, _, _), _ = _make_agents(provider="claude")
+    (synth, _, _, _, _), _ = _make_agents(provider="claude")
     assert "claude-sonnet-4-6" in str(synth.model)
-    (synth_oai, _, _, _), _ = _make_agents(provider="openai")
+    (synth_oai, _, _, _, _), _ = _make_agents(provider="openai")
     assert "gpt-5.4-mini" in str(synth_oai.model)
 
 
 def test_synthesizer_output_type_is_str():
     """Synthesizer output_type is str."""
-    (synth, _, _, _), _ = _make_agents()
+    (synth, _, _, _, _), _ = _make_agents()
     assert synth.output_type is str
 
 
@@ -98,7 +98,7 @@ def test_synthesizer_prompt_balanced_gains_and_drops():
 
 def test_editor_model_matches_provider():
     """Editor agent uses the correct model for the provider."""
-    (_, ed, _, _), _ = _make_agents(provider="claude")
+    (_, ed, _, _, _), _ = _make_agents(provider="claude")
     assert "claude-sonnet-4-6" in str(ed.model)
 
 
@@ -428,13 +428,13 @@ def test_hallucination_guard_hardhit_pct_still_known():
 
 def test_hook_writer_model_matches_provider():
     """Hook writer agent uses the correct model for the provider."""
-    (_, _, hook, _), _ = _make_agents(provider="claude")
+    (_, _, hook, _, _), _ = _make_agents(provider="claude")
     assert "claude-sonnet-4-6" in str(hook.model)
 
 
 def test_hook_writer_output_type_is_str():
     """Hook writer output_type is str."""
-    (_, _, hook, _), _ = _make_agents()
+    (_, _, hook, _, _), _ = _make_agents()
     assert hook.output_type is str
 
 
@@ -470,13 +470,13 @@ def test_report_result_narrative_matches_editor_output(ctx):
 
 def test_fantasy_analyst_model_matches_provider():
     """Fantasy analyst agent uses the correct model for the provider."""
-    (_, _, _, fantasy), _ = _make_agents(provider="claude")
+    (_, _, _, fantasy, _), _ = _make_agents(provider="claude")
     assert "claude-sonnet-4-6" in str(fantasy.model)
 
 
 def test_fantasy_analyst_output_type_is_str():
     """Fantasy analyst output_type is str."""
-    (_, _, _, fantasy), _ = _make_agents()
+    (_, _, _, fantasy, _), _ = _make_agents()
     assert fantasy.output_type is str
 
 
