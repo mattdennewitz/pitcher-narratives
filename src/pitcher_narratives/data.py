@@ -35,7 +35,7 @@ __all__ = [
 _DEFAULT_DATA_DIR = Path(__file__).resolve().parent.parent.parent
 _data_dir_override = os.environ.get("PITCHER_NARRATIVES_DATA_DIR")
 DATA_DIR = Path(_data_dir_override) if _data_dir_override else _DEFAULT_DATA_DIR
-_YEARS: list[int] = [2026]
+_YEARS: list[int] = [2025, 2026]
 PARQUET_PATH = DATA_DIR / f"statcast_{_YEARS[-1]}.parquet"
 AGGS_DIR = DATA_DIR / "aggs"
 RV_DF_PATH = AGGS_DIR / "RV_df.csv"
@@ -126,24 +126,34 @@ def load_csv(filename: str, pitcher_id: int | None) -> pl.DataFrame:
 def load_statcast(pitcher_id: int) -> pl.DataFrame:
     """Load Statcast pitch-level data filtered to a single pitcher.
 
-    Reads the parquet file, filters to allowed game types (excluding
-    spring training and exhibition), then filters to the given pitcher.
+    Reads parquet files for all configured years in ``_YEARS``, filters
+    each to allowed game types (excluding spring training and exhibition),
+    filters to the given pitcher, and concatenates results. Missing year
+    files are skipped gracefully.
 
     Args:
         pitcher_id: MLB pitcher ID to filter on.
 
     Returns:
-        Polars DataFrame containing only regular-season rows for the given pitcher.
+        Polars DataFrame containing only regular-season rows for the given pitcher
+        across all available years.
 
     Raises:
         ValueError: If no rows found for the given pitcher ID after filtering.
     """
-    df = pl.read_parquet(PARQUET_PATH)
-    df = filter_game_type(df)
-    result = df.filter(pl.col("pitcher") == pitcher_id)
-    if result.is_empty():
+    frames: list[pl.DataFrame] = []
+    for year in _YEARS:
+        path = DATA_DIR / f"statcast_{year}.parquet"
+        if not path.exists():
+            continue
+        df = pl.read_parquet(path)
+        df = filter_game_type(df)
+        filtered = df.filter(pl.col("pitcher") == pitcher_id)
+        if not filtered.is_empty():
+            frames.append(filtered)
+    if not frames:
         raise ValueError(f"Pitcher {pitcher_id} not found")
-    return result
+    return pl.concat(frames)
 
 
 def load_run_values() -> pl.DataFrame:
@@ -159,6 +169,9 @@ def load_run_values() -> pl.DataFrame:
 def load_agg_csvs(pitcher_id: int) -> dict[str, pl.DataFrame]:
     """Load all 8 Pitching+ CSV aggregation files filtered to a pitcher.
 
+    Reads year-prefixed CSV files for all configured years in ``_YEARS``
+    and concatenates per grain. Missing year files are skipped gracefully.
+
     Args:
         pitcher_id: MLB pitcher ID to filter on.
 
@@ -170,9 +183,18 @@ def load_agg_csvs(pitcher_id: int) -> dict[str, pl.DataFrame]:
     all_grains = [*_SEASON_GRAINS, *_APPEARANCE_GRAINS]
     result: dict[str, pl.DataFrame] = {}
     for grain in all_grains:
-        filename = f"{_YEARS[-1]}-{grain}.csv"
-        pid = None if grain == "team" else pitcher_id
-        result[grain] = load_csv(filename, pid)
+        frames: list[pl.DataFrame] = []
+        for year in _YEARS:
+            filename = f"{year}-{grain}.csv"
+            path = AGGS_DIR / filename
+            if not path.exists():
+                continue
+            pid = None if grain == "team" else pitcher_id
+            frames.append(load_csv(filename, pid))
+        if frames:
+            result[grain] = pl.concat(frames)
+        else:
+            result[grain] = pl.DataFrame()
     return result
 
 
