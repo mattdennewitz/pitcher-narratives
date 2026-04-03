@@ -1185,6 +1185,8 @@ def _make_pitcher_data_for_trends(
         window_appearances=pl.DataFrame(),
         season_baseline=pl.DataFrame(),
         pitch_type_baseline=pl.DataFrame(),
+        prior_season_baseline=pl.DataFrame(),
+        prior_pitch_type_baseline=pl.DataFrame(),
         agg_csvs={"pitcher_type": pitcher_type_df},
         pitcher_id=pitcher_id,
         pitcher_name="Test Pitcher",
