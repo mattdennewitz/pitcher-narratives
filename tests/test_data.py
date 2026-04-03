@@ -169,7 +169,7 @@ def test_filter_game_type_no_column():
     df = pl.DataFrame({"pitcher": [1, 2], "velo": [95.0, 93.0]})
     result = filter_game_type(df)
     assert result.shape == df.shape
-    assert result.frame_equal(df)
+    assert result.equals(df)
 
 
 def test_filter_game_type_exported():
