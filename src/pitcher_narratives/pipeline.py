@@ -585,6 +585,9 @@ def _build_trend_input(ctx: PitcherContext) -> str:
         ctx._render_release_point_section(),
         ctx._render_hard_hit_section(),
     ]
+    # Per-appearance pitch trends (three-way comparison)
+    if ctx.appearance_pitch_trends is not None:
+        sections.append(ctx._render_appearance_pitch_trends_section())
     # Cross-season context (when available) — trends specialist gets full YoY section
     if ctx.cross_season_summary is not None or ctx.arsenal_trend is not None:
         sections.append(ctx._render_yoy_section())

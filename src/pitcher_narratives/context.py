@@ -10,6 +10,8 @@ from pydantic import BaseModel, ConfigDict
 
 from pitcher_narratives.data import PitcherData
 from pitcher_narratives.engine import (
+    AppearancePitchTrendRecord,
+    AppearancePitchTrends,
     ArsenalTrend,
     ComponentAttribution,
     CrossSeasonSummary,
@@ -26,6 +28,7 @@ from pitcher_narratives.engine import (
     TTOPlatoonSplit,
     VelocityArc,
     WorkloadContext,
+    compute_appearance_pitch_trends,
     compute_arsenal_summary,
     compute_arsenal_trends,
     compute_component_attribution,
@@ -84,6 +87,9 @@ class PitcherContext(BaseModel):
     arsenal_trend: ArsenalTrend | None = None
     """Year-over-year arsenal evolution (added/dropped/changed pitches). None for single-season pitchers."""
 
+    appearance_pitch_trends: AppearancePitchTrends | None = None
+    """Per-appearance pitch trend analysis. None when insufficient data."""
+
     def to_prompt(self) -> str:
         """Render as prompt-ready markdown under 2,000 tokens."""
         sections: list[str] = []
@@ -105,6 +111,9 @@ class PitcherContext(BaseModel):
 
         # Arsenal table
         sections.append(self._render_arsenal_section())
+
+        # Per-appearance pitch trends (three-way comparison)
+        sections.append(self._render_appearance_pitch_trends_section())
 
         # Execution table
         sections.append(self._render_execution_section())
@@ -533,6 +542,73 @@ class PitcherContext(BaseModel):
             )
         return "\n".join(lines)
 
+    def _render_appearance_pitch_trends_section(self) -> str:
+        """Render per-appearance pitch trends table (three-way comparison).
+
+        Shows velocity and movement for each pitch type across the most recent
+        appearance, the lookback window average, and the prior-season baseline.
+
+        Returns:
+            Rendered markdown string, or "" when no data exists.
+        """
+        apt = self.appearance_pitch_trends
+        if apt is None or not apt.records:
+            return ""
+
+        lines = [f"## Appearance Pitch Trends (last start vs window vs prior season)"]
+        lines.append(f"*Last start: {apt.last_game_date}*")
+        lines.append("")
+
+        # Velocity table
+        lines.append("| Pitch | Last Velo | Win Avg | Prior | Velo vs Win | Velo vs Prior | Pattern |")
+        lines.append("|-------|-----------|---------|-------|-------------|---------------|---------|")
+        for r in apt.records:
+            prior_v = f"{r.prior_season_velo:.1f}" if r.prior_season_velo is not None else "--"
+            lines.append(
+                f"| {r.pitch_name} ({r.pitch_type}) "
+                f"| {r.last_start_velo:.1f} "
+                f"| {r.window_avg_velo:.1f} "
+                f"| {prior_v} "
+                f"| {r.last_vs_window_velo} "
+                f"| {r.last_vs_prior_velo} "
+                f"| {r.pattern_label} |"
+            )
+
+        lines.append("")
+        lines.append("**Movement detail (inches):**")
+
+        # Horizontal movement table
+        lines.append("")
+        lines.append("| Pitch | Last H-mov | Win H-mov | Prior H-mov | H delta vs Win | H delta vs Prior |")
+        lines.append("|-------|------------|-----------|-------------|----------------|------------------|")
+        for r in apt.records:
+            prior_hx = f"{r.prior_season_pfx_x:.1f}" if r.prior_season_pfx_x is not None else "--"
+            lines.append(
+                f"| {r.pitch_name} "
+                f"| {r.last_start_pfx_x:.1f} "
+                f"| {r.window_avg_pfx_x:.1f} "
+                f"| {prior_hx} "
+                f"| {r.last_vs_window_pfx_x} "
+                f"| {r.last_vs_prior_pfx_x} |"
+            )
+
+        # Vertical movement table
+        lines.append("")
+        lines.append("| Pitch | Last V-mov | Win V-mov | Prior V-mov | V delta vs Win | V delta vs Prior |")
+        lines.append("|-------|------------|-----------|-------------|----------------|------------------|")
+        for r in apt.records:
+            prior_vz = f"{r.prior_season_pfx_z:.1f}" if r.prior_season_pfx_z is not None else "--"
+            lines.append(
+                f"| {r.pitch_name} "
+                f"| {r.last_start_pfx_z:.1f} "
+                f"| {r.window_avg_pfx_z:.1f} "
+                f"| {prior_vz} "
+                f"| {r.last_vs_window_pfx_z} "
+                f"| {r.last_vs_prior_pfx_z} |"
+            )
+
+        return "\n".join(lines)
+
     def _render_yoy_section(self) -> str:
         """Render year-over-year changes section.
 
@@ -628,6 +704,7 @@ def assemble_pitcher_context(data: PitcherData) -> PitcherContext:
     tto = compute_tto_analysis(data)
     cross_season_summary = compute_cross_season_summary(data)
     arsenal_trend = compute_arsenal_trends(data)
+    appearance_pitch_trends = compute_appearance_pitch_trends(data)
 
     # Determine role from most recent appearance
     most_recent = data.appearances.sort("game_date", descending=True).row(0, named=True)
@@ -652,4 +729,5 @@ def assemble_pitcher_context(data: PitcherData) -> PitcherContext:
         tto=tto,
         cross_season_summary=cross_season_summary,
         arsenal_trend=arsenal_trend,
+        appearance_pitch_trends=appearance_pitch_trends,
     )

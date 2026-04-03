@@ -10,6 +10,8 @@ from pitcher_narratives.context import PitcherContext, assemble_pitcher_context
 from pitcher_narratives.data import PitcherData, load_pitcher_data
 from pitcher_narratives.engine import (
     AddedDroppedPitch,
+    AppearancePitchTrendRecord,
+    AppearancePitchTrends,
     AppearanceWorkload,
     ArsenalTrend,
     ComponentAttribution,
@@ -43,6 +45,7 @@ def _make_synthetic_ctx(
     *,
     cross_season_summary: CrossSeasonSummary | None = None,
     arsenal_trend: ArsenalTrend | None = None,
+    appearance_pitch_trends: AppearancePitchTrends | None = None,
 ) -> PitcherContext:
     """Build a minimal synthetic PitcherContext for YoY tests.
 
@@ -148,6 +151,7 @@ def _make_synthetic_ctx(
         tto=None,
         cross_season_summary=cross_season_summary,
         arsenal_trend=arsenal_trend,
+        appearance_pitch_trends=appearance_pitch_trends,
     )
 
 
@@ -591,3 +595,104 @@ def test_to_prompt_yoy_renders_movement_deltas():
         yoy_text = yoy_section
     # Slider's Steady movement should not appear
     assert "Steady (+0.1 in)" not in yoy_text
+
+
+# ── Appearance Pitch Trends context tests ────────────────────────────
+
+
+def _make_appearance_pitch_trends() -> AppearancePitchTrends:
+    """Create a synthetic AppearancePitchTrends for tests."""
+    return AppearancePitchTrends(
+        last_game_date="2026-04-15",
+        records=[
+            AppearancePitchTrendRecord(
+                pitch_type="FF",
+                pitch_name="4-Seam Fastball",
+                n_pitches_last=20,
+                last_start_velo=96.0,
+                window_avg_velo=94.3,
+                prior_season_velo=94.0,
+                last_vs_window_velo="Up 1.7 mph",
+                last_vs_prior_velo="Up 2.0 mph",
+                last_start_pfx_x=0.96,
+                window_avg_pfx_x=0.76,
+                prior_season_pfx_x=0.66,
+                last_vs_window_pfx_x="Steady (+0.2 in)",
+                last_vs_prior_pfx_x="Steady (+0.3 in)",
+                last_start_pfx_z=1.56,
+                window_avg_pfx_z=1.44,
+                prior_season_pfx_z=1.38,
+                last_vs_window_pfx_z="Steady (+0.1 in)",
+                last_vs_prior_pfx_z="Steady (+0.2 in)",
+                pattern_label="something new",
+            ),
+        ],
+    )
+
+
+def test_appearance_pitch_trends_field_default_none():
+    """appearance_pitch_trends defaults to None."""
+    ctx = _make_synthetic_ctx()
+    assert ctx.appearance_pitch_trends is None
+
+
+def test_appearance_pitch_trends_field_accepts_value():
+    """PitcherContext accepts appearance_pitch_trends field."""
+    apt = _make_appearance_pitch_trends()
+    ctx = _make_synthetic_ctx(appearance_pitch_trends=apt)
+    assert ctx.appearance_pitch_trends is apt
+    assert len(ctx.appearance_pitch_trends.records) == 1
+
+
+def test_to_prompt_includes_appearance_pitch_trends():
+    """to_prompt() renders 'Appearance Pitch Trends' header when data exists."""
+    apt = _make_appearance_pitch_trends()
+    ctx = _make_synthetic_ctx(appearance_pitch_trends=apt)
+    prompt = ctx.to_prompt()
+    assert "Appearance Pitch Trends" in prompt
+
+
+def test_to_prompt_omits_appearance_pitch_trends_when_none():
+    """to_prompt() omits appearance pitch trends when field is None."""
+    ctx = _make_synthetic_ctx(appearance_pitch_trends=None)
+    prompt = ctx.to_prompt()
+    assert "Appearance Pitch Trends" not in prompt
+
+
+def test_to_prompt_appearance_pitch_trends_contains_velo_table():
+    """Rendered section has velocity comparison table with pattern label."""
+    apt = _make_appearance_pitch_trends()
+    ctx = _make_synthetic_ctx(appearance_pitch_trends=apt)
+    prompt = ctx.to_prompt()
+    assert "Last Velo" in prompt
+    assert "Win Avg" in prompt
+    assert "Pattern" in prompt
+    assert "something new" in prompt
+    assert "96.0" in prompt  # last_start_velo
+    assert "94.3" in prompt  # window_avg_velo
+
+
+def test_to_prompt_appearance_pitch_trends_contains_movement_detail():
+    """Rendered section has horizontal and vertical movement detail tables."""
+    apt = _make_appearance_pitch_trends()
+    ctx = _make_synthetic_ctx(appearance_pitch_trends=apt)
+    prompt = ctx.to_prompt()
+    assert "Movement detail" in prompt
+    assert "H-mov" in prompt
+    assert "V-mov" in prompt
+
+
+def test_to_prompt_appearance_pitch_trends_ordering():
+    """Appearance Pitch Trends appears after Arsenal and before Execution."""
+    apt = _make_appearance_pitch_trends()
+    ctx = _make_synthetic_ctx(appearance_pitch_trends=apt)
+    prompt = ctx.to_prompt()
+    arsenal_pos = prompt.find("## Arsenal")
+    apt_pos = prompt.find("## Appearance Pitch Trends")
+    exec_pos = prompt.find("## Execution")
+    assert arsenal_pos > 0, "Arsenal section not found"
+    assert apt_pos > 0, "Appearance Pitch Trends section not found"
+    assert exec_pos > 0, "Execution section not found"
+    assert arsenal_pos < apt_pos < exec_pos, (
+        f"Ordering wrong: Arsenal@{arsenal_pos}, APT@{apt_pos}, Exec@{exec_pos}"
+    )
