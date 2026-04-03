@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.8
 milestone_name: Cross-Season Trend Analysis
-status: ready_to_plan
-stopped_at: Roadmap created for v1.8
-last_updated: "2026-04-02"
-last_activity: 2026-04-02
+status: executing
+stopped_at: Completed 21-01-PLAN.md
+last_updated: "2026-04-03"
+last_activity: 2026-04-03
 progress:
   total_phases: 4
   completed_phases: 0
-  total_plans: 0
-  completed_plans: 0
+  total_plans: 1
+  completed_plans: 1
 ---
 
 # Project State
@@ -24,10 +24,10 @@ See: .planning/PROJECT.md (updated 2026-04-03)
 
 ## Current Position
 
-Phase: 19 (Cross-Season Baseline Exposure)
-Plan: Not started
-Status: Ready to plan
-Last activity: 2026-04-02
+Phase: 21 (Arsenal Trend Engine)
+Plan: 1 of 1 complete
+Status: Executing
+Last activity: 2026-04-03
 
 ## Accumulated Context
 
@@ -37,6 +37,8 @@ Decisions are logged in PROJECT.md Key Decisions table.
 
 - v1.7: Per-season baseline grouping (not cross-season averaged) -- foundation for v1.8
 - v1.7: load_pitcher_data() filters baselines to max season -- v1.8 Phase 19 removes this filter
+- v1.8: Arsenal trend engine computes prior-season baselines from agg_csvs directly rather than depending on Phase 19 PitcherData changes
+- v1.8: _MIN_PITCHES (10) threshold for YoY added/dropped pitch detection
 
 ### Pending Todos
 
@@ -49,6 +51,6 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-04-02
-Stopped at: Roadmap created for v1.8
+Last session: 2026-04-03
+Stopped at: Completed 21-01-PLAN.md (Arsenal Trend Engine)
 Resume file: None

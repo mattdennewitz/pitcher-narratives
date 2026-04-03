@@ -16,7 +16,7 @@
 
 - [ ] **Phase 19: Cross-Season Baseline Exposure** - Make prior-season baselines available to engine computations
 - [ ] **Phase 20: Season-Delta Engine** - Compute year-over-year deltas for top-level pitcher metrics
-- [ ] **Phase 21: Arsenal Trend Engine** - Compute year-over-year deltas per pitch type (added/dropped pitches, usage shifts, grade changes)
+- [x] **Phase 21: Arsenal Trend Engine** - Compute year-over-year deltas per pitch type (added/dropped pitches, usage shifts, grade changes) (completed 2026-04-03)
 - [ ] **Phase 22: Context Assembly & Prompt Rendering** - Integrate cross-season insights into PitcherContext and LLM prompt
 
 ## Phase Details
@@ -86,7 +86,7 @@
 | 18. Consumer Module Updates | v1.7 | 2/2 | Complete | 2026-04-03 |
 | 19. Cross-Season Baseline Exposure | v1.8 | 0/0 | Not started | - |
 | 20. Season-Delta Engine | v1.8 | 0/0 | Not started | - |
-| 21. Arsenal Trend Engine | v1.8 | 0/0 | Not started | - |
+| 21. Arsenal Trend Engine | v1.8 | 1/1 | Complete   | 2026-04-03 |
 | 22. Context Assembly & Prompt Rendering | v1.8 | 0/0 | Not started | - |
 
 ---

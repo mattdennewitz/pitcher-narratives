@@ -21,9 +21,9 @@ Requirements for Cross-Season Trend Analysis milestone. Each maps to roadmap pha
 
 ### Arsenal Trends
 
-- [ ] **ATRN-01**: Engine identifies pitches added (present in current season, absent in prior) and dropped (present in prior, absent in current) using a minimum-pitch threshold
-- [ ] **ATRN-02**: Engine computes per-pitch-type YoY deltas for usage rate, P+, S+, and velocity for pitches present in both seasons
-- [ ] **ATRN-03**: Arsenal trend output is None when pitcher has only one season of data
+- [x] **ATRN-01**: Engine identifies pitches added (present in current season, absent in prior) and dropped (present in prior, absent in current) using a minimum-pitch threshold
+- [x] **ATRN-02**: Engine computes per-pitch-type YoY deltas for usage rate, P+, S+, and velocity for pitches present in both seasons
+- [x] **ATRN-03**: Arsenal trend output is None when pitcher has only one season of data
 
 ### Context & Prompt
 
@@ -77,9 +77,9 @@ Which phases cover which requirements. Updated during roadmap creation.
 | SDLT-01 | Phase 20 | Pending |
 | SDLT-02 | Phase 20 | Pending |
 | SDLT-03 | Phase 20 | Pending |
-| ATRN-01 | Phase 21 | Pending |
-| ATRN-02 | Phase 21 | Pending |
-| ATRN-03 | Phase 21 | Pending |
+| ATRN-01 | Phase 21 | Complete |
+| ATRN-02 | Phase 21 | Complete |
+| ATRN-03 | Phase 21 | Complete |
 | CPMT-01 | Phase 22 | Pending |
 | CPMT-02 | Phase 22 | Pending |
 | CPMT-03 | Phase 22 | Pending |
