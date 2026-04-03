@@ -140,12 +140,6 @@ def main() -> None:
             _model_override=model_override,
         )
 
-        # Executive summary
-        if pipeline_result.executive_summary:
-            print("\n\n# Executive Summary\n")
-            for bullet in pipeline_result.executive_summary:
-                print(f"- {bullet}")
-
         # Data audit
         print("\n\n# Data Audit\n")
         if pipeline_result.audit_flags:
