@@ -1,10 +1,11 @@
-"""Tests for the fastball quality, arsenal, execution metrics, and workload engine.
+"""Tests for the fastball quality, arsenal, execution metrics, workload, and cross-season engine.
 
 Covers delta string helpers, FastballSummary computation, VelocityArc
 computation, cold start fallback, small sample flagging, arsenal summary,
 platoon mix shifts, first-pitch weaponry analysis, execution metrics
-(CSW%, zone rate, chase rate, xWhiff, xSwing, xRV100 percentile), and
-workload context (rest days, IP, pitch counts, consecutive days).
+(CSW%, zone rate, chase rate, xWhiff, xSwing, xRV100 percentile),
+workload context (rest days, IP, pitch counts, consecutive days), and
+cross-season year-over-year delta computation.
 """
 
 import polars as pl
@@ -14,6 +15,7 @@ from pitcher_narratives.engine import (
     _CSW_DESCRIPTIONS,
     AppearanceWorkload,
     ComponentAttribution,
+    CrossSeasonSummary,
     ExecutionMetrics,
     FastballSummary,
     FirstPitchEntry,
@@ -39,6 +41,7 @@ from pitcher_narratives.engine import (
     _velo_delta_string,
     compute_arsenal_summary,
     compute_component_attribution,
+    compute_cross_season_summary,
     compute_execution_metrics,
     compute_fastball_summary,
     compute_first_pitch_weaponry,
@@ -1079,3 +1082,191 @@ def test_component_attribution_pitch_names():
         assert attr.pitch_name == expected_names.get(attr.pitch_type, attr.pitch_type), (
             f"{attr.pitch_type}: pitch_name={attr.pitch_name}"
         )
+
+
+# -- Cross-season summary --
+
+
+def _create_cross_season_pitcher_data(tmp_path, monkeypatch, years=(2025, 2026)):
+    """Create synthetic multi-year PitcherData with columns needed by the engine.
+
+    Extends the pattern from test_data._create_synthetic_multi_year_data but
+    adds: release_speed, pitch_type, events, and pitch_name columns to statcast,
+    and uses P+/S+/L+ column names matching real pitchingplus CSV output.
+
+    Synthetic metric values:
+        2025: P+=98, S+=100, L+=95, velo~93.5
+        2026: P+=105, S+=110, L+=100, velo~95.0
+    """
+    from datetime import date as date_cls
+
+    import pitcher_narratives.data as data_mod
+
+    aggs_dir = tmp_path / "aggs"
+    aggs_dir.mkdir(exist_ok=True)
+
+    # Grain definitions (must match data.py)
+    season_grains = ("pitcher", "pitcher_type", "pitcher_type_platoon", "team")
+    appearance_grains = (
+        "pitcher_appearance",
+        "pitcher_type_appearance",
+        "pitcher_type_platoon_appearance",
+        "all_pitches",
+    )
+
+    for year in years:
+        # Velocities: 2025=93.5, 2026=95.0
+        velo = 93.5 if year == 2025 else 95.0
+        game_dt = date_cls(year, 6, 15)
+        game_pk_val = 100000 + year
+
+        # Create statcast with enough rows: 6 pitches across 2 innings,
+        # including events for IP computation (outs in inning 2).
+        statcast_df = pl.DataFrame(
+            {
+                "pitcher": [12345] * 6,
+                "player_name": ["Test Pitcher"] * 6,
+                "p_throws": ["R"] * 6,
+                "game_type": ["R"] * 6,
+                "game_year": [year] * 6,
+                "game_pk": [game_pk_val] * 6,
+                "game_date": [game_dt] * 6,
+                "inning": [1, 1, 1, 2, 2, 2],
+                "release_speed": [velo, velo + 0.5, velo - 0.5, velo, velo + 0.2, velo - 0.2],
+                "pitch_type": ["FF", "FF", "FF", "FF", "FF", "FF"],
+                "pitch_name": ["4-Seam Fastball"] * 6,
+                "events": [None, None, "strikeout", None, "field_out", "field_out"],
+            }
+        )
+        statcast_df.write_parquet(tmp_path / f"statcast_{year}.parquet")
+
+        # Create CSV agg files with P+/S+/L+ columns (matching real pitchingplus output)
+        p_plus = 98.0 + (year - 2025) * 7  # 2025=98, 2026=105
+        s_plus = 100.0 + (year - 2025) * 10  # 2025=100, 2026=110
+        l_plus = 95.0 + (year - 2025) * 5  # 2025=95, 2026=100
+
+        for grain in [*season_grains, *appearance_grains]:
+            base_cols: dict[str, list] = {
+                "season": [year],
+                "game_type": ["R"],
+                "player_name": ["Test Pitcher"],
+                "p_throws": ["R"],
+                "team_code": ["NYY"],
+                "n_pitches": [100],
+                "P+": [p_plus],
+                "S+": [s_plus],
+                "L+": [l_plus],
+            }
+            if grain != "team":
+                base_cols["pitcher"] = [12345]
+            if "type" in grain:
+                base_cols["pitch_type"] = ["FF"]
+            if "platoon" in grain:
+                base_cols["platoon"] = ["vs_R"]
+            if "appearance" in grain:
+                base_cols["game_date"] = [f"{year}-06-15"]
+                base_cols["game_pk"] = [game_pk_val]
+            if grain == "all_pitches":
+                base_cols["game_date"] = [f"{year}-06-15"]
+                base_cols["game_pk"] = [game_pk_val]
+
+            df = pl.DataFrame(base_cols)
+            df.write_csv(aggs_dir / f"{year}-{grain}.csv")
+
+    monkeypatch.setattr(data_mod, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(data_mod, "AGGS_DIR", aggs_dir)
+    monkeypatch.setattr(data_mod, "_YEARS", list(years))
+
+    return load_pitcher_data(12345, window_days=365)
+
+
+def _create_single_season_pitcher_data(tmp_path, monkeypatch):
+    """Create synthetic single-season PitcherData (2026 only)."""
+    return _create_cross_season_pitcher_data(tmp_path, monkeypatch, years=(2026,))
+
+
+def test_cross_season_summary_returns_dataclass(tmp_path, monkeypatch):
+    """Multi-year PitcherData -> compute_cross_season_summary returns CrossSeasonSummary."""
+    data = _create_cross_season_pitcher_data(tmp_path, monkeypatch)
+    result = compute_cross_season_summary(data)
+    assert result is not None
+    assert isinstance(result, CrossSeasonSummary)
+
+
+def test_cross_season_summary_metrics(tmp_path, monkeypatch):
+    """CrossSeasonSummary has correct current/prior P+, S+, L+ values."""
+    data = _create_cross_season_pitcher_data(tmp_path, monkeypatch)
+    result = compute_cross_season_summary(data)
+    assert result is not None
+    # 2026 values: P+=105, S+=110, L+=100
+    assert abs(result.current_p_plus - 105.0) < 0.1
+    assert abs(result.current_s_plus - 110.0) < 0.1
+    assert abs(result.current_l_plus - 100.0) < 0.1
+    # 2025 values: P+=98, S+=100, L+=95
+    assert abs(result.prior_p_plus - 98.0) < 0.1
+    assert abs(result.prior_s_plus - 100.0) < 0.1
+    assert abs(result.prior_l_plus - 95.0) < 0.1
+
+
+def test_cross_season_velo_from_statcast(tmp_path, monkeypatch):
+    """Velocity computed from statcast release_speed, not from CSV baselines."""
+    data = _create_cross_season_pitcher_data(tmp_path, monkeypatch)
+    result = compute_cross_season_summary(data)
+    assert result is not None
+    # 2026 velo should be ~95.0 (mean of 95.0, 95.5, 94.5, 95.0, 95.2, 94.8)
+    assert abs(result.current_velo - 95.0) < 0.5
+    # 2025 velo should be ~93.5
+    assert abs(result.prior_velo - 93.5) < 0.5
+
+
+def test_cross_season_delta_strings_match(tmp_path, monkeypatch):
+    """YoY delta strings use the same format as within-season deltas."""
+    data = _create_cross_season_pitcher_data(tmp_path, monkeypatch)
+    result = compute_cross_season_summary(data)
+    assert result is not None
+    # Velo delta: 95.0 - 93.5 = 1.5, above 0.5 threshold -> "Up"
+    assert "Up" in result.velo_delta
+    assert "mph" in result.velo_delta
+    # P+ delta: 105 - 98 = 7, above 5 threshold -> "Up"
+    assert "Up" in result.p_plus_delta
+    assert "points" in result.p_plus_delta
+    # S+ delta: 110 - 100 = 10, hits sharp threshold -> "sharply"
+    assert "Up" in result.s_plus_delta
+    assert "sharply" in result.s_plus_delta
+    # L+ delta: 100 - 95 = 5, right at threshold -> could be "Steady" or "Up"
+    # _pplus_delta_string uses abs(delta) < threshold, so 5 is NOT < 5 -> "Up"
+    assert "Up" in result.l_plus_delta
+
+
+def test_cross_season_none_single_season(tmp_path, monkeypatch):
+    """Single-season PitcherData -> compute_cross_season_summary returns None."""
+    data = _create_single_season_pitcher_data(tmp_path, monkeypatch)
+    result = compute_cross_season_summary(data)
+    assert result is None
+
+
+def test_cross_season_workload(tmp_path, monkeypatch):
+    """CrossSeasonSummary includes workload comparison metrics."""
+    data = _create_cross_season_pitcher_data(tmp_path, monkeypatch)
+    result = compute_cross_season_summary(data)
+    assert result is not None
+    # Each year has 1 appearance with 6 pitches
+    assert result.current_appearances >= 1
+    assert result.prior_appearances >= 1
+    # IP: each year has 2 innings of data; 1 full inning + partial
+    # Inning 1: complete (3 outs assumed for non-final). Inning 2: 2 field_outs.
+    # => 1 full inning + 2 outs in final = 1.2 baseball = 5/3 = ~1.67 decimal
+    assert result.current_ip > 0
+    assert result.prior_ip > 0
+    # Avg pitches: 6 pitches per appearance
+    assert result.current_avg_pitches > 0
+    assert result.prior_avg_pitches > 0
+
+
+def test_cross_season_seasons(tmp_path, monkeypatch):
+    """CrossSeasonSummary has correct season year values."""
+    data = _create_cross_season_pitcher_data(tmp_path, monkeypatch)
+    result = compute_cross_season_summary(data)
+    assert result is not None
+    assert result.current_season == 2026
+    assert result.prior_season == 2025
