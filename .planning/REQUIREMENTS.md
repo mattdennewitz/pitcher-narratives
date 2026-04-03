@@ -9,9 +9,9 @@ Requirements for Cross-Season Trend Analysis milestone. Each maps to roadmap pha
 
 ### Cross-Season Baselines
 
-- [ ] **XSBL-01**: PitcherData exposes prior-season baselines alongside current-season baselines (both season-level and pitch-type-level)
-- [ ] **XSBL-02**: load_pitcher_data() retains all per-season baseline rows instead of filtering to max season only
-- [ ] **XSBL-03**: Prior-season baselines are empty DataFrames (not crashes) when pitcher has only one season of data
+- [x] **XSBL-01**: PitcherData exposes prior-season baselines alongside current-season baselines (both season-level and pitch-type-level)
+- [x] **XSBL-02**: load_pitcher_data() retains all per-season baseline rows instead of filtering to max season only
+- [x] **XSBL-03**: Prior-season baselines are empty DataFrames (not crashes) when pitcher has only one season of data
 
 ### Season Deltas
 
@@ -71,9 +71,9 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| XSBL-01 | Phase 19 | Pending |
-| XSBL-02 | Phase 19 | Pending |
-| XSBL-03 | Phase 19 | Pending |
+| XSBL-01 | Phase 19 | Complete |
+| XSBL-02 | Phase 19 | Complete |
+| XSBL-03 | Phase 19 | Complete |
 | SDLT-01 | Phase 20 | Pending |
 | SDLT-02 | Phase 20 | Pending |
 | SDLT-03 | Phase 20 | Pending |
@@ -91,4 +91,4 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 ---
 *Requirements defined: 2026-04-02*
-*Last updated: 2026-04-02 after roadmap creation*
+*Last updated: 2026-04-03 after Phase 19 completion*
