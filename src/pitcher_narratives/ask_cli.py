@@ -9,7 +9,6 @@ from __future__ import annotations
 import argparse
 import logging
 import os
-import re
 import sys
 
 from dotenv import load_dotenv
@@ -21,70 +20,6 @@ __all__ = ["main", "parse_args"]
 log = logging.getLogger("pitcher_narratives")
 
 
-def _extract_pitcher_name(
-    question: str,
-) -> tuple[str | None, "ResolveResult | None"]:
-    """Extract a pitcher name from a question by trying phrases against the resolver.
-
-    Tokenizes the question, strips possessives, and tries contiguous 3-word,
-    2-word, then 1-word subsequences through the resolver. Returns the first
-    definite match (exact, exact_last, fuzzy). If only ambiguous results are
-    found, returns those for disambiguation. If nothing matches, returns
-    (None, None).
-
-    Args:
-        question: Natural-language question containing a pitcher name.
-
-    Returns:
-        Tuple of (matched_query, ResolveResult) on success, or (None, result)
-        for ambiguous, or (None, None) for not found.
-    """
-    from pitcher_narratives.resolver import ResolveResult, resolve  # noqa: F811
-
-    # Tokenize and strip possessives, tracking capitalization
-    words = question.split()
-    cleaned: list[str] = []
-    is_capitalized: list[bool] = []
-    for idx, word in enumerate(words):
-        # Remove trailing punctuation for matching, but keep the word itself
-        w = re.sub(r"[?.!,;:]+$", "", word)
-        # Strip possessives: "Cease's" -> "Cease", "Cease'" -> "Cease"
-        w = re.sub(r"'s$", "", w)
-        w = re.sub(r"'$", "", w)
-        if w:
-            cleaned.append(w)
-            # Track if word was capitalized (proper noun indicator);
-            # skip first word since sentence-initial caps are unreliable
-            is_capitalized.append(idx > 0 and w[0].isupper())
-
-    best_ambiguous: tuple[str | None, ResolveResult | None] = (None, None)
-
-    # Try progressively shorter phrases: 3-word, 2-word, 1-word
-    # Exact/exact_last matches are always accepted (high confidence).
-    # Fuzzy and ambiguous results require at least one capitalized word
-    # in the candidate phrase (proper noun heuristic) to avoid false
-    # positives like "about" -> "Abbott" or "Tell me" -> ambiguous.
-    for width in (3, 2, 1):
-        for i in range(len(cleaned) - width + 1):
-            candidate = " ".join(cleaned[i : i + width])
-            result = resolve(candidate)
-            if result.match_type in ("exact", "exact_last"):
-                return (candidate, result)
-            # For fuzzy/ambiguous, check capitalization:
-            # - Single words: must be capitalized (proper noun heuristic)
-            # - Multi-word: ALL words must be capitalized (e.g., "Dylan Cease"
-            #   yes, "Johnson pitching" no -- "pitching" isn't a name)
-            if width == 1:
-                has_capital = is_capitalized[i]
-            else:
-                has_capital = all(is_capitalized[i + j] for j in range(width) if i + j < len(is_capitalized))
-            if result.match_type == "fuzzy" and has_capital:
-                return (candidate, result)
-            if result.match_type == "ambiguous" and best_ambiguous[1] is None and has_capital:
-                best_ambiguous = (None, result)
-
-    # Return best ambiguous result or (None, None)
-    return best_ambiguous
 
 
 def parse_args() -> argparse.Namespace:
@@ -142,7 +77,9 @@ def main() -> None:
         sys.exit(1)
 
     # Resolve pitcher name from question text
-    query, result = _extract_pitcher_name(args.question)
+    from pitcher_narratives.resolver import extract_pitcher_from_question
+
+    query, result = extract_pitcher_from_question(args.question)
 
     if result is None:
         log.error("No pitcher found matching '%s'", args.question)

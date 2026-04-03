@@ -1,6 +1,6 @@
 """Tests for ask CLI argument parsing and integration.
 
-Covers unit tests for parse_args and _extract_pitcher_name, plus
+Covers unit tests for parse_args and extract_pitcher_from_question, plus
 subprocess-based integration tests for the full CLI lifecycle.
 """
 
@@ -12,7 +12,8 @@ import sys
 
 import pytest
 
-from pitcher_narratives.ask_cli import _extract_pitcher_name, parse_args
+from pitcher_narratives.ask_cli import parse_args
+from pitcher_narratives.resolver import extract_pitcher_from_question
 
 
 # ── Helper ──
@@ -78,13 +79,13 @@ def test_parse_defaults(monkeypatch):
 
 
 # ══════════════════════════════════════════════════════════════════════
-# UNIT TESTS: _extract_pitcher_name
+# UNIT TESTS: extract_pitcher_from_question
 # ══════════════════════════════════════════════════════════════════════
 
 
 def test_extract_exact_full_name():
     """Full name 'Dylan Cease' resolves with a definite match."""
-    query, result = _extract_pitcher_name("How is Dylan Cease pitching?")
+    query, result = extract_pitcher_from_question("How is Dylan Cease pitching?")
     assert query is not None
     assert "Dylan Cease" in query
     assert result is not None
@@ -94,7 +95,7 @@ def test_extract_exact_full_name():
 
 def test_extract_last_name_only():
     """Last name 'Cease' resolves to a pitcher containing 'Cease'."""
-    query, result = _extract_pitcher_name("How is Cease pitching?")
+    query, result = extract_pitcher_from_question("How is Cease pitching?")
     assert result is not None
     assert result.match_type in ("exact_last", "fuzzy")
     assert result.pitcher_name is not None
@@ -103,7 +104,7 @@ def test_extract_last_name_only():
 
 def test_extract_possessive():
     """Possessive 'Cease's' is stripped and resolves correctly."""
-    query, result = _extract_pitcher_name("Cease's knuckle curve is bad")
+    query, result = extract_pitcher_from_question("Cease's knuckle curve is bad")
     assert result is not None
     assert result.pitcher_name is not None
     assert "Cease" in result.pitcher_name
@@ -111,14 +112,14 @@ def test_extract_possessive():
 
 def test_extract_not_found():
     """Gibberish question returns (None, None)."""
-    query, result = _extract_pitcher_name("Tell me about xyzzyplugh")
+    query, result = extract_pitcher_from_question("Tell me about xyzzyplugh")
     assert query is None
     assert result is None
 
 
 def test_extract_ambiguous():
     """Ambiguous name 'Johnson' returns ambiguous result with candidates."""
-    query, result = _extract_pitcher_name("How is Johnson pitching?")
+    query, result = extract_pitcher_from_question("How is Johnson pitching?")
     assert result is not None
     assert result.match_type == "ambiguous"
     assert len(result.candidates) > 1
