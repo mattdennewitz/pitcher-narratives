@@ -489,6 +489,24 @@ def _build_stuff_input(ctx: PitcherContext) -> str:
         comparisons = format_s_variant_comparisons(b, im.xswing_s, im.xwhiff_s, im.xrv100_s)
         lines.append(f"- {im.pitch_name} ({im.pitch_type}): {', '.join(comparisons)}")
 
+    # Cross-season context (when available)
+    if ctx.cross_season_summary is not None or ctx.arsenal_trend is not None:
+        lines.append("\n## Year-over-Year Context")
+        css = ctx.cross_season_summary
+        if css is not None:
+            lines.append(f"Comparing {css.current_season} vs {css.prior_season}:")
+            lines.append(f"- Velocity YoY: {css.velo_delta}")
+            lines.append(f"- P+ YoY: {css.p_plus_delta}")
+            lines.append(f"- S+ YoY: {css.s_plus_delta}")
+        at = ctx.arsenal_trend
+        if at is not None:
+            if at.added_pitches:
+                added = ", ".join(p.pitch_name for p in at.added_pitches)
+                lines.append(f"- Added pitches: {added}")
+            if at.dropped_pitches:
+                dropped = ", ".join(p.pitch_name for p in at.dropped_pitches)
+                lines.append(f"- Dropped pitches: {dropped}")
+
     return "\n".join(lines)
 
 
@@ -559,6 +577,9 @@ def _build_trend_input(ctx: PitcherContext) -> str:
         ctx._render_release_point_section(),
         ctx._render_hard_hit_section(),
     ]
+    # Cross-season context (when available) — trends specialist gets full YoY section
+    if ctx.cross_season_summary is not None or ctx.arsenal_trend is not None:
+        sections.append(ctx._render_yoy_section())
     return "\n\n".join(s for s in sections if s)
 
 
@@ -574,6 +595,33 @@ def _build_game_shape_input(ctx: PitcherContext) -> str:
         ctx._render_appearances_section(),
         ctx._render_role_section(),
     ]
+    # Cross-season context (when available) — game shape gets workload + usage shifts
+    css = ctx.cross_season_summary
+    at = ctx.arsenal_trend
+    if css is not None or at is not None:
+        yoy_lines = ["## Year-over-Year Context"]
+        if css is not None:
+            yoy_lines.append(
+                f"- Workload: {css.current_appearances} app / {css.current_ip:.0f} IP "
+                f"(prior {css.prior_season}: {css.prior_appearances} app / {css.prior_ip:.0f} IP)"
+            )
+            yoy_lines.append(
+                f"- Avg pitches/app: {css.current_avg_pitches:.0f} "
+                f"(prior: {css.prior_avg_pitches:.0f})"
+            )
+        if at is not None:
+            for pt in at.pitch_trends[:4]:
+                if "Steady" not in pt.usage_delta:
+                    yoy_lines.append(f"- {pt.pitch_name} usage: {pt.usage_delta}")
+            if at.added_pitches:
+                yoy_lines.append(
+                    f"- Added: {', '.join(p.pitch_name for p in at.added_pitches)}"
+                )
+            if at.dropped_pitches:
+                yoy_lines.append(
+                    f"- Dropped: {', '.join(p.pitch_name for p in at.dropped_pitches)}"
+                )
+        sections.append("\n".join(yoy_lines))
     return "\n\n".join(s for s in sections if s)
 
 
