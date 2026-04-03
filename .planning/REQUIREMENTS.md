@@ -1,31 +1,33 @@
-# Requirements: Pitcher Narratives v1.7
+# Requirements: Pitcher Narratives v1.8
 
-**Defined:** 2026-04-02
+**Defined:** 2026-04-03
 **Core Value:** The report must read like a scout wrote it -- surfacing changes, adaptations, and execution trends rather than reciting numbers.
 
-## v1.7 Requirements
+## v1.8 Requirements
 
-Requirements for Multi-Year Data & Game Type Filtering milestone. Each maps to roadmap phases.
+Requirements for Cross-Season Trend Analysis milestone. Each maps to roadmap phases.
 
-### Data Foundation
+### Cross-Season Baselines
 
-- [ ] **DFND-01**: Data pipeline filters to allowed game types (R, F, D, L, W) at load time, excluding spring training and exhibition data
-- [ ] **DFND-02**: Year-specific hardcoded paths (statcast_2026.parquet, 2026-*.csv) replaced with parameterized loading from a _YEARS constant
-- [ ] **DFND-03**: "season" added to _ID_COLS so year values are not weight-averaged as metrics
-- [ ] **DFND-04**: _filter_game_type helper exported as public API for use by consumer modules
+- [ ] **XSBL-01**: `PitcherData` includes both current-season and prior-season baselines so engine consumers can compute year-over-year deltas
+- [ ] **XSBL-02**: When a pitcher has only one season of data, cross-season fields are empty/None (no crash, no misleading comparison)
 
-### Multi-Year Loading
+### Season-over-Season Deltas
 
-- [x] **MYLD-01**: load_statcast() reads and concatenates parquet files for all configured years
-- [x] **MYLD-02**: load_agg_csvs() reads and concatenates CSV files for all configured years per grain
-- [x] **MYLD-03**: Pipeline gracefully handles missing year files (skips without crashing)
-- [x] **MYLD-04**: Season baselines computed per-season (not cross-season averaged) using the season column
+- [ ] **SDLT-01**: Engine computes per-pitch-type usage shift between seasons (e.g., "sweeper usage to LHH dropped from 14% to 0%")
+- [ ] **SDLT-02**: Engine computes per-pitch-type velocity and movement profile changes between seasons (e.g., "curveball 3 mph slower with 7 more inches of depth")
+- [ ] **SDLT-03**: Engine computes platoon split changes between seasons -- per-handedness pitch mix, not just aggregate
 
-### Consumer Updates
+### Appearance-over-Appearance Trends
 
-- [ ] **CSMR-01**: engine.py direct CSV read eliminated and routed through data.py load_full_agg()
-- [ ] **CSMR-02**: resolver.py builds name table from all available parquet files (not just 2026)
-- [ ] **CSMR-03**: scout.py hardcoded CSV loads and parquet reads replaced with data.py functions
+- [ ] **ATRN-01**: Engine computes pitch-level trends across recent appearances within the current season -- velocity arc, shape drift, mix evolution per outing
+- [ ] **ATRN-02**: Appearance trends distinguish between platoon splits (LHH vs RHH) per outing when data supports it
+
+### Context & Prompt Integration
+
+- [ ] **CPMT-01**: `PitcherContext.to_prompt()` includes a "Year-over-Year Changes" section when prior-season data exists
+- [ ] **CPMT-02**: `PitcherContext.to_prompt()` includes a "Recent Appearance Trends" section showing outing-to-outing evolution
+- [ ] **CPMT-03**: LLM system prompts updated to reason about what changed between seasons and across recent appearances, not just current-state description
 
 ## Future Requirements
 
@@ -55,11 +57,11 @@ Explicitly excluded. Documented to prevent scope creep.
 
 | Feature | Reason |
 |---------|--------|
-| Auto-discovery of years from filesystem | Explicit _YEARS constant is sufficient for 2 years |
-| Converting agg CSVs to parquet | Valid at 5+ years, not needed at 2 |
-| Cross-season trend analysis | Multi-year loading supports it, but narrative integration deferred |
-| User-visible data freshness indicator | Nice-to-have, not correctness-critical |
-| CLI flag for game type selection | Allowlist is correct for all use cases; no user override needed |
+| Cross-season trend analysis across 3+ years | Two-year comparison is sufficient for current data |
+| Automated scouting alerts | This milestone adds analysis, not notification |
+| Batter-side analysis | Pitcher-focused reports only |
+| Web UI or API | CLI tool only |
+| Real-time data ingestion | Static parquet/CSV files |
 
 ## Traceability
 
@@ -67,23 +69,21 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| DFND-01 | Phase 16 | Pending |
-| DFND-02 | Phase 16 | Pending |
-| DFND-03 | Phase 16 | Pending |
-| DFND-04 | Phase 16 | Pending |
-| MYLD-01 | Phase 17 | Complete |
-| MYLD-02 | Phase 17 | Complete |
-| MYLD-03 | Phase 17 | Complete |
-| MYLD-04 | Phase 17 | Complete |
-| CSMR-01 | Phase 18 | Pending |
-| CSMR-02 | Phase 18 | Pending |
-| CSMR-03 | Phase 18 | Pending |
+| XSBL-01 | TBD | Pending |
+| XSBL-02 | TBD | Pending |
+| SDLT-01 | TBD | Pending |
+| SDLT-02 | TBD | Pending |
+| SDLT-03 | TBD | Pending |
+| ATRN-01 | TBD | Pending |
+| ATRN-02 | TBD | Pending |
+| CPMT-01 | TBD | Pending |
+| CPMT-02 | TBD | Pending |
+| CPMT-03 | TBD | Pending |
 
 **Coverage:**
-- v1.7 requirements: 11 total
-- Mapped to phases: 11
-- Unmapped: 0
+- v1.8 requirements: 10 total
+- Mapped to phases: 0
+- Unmapped: 10
 
 ---
-*Requirements defined: 2026-04-02*
-*Last updated: 2026-04-02 after roadmap creation*
+*Requirements defined: 2026-04-03*
