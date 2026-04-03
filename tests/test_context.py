@@ -1,11 +1,33 @@
 """Tests for PitcherContext assembly and to_prompt() rendering."""
 
+from datetime import date
+
+import polars as pl
 import pytest
 from pydantic import BaseModel
 
-from pitcher_narratives.context import assemble_pitcher_context
-from pitcher_narratives.data import load_pitcher_data
-from pitcher_narratives.engine import HardHitRate, ReleasePointMetrics
+from pitcher_narratives.context import PitcherContext, assemble_pitcher_context
+from pitcher_narratives.data import PitcherData, load_pitcher_data
+from pitcher_narratives.engine import (
+    AddedDroppedPitch,
+    AppearanceWorkload,
+    ArsenalTrend,
+    ComponentAttribution,
+    CrossSeasonSummary,
+    ExecutionMetrics,
+    FastballSummary,
+    FirstPitchEntry,
+    FirstPitchWeaponry,
+    HardHitRate,
+    IntermediateProbabilities,
+    PitchTrend,
+    PitchTypeSummary,
+    PlatoonMix,
+    ReleasePointMetrics,
+    ReleasePointPitchType,
+    VelocityArc,
+    WorkloadContext,
+)
 
 TEST_PITCHER = 592155  # Booser, Cam
 
@@ -15,6 +37,204 @@ def ctx():
     """Load data once per module (read-only test data)."""
     data = load_pitcher_data(TEST_PITCHER, window_days=30)
     return assemble_pitcher_context(data)
+
+
+def _make_synthetic_ctx(
+    *,
+    cross_season_summary: CrossSeasonSummary | None = None,
+    arsenal_trend: ArsenalTrend | None = None,
+) -> PitcherContext:
+    """Build a minimal synthetic PitcherContext for YoY tests.
+
+    Avoids needing real data files -- constructs all required fields
+    with synthetic but structurally valid data.
+    """
+    fastball = FastballSummary(
+        pitch_type="FF",
+        pitch_name="4-Seam Fastball",
+        season_velo=94.0,
+        window_velo=94.5,
+        velo_delta="Up modestly",
+        season_p_plus=105.0,
+        window_p_plus=108.0,
+        p_plus_delta="Up modestly",
+        season_s_plus=102.0,
+        window_s_plus=106.0,
+        s_plus_delta="Up modestly",
+        season_l_plus=100.0,
+        window_l_plus=101.0,
+        l_plus_delta="Steady",
+        window_pfx_x=-6.5,
+        season_pfx_x=-6.3,
+        pfx_x_delta="Steady",
+        window_pfx_z=14.2,
+        season_pfx_z=14.0,
+        pfx_z_delta="Steady",
+        small_sample=False,
+        cold_start=False,
+    )
+
+    arsenal = [
+        PitchTypeSummary(
+            pitch_type="FF",
+            pitch_name="4-Seam Fastball",
+            season_velo=94.0,
+            window_velo=94.5,
+            velo_delta="Up modestly",
+            season_usage_pct=55.0,
+            window_usage_pct=50.0,
+            usage_delta="Down modestly",
+            season_p_plus=105.0,
+            window_p_plus=108.0,
+            p_plus_delta="Up modestly",
+            season_s_plus=102.0,
+            window_s_plus=106.0,
+            s_plus_delta="Up modestly",
+            season_l_plus=100.0,
+            window_l_plus=101.0,
+            l_plus_delta="Steady",
+            window_pfx_x=-6.5,
+            season_pfx_x=-6.3,
+            pfx_x_delta="Steady",
+            window_pfx_z=14.2,
+            season_pfx_z=14.0,
+            pfx_z_delta="Steady",
+            n_pitches_season=500,
+            n_pitches_window=50,
+            small_sample=False,
+            cold_start=False,
+        ),
+    ]
+
+    workload = WorkloadContext(
+        appearances=[
+            AppearanceWorkload(
+                game_pk=700001,
+                game_date="2026-06-15",
+                role="SP",
+                ip="6.0",
+                pitch_count=95,
+                rest_days=5,
+            ),
+        ],
+        max_consecutive_days=1,
+        workload_concern=False,
+    )
+
+    return PitcherContext(
+        pitcher_name="Test Pitcher",
+        pitcher_id=99999,
+        throws="R",
+        role="SP",
+        fastball=fastball,
+        velocity_arc=None,
+        arsenal=arsenal,
+        platoon_mix=PlatoonMix(splits=[], cold_start=False),
+        first_pitch=FirstPitchWeaponry(entries=[], total_first_pitches_season=100, total_first_pitches_window=10, cold_start=False),
+        execution=[],
+        intermediates=[],
+        attributions=[],
+        hard_hit_rate=HardHitRate(
+            hard_hit_pct=30.0,
+            season_hard_hit_pct=32.0,
+            n_hard_hit=6,
+            n_batted_balls=20,
+            delta="Steady",
+            cold_start=False,
+            small_sample=True,
+        ),
+        release_point=ReleasePointMetrics(pitch_types=[], cold_start=False),
+        workload=workload,
+        tto=None,
+        cross_season_summary=cross_season_summary,
+        arsenal_trend=arsenal_trend,
+    )
+
+
+def _make_cross_season_summary() -> CrossSeasonSummary:
+    """Create a synthetic CrossSeasonSummary for tests."""
+    return CrossSeasonSummary(
+        current_season=2026,
+        prior_season=2025,
+        current_velo=93.5,
+        prior_velo=92.1,
+        velo_delta="Up 1.4 mph",
+        current_p_plus=112.0,
+        prior_p_plus=105.0,
+        p_plus_delta="Up 7 points",
+        current_s_plus=108.0,
+        prior_s_plus=101.0,
+        s_plus_delta="Up 7 points",
+        current_l_plus=104.0,
+        prior_l_plus=103.0,
+        l_plus_delta="Steady (+1 points)",
+        current_appearances=10,
+        prior_appearances=25,
+        current_ip=45.0,
+        prior_ip=120.0,
+        current_avg_pitches=88.0,
+        prior_avg_pitches=92.0,
+    )
+
+
+def _make_arsenal_trend() -> ArsenalTrend:
+    """Create a synthetic ArsenalTrend for tests."""
+    return ArsenalTrend(
+        prior_season=2025,
+        current_season=2026,
+        added_pitches=[
+            AddedDroppedPitch(
+                pitch_type="SV",
+                pitch_name="Sweeper",
+                usage_pct=12.0,
+                n_pitches=50,
+                season=2026,
+            ),
+        ],
+        dropped_pitches=[
+            AddedDroppedPitch(
+                pitch_type="KC",
+                pitch_name="Knuckle Curve",
+                usage_pct=8.0,
+                n_pitches=40,
+                season=2025,
+            ),
+        ],
+        pitch_trends=[
+            PitchTrend(
+                pitch_type="FF",
+                pitch_name="4-Seam Fastball",
+                prior_usage_pct=55.0,
+                current_usage_pct=48.0,
+                usage_delta="Down 7.0 pp",
+                prior_p_plus=105.0,
+                current_p_plus=112.0,
+                p_plus_delta="Up 7 points",
+                prior_s_plus=101.0,
+                current_s_plus=108.0,
+                s_plus_delta="Up 7 points",
+                prior_velo=92.1,
+                current_velo=93.5,
+                velo_delta="Up 1.4 mph",
+            ),
+            PitchTrend(
+                pitch_type="SL",
+                pitch_name="Slider",
+                prior_usage_pct=20.0,
+                current_usage_pct=22.0,
+                usage_delta="Steady (+2.0 pp)",
+                prior_p_plus=100.0,
+                current_p_plus=101.0,
+                p_plus_delta="Steady (+1 points)",
+                prior_s_plus=100.0,
+                current_s_plus=100.0,
+                s_plus_delta="Steady (0 points)",
+                prior_velo=85.0,
+                current_velo=85.2,
+                velo_delta="Steady (+0.2 mph)",
+            ),
+        ],
+    )
 
 
 # ── Assembly tests ────────────────────────────────────────────────────
@@ -183,3 +403,156 @@ def test_to_prompt_no_intermediates_when_empty(ctx):
     empty_ctx = ctx.model_copy(update={"intermediates": []})
     prompt = empty_ctx.to_prompt()
     assert "Model Internals" not in prompt
+
+
+# ── Year-over-Year context tests ─────────────────────────────────────
+
+
+def test_pitcher_context_accepts_cross_season_fields():
+    """CPMT-01: PitcherContext accepts cross_season_summary and arsenal_trend fields."""
+    css = _make_cross_season_summary()
+    at = _make_arsenal_trend()
+    ctx = _make_synthetic_ctx(cross_season_summary=css, arsenal_trend=at)
+    assert ctx.cross_season_summary is css
+    assert ctx.arsenal_trend is at
+
+
+def test_pitcher_context_yoy_fields_default_none():
+    """CPMT-01: cross_season_summary and arsenal_trend default to None."""
+    ctx = _make_synthetic_ctx()
+    assert ctx.cross_season_summary is None
+    assert ctx.arsenal_trend is None
+
+
+def test_to_prompt_yoy_section_present():
+    """CPMT-02: to_prompt() renders 'Year-over-Year Changes' header when cross-season data exists."""
+    ctx = _make_synthetic_ctx(
+        cross_season_summary=_make_cross_season_summary(),
+        arsenal_trend=_make_arsenal_trend(),
+    )
+    prompt = ctx.to_prompt()
+    assert "## Year-over-Year Changes" in prompt
+
+
+def test_to_prompt_yoy_section_absent():
+    """CPMT-02: to_prompt() omits YoY section entirely when both fields are None."""
+    ctx = _make_synthetic_ctx(cross_season_summary=None, arsenal_trend=None)
+    prompt = ctx.to_prompt()
+    assert "Year-over-Year" not in prompt
+
+
+def test_to_prompt_yoy_renders_velocity_delta():
+    """CPMT-02: YoY section contains velocity delta string."""
+    css = _make_cross_season_summary()
+    ctx = _make_synthetic_ctx(cross_season_summary=css)
+    prompt = ctx.to_prompt()
+    assert css.velo_delta in prompt
+
+
+def test_to_prompt_yoy_renders_plus_deltas():
+    """CPMT-02: YoY section contains P+/S+/L+ delta strings."""
+    css = _make_cross_season_summary()
+    ctx = _make_synthetic_ctx(cross_season_summary=css)
+    prompt = ctx.to_prompt()
+    assert css.p_plus_delta in prompt
+    assert css.s_plus_delta in prompt
+    assert css.l_plus_delta in prompt
+
+
+def test_to_prompt_yoy_renders_added_pitches():
+    """CPMT-02: YoY section contains added pitch names from arsenal_trend."""
+    at = _make_arsenal_trend()
+    ctx = _make_synthetic_ctx(arsenal_trend=at)
+    prompt = ctx.to_prompt()
+    assert "Added" in prompt
+    assert "Sweeper" in prompt
+
+
+def test_to_prompt_yoy_renders_dropped_pitches():
+    """CPMT-02: YoY section contains dropped pitch names from arsenal_trend."""
+    at = _make_arsenal_trend()
+    ctx = _make_synthetic_ctx(arsenal_trend=at)
+    prompt = ctx.to_prompt()
+    assert "Dropped" in prompt
+    assert "Knuckle Curve" in prompt
+
+
+def test_to_prompt_yoy_renders_nonsteady_pitch_trends():
+    """CPMT-02: YoY section shows non-Steady pitch trend deltas."""
+    at = _make_arsenal_trend()
+    ctx = _make_synthetic_ctx(arsenal_trend=at)
+    prompt = ctx.to_prompt()
+    # FF has non-Steady deltas: "Down 7.0 pp", "Up 7 points", "Up 1.4 mph"
+    assert "4-Seam Fastball" in prompt
+    assert "Down 7.0 pp" in prompt or "Up 7 points" in prompt
+
+
+def test_to_prompt_yoy_omits_all_steady_pitch():
+    """CPMT-02: YoY section omits pitches where ALL deltas are Steady."""
+    at = _make_arsenal_trend()
+    ctx = _make_synthetic_ctx(arsenal_trend=at)
+    prompt = ctx.to_prompt()
+    # The "Slider" trend has all Steady deltas in our fixture
+    # It should NOT appear as a pitch trend line in the YoY section
+    yoy_start = prompt.find("Year-over-Year")
+    if yoy_start >= 0:
+        yoy_section = prompt[yoy_start:]
+        # "Slider" could appear in other sections (arsenal, etc.)
+        # but should not appear in a pitch trend line within YoY
+        yoy_end = yoy_section.find("\n## ", 1)
+        if yoy_end > 0:
+            yoy_text = yoy_section[:yoy_end]
+        else:
+            yoy_text = yoy_section
+        assert "Slider" not in yoy_text
+
+
+def test_to_prompt_yoy_section_ordering():
+    """CPMT-02: YoY section appears after First-Pitch and before Recent Appearances."""
+    ctx = _make_synthetic_ctx(
+        cross_season_summary=_make_cross_season_summary(),
+        arsenal_trend=_make_arsenal_trend(),
+    )
+    prompt = ctx.to_prompt()
+    yoy_pos = prompt.find("Year-over-Year Changes")
+    appearances_pos = prompt.find("Recent Appearances")
+    assert yoy_pos > 0, "Year-over-Year section not found"
+    assert appearances_pos > 0, "Recent Appearances section not found"
+    assert yoy_pos < appearances_pos, "YoY should come before Recent Appearances"
+
+
+def test_to_prompt_yoy_token_budget():
+    """CPMT-02: to_prompt() stays under 2,000 token budget even with YoY section."""
+    ctx = _make_synthetic_ctx(
+        cross_season_summary=_make_cross_season_summary(),
+        arsenal_trend=_make_arsenal_trend(),
+    )
+    prompt = ctx.to_prompt()
+    estimated_tokens = len(prompt) / 4
+    assert estimated_tokens < 2000, f"Estimated {estimated_tokens:.0f} tokens exceeds 2,000 budget"
+
+
+def test_to_prompt_yoy_with_only_cross_season_summary():
+    """CPMT-02: YoY section renders when only cross_season_summary is present (no arsenal_trend)."""
+    ctx = _make_synthetic_ctx(cross_season_summary=_make_cross_season_summary())
+    prompt = ctx.to_prompt()
+    assert "Year-over-Year Changes" in prompt
+    assert "Up 1.4 mph" in prompt
+
+
+def test_to_prompt_yoy_with_only_arsenal_trend():
+    """CPMT-02: YoY section renders when only arsenal_trend is present (no cross_season_summary)."""
+    ctx = _make_synthetic_ctx(arsenal_trend=_make_arsenal_trend())
+    prompt = ctx.to_prompt()
+    assert "Year-over-Year Changes" in prompt
+    assert "Sweeper" in prompt
+
+
+def test_to_prompt_yoy_workload_comparison():
+    """CPMT-02: YoY section includes workload comparison when cross_season_summary present."""
+    css = _make_cross_season_summary()
+    ctx = _make_synthetic_ctx(cross_season_summary=css)
+    prompt = ctx.to_prompt()
+    # Should mention appearances and IP
+    assert "10 app" in prompt or "10 appearances" in prompt
+    assert "45" in prompt  # current IP

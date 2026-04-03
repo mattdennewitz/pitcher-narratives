@@ -21,15 +21,15 @@ Requirements for Cross-Season Trend Analysis milestone. Each maps to roadmap pha
 
 ### Arsenal Trends
 
-- [x] **ATRN-01**: Engine identifies pitches added (present in current season, absent in prior) and dropped (present in prior, absent in current) using a minimum-pitch threshold
-- [x] **ATRN-02**: Engine computes per-pitch-type YoY deltas for usage rate, P+, S+, and velocity for pitches present in both seasons
-- [x] **ATRN-03**: Arsenal trend output is None when pitcher has only one season of data
+- [ ] **ATRN-01**: Engine identifies pitches added (present in current season, absent in prior) and dropped (present in prior, absent in current) using a minimum-pitch threshold
+- [ ] **ATRN-02**: Engine computes per-pitch-type YoY deltas for usage rate, P+, S+, and velocity for pitches present in both seasons
+- [ ] **ATRN-03**: Arsenal trend output is None when pitcher has only one season of data
 
 ### Context & Prompt
 
-- [ ] **CPMT-01**: PitcherContext model includes optional cross-season summary and arsenal trend fields
-- [ ] **CPMT-02**: to_prompt() renders a Year-over-Year section with top-level deltas and arsenal changes when multi-season data exists, omits it entirely for single-season pitchers
-- [ ] **CPMT-03**: Specialist pipeline agents (stuff, trends, game shape) receive cross-season data in their context blocks
+- [x] **CPMT-01**: PitcherContext model includes optional cross-season summary and arsenal trend fields
+- [x] **CPMT-02**: to_prompt() renders a Year-over-Year section with top-level deltas and arsenal changes when multi-season data exists, omits it entirely for single-season pitchers
+- [x] **CPMT-03**: Specialist pipeline agents (stuff, trends, game shape) receive cross-season data in their context blocks
 
 ## Future Requirements
 
@@ -77,12 +77,12 @@ Which phases cover which requirements. Updated during roadmap creation.
 | SDLT-01 | Phase 20 | Pending |
 | SDLT-02 | Phase 20 | Pending |
 | SDLT-03 | Phase 20 | Pending |
-| ATRN-01 | Phase 21 | Complete |
-| ATRN-02 | Phase 21 | Complete |
-| ATRN-03 | Phase 21 | Complete |
-| CPMT-01 | Phase 22 | Pending |
-| CPMT-02 | Phase 22 | Pending |
-| CPMT-03 | Phase 22 | Pending |
+| ATRN-01 | Phase 21 | Pending |
+| ATRN-02 | Phase 21 | Pending |
+| ATRN-03 | Phase 21 | Pending |
+| CPMT-01 | Phase 22 | Complete |
+| CPMT-02 | Phase 22 | Complete |
+| CPMT-03 | Phase 22 | Complete |
 
 **Coverage:**
 - v1.8 requirements: 12 total
