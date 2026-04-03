@@ -35,7 +35,7 @@ Plans:
   4. Running `grep "read_csv\|read_parquet" src/pitcher_narratives/ | grep -v data.py` returns zero results (no bypass loads remain)
 **Plans:** 2 plans
 Plans:
-- [ ] 18-01-PLAN.md -- Add load_all_statcast() and load_full_agg() league-wide data functions to data.py
+- [x] 18-01-PLAN.md -- Add load_all_statcast() and load_full_agg() league-wide data functions to data.py
 - [ ] 18-02-PLAN.md -- Refactor engine.py, resolver.py, scout.py to use data.py functions; fix test assertions
 
 ## Progress
@@ -62,7 +62,7 @@ Phases execute in numeric order: 16 -> 17 -> 18
 | 15. Specialist-Writer Architecture | v1.6 | prototyped | Complete | 2026-04-03 |
 | 16. Data Foundation | v1.7 | 1/1 | Complete    | 2026-04-03 |
 | 17. Multi-Year Loading | v1.7 | 1/1 | Complete    | 2026-04-03 |
-| 18. Consumer Module Updates | v1.7 | 0/2 | Not started | -- |
+| 18. Consumer Module Updates | v1.7 | 1/2 | In progress | -- |
 
 ---
 *Full phase details archived in `.planning/milestones/`*
