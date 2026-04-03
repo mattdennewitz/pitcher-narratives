@@ -67,13 +67,23 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| (populated by roadmapper) | | |
+| DFND-01 | Phase 16 | Pending |
+| DFND-02 | Phase 16 | Pending |
+| DFND-03 | Phase 16 | Pending |
+| DFND-04 | Phase 16 | Pending |
+| MYLD-01 | Phase 17 | Pending |
+| MYLD-02 | Phase 17 | Pending |
+| MYLD-03 | Phase 17 | Pending |
+| MYLD-04 | Phase 17 | Pending |
+| CSMR-01 | Phase 18 | Pending |
+| CSMR-02 | Phase 18 | Pending |
+| CSMR-03 | Phase 18 | Pending |
 
 **Coverage:**
 - v1.7 requirements: 11 total
-- Mapped to phases: 0
-- Unmapped: 11
+- Mapped to phases: 11
+- Unmapped: 0
 
 ---
 *Requirements defined: 2026-04-02*
-*Last updated: 2026-04-02 after initial definition*
+*Last updated: 2026-04-02 after roadmap creation*

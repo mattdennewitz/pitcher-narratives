@@ -5,7 +5,9 @@
 - v1.0 MVP - Phases 1-4 (shipped 2026-03-26)
 - v1.3 Editor-Anchor Reflection Loop - Phases 5-7 (shipped 2026-03-28)
 - v1.4 Interactive Pitcher Q&A - Phases 8-10 (shipped 2026-03-30)
-- v1.5 Model-Explainable Narratives - Phases 11-14
+- v1.5 Model-Explainable Narratives - Phases 11-14 (shipped 2026-04-01)
+- v1.6 Stuff Explainer - Phase 15 (shipped 2026-04-02)
+- v1.7 Multi-Year Data & Game Type Filtering - Phases 16-18
 
 ## Phases
 
@@ -43,12 +45,21 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 </details>
 
-### v1.5 Model-Explainable Narratives
+<details>
+<summary>v1.5 Model-Explainable Narratives (Phases 11-14) - SHIPPED 2026-04-01</summary>
 
-- [ ] **Phase 11: Intermediate Probability Pipeline** - Load and surface existing intermediate probabilities (P and S variants) from pitchingplus aggregation CSVs
-- [ ] **Phase 12: Component Attribution** - Decompose xRV into 13 outcome-level contributions per pitch type
-- [ ] **Phase 13: Tool Interface Updates** - Update analyst tools to return intermediate probabilities, P/S comparisons, and component attribution
-- [ ] **Phase 14: Analyst Prompt Rewrite** - Rewrite system prompt to reason from model internals with P/S location diagnosis and outcome-dominant attribution
+- [x] **Phase 11: Intermediate Probability Pipeline** - Load and surface existing intermediate probabilities (P and S variants) from pitchingplus aggregation CSVs
+- [x] **Phase 12: Component Attribution** - Decompose xRV into 13 outcome-level contributions per pitch type
+- [x] **Phase 13: Tool Interface Updates** - Update analyst tools to return intermediate probabilities, P/S comparisons, and component attribution
+- [x] **Phase 14: Analyst Prompt Rewrite** - Rewrite system prompt to reason from model internals with P/S location diagnosis and outcome-dominant attribution
+
+</details>
+
+### v1.7 Multi-Year Data & Game Type Filtering
+
+- [ ] **Phase 16: Data Foundation** - Filter spring training/exhibition data at load time, parameterize year-specific paths, add "season" to identity columns
+- [ ] **Phase 17: Multi-Year Loading** - Concatenate parquet and CSV files across configured years with per-season baselines
+- [ ] **Phase 18: Consumer Module Updates** - Eliminate all bypass CSV/parquet reads in engine.py, resolver.py, and scout.py by routing through data.py
 
 ## Phase Details
 
@@ -213,6 +224,9 @@ Plans:
 
 </details>
 
+<details>
+<summary>v1.5 Model-Explainable Narratives (Phases 11-14) - SHIPPED 2026-04-01</summary>
+
 ### Phase 11: Intermediate Probability Pipeline
 **Goal**: The data pipeline loads and surfaces per-pitch-type intermediate probabilities (both P and S variants) from pitchingplus aggregation CSVs so downstream tools can expose them
 **Depends on**: Phase 9 (existing analyst agent and data pipeline)
@@ -250,19 +264,19 @@ Plans:
   1. `get_pitcher_summary` tool output includes per-pitch-type intermediate probabilities with P and S variants
   2. `get_pitch_detail` tool output includes the 13-outcome component attribution breakdown for the requested pitch type
   3. P vs S delta is computed and presented (e.g., "xSwing_P: 42%, xSwing_S: 51%, location delta: -9%")
-  4. Existing tool output (plus scores, arsenal, execution metrics) is preserved — new data is additive
+  4. Existing tool output (plus scores, arsenal, execution metrics) is preserved -- new data is additive
 **Plans**: 1 plan
 
 Plans:
 - [x] 13-01-PLAN.md -- Intermediates rendering in to_prompt, attribution + intermediates in get_pitch_detail
 
 ### Phase 14: Analyst Prompt Rewrite
-**Goal**: The analyst reasons from model internals — diagnosing pitch quality through outcome probabilities and component attribution rather than citing opaque plus grades
+**Goal**: The analyst reasons from model internals -- diagnosing pitch quality through outcome probabilities and component attribution rather than citing opaque plus grades
 **Depends on**: Phase 13 (tools returning new data)
 **Requirements**: ANLST-01, ANLST-02, ANLST-03
 **Success Criteria** (what must be TRUE):
-  1. Analyst explains *why* a pitch scores well or poorly using intermediate probabilities (e.g., "38% whiff rate vs 25% league avg — the movement fools hitters")
-  2. Analyst diagnoses location impact by comparing P vs S variants (e.g., "swing rate drops 9% with location — hitters lay off this pitch in the zones he's throwing it")
+  1. Analyst explains *why* a pitch scores well or poorly using intermediate probabilities (e.g., "38% whiff rate vs 25% league avg -- the movement fools hitters")
+  2. Analyst diagnoses location impact by comparing P vs S variants (e.g., "swing rate drops 9% with location -- hitters lay off this pitch in the zones he's throwing it")
   3. Analyst identifies the dominant run-value driver from component attribution (e.g., "whiffs contribute 1.4 runs saved per 100, but home runs give back 0.6")
   4. Plus scores (P+/S+/L+) are still referenced as summary grades, but the explanation focuses on what drives them
 **Plans**: 1 plan
@@ -270,10 +284,46 @@ Plans:
 Plans:
 - [x] 14-01-PLAN.md -- Rewrite _ANALYST_INSTRUCTIONS with model-internals-first reasoning (TDD)
 
+</details>
+
+### Phase 16: Data Foundation
+**Goal**: The data pipeline filters out spring training and exhibition games at load time and replaces all hardcoded year-specific paths with a parameterized `_YEARS` constant, so all downstream modules receive clean regular-season data without knowing about file naming or game type semantics
+**Depends on**: Phase 15 (existing data pipeline)
+**Requirements**: DFND-01, DFND-02, DFND-03, DFND-04
+**Success Criteria** (what must be TRUE):
+  1. Running any CLI command produces baselines computed exclusively from regular-season data -- spring training (game_type "S") and exhibition ("E") rows are excluded before any computation
+  2. All year-specific file paths in data.py derive from a single `_YEARS` constant -- no hardcoded "2026-" prefixes or "statcast_2026.parquet" literals remain
+  3. The `season` column is treated as an identity column (not weight-averaged as a metric) so multi-year data does not produce nonsense values like "2025.375"
+  4. A public `filter_game_type()` function is exported from data.py for use by consumer modules that load data independently
+  5. All existing tests pass after assertions are updated for filtered (regular-season-only) values
+**Plans**: TBD
+
+### Phase 17: Multi-Year Loading
+**Goal**: The data pipeline loads and concatenates parquet and CSV files across all configured years, with per-season baselines that prevent cross-season averaging artifacts
+**Depends on**: Phase 16
+**Requirements**: MYLD-01, MYLD-02, MYLD-03, MYLD-04
+**Success Criteria** (what must be TRUE):
+  1. `load_statcast()` reads parquet files for all years in `_YEARS` and returns a single concatenated DataFrame spanning both 2025 and 2026
+  2. `load_agg_csvs()` reads year-prefixed CSV files for all configured years and returns concatenated DataFrames per grain
+  3. When a year's files are missing (e.g., 2025 parquet does not exist), the pipeline skips that year without crashing and loads available years
+  4. Season baselines are computed per-season -- a pitcher who threw 95 mph in 2025 and 97 mph in 2026 has a 2026 baseline of 97, not 96
+**Plans**: TBD
+
+### Phase 18: Consumer Module Updates
+**Goal**: All modules that bypass data.py to read CSV or parquet files directly are refactored to use data.py's loading functions, ensuring game type filtering and multi-year support are applied consistently everywhere
+**Depends on**: Phase 16, Phase 17
+**Requirements**: CSMR-01, CSMR-02, CSMR-03
+**Success Criteria** (what must be TRUE):
+  1. `engine.py` no longer contains any direct `read_csv` or `read_parquet` calls -- all data access routes through `data.py` functions
+  2. `resolver.py` builds its pitcher name table from all available parquet files (not just 2026), so pitchers who appeared only in 2025 are discoverable
+  3. `scout.py` no longer contains any direct CSV or parquet reads -- all data access routes through `data.py` functions including the velocity baseline computation
+  4. Running `grep "read_csv\|read_parquet" src/pitcher_narratives/ | grep -v data.py` returns zero results (no bypass loads remain)
+**Plans**: TBD
+
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 11 -> 12 -> 13 -> 14
+Phases execute in numeric order: 16 -> 17 -> 18
 
 | Phase | Milestone | Plans Complete | Status | Completed |
 |-------|-----------|----------------|--------|-----------|
@@ -287,7 +337,11 @@ Phases execute in numeric order: 11 -> 12 -> 13 -> 14
 | 8. Name Resolution | v1.4 | 1/1 | Complete | 2026-03-30 |
 | 9. Analyst Agent & Tools | v1.4 | 1/1 | Complete | 2026-03-30 |
 | 10. Ask CLI | v1.4 | 1/1 | Complete | 2026-03-30 |
-| 11. Intermediate Probability Pipeline | v1.5 | 1/1 | Complete    | 2026-03-31 |
-| 12. Component Attribution | v1.5 | 2/2 | Complete    | 2026-03-31 |
-| 13. Tool Interface Updates | v1.5 | 1/1 | Complete    | 2026-03-31 |
-| 14. Analyst Prompt Rewrite | v1.5 | 1/1 | Complete    | 2026-03-31 |
+| 11. Intermediate Probability Pipeline | v1.5 | 1/1 | Complete | 2026-03-31 |
+| 12. Component Attribution | v1.5 | 2/2 | Complete | 2026-03-31 |
+| 13. Tool Interface Updates | v1.5 | 1/1 | Complete | 2026-03-31 |
+| 14. Analyst Prompt Rewrite | v1.5 | 1/1 | Complete | 2026-03-31 |
+| 15. Stuff Explainer | v1.6 | 1/1 | Complete | 2026-04-02 |
+| 16. Data Foundation | v1.7 | 0/0 | Not started | -- |
+| 17. Multi-Year Loading | v1.7 | 0/0 | Not started | -- |
+| 18. Consumer Module Updates | v1.7 | 0/0 | Not started | -- |

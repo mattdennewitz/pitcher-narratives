@@ -2,13 +2,13 @@
 gsd_state_version: 1.0
 milestone: v1.7
 milestone_name: Multi-Year Data & Game Type Filtering
-status: planning
-stopped_at: null
+status: roadmap_complete
+stopped_at: Roadmap created with 3 phases (16-18)
 last_updated: "2026-04-02T00:00:00.000Z"
 last_activity: 2026-04-02
 progress:
-  total_phases: 0
-  completed_phases: 0
+  total_phases: 18
+  completed_phases: 15
   total_plans: 0
   completed_plans: 0
 ---
@@ -20,14 +20,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-02)
 
 **Core value:** Reports must read like a scout wrote them -- surfacing changes, adaptations, and execution trends rather than reciting numbers.
-**Current focus:** Defining requirements for v1.7
+**Current focus:** Phase 16 -- Data Foundation (ready to plan)
 
 ## Current Position
 
-Phase: Not started (defining requirements)
-Plan: —
-Status: Defining requirements
-Last activity: 2026-04-02 — Milestone v1.7 started
+Phase: 16 of 18 (Data Foundation)
+Plan: Not started
+Status: Ready to plan
+Last activity: 2026-04-02 -- Roadmap created for v1.7
+
+Progress: [==============░░░] 83% (15/18 phases)
 
 ## Accumulated Context
 
@@ -36,11 +38,10 @@ Last activity: 2026-04-02 — Milestone v1.7 started
 Decisions are logged in PROJECT.md Key Decisions table.
 Recent decisions affecting current work:
 
-- [v1.4]: Tool-calling agent pattern (AGENT-02/03 require tools, not pre-assembled context)
-- [v1.4]: rapidfuzz for name resolution (deterministic, fast, no LLM)
-- [v1.4]: Three new modules (resolver.py, analyst.py, ask_cli.py), zero modifications to existing code
-- [v1.5]: Component attribution (medium effort) over SHAP (high effort) — answers "why" using already-computed data without new ML infrastructure
-- [v1.5]: P vs S variant comparison to isolate location impact — scout-readable diagnostic
+- [v1.7]: Filter once in data.py at load time, all downstream consumers receive clean data
+- [v1.7]: Explicit _YEARS constant over filesystem auto-discovery (sufficient for 2 years)
+- [v1.7]: Per-season baselines (not cross-season averaged) to prevent double-counting artifacts
+- [v1.7]: Export filter_game_type as public API for consumer modules
 
 ### Pending Todos
 
@@ -48,8 +49,9 @@ None yet.
 
 ### Blockers/Concerns
 
-- pitchingplus model internals at ~/src/pitchingplus/packages/plus — external dependency, changes there affect this project's data pipeline
-- data.py has hardcoded 2026-prefixed filenames and single parquet path — restructuring is the core of v1.6
+- pitchingplus model internals at ~/src/pitchingplus/packages/plus -- external dependency, changes there affect this project's data pipeline
+- 75.9% of 2026 statcast rows are spring training -- filtering is correctness-critical, not optional
+- Test assertions will break when filtering lands; new expected values must be computed against filtered data
 
 ## Performance Metrics
 
@@ -58,5 +60,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-04-02
-Stopped at: Milestone v1.7 initialization
+Stopped at: Roadmap created for v1.7 (3 phases 16-18, 11 requirements)
 Resume file: None
