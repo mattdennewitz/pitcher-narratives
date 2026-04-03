@@ -27,7 +27,7 @@
 | 13. Tool Interface Updates | v1.5 | 1/1 | Complete | 2026-03-31 |
 | 14. Analyst Prompt Rewrite | v1.5 | 1/1 | Complete | 2026-03-31 |
 | 15. Specialist-Writer Architecture | v1.6 | prototyped | Complete | 2026-04-03 |
-| 18. Consumer Module Updates | v1.7 | 2/2 | Complete | 2026-04-03 |
+| 18. Consumer Module Updates | v1.7 | 2/2 | Complete    | 2026-04-03 |
 
 ---
 *Full phase details archived in `.planning/milestones/`*
