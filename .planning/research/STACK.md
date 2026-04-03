@@ -1,363 +1,212 @@
-# Stack Research: v1.4 Interactive Pitcher Q&A
+# Stack Research: v1.6 Multi-Year Data & Game Type Filtering
 
 **Project:** Pitcher Narratives
-**Milestone:** v1.4 -- Interactive Pitcher Q&A
-**Researched:** 2026-03-30
+**Milestone:** v1.6 -- Multi-Year Data & Game Type Filtering
+**Researched:** 2026-04-02
 **Confidence:** HIGH
-**Scope:** Stack additions/changes ONLY for interactive Q&A features. Existing validated stack (Python 3.14, polars 1.39, pydantic-ai 1.72, multi-provider LLM, argparse CLI) is unchanged.
+**Scope:** Stack additions/changes ONLY for multi-year parquet/CSV loading and game type filtering. Existing validated stack (Python 3.14, polars 1.39.3, pydantic-ai 1.72, rapidfuzz, multi-provider LLM) is unchanged.
 
 ## Executive Summary
 
-One new dependency: **rapidfuzz** for pitcher name fuzzy matching. Everything else -- tool-calling agents, dependency injection, question-aware context assembly, and the new CLI entry point -- is implementable with existing pydantic-ai 1.72 primitives and argparse. The Q&A agent uses `@agent.tool` decorators with `RunContext[QADeps]` to give the LLM access to the data pipeline through typed tools. No CLI framework migration is needed; a third `[project.scripts]` entry point using the existing argparse pattern is the right approach.
+No new dependencies. Polars 1.39.3 already supports every pattern needed: `read_parquet` accepts `list[Path]` for multi-file loading, `pl.concat(how="vertical")` handles multi-year CSV concatenation, and `is_in` filtering handles game type exclusion. This milestone is a refactor of `data.py` internals -- not a stack change.
 
-## Stack Changes for v1.4
+## Stack Changes for v1.6
 
 ### New Dependencies
 
-| Library | Version | Purpose | Why This One |
-|---------|---------|---------|--------------|
-| rapidfuzz | >=3.14 | Fuzzy string matching for pitcher name resolution | C++ backend makes it 20-100x faster than thefuzz. MIT license (vs thefuzz's GPL). Drop-in compatible API. `process.extractOne` does exactly what we need: match "degrom" to "deGrom, Jacob" from ~1,651 pitcher names. |
+None.
 
 ### What Changes
 
-| Component | Current (v1.3) | Change for v1.4 | Why |
+| Component | Current (v1.5) | Change for v1.6 | Why |
 |-----------|----------------|------------------|-----|
-| Dependencies | polars, pydantic-ai, python-dotenv | Add `rapidfuzz>=3.14` | Name resolution needs fuzzy matching; no built-in alternative |
-| Agent pattern | `Agent(model, output_type=str)` with no tools | `Agent(model, deps_type=QADeps, tools=[...])` with tool-calling | Q&A agent needs to look up pitcher data on demand |
-| CLI entry points | 2 (`pitcher-narratives`, `pitcher-scout`) | Add 3rd: `pitcher-ask` | Separate entry point keeps Q&A concerns isolated |
-| Data pipeline | Called once by CLI, result passed to report | Exposed as tool functions the LLM can invoke | Agent decides which data to fetch based on the question |
+| `PARQUET_PATH` constant | Single `Path` to `statcast_2026.parquet` | List of paths or glob-based discovery | Support 2025 + 2026 parquet files |
+| `_SEASON_CSVS` / `_APPEARANCE_CSVS` dicts | Hardcoded `"2026-pitcher.csv"` etc. | Year-parameterized templates with multi-year iteration | Support year-prefixed CSV files for both years |
+| `load_statcast()` | `pl.read_parquet(PARQUET_PATH)` | `pl.read_parquet(list_of_paths)` + game type filter | Multi-file load with immediate filtering |
+| `_load_csv_with_dates()` | Loads single CSV | Loads per-year CSVs and `pl.concat`s | Multi-year aggregation data |
+| `compute_season_baseline()` | Weights across game_type rows (S/C/R) | Weights across game_type rows after filtering to R only | Correct baselines exclude spring training |
 
 ### What Does NOT Change
 
-- **data.py**: All loading functions reused as-is. No modifications.
-- **engine.py**: All compute functions reused as-is. No modifications.
-- **context.py**: `PitcherContext` and `assemble_pitcher_context` reused. No modifications.
-- **report.py**: Existing 5-phase pipeline untouched. Q&A is a separate agent.
-- **scout.py / curator.py / scout_cli.py**: Unrelated features. Unchanged.
-- **cli.py**: Existing narrative CLI unchanged. Q&A gets its own module.
-- **pyproject.toml structure**: Same hatch build, same src layout.
+- **engine.py**: All compute functions receive DataFrames from `data.py`. No interface changes.
+- **context.py**: Receives `PitcherData` bundle. No changes.
+- **report.py**: 5-phase pipeline receives assembled context. No changes.
+- **analyst.py / ask_cli.py**: Tool-calling agent receives `PitcherData`. No changes.
+- **resolver.py**: Needs minor update (reads from multi-year parquet), but the fuzzy matching logic is unchanged.
+- **scout.py**: Needs minor update (reads `PARQUET_PATH` for velo data), but scoring logic is unchanged.
 
-## Key Technical Decisions
+## Polars Patterns for Multi-Year Loading
 
-### 1. rapidfuzz for Name Resolution (Not thefuzz, Not Manual)
+### Pattern 1: Parquet -- `pl.read_parquet` with `list[Path]`
 
-**Decision:** Use `rapidfuzz.process.extractOne` with `fuzz.WRatio` scorer and `score_cutoff=70`.
-
-**Why rapidfuzz over thefuzz:**
-- **Performance**: C++ implementation, 20-100x faster than thefuzz's pure Python. Not critical for 1,651 names (both are instant), but it means zero motivation to ever consider caching or optimization.
-- **License**: MIT vs thefuzz's GPL-2.0. MIT is compatible with any project license.
-- **API**: Near-identical to thefuzz (`from rapidfuzz import fuzz, process`), so all thefuzz examples and tutorials apply.
-- **Maintenance**: rapidfuzz is actively maintained (v3.14.3 released Nov 2025). thefuzz's last meaningful update was renaming from fuzzywuzzy.
-
-**Why not manual substring matching:**
-- Pitcher names have edge cases: "deGrom" vs "degrom", "Musgrove" vs "Musgrave", "Yamamoto" (multiple pitchers with same last name). Fuzzy matching handles these naturally; substring matching requires special-casing.
-
-**Name format in data:** Statcast uses `"Last, First"` format (e.g., `"deGrom, Jacob"`, `"Abbott, Andrew"`). The fuzzy matcher should handle both "Jacob deGrom" and "degrom" as input, matching against the full `"Last, First"` string with `utils.default_process` for case/punctuation normalization.
-
-**Pattern:**
+**Verified:** polars 1.39.3 `FileSource` type resolves to `str | Path | IO[bytes] | bytes | list[str] | list[Path] | list[IO[bytes]] | list[bytes]`. Passing a list of `Path` objects works natively -- polars reads each file in parallel and auto-concatenates.
 
 ```python
-from rapidfuzz import fuzz, process
+YEARS: list[int] = [2025, 2026]
 
-def resolve_pitcher_name(query: str, names: dict[str, int]) -> tuple[int, str, float]:
-    """Resolve a fuzzy pitcher name query to (pitcher_id, canonical_name, score).
+def _discover_parquet_paths() -> list[Path]:
+    """Build ordered list of statcast parquet paths for all configured years."""
+    paths = [DATA_DIR / f"statcast_{year}.parquet" for year in YEARS]
+    missing = [p for p in paths if not p.exists()]
+    if missing:
+        raise FileNotFoundError(f"Missing parquet files: {missing}")
+    return paths
 
-    Args:
-        query: User input like "degrom" or "Jacob deGrom".
-        names: Mapping of "Last, First" -> pitcher_id from statcast data.
-
-    Returns:
-        Tuple of (pitcher_id, matched_name, match_score).
-
-    Raises:
-        ValueError: If no match above score_cutoff, or if ambiguous (multiple high matches).
-    """
-    result = process.extractOne(query, names.keys(), scorer=fuzz.WRatio, score_cutoff=70)
-    if result is None:
-        raise ValueError(f"No pitcher found matching '{query}'")
-    matched_name, score, _ = result
-    return names[matched_name], matched_name, score
+def load_statcast(pitcher_id: int) -> pl.DataFrame:
+    paths = _discover_parquet_paths()
+    df = pl.read_parquet(paths)
+    df = df.filter(pl.col("game_type").is_in(REGULAR_SEASON_GAME_TYPES))
+    result = df.filter(pl.col("pitcher") == pitcher_id)
+    if result.is_empty():
+        raise ValueError(f"Pitcher {pitcher_id} not found")
+    return result
 ```
 
-**Ambiguity handling:** When `process.extract` returns multiple results above the cutoff with scores within 5 points of each other (e.g., "Yamamoto" matching both "Yamamoto, Yoshinobu" and "Yamamoto, Jordan"), the tool should return all matches and let the user disambiguate. This is a UI concern for the CLI, not a library concern.
+**Why `list[Path]` over glob string:** Explicit path construction from `YEARS` constant fails fast on missing files. A glob like `statcast_*.parquet` would silently succeed with fewer files than expected (e.g., if `statcast_2025.parquet` is missing, glob returns only 2026 and continues with incomplete data).
 
-**Building the name lookup table:** The statcast parquet already has `pitcher` (ID) and `player_name` columns. Build the lookup once at startup:
+**Why `read_parquet` (eager) over `scan_parquet` (lazy):** Total dataset is ~50MB across both years. Eager read takes <1s. The code immediately filters to one pitcher (~200 rows). LazyFrame adds `.collect()` calls everywhere for zero measurable benefit. The existing codebase is entirely eager -- no reason to introduce lazy evaluation for a small dataset.
+
+**Key parameter notes:**
+- `include_file_paths="source_file"` could tag rows with origin, useful for debugging. Not needed in production.
+- `missing_columns="raise"` (the default) is correct. Statcast schema is stable across 2025-2026. If schemas diverge, we want a loud error, not silent nulls.
+
+### Pattern 2: CSV -- `pl.concat` with per-year `pl.read_csv`
+
+**Verified:** polars 1.39.3 `read_csv` source type is `str | Path | IO[str] | IO[bytes] | bytes` -- does NOT accept a list of paths (unlike `read_parquet`). Glob patterns via `read_csv("aggs/*-pitcher.csv")` fail when multiple grains match ("schema lengths differ").
 
 ```python
-def build_pitcher_lookup(parquet_path: Path) -> dict[str, int]:
-    """Build name->ID lookup from statcast parquet."""
-    df = pl.read_parquet(parquet_path, columns=["pitcher", "player_name"])
-    unique = df.unique(subset=["pitcher", "player_name"])
-    return dict(zip(unique["player_name"].to_list(), unique["pitcher"].to_list()))
+_SEASON_CSV_GRAINS = {
+    "pitcher": "pitcher.csv",
+    "pitcher_type": "pitcher_type.csv",
+    "pitcher_type_platoon": "pitcher_type_platoon.csv",
+    "team": "team.csv",
+}
+
+def _load_csv_multi_year(grain: str, pitcher_id: int | None) -> pl.DataFrame:
+    """Load a CSV agg file across all available years and concatenate."""
+    template = {**_SEASON_CSV_GRAINS, **_APPEARANCE_CSV_GRAINS}[grain]
+    frames = []
+    for year in YEARS:
+        path = AGGS_DIR / f"{year}-{template}"
+        if path.exists():
+            df = pl.read_csv(path)
+            frames.append(df)
+    if not frames:
+        raise FileNotFoundError(f"No CSV files found for grain '{grain}'")
+    combined = pl.concat(frames, how="vertical")
+    # Apply game_type filter and pitcher filter
+    if "game_type" in combined.columns:
+        combined = combined.filter(pl.col("game_type").is_in(REGULAR_SEASON_GAME_TYPES))
+    if "game_date" in combined.columns:
+        combined = combined.with_columns(pl.col("game_date").str.to_date("%Y-%m-%d"))
+    if pitcher_id is not None and "pitcher" in combined.columns:
+        combined = combined.filter(pl.col("pitcher") == pitcher_id)
+    return combined
 ```
 
-This reads only 2 columns (fast, ~2MB vs full 145K-row parquet), and produces ~1,651 entries. Negligible memory.
+**Why `pl.concat` over glob:** The 8 grain files have different schemas (pitcher.csv: 30 columns, pitcher_type.csv: 32+, etc.), so glob patterns match wrong files. Explicit per-year loading with `pl.concat(how="vertical")` is predictable.
 
-**Confidence:** HIGH -- rapidfuzz API verified against official docs and PyPI. Name format verified against actual statcast data.
+**Why `how="vertical"`:** All year-files for the same grain share identical schemas. Vertical concat stacks rows. This is the default but explicit is clearer.
 
-### 2. pydantic-ai Tool-Calling Agent for Q&A (Using Existing Primitives)
+**Why `path.exists()` check instead of raising:** CSVs might lag -- 2025 data could exist before 2026, or vice versa. Graceful fallback to available years is safer than requiring all years to be present. The parquet files should all be present (they're the primary data), but agg CSVs are derived and may be generated incrementally.
 
-**Decision:** Create a single `Agent[QADeps, str]` with `@agent.tool` decorators that expose data pipeline functions. The LLM decides which tools to call based on the user's question.
+### Pattern 3: Game Type Filtering
 
-**Why tool-calling over pre-assembled context:**
-- The existing narrative pipeline always assembles the FULL PitcherContext (~544 tokens) because the report needs everything. For Q&A, the user might ask "what's his fastball velocity?" which only needs the fastball summary -- sending the full context wastes tokens and dilutes the answer.
-- Tool-calling lets the LLM request only the data it needs. The tools are thin wrappers around existing `engine.py` compute functions.
+**Verified from actual data:**
 
-**Pattern (verified against installed pydantic-ai 1.72.0 source):**
+| Source | game_type values | Row counts (2026) |
+|--------|-----------------|-------------------|
+| `statcast_2026.parquet` | S, R, C | S=133,887; R=31,331; C=11,162 |
+| `aggs/2026-pitcher.csv` | R only | All rows are game_type=R |
+
+- **S** = Spring Training (75.9% of 2026 statcast rows -- early-season data dominated by ST)
+- **R** = Regular Season (17.8%)
+- **C** = Championship Series / All-Star / Exhibition (6.3%)
+- Agg CSVs only contain R rows because the upstream Pitching+ aggregation pipeline already filters
+
+**Filtering constant:**
 
 ```python
-from dataclasses import dataclass
-from pydantic_ai import Agent, RunContext
-from pitcher_narratives.data import PitcherData
-
-@dataclass
-class QADeps:
-    """Dependencies for the Q&A agent."""
-    pitcher_data: PitcherData
-    pitcher_name: str
-
-qa_agent = Agent(
-    'openai:gpt-5.4-mini',
-    deps_type=QADeps,
-    output_type=str,
-    instructions="You are a baseball analyst answering questions about pitchers...",
-    defer_model_check=True,
-)
-
-@qa_agent.tool
-def get_fastball_summary(ctx: RunContext[QADeps]) -> str:
-    """Get the pitcher's primary fastball quality metrics.
-
-    Returns velocity, Pitching+ triad (P+, S+, L+), movement deltas,
-    and velocity trend vs season baseline.
-    """
-    from pitcher_narratives.engine import compute_fastball_summary
-    fb = compute_fastball_summary(ctx.deps.pitcher_data)
-    if fb is None:
-        return "No standard fastball identified for this pitcher."
-    # Return structured text the LLM can reason about
-    return (
-        f"Primary fastball: {fb.pitch_name} ({fb.pitch_type})\n"
-        f"Season velo: {fb.season_velo:.1f} / Recent: {fb.window_velo:.1f} ({fb.velo_delta})\n"
-        f"P+: {fb.season_p_plus:.0f} season / {fb.window_p_plus or '--'} recent ({fb.p_plus_delta})\n"
-        f"S+: {fb.season_s_plus:.0f} season / {fb.window_s_plus or '--'} recent ({fb.s_plus_delta})\n"
-        f"L+: {fb.season_l_plus:.0f} season / {fb.window_l_plus or '--'} recent ({fb.l_plus_delta})"
-    )
-
-@qa_agent.tool
-def get_arsenal_summary(ctx: RunContext[QADeps]) -> str:
-    """Get the pitcher's full arsenal with usage rates, P+/S+/L+ scores, and deltas."""
-    from pitcher_narratives.engine import compute_arsenal_summary
-    arsenal = compute_arsenal_summary(ctx.deps.pitcher_data)
-    # Format as text table
-    ...
-
-@qa_agent.tool
-def get_execution_metrics(ctx: RunContext[QADeps]) -> str:
-    """Get per-pitch execution metrics: CSW%, zone rate, chase rate, xWhiff, xSwing."""
-    ...
-
-@qa_agent.tool
-def get_workload_context(ctx: RunContext[QADeps]) -> str:
-    """Get recent appearances, pitch counts, rest days, and workload flags."""
-    ...
-
-# ... additional tools wrapping engine.py compute functions
+REGULAR_SEASON_GAME_TYPES = frozenset({"R"})
 ```
 
-**Key API details (verified in installed source):**
-- `@agent.tool`: First parameter must be `RunContext[QADeps]`. Remaining parameters become the tool schema sent to the LLM. For data lookup tools, there are no additional parameters -- the pitcher is implicit in `ctx.deps`.
-- `@agent.tool_plain`: For tools that do not need `RunContext`. Not needed here since all tools access `ctx.deps.pitcher_data`.
-- `ModelRetry`: Import from `pydantic_ai.exceptions`. Raise in a tool to tell the LLM to retry with different arguments. Useful if a tool receives invalid input.
-- Tool return type: Must be JSON-serializable. Returning `str` is simplest and gives the LLM natural-language data it can directly quote.
-- Docstrings are critical: pydantic-ai extracts the tool description from the docstring and sends it to the LLM as the tool's description. The LLM uses this to decide which tool to call.
+**Where to filter:**
 
-**Running the agent:**
+1. **Statcast parquet** -- filter in `load_statcast()` immediately after `read_parquet`, before any downstream processing. This is the critical filter: 82% of statcast rows are non-regular-season.
 
-```python
-result = qa_agent.run_sync(
-    user_prompt=question,
-    deps=QADeps(pitcher_data=data, pitcher_name=name),
-)
-print(result.output)
-```
+2. **Agg CSVs** -- filter in `_load_csv_multi_year()` as defense-in-depth. The upstream pipeline already filters to R, but if that changes or if 2025 data has different behavior, we're protected.
 
-**Confidence:** HIGH -- `Agent.__init__` signature, `@agent.tool` decorator, `RunContext` dataclass, and `run_sync` method all verified in installed pydantic-ai 1.72.0 source at `.venv/lib/python3.14/site-packages/pydantic_ai/`.
+3. **NOT in downstream consumers.** `engine.py`, `context.py`, `report.py`, `analyst.py` should all receive already-filtered data. Single filtering point in `data.py` prevents leakage.
 
-### 3. `instructions` Over `system_prompt` for the Q&A Agent
+**Why `frozenset` + `is_in`:** Extensible to include postseason game types (D=Division Series, L=League Championship, W=World Series) later without code changes. Constant makes allowed types explicit and grep-able.
 
-**Decision:** Use the `instructions` parameter (not `system_prompt`) for the Q&A agent's system-level guidance.
-
-**Why:**
-- `instructions` are excluded from `message_history` when continuing conversations. This matters if we later add multi-turn Q&A: the instructions don't accumulate as duplicate system messages across turns.
-- `system_prompt` is retained in message history. For a single-shot Q&A agent (v1.4 scope), both work identically. But `instructions` is future-proof for multi-turn without any code change.
-- The existing report pipeline uses `system_prompt` because those agents never do multi-turn. For Q&A, the usage pattern is different.
-
-**Confidence:** HIGH -- behavior difference verified in pydantic-ai docs: "Instructions: Exclude previous agent instructions when `message_history` is provided; reevaluated per run."
-
-### 4. Separate CLI Module (Not Subcommand)
-
-**Decision:** Create `ask_cli.py` as a new module with its own `main()` and a new `[project.scripts]` entry point `pitcher-ask`. Do NOT convert existing CLIs to subcommands.
-
-**Why:**
-- The existing project has two separate entry points (`pitcher-narratives` and `pitcher-scout`) as independent argparse scripts. Adding a third follows the established pattern.
-- Converting to subcommands (e.g., `pitcher report`, `pitcher scout`, `pitcher ask`) would be a breaking change to the existing CLI interfaces that users may have scripted.
-- argparse is adequate. The Q&A CLI needs: pitcher name (positional), question (positional or `-q`), provider flag, thinking flag. That's 4 arguments. No framework migration needed.
-
-**Pattern:**
-
-```python
-# pyproject.toml addition
-[project.scripts]
-pitcher-narratives = "pitcher_narratives.cli:main"
-pitcher-scout = "pitcher_narratives.scout_cli:main"
-pitcher-ask = "pitcher_narratives.ask_cli:main"
-```
-
-```python
-# ask_cli.py
-def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Ask questions about a pitcher's recent performance",
-    )
-    parser.add_argument("pitcher", help="Pitcher name (fuzzy matched)")
-    parser.add_argument("question", help="Question to ask about the pitcher")
-    parser.add_argument("--provider", choices=["openai", "claude", "gemini"], default="openai")
-    parser.add_argument("--thinking", choices=["minimal", "low", "medium", "high", "xhigh"], default="medium")
-    parser.add_argument("-w", "--window", type=int, default=30, help="Lookback window in days")
-    return parser.parse_args()
-```
-
-**Confidence:** HIGH -- follows established project patterns exactly.
-
-### 5. Tool Return Format: Structured Text (Not Pydantic Models)
-
-**Decision:** Q&A tools return `str` (formatted text), not Pydantic model instances or dicts.
-
-**Why:**
-- The LLM needs to read the tool output and synthesize an answer. A formatted text string ("P+: 112 season / 118 recent (Rising)") is directly quotable and readable. A JSON dict (`{"season_p_plus": 112, "window_p_plus": 118, "delta": "Rising"}`) requires the LLM to reconstruct meaning from keys.
-- The existing `PitcherContext.to_prompt()` already proves that structured text is the right format for LLM consumption in this project.
-- Returning str avoids coupling tool output format to any specific schema. If engine.py evolves, the tool just updates its format string.
-
-**When to use structured returns:** If a future feature needs the LLM to pass tool output to another tool (chained tool calls), structured output would be better. For v1.4's single-agent Q&A, text is simpler and more effective.
-
-**Confidence:** HIGH -- validated by existing project's `to_prompt()` pattern.
-
-### 6. No Async Conversion Needed
-
-**Decision:** Continue using `run_sync` for the Q&A agent. Do not convert to async.
-
-**Why:**
-- The existing pipeline uses `run_sync` and `run_stream_sync` throughout. The Q&A agent is a CLI tool that blocks on a single LLM call. Async provides zero benefit here.
-- pydantic-ai's `run_sync` internally handles the async-to-sync bridge. No manual `asyncio.run()` needed.
-- The tool functions access polars DataFrames synchronously. Making them async would require wrapping every polars call in `asyncio.to_thread()` for no benefit.
-
-**Confidence:** HIGH -- consistent with existing project architecture.
-
-## Installation
-
-```bash
-# Add rapidfuzz to project dependencies
-uv add "rapidfuzz>=3.14"
-```
-
-In `pyproject.toml`:
-
-```toml
-dependencies = [
-    "polars>=1.39.3",
-    "pydantic-ai>=1.72.0",
-    "pydantic-ai-slim[google]>=1.72.0",
-    "python-dotenv>=1.2.2",
-    "rapidfuzz>=3.14",  # NEW for v1.4
-]
-
-[project.scripts]
-pitcher-narratives = "pitcher_narratives.cli:main"
-pitcher-scout = "pitcher_narratives.scout_cli:main"
-pitcher-ask = "pitcher_narratives.ask_cli:main"  # NEW for v1.4
-```
-
-## Alternatives Considered
-
-| Decision | Recommended | Alternative | Why Not |
-|----------|-------------|-------------|---------|
-| Fuzzy matching | rapidfuzz | thefuzz (fuzzywuzzy) | GPL license, pure Python (slower), less actively maintained. Identical API -- easy to swap if needed. |
-| Fuzzy matching | rapidfuzz | polars string contains / regex | No fuzzy tolerance. "degrom" won't match "deGrom, Jacob" without exact substring logic. Breaks on typos. |
-| Fuzzy matching | rapidfuzz | Manual Levenshtein | Reinventing the wheel. rapidfuzz's `process.extractOne` handles scoring, cutoff, preprocessing, and ranking in one call. |
-| Agent pattern | Tool-calling agent | Pre-assembled full context | Wastes tokens on irrelevant data. A "what's his fastball velo?" question doesn't need platoon splits, TTO analysis, or first-pitch tendencies. |
-| Agent pattern | Tool-calling agent | Multiple specialized agents | Over-engineering. One agent with 6-8 tools covers all question types. Multiple agents need routing logic and add latency. |
-| CLI structure | Separate entry point | Subcommand migration | Breaking change to existing CLI. Three small independent scripts is simpler than one dispatcher. |
-| CLI framework | argparse | typer / click | Already in stdlib, already used by project, 4 arguments don't justify a new dependency. typer IS in the dep tree (transitive via pydantic-ai) but using it for one CLI while others use argparse creates inconsistency. |
-| Tool returns | str | dict / Pydantic model | LLM reads text better than JSON for answer synthesis. Existing to_prompt() pattern validates this approach. |
-
-## What NOT to Add
-
-| Avoid | Why | Risk if Added |
-|-------|-----|---------------|
-| LangChain / LlamaIndex | Massive dependency trees for a single-agent Q&A. pydantic-ai already does tool-calling natively. | 50+ transitive deps, version conflicts, abstraction layer mismatch |
-| Vector database (ChromaDB, Pinecone) | 1,651 pitchers with structured data. Fuzzy string matching on names is exact enough. Vector search is for unstructured document retrieval. | Complexity for zero benefit on structured tabular data |
-| Embedding model for name matching | Same reason. `process.extractOne` on 1,651 names runs in <1ms. Embedding similarity is slower and less interpretable. | API calls for name matching, latency, cost |
-| Conversation memory / persistence | v1.4 is single-shot Q&A. Multi-turn is out of scope. pydantic-ai's `message_history` can add this later with zero new deps. | Premature complexity |
-| typer / click / rich for CLI | argparse works. The Q&A CLI has 4-5 arguments. Rich terminal formatting is out of scope per PROJECT.md. | Inconsistency with existing CLIs, new dep for no benefit |
-| Async runtime | CLI blocks on one LLM call. `run_sync` is correct. | asyncio boilerplate for zero performance benefit |
-| Separate "router" agent | One agent can dispatch via tools. A router adds an extra LLM call to decide which agent to invoke. | Doubled latency, doubled cost, unnecessary for Q&A scope |
-| pydantic-graph for Q&A flow | Q&A is: resolve name -> load data -> call agent -> print. Linear. Not a graph. | Same objection as v1.3: boilerplate for a while-loop |
-
-## Version Compatibility
-
-| Package | Compatible With | Notes |
-|---------|-----------------|-------|
-| rapidfuzz >=3.14 | Python >=3.10 | Project requires 3.14+, well within range |
-| rapidfuzz >=3.14 | polars >=1.39 | No interaction (different domains) |
-| rapidfuzz >=3.14 | pydantic-ai >=1.72 | No interaction (different domains) |
-| pydantic-ai 1.72 | `@agent.tool` with `RunContext` | Verified in installed source -- full tool-calling support |
-| pydantic-ai 1.72 | `instructions` parameter | Verified -- excludes from message_history on subsequent runs |
-| pydantic-ai 1.72 | `ModelRetry` exception | Verified in `exceptions.py` -- tools can signal retry |
+**Impact on baselines:** `compute_season_baseline()` currently uses n_pitches-weighted averaging across game_type rows. After filtering CSVs to R only, this averaging becomes a passthrough (single game_type). The function still works correctly -- it just collapses fewer rows. No code change needed in the function itself.
 
 ## Integration Points
 
-### New Files
+### Files that import from `data.py` and need attention:
 
-| File | Purpose | Depends On |
-|------|---------|------------|
-| `ask_cli.py` | CLI entry point for `pitcher-ask` command | argparse, data.py, resolve.py, ask.py |
-| `resolve.py` | Pitcher name resolution (fuzzy matching) | rapidfuzz, data.py (for name lookup table) |
-| `ask.py` | Q&A agent definition with tools | pydantic-ai, data.py, engine.py |
+| Module | Import | Impact |
+|--------|--------|--------|
+| `resolver.py` | `PARQUET_PATH` (singular `Path`) | Must change to use multi-file loading. Options: (a) import a new function that returns concatenated name table, or (b) import a `PARQUET_PATHS` list. Recommend (a) -- expose a `load_pitcher_names() -> pl.DataFrame` function from `data.py`. |
+| `scout.py` | `PARQUET_PATH` (singular `Path`) | Line 283: `pl.read_parquet(PARQUET_PATH, columns=[...])` for velo data. Must change to multi-file read. Same pattern: `pl.read_parquet(paths, columns=[...])`. |
+| `engine.py` | `AGGS_DIR`, `PitcherData` | Uses `AGGS_DIR` for `RV_df.csv` (not year-prefixed, no change needed). `PitcherData` interface unchanged. |
+| `cli.py` | `load_pitcher_data` | No change -- calls orchestrator function. |
+| `ask_cli.py` | `load_pitcher_data` | No change -- calls orchestrator function. |
+| `context.py` | `PitcherData` | No change -- receives already-loaded data. |
+| `analyst.py` | `PitcherData` | No change -- receives already-loaded data. |
 
-### Existing Files Modified
+### Key design decision: Year-awareness scope
 
-| File | Change | Impact |
-|------|--------|--------|
-| `pyproject.toml` | Add `rapidfuzz>=3.14` dep, add `pitcher-ask` entry point | Minimal -- two lines |
+**Recommendation:** Year-awareness lives entirely in `data.py`. Replace `PARQUET_PATH` (singular constant) with either:
+- A `YEARS` constant + discovery functions, or
+- A `PARQUET_PATHS` list constant
 
-### Existing Files NOT Modified
+The CSV filename dicts (`_SEASON_CSVS`, `_APPEARANCE_CSVS`) become grain-only templates (strip the `2026-` prefix), with the year applied at load time.
 
-| File | Why Unchanged |
-|------|---------------|
-| `data.py` | Functions reused as-is via tool wrappers. No changes to loading logic. |
-| `engine.py` | Compute functions called from tools. No interface changes. |
-| `context.py` | `assemble_pitcher_context` reusable if agent wants full context. No changes. |
-| `report.py` | Narrative pipeline is a separate feature. No interaction with Q&A. |
-| `cli.py` | Existing narrative CLI unchanged. |
-| `scout.py` / `curator.py` / `scout_cli.py` | Unrelated features. |
+No other module should know about year prefixes or file naming conventions.
+
+### The `PitcherData` dataclass
+
+**No interface change.** Downstream consumers receive the same `PitcherData` bundle. The data inside it now spans multiple years, but the fields (statcast, appearances, agg_csvs, etc.) are the same type and shape. This is the key benefit of centralizing loading in `data.py`.
+
+## What NOT to Add
+
+| Avoid | Why | Use Instead |
+|-------|-----|-------------|
+| `scan_parquet` / LazyFrames | ~50MB total across 2 years. Eager read <1s. Lazy adds `.collect()` everywhere for zero benefit. | `pl.read_parquet(list[Path])` |
+| `pyarrow.dataset` | Polars handles multi-file parquet natively. PyArrow adds API surface for no gain. | `pl.read_parquet(list[Path])` |
+| `duckdb` | Sometimes suggested for multi-file queries. Massive dependency, overkill for 2 files. | `pl.read_parquet` + `pl.concat` |
+| Hive partitioning | Requires reorganizing files into `year=2025/` directories. Unnecessary for 2 flat files. | Year-prefixed filenames |
+| `glob` stdlib module | `pathlib.Path.glob()` or explicit path construction is sufficient. | `DATA_DIR / f"statcast_{year}.parquet"` |
+| New config system for years | Two years don't justify YAML/TOML config. A module-level `YEARS = [2025, 2026]` constant is sufficient. Add config later if year count grows. | `YEARS` constant |
+| `missing_columns="insert"` | Only needed if schemas differ across years. Statcast schema is stable 2025-2026. Silent null columns mask real problems. | Default `missing_columns="raise"` |
+| `include_file_paths` parameter | Adds a source column to every DataFrame. Useful for debugging but unnecessary overhead in production. The `season` column already identifies year. | The existing `season` column in the data |
+| Environment variable for game type filter | The filter is a safety/correctness concern, not a user preference. Allowing `GAME_TYPES=S,R` via env var invites broken baselines. | Hardcoded `REGULAR_SEASON_GAME_TYPES` constant |
+
+## Version Compatibility
+
+| Package | Version | Status | Notes |
+|---------|---------|--------|-------|
+| polars | 1.39.3 | Already installed | `read_parquet(list[Path])` verified. `pl.concat(how="vertical")` verified. `is_in` filtering verified. No upgrade needed. |
+| Python | 3.14 | Already pinned | `pathlib.Path` works as expected. `frozenset` for game type constant works. |
+
+No new packages. No version upgrades. The existing polars 1.39.3 handles this milestone completely.
 
 ## Sources
 
 | Source | What Verified | Confidence |
 |--------|---------------|------------|
-| [RapidFuzz PyPI](https://pypi.org/project/RapidFuzz/) | v3.14.3 latest, MIT license, Python >=3.10 | HIGH |
-| [RapidFuzz GitHub](https://github.com/rapidfuzz/RapidFuzz) | API: `process.extractOne`, `fuzz.WRatio`, `score_cutoff` param | HIGH |
-| [pydantic-ai Tools docs](https://ai.pydantic.dev/tools/) | `@agent.tool`, `@agent.tool_plain`, docstring extraction, `ModelRetry` | HIGH |
-| [pydantic-ai Agent docs](https://ai.pydantic.dev/agent/) | `instructions` vs `system_prompt`, `run_sync`, `deps_type`, `message_history` | HIGH |
-| [pydantic-ai Dependencies docs](https://ai.pydantic.dev/dependencies/) | `RunContext[DepsType]`, dataclass deps pattern, runtime `deps=` passing | HIGH |
-| Installed source: `pydantic_ai/agent/__init__.py` | `tool()` decorator signature, `tool_plain()` signature | HIGH |
-| Installed source: `pydantic_ai/_run_context.py` | `RunContext` dataclass fields: `deps`, `model`, `usage`, `messages` | HIGH |
-| Installed source: `pydantic_ai/exceptions.py` | `ModelRetry` class definition and schema | HIGH |
-| Project source: `data.py` | `load_pitcher_data`, `PitcherData` dataclass, name format "Last, First" | HIGH |
-| Project source: `report.py` | Existing agent creation pattern, `_make_agents`, `CachePoint` usage | HIGH |
-| Project data: `statcast_2026.parquet` | 1,651 unique pitchers, "Last, First" name format confirmed | HIGH |
+| polars 1.39.3 venv (`inspect.signature`) | `read_parquet` accepts `list[Path]` via `FileSource` type alias | HIGH |
+| polars 1.39.3 venv (`inspect.signature`) | `read_csv` does NOT accept `list[Path]` -- source is `str \| Path \| IO` only | HIGH |
+| polars 1.39.3 venv (`inspect.signature`) | `pl.concat` signature: `how: ConcatMethod = 'vertical'` | HIGH |
+| polars 1.39.3 venv (`FileSource` type) | Resolves to `str \| Path \| IO[bytes] \| bytes \| list[str] \| list[Path] \| list[IO[bytes]] \| list[bytes]` | HIGH |
+| Actual data: `statcast_2026.parquet` | game_type distribution: S=133,887, R=31,331, C=11,162 | HIGH |
+| Actual data: `aggs/2026-pitcher.csv` | Contains only `game_type="R"` rows | HIGH |
+| Project source: `data.py` | Current loading patterns, constant structure, baseline computation | HIGH |
+| [Polars multiple files guide](https://docs.pola.rs/user-guide/io/multiple/) | Glob and concat patterns for multi-file loading | MEDIUM |
+| [polars.read_parquet API](https://docs.pola.rs/api/python/stable/reference/api/polars.read_parquet.html) | Parameter reference | MEDIUM |
 
 ---
-*Stack research for: v1.4 Interactive Pitcher Q&A*
-*Researched: 2026-03-30*
+*Stack research for: v1.6 Multi-Year Data & Game Type Filtering*
+*Researched: 2026-04-02*

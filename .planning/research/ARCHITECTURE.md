@@ -1,539 +1,392 @@
-# Architecture: Interactive Pitcher Q&A Integration
+# Architecture Patterns
 
-**Domain:** Conversational Q&A agent layered onto existing data pipeline
-**Researched:** 2026-03-30
-**Confidence:** HIGH
+**Domain:** Multi-year data loading and game type filtering for pitcher narratives CLI
+**Researched:** 2026-04-02
 
-## Problem Statement
+## Recommended Architecture
 
-The existing system generates one-shot scouting reports: user provides a pitcher ID, the pipeline computes everything, a 5-phase LLM pipeline produces a narrative. v1.4 adds a second consumer of that same data pipeline -- a Q&A agent that answers natural-language questions about pitchers. This requires solving four integration questions:
+### Design Principle: Filter Early, Concatenate at the Loader
 
-1. Where does pitcher name resolution live?
-2. Should the analyst agent use tools (multi-turn) or pre-assembled context (single call)?
-3. How do report and Q&A consumers share the data pipeline?
-4. What does the CLI entry point look like?
+Game type filtering and multi-year concatenation belong in `data.py` at load time -- before `PitcherData` is constructed. Every downstream consumer (`engine.py`, `context.py`, `scout.py`, `resolver.py`) already operates on `PitcherData` fields or raw DataFrames from `data.py` exports. If filtered data enters `PitcherData`, nothing downstream needs to change.
 
-## Current Architecture (What Exists)
+This is the single most important architectural decision: **filtering happens inside the loaders, not after construction.**
+
+### Data Flow (Current vs Proposed)
 
 ```
-CLI (cli.py)                 Scout CLI (scout_cli.py)
-    |                              |
-    v                              v
-load_pitcher_data(id, window)  scout_appearances(window, top_n)
-    |                              |
-    v                              |
-PitcherData                        |
-    |                              |
-    v                              |
-assemble_pitcher_context()         |
-    |                              |
-    v                              v
-PitcherContext            ScoredAppearance[]
-    |                              |
-    v                              v
-generate_report_streaming()   curate_appearances()
-    |
-    v
-ReportResult (narrative + hook + fantasy + warnings)
+CURRENT:
+  statcast_2026.parquet ──> load_statcast() ──> PitcherData.statcast
+  2026-pitcher.csv ────────> load_agg_csvs() ─> PitcherData.agg_csvs
+  (single year, all game types including S/E)
+
+PROPOSED:
+  statcast_2025.parquet ─┐
+  statcast_2026.parquet ─┴─> load_statcast() ──> filter game_type ──> PitcherData.statcast
+  2025-pitcher.csv ──────┐
+  2026-pitcher.csv ──────┴─> load_agg_csvs() ──> filter game_type ──> PitcherData.agg_csvs
+  (multi-year, regular season only)
 ```
 
-Key module responsibilities:
-- **data.py**: `load_pitcher_data(pitcher_id, window_days)` -> `PitcherData` (parquet + 8 CSVs, classification, baselines)
-- **engine.py**: 10 compute functions (fastball, velocity arc, arsenal, execution, platoon, first pitch, workload, hard hit, release point, TTO) -> dataclass outputs
-- **context.py**: `assemble_pitcher_context(PitcherData)` -> `PitcherContext` Pydantic model with `to_prompt()` -> ~544 token markdown
-- **report.py**: 5-phase LLM pipeline + reflection loop, `generate_report_streaming(PitcherContext)` -> `ReportResult`
-- **scout.py**: Scores appearances for interestingness without LLM calls
-- **curator.py**: LLM-powered curation of scored appearances
-- **cli.py**: argparse entry point for narrative generation (`pitcher-narratives` script)
-- **scout_cli.py**: argparse entry point for scouting (`pitcher-scout` script)
+## Component Boundaries
 
-Data sources:
-- `statcast_2026.parquet`: 145K pitch-level rows, has `pitcher` (int ID) and `player_name` (str, format "Last, First")
-- `aggs/2026-pitcher.csv`: ~1,651 unique pitchers with `pitcher` and `player_name` columns
+### What Changes
 
-## Integration Decision: Name Resolution
+| Component | Change Type | Scope |
+|-----------|-------------|-------|
+| `data.py` | **Modified (primary)** | Multi-year paths, concat, game_type filter |
+| `scout.py` | **Modified (secondary)** | Has its own hardcoded CSV filenames + PARQUET_PATH import |
+| `engine.py` | **Modified (one line)** | Line 1563: hardcoded `2026-pitcher_type.csv` |
+| `resolver.py` | **Modified (minimal)** | Uses `PARQUET_PATH` for name table; needs multi-parquet |
+| `context.py` | **No change** | Consumes `PitcherData`, agnostic to data source |
+| `analyst.py` | **No change** | Consumes `PitcherContext`, no direct data loading |
+| `report.py` | **No change** | Consumes context/capsules, no data loading |
+| `cli.py` | **No change** | Calls `load_pitcher_data()`, interface unchanged |
+| `curator.py` | **No change** | Consumes `ScoredAppearance` list |
+| `ask_cli.py` | **No change** | Calls `load_pitcher_data()` via analyst |
+| `scout_cli.py` | **No change** | Calls `scout_appearances()`, interface unchanged |
 
-### Decision: Standalone `resolver.py` module (not an LLM tool)
+### Component Detail
 
-Name resolution is a deterministic string-matching problem. It does not benefit from LLM reasoning and should not consume LLM tokens. The LLM does not need to "decide" to look up a name -- the CLI layer resolves the name before any LLM call happens.
+#### data.py (Primary Target)
 
-**Implementation:**
+**Current hardcoded state:**
+- `PARQUET_PATH = DATA_DIR / "statcast_2026.parquet"` -- single file
+- `_SEASON_CSVS` -- 4 entries, all `"2026-"` prefixed
+- `_APPEARANCE_CSVS` -- 4 entries, all `"2026-"` prefixed
+- `_ID_COLS` includes `"game_type"` already (used to exclude from metric averaging)
 
+**Changes needed:**
+
+1. **Add centralized constants** for years and excluded game types:
+   ```python
+   _YEARS = [2025, 2026]
+   _EXCLUDED_GAME_TYPES = frozenset({"S", "E"})
+   ```
+
+2. **Replace `PARQUET_PATH` with `PARQUET_PATHS`** -- a list of paths:
+   ```python
+   PARQUET_PATHS: list[Path] = [DATA_DIR / f"statcast_{y}.parquet" for y in _YEARS]
+   ```
+
+3. **Replace `_SEASON_CSVS` / `_APPEARANCE_CSVS` with year-aware generation**:
+   ```python
+   _SEASON_GRAINS = ["pitcher", "pitcher_type", "pitcher_type_platoon", "team"]
+   _APPEARANCE_GRAINS = ["pitcher_appearance", "pitcher_type_appearance",
+                          "pitcher_type_platoon_appearance", "all_pitches"]
+   ```
+
+4. **Add a shared game_type filter helper**:
+   ```python
+   def _filter_game_type(df: pl.DataFrame) -> pl.DataFrame:
+       if "game_type" in df.columns:
+           return df.filter(~pl.col("game_type").is_in(list(_EXCLUDED_GAME_TYPES)))
+       return df
+   ```
+
+5. **Update `load_statcast()`** to concat multiple parquets and filter:
+   ```python
+   def load_statcast(pitcher_id: int) -> pl.DataFrame:
+       frames = [pl.read_parquet(p) for p in PARQUET_PATHS if p.exists()]
+       if not frames:
+           raise FileNotFoundError("No statcast parquet files found")
+       df = pl.concat(frames)
+       df = _filter_game_type(df)
+       result = df.filter(pl.col("pitcher") == pitcher_id)
+       if result.is_empty():
+           raise ValueError(f"Pitcher {pitcher_id} not found")
+       return result
+   ```
+
+6. **Update `_load_csv_with_dates()`** to accept a list of filenames:
+   ```python
+   def _load_csv_with_dates(filenames: list[str], pitcher_id: int | None) -> pl.DataFrame:
+       frames = [pl.read_csv(AGGS_DIR / f) for f in filenames if (AGGS_DIR / f).exists()]
+       if not frames:
+           raise FileNotFoundError(f"No CSV files found for {filenames}")
+       df = pl.concat(frames)
+       df = _filter_game_type(df)
+       if "game_date" in df.columns:
+           df = df.with_columns(pl.col("game_date").str.to_date("%Y-%m-%d"))
+       if pitcher_id is not None and "pitcher" in df.columns:
+           df = df.filter(pl.col("pitcher") == pitcher_id)
+       return df
+   ```
+
+7. **Update `load_agg_csvs()`** to generate multi-year filename lists:
+   ```python
+   def load_agg_csvs(pitcher_id: int) -> dict[str, pl.DataFrame]:
+       result: dict[str, pl.DataFrame] = {}
+       for grain in _SEASON_GRAINS + _APPEARANCE_GRAINS:
+           filenames = [f"{y}-{grain}.csv" for y in _YEARS]
+           pid = None if grain == "team" else pitcher_id
+           result[grain] = _load_csv_with_dates(filenames, pid)
+       return result
+   ```
+
+8. **Add `load_full_agg()` export** for engine.py and scout.py:
+   ```python
+   def load_full_agg(grain: str) -> pl.DataFrame:
+       """Load full (unfiltered-by-pitcher) multi-year agg CSV, game_type filtered."""
+       filenames = [f"{y}-{grain}.csv" for y in _YEARS]
+       return _load_csv_with_dates(filenames, pitcher_id=None)
+   ```
+
+9. **`compute_season_baseline()` and `compute_pitch_type_baseline()` need no structural changes.** These already group by `pitcher` (not by season or game_type) and weight by `n_pitches`. After game_type filtering removes S/E rows upstream, the weighted averaging math remains correct. The `_ID_COLS` frozenset already includes `"game_type"` and `"season"`, so multi-year data with `season` column values [2025, 2026] will have metric columns correctly identified and averaged.
+
+10. **`load_pitcher_data()` signature stays the same:** `load_pitcher_data(pitcher_id: int, window_days: int = 30) -> PitcherData`. No new parameters. Multi-year and game_type filtering are internal to the loaders.
+
+#### resolver.py (Minimal Change)
+
+**Current:** Imports `PARQUET_PATH` from `data.py`, reads single parquet for name table.
+
+**Change:** Import `PARQUET_PATHS`, concat:
 ```python
-# resolver.py
-@dataclass
-class ResolvedPitcher:
-    pitcher_id: int
-    pitcher_name: str    # canonical "Last, First" format
-    confidence: float    # match score 0-100
-    alternatives: list[tuple[int, str, float]]  # other close matches
+from pitcher_narratives.data import PARQUET_PATHS
 
-def resolve_pitcher(query: str) -> ResolvedPitcher: ...
+def _build_name_table() -> _NameTable:
+    ...
+    frames = [pl.read_parquet(p, columns=["pitcher", "player_name"])
+              for p in PARQUET_PATHS if p.exists()]
+    df = pl.concat(frames)
+    unique = df.unique(subset=["pitcher"])
+    ...
 ```
 
-**Why not a tool?** Three reasons:
-1. Name resolution must succeed before we load any data. If the LLM calls a tool and gets back "Ohtani could be 660271 or did you mean..." -- that adds a round trip and the LLM still cannot proceed without a definitive ID.
-2. The existing data pipeline (`load_pitcher_data`) takes `pitcher_id: int`. Changing this to accept names would couple two concerns.
-3. Fuzzy matching is fast (~ms on 1,651 names) and deterministic. No reason to involve the LLM.
+No game_type filter needed here -- name resolution should work for all pitchers regardless of game type. A pitcher who only appeared in spring training should still be resolvable (the downstream data just will not have regular-season rows for them, and `load_statcast` will raise `ValueError`).
 
-**Data source for name lookup:** `aggs/2026-pitcher.csv` is the smallest file containing the full pitcher-to-name mapping (375 KB, ~1,651 unique pitchers). Load it once, build an in-memory index.
+#### scout.py (Secondary Target)
 
-**Matching strategy:**
-- Exact match first (case-insensitive, both "Ohtani" and "Ohtani, Shohei")
-- Token-based matching for partial names ("Shohei" matches "Ohtani, Shohei")
-- Fuzzy matching via `rapidfuzz` for typos ("Ohtanni" -> "Ohtani, Shohei")
-- Threshold: score >= 85 for auto-resolve, 70-85 presents alternatives, <70 fails
+**Current state:** Has its own `_load_csv()` helper with 4 hardcoded `"2026-"` filenames (lines 115-118), and imports `PARQUET_PATH` (line 277). Also filters on `level == "MLB"` (lines 121-124) but does not filter game_type.
 
-**Dependency:** `rapidfuzz` (MIT license, C++ backend, ~100x faster than `thefuzz`, API-compatible). Small pure dependency, no transitive weight. If adding a dependency is undesirable, Python's `difflib.SequenceMatcher` handles 1,651 names fine (just slower on repeated calls).
+**Changes needed:**
 
-**Recommendation:** Use `rapidfuzz` -- it is the standard library for this task, MIT licensed, and the performance headroom means name resolution stays under 5ms even with repeated calls.
+1. **Replace 4 hardcoded CSV loads** with the new `load_full_agg()` from data.py:
+   ```python
+   from pitcher_narratives.data import PARQUET_PATHS, load_full_agg
+   
+   def scout_appearances(...) -> list[ScoredAppearance]:
+       app_df = load_full_agg("pitcher_appearance")
+       app_type_df = load_full_agg("pitcher_type_appearance")
+       season_type_df = load_full_agg("pitcher_type")
+       season_df = load_full_agg("pitcher")
+   ```
+   This eliminates scout.py's `_load_csv()` helper entirely. Game_type filtering comes from `load_full_agg` for free.
 
-## Integration Decision: Tool-Based vs. Pre-Assembled Context
+2. **Add game_type filter alongside existing `level == "MLB"` filter** (lines 121-124). After switching to `load_full_agg()`, game_type is already filtered, so these lines only need the `level` filter. But verify -- if `load_full_agg` handles game_type, scout only needs `level`.
 
-### Decision: Pre-assembled context with a single LLM call (no tools)
+3. **Replace `PARQUET_PATH` import** with `PARQUET_PATHS` in `_compute_velo_baselines()` (line 277-284):
+   ```python
+   frames = [pl.read_parquet(p, columns=[...]) for p in PARQUET_PATHS if p.exists()]
+   df = pl.concat(frames)
+   # game_type filter for statcast too
+   df = df.filter(~pl.col("game_type").is_in(["S", "E"]))
+   ```
+   Note: `_compute_velo_baselines` loads specific columns from parquet and does not go through `load_statcast()`, so it needs its own game_type filter or should use the shared `_filter_game_type` helper. Since scout.py already imports from `data.py`, importing `_EXCLUDED_GAME_TYPES` or using `load_full_agg` patterns works. But the parquet load here is not a CSV -- it is the raw statcast parquet for velocity computation. Best approach: import `_filter_game_type` (or make it public as `filter_game_type`) from data.py and apply it after concat.
 
-This is the most consequential architectural choice and the one where this research diverges from the STACK.md recommendation. STACK.md recommends a tool-calling agent with `@agent.tool` decorators wrapping engine compute functions. This ARCHITECTURE.md recommends pre-assembled context instead. Here is the full analysis.
+#### engine.py (One-Line Fix)
 
-**Option A: Tools (multi-turn)** -- Agent has tools like `get_fastball_summary()`, `get_arsenal()`, `get_platoon_splits()`. The LLM decides which data to fetch based on the question.
+**Line 1563:** `full_pitcher_type_df = pl.read_csv(AGGS_DIR / "2026-pitcher_type.csv")`
 
-**Option B: Pre-assembled context (single call)** -- Assemble the full `PitcherContext.to_prompt()` markdown (~544 tokens) and send it with the question in one call. The LLM answers from the pre-assembled data.
+This loads the full (unfiltered-by-pitcher) pitcher_type CSV for league-wide xRV100 percentile computation in `_compute_xrv100_percentile`.
 
-**Option B wins.** The reasoning:
-
-1. **Context is small -- the core argument.** The entire `PitcherContext.to_prompt()` is ~544 tokens. STACK.md's argument for tools is "A 'what's his fastball velo?' question doesn't need platoon splits" -- true, but the overhead of sending unused context is ~400 tokens, which costs <$0.001 and adds zero perceptible latency. The overhead of a tool-calling round trip is 500ms-2s of wall-clock time per tool call, plus the LLM must decide which tool to call (sometimes incorrectly).
-
-2. **Tools add latency, not intelligence.** Each tool call requires: (a) the LLM to decide to call a tool, (b) sending the tool call back to the application, (c) executing the tool, (d) returning the result, (e) the LLM to process the result. For a Q&A interaction where the user wants sub-second responsiveness, a single call with 544 tokens of context is always faster than tool-calling loops. Even a single tool call adds 1-2 seconds of latency.
-
-3. **The existing context is already optimized.** The `to_prompt()` method was specifically designed for LLM consumption. The engine already pre-computes deltas, trend strings, and qualitative labels. The tools in STACK.md would just be wrappers that call the same compute functions and format the output -- duplicating what `to_prompt()` already does.
-
-4. **Tool-based agents are harder to test.** With pre-assembled context, testing is: build context, call agent, assert on output. With tools, you need to verify the LLM calls the right tools for each question type, handle cases where it calls the wrong tool or no tool, mock tool execution, etc. The test matrix is combinatorial.
-
-5. **Tool selection can be wrong.** If a user asks "what's different about his stuff recently?" the LLM must decide: call `get_fastball_summary()`? `get_arsenal_summary()`? Both? All of them? Pre-assembled context sidesteps this entirely -- the LLM has everything and picks what is relevant. The LLM is better at extracting relevant information from a document than at deciding which API to call.
-
-6. **Question-aware filtering is better done in Python.** If context filtering is needed (it likely is not at 544 tokens), detecting "slider" in a question and promoting SL data in the context is a simple regex. It is cheaper, faster, and more reliable than hoping the LLM calls `get_pitch_type_data("SL")`.
-
-**When tools would be the right choice:**
-- If context exceeded ~2,000 tokens (selective retrieval saves real cost)
-- If the agent needs data not in PitcherContext (league averages, other pitchers)
-- If multi-turn conversation is supported (tools enable dynamic data fetching per turn)
-
-None of these apply to v1.4. If any become true in v1.5+, migrating from pre-assembled context to tools is straightforward -- the `ask_question()` function signature does not change, only its internals.
-
-### Reconciliation with STACK.md
-
-STACK.md recommends tools because it views the problem as "the LLM should only see relevant data." This is sound engineering intuition for large contexts. But it does not account for the actual context size (544 tokens) or the latency cost of tool calls in a CLI Q&A interaction. The architectural evidence (measuring `to_prompt()` output) overrides the general principle.
-
-STACK.md's `instructions` vs `system_prompt` recommendation is correct and adopted here. STACK.md's `rapidfuzz` recommendation is correct and adopted here. The tool-calling pattern is the only point of disagreement, and this document explains why.
-
-### Question-Aware Context Filtering
-
-Not a complex feature -- a lightweight enhancement:
-
+**Fix:** Import and use `load_full_agg`:
 ```python
-# In context.py or a new qa_context.py
-def to_qa_prompt(self, question: str) -> str:
-    """Render context with question-relevant sections promoted."""
+from pitcher_narratives.data import load_full_agg
+
+# In compute_execution_metrics():
+full_pitcher_type_df = load_full_agg("pitcher_type")
 ```
 
-The idea: detect keywords in the question (pitch type names, "velocity", "platoon", "workload", etc.) and reorder or annotate the context sections to emphasize relevant data. The full context still ships (it is only 544 tokens), but the question-relevant section gets a "** Relevant to your question **" annotation or moves to the top.
-
-**Recommendation:** Start without question-aware filtering. The context is small enough that the LLM handles it fine. Add filtering only if testing reveals the agent missing relevant data in answers.
-
-## Integration Decision: Sharing the Data Pipeline
-
-### Decision: Reuse `load_pitcher_data()` and `assemble_pitcher_context()` as-is
-
-The existing pipeline already does exactly what the Q&A agent needs:
-
-```
-resolve_pitcher("Ohtani")      # NEW: resolver.py
-    |
-    v
-pitcher_id = 660271
-    |
-    v
-load_pitcher_data(660271, 30)  # EXISTING: data.py (unchanged)
-    |
-    v
-PitcherData
-    |
-    v
-assemble_pitcher_context(data) # EXISTING: context.py (unchanged)
-    |
-    v
-PitcherContext
-    |
-    v
-analyst_agent.run_sync(        # NEW: analyst.py
-    question + context.to_prompt()
-)
-    |
-    v
-Answer (str)
-```
-
-**No modifications needed to data.py, engine.py, or context.py.** The Q&A agent is a new consumer of the same data pipeline, not a modification of it.
-
-The `window_days` parameter maps naturally to Q&A: default to 30 for general questions, allow the user to specify a different window if they want ("how has he looked in the last week?").
-
-## Integration Decision: CLI Entry Point
-
-### Decision: New `ask_cli.py` module with new `pitcher-ask` script entry point
-
-The project already has two separate CLI scripts:
-- `pitcher-narratives` -> `cli.py:main`
-- `pitcher-scout` -> `scout_cli.py:main`
-
-Follow the same pattern: a new `pitcher-ask` script entry point.
-
-```toml
-# pyproject.toml
-[project.scripts]
-pitcher-narratives = "pitcher_narratives.cli:main"
-pitcher-scout = "pitcher_narratives.scout_cli:main"
-pitcher-ask = "pitcher_narratives.ask_cli:main"       # NEW
-```
-
-**Why not a subcommand of `pitcher-narratives`?** Three reasons:
-1. The existing CLIs use `argparse` with no subcommand structure. Adding subcommands to `pitcher-narratives` would break the existing `pitcher-narratives -p 660271` interface.
-2. The project already set the precedent of separate scripts per concern (`pitcher-scout` is separate from `pitcher-narratives`).
-3. The Q&A usage pattern is fundamentally different: it takes a name (not an ID) and a question (not a window).
-
-**CLI interface:**
-
-```bash
-# Basic usage
-pitcher-ask "Ohtani" "How's his slider looking?"
-
-# With options
-pitcher-ask "Gerrit Cole" "Is his fastball velocity trending down?" -w 14
-pitcher-ask "Cole, Gerrit" "What's changed recently?" --provider claude
-```
-
-Arguments:
-- `pitcher` (positional): Pitcher name (fuzzy matched)
-- `question` (positional): Natural language question
-- `-w` / `--window`: Lookback window in days (default 30, reuses existing convention)
-- `--provider`: LLM provider (default openai, same options as existing CLIs)
-- `--thinking`: Thinking effort level (default medium, same as existing)
-
-## Recommended Architecture (v1.4)
-
-### New Component Map
-
-```
-CLI Layer
-  ask_cli.py [NEW]          -- argparse, orchestrates name resolution + Q&A
-  cli.py     [UNCHANGED]    -- existing narrative CLI
-  scout_cli.py [UNCHANGED]  -- existing scout CLI
-
-Resolution Layer
-  resolver.py [NEW]         -- fuzzy name-to-ID matching
-
-Data Layer
-  data.py    [UNCHANGED]    -- load_pitcher_data()
-  engine.py  [UNCHANGED]    -- 10 compute functions
-  context.py [UNCHANGED]    -- PitcherContext assembly + to_prompt()
-
-LLM Layer
-  analyst.py [NEW]          -- Q&A agent with analyst system prompt
-  report.py  [UNCHANGED]    -- 5-phase narrative pipeline
-  curator.py [UNCHANGED]    -- curation agent
-```
-
-### New Modules Detail
-
-#### `resolver.py` -- Pitcher Name Resolution
-
-```python
-"""Fuzzy pitcher name resolution from local data.
-
-Maps natural-language pitcher names to MLB pitcher IDs using the
-pitcher aggregation CSV as the name registry.
-"""
-
-@dataclass
-class ResolvedPitcher:
-    pitcher_id: int
-    pitcher_name: str
-    confidence: float
-    alternatives: list[tuple[int, str, float]]
-
-class AmbiguousMatchError(Exception):
-    """Multiple pitchers matched with similar confidence."""
-    candidates: list[tuple[int, str, float]]
-
-class NoMatchError(Exception):
-    """No pitcher matched the query."""
-    query: str
-
-def build_pitcher_index() -> dict[int, str]:
-    """Load unique pitcher ID -> name mapping from 2026-pitcher.csv."""
-
-def resolve_pitcher(query: str) -> ResolvedPitcher:
-    """Resolve a natural-language name to a pitcher ID.
-
-    Strategy: exact match -> token match -> fuzzy match.
-    Raises AmbiguousMatchError or NoMatchError on failure.
-    """
-```
-
-Responsibilities:
-- Load pitcher name registry from `aggs/2026-pitcher.csv` (once, cached)
-- Support multiple input formats: "Ohtani", "Shohei Ohtani", "Ohtani, Shohei"
-- Fuzzy match via `rapidfuzz.fuzz.token_sort_ratio` for typo tolerance
-- Return structured result with confidence score and alternatives
-- Raise specific errors for ambiguous or no-match cases
-
-#### `analyst.py` -- Q&A Analyst Agent
-
-```python
-"""Single-phase Q&A analyst agent.
-
-Takes a question and PitcherContext, returns a grounded analytical
-response. No multi-phase pipeline, no reflection loop -- single call
-optimized for interactive responsiveness.
-"""
-
-def ask_question(
-    question: str,
-    ctx: PitcherContext,
-    *,
-    provider: str = "openai",
-    thinking: ThinkingEffort = "medium",
-    _model_override: Any = None,
-) -> str:
-    """Answer a question about a pitcher using pre-assembled context."""
-```
-
-System prompt characteristics:
-- Grounded analyst voice (reuse the pragmatic tone from the editor prompt)
-- Explicit instruction: answer ONLY from the provided data, say "the data doesn't cover that" when asked about something not in the context
-- No hallucination -- cite specific numbers from the context
-- Concise answers (2-4 sentences for most questions, longer for "tell me everything about his slider")
-- No bullet points, no headers -- conversational prose
-
-Key differences from the report pipeline:
-- Single agent, single call (no multi-phase, no reflection loop)
-- Optimized for speed (interactive feel, not report quality)
-- Lower thinking effort by default (medium vs high)
-- Output is direct answer text, not a structured ReportResult
-- Uses `instructions` parameter (not `system_prompt`) per STACK.md recommendation, for future multi-turn compatibility
-
-#### `ask_cli.py` -- Q&A CLI Entry Point
-
-```python
-"""CLI entry point for interactive pitcher Q&A.
-
-Resolves pitcher names to IDs, loads data, and answers questions
-using the analyst agent.
-"""
-
-def main() -> None:
-    """Entry point: resolve name, load data, ask question, print answer."""
-```
-
-Flow:
-1. Parse args (pitcher name, question, options)
-2. Resolve name via `resolver.resolve_pitcher()`
-3. Print resolution result to stderr ("Resolved: Ohtani, Shohei (660271)")
-4. Load data via `data.load_pitcher_data()`
-5. Assemble context via `context.assemble_pitcher_context()`
-6. Call `analyst.ask_question()` with streaming output
-7. Print answer to stdout
-
-Error handling:
-- `NoMatchError`: print "No pitcher found matching 'X'" to stderr, exit 1
-- `AmbiguousMatchError`: print candidates to stderr ("Did you mean: ..."), exit 1
-- `ValueError` from `load_pitcher_data`: print error, exit 1
-- Missing API key: same pre-flight check pattern as existing CLIs
-
-### Component Boundaries
-
-| Component | Responsibility | Communicates With |
-|-----------|---------------|-------------------|
-| `ask_cli.py` | Arg parsing, orchestration, error handling, streaming output | resolver, data, context, analyst |
-| `resolver.py` | Name -> ID mapping, fuzzy matching, ambiguity handling | data (reads CSV directly) |
-| `analyst.py` | LLM Q&A agent definition, system prompt, single-call answering | context (reads PitcherContext) |
-| `data.py` | Data loading (unchanged) | parquet + CSV files |
-| `engine.py` | Computation (unchanged) | data.py outputs |
-| `context.py` | Context assembly (unchanged) | engine.py outputs |
-
-### Data Flow
-
-```
-User: pitcher-ask "Ohtani" "How's his slider looking?" -w 14
-
-ask_cli.py:
-  1. Parse: pitcher="Ohtani", question="How's his slider looking?", window=14
-  2. resolver.resolve_pitcher("Ohtani")
-     -> ResolvedPitcher(id=660271, name="Ohtani, Shohei", confidence=95)
-  3. stderr: "Resolved: Ohtani, Shohei (660271)"
-  4. data.load_pitcher_data(660271, window_days=14) -> PitcherData
-  5. context.assemble_pitcher_context(data) -> PitcherContext
-  6. analyst.ask_question(
-       question="How's his slider looking?",
-       ctx=pitcher_context,
-       provider="openai",
-     )
-  7. Stream answer to stdout
-```
+This single change gets multi-year concat + game_type filtering for free.
 
 ## Patterns to Follow
 
-### Pattern 1: Separate CLI per Concern (established)
-**What:** Each major feature gets its own CLI entry point script and pyproject.toml entry.
-**When:** Adding a new user-facing capability with a different interaction pattern.
-**Evidence:** `cli.py` / `pitcher-narratives` and `scout_cli.py` / `pitcher-scout` already demonstrate this.
+### Pattern 1: Filter at the Gate
 
-### Pattern 2: Agent Factory with Caching (established)
-**What:** `_make_agents()` in report.py creates and caches agents keyed by (provider, thinking).
-**When:** Creating LLM agents that may be reused across calls.
-**Apply to:** The analyst agent in `analyst.py` should follow the same pattern -- a module-level `_make_analyst()` that caches by (provider, thinking).
+**What:** Apply game_type exclusion (`~game_type.is_in(["S", "E"])`) inside every load function, not in consumer code.
 
-### Pattern 3: Pre-flight API Key Check (established)
-**What:** Check for the required API key env var before making any LLM call.
-**When:** Any CLI that calls an LLM.
-**Evidence:** Both `cli.py` and `scout_cli.py` do this.
+**When:** Always. Every function that reads from parquet or CSV should strip spring training and exhibition data before returning.
 
-### Pattern 4: Lazy Imports for Speed (established)
-**What:** Import heavy modules (`pydantic_ai`, `polars`) inside functions, not at module top.
-**When:** CLI modules where import time affects perceived startup latency.
-**Evidence:** `cli.py` uses `from pitcher_narratives.data import load_pitcher_data` inside `main()`.
+**Why:** Downstream code (engine, context, scout, report) never sees non-regular-season data. No risk of a forgotten filter in one code path producing tainted baselines. The `compute_season_baseline` docstring currently says "Combines game_type rows (S/C/R)" -- after filtering, it only sees R and C (championship/postseason), which is correct.
 
-### Pattern 5: stderr for Status, stdout for Output (established)
-**What:** All status messages, progress indicators, and error messages go to stderr. Only the final output (report, table, answer) goes to stdout.
-**When:** Always.
-**Evidence:** All existing CLIs follow this strictly.
+**Implementation:**
+```python
+_EXCLUDED_GAME_TYPES = frozenset({"S", "E"})
+
+def _filter_game_type(df: pl.DataFrame) -> pl.DataFrame:
+    """Remove spring training and exhibition rows if game_type column exists."""
+    if "game_type" in df.columns:
+        return df.filter(~pl.col("game_type").is_in(list(_EXCLUDED_GAME_TYPES)))
+    return df
+```
+
+### Pattern 2: Year-Agnostic Consumers
+
+**What:** No code outside `data.py` should know about year prefixes or file counts.
+
+**When:** Always. If a new year (2027) is added, only `data.py`'s `_YEARS` list should change.
+
+**Why:** Single point of configuration. The rest of the codebase operates on concatenated DataFrames and does not care how many years contributed to them.
+
+### Pattern 3: Graceful Degradation on Missing Files
+
+**What:** If a parquet or CSV file for a given year does not exist, skip it silently and load available years.
+
+**When:** During development and data ingestion when years arrive incrementally.
+
+**Example:**
+```python
+frames = [pl.read_parquet(p) for p in PARQUET_PATHS if p.exists()]
+if not frames:
+    raise FileNotFoundError("No statcast parquet files found")
+df = pl.concat(frames)
+```
+
+**Why:** Fail loud when no data exists (zero frames = error). Degrade gracefully when partial data exists (one year missing = proceed with available data).
+
+### Pattern 4: Centralized Year Configuration
+
+**What:** A single `_YEARS` constant in `data.py` drives all file discovery.
+
+**When:** Always. No magic year detection from filesystem -- explicit is better.
+
+**Why:** Predictable behavior. An accidental `statcast_2024.parquet` in the data dir will not silently load stale data. Adding a new year is a one-line change with clear intent.
 
 ## Anti-Patterns to Avoid
 
-### Anti-Pattern 1: Making the LLM Do Name Resolution
-**What:** Giving the analyst agent a `resolve_name` tool so it can look up pitcher IDs.
-**Why bad:** Wastes LLM tokens on a deterministic string-matching task. Adds latency (tool call round trip). Creates error paths where the LLM misinterprets ambiguous matches.
-**Instead:** Resolve the name in Python before any LLM call. The LLM receives a fully-resolved PitcherContext.
+### Anti-Pattern 1: Filtering in PitcherData Consumers
 
-### Anti-Pattern 2: Modifying PitcherContext for Q&A
-**What:** Adding Q&A-specific fields or methods to the shared `PitcherContext` model.
-**Why bad:** Couples two consumers. The report pipeline and Q&A agent have different context needs. PitcherContext is already well-scoped for its purpose.
-**Instead:** If Q&A needs different context formatting, create a thin wrapper or a separate `to_qa_prompt()` method. But start by reusing `to_prompt()` as-is -- it is only 544 tokens and likely sufficient.
+**What:** Letting engine.py or context.py filter game_type from DataFrames they receive.
 
-### Anti-Pattern 3: Multi-Phase Pipeline for Q&A
-**What:** Replicating the synthesizer -> editor -> anchor check flow for Q&A.
-**Why bad:** Massive overkill. The report pipeline exists because generating a polished narrative requires multiple refinement passes. Q&A is a direct question-answer interaction. One LLM call is correct.
-**Instead:** Single agent, single call. If answer quality becomes a problem, add a lightweight fact-check step later (but do not start with it).
+**Why bad:** Duplicated filter logic across 5+ modules. One missed filter means spring training data contaminates baselines or scout scores. The current `compute_season_baseline` averages across game_type rows by design -- if S/E rows are present, they get averaged in, silently biasing metrics toward spring training performance.
 
-### Anti-Pattern 4: Subcommands on Existing CLI
-**What:** Changing `pitcher-narratives -p 660271` to `pitcher-narratives report -p 660271` and adding `pitcher-narratives ask "Ohtani" "question"`.
-**Why bad:** Breaking change to the existing interface. The existing CLI has no subcommand structure. Users and scripts depending on `pitcher-narratives -p 660271` would break.
-**Instead:** New `pitcher-ask` script. Clean separation, zero breaking changes.
+**Instead:** Filter once in `data.py` loaders. Consumers get clean data.
 
-### Anti-Pattern 5: Tool-Based Agent for 544-Token Context
-**What:** Wrapping each engine compute function as an `@agent.tool` so the LLM fetches data selectively.
-**Why bad:** At 544 tokens total context, the overhead of tool-calling (latency, LLM decision-making about which tool to call, error handling for wrong tool selection) exceeds the cost of sending the full context. Tools are correct when context is large and selective retrieval saves meaningful tokens/cost. That threshold is not met here.
-**Instead:** Send full `PitcherContext.to_prompt()` as user message context. Reassess if context grows past ~2,000 tokens.
+### Anti-Pattern 2: Changing PitcherData's Interface
+
+**What:** Adding `game_types: list[str]` or `years: list[int]` fields to `PitcherData`.
+
+**Why bad:** `PitcherData` is a value object -- a bundle of processed data for a single pitcher. It should not carry metadata about how it was filtered. Every consumer would need to check these fields or ignore them. The dataclass has 9 fields today and is passed through engine, context, report, analyst. Adding filter metadata is noise.
+
+**Instead:** `load_pitcher_data()` applies filtering during construction. Downstream code receives clean data and does not second-guess it.
+
+### Anti-Pattern 3: Dynamic Year Discovery from Filesystem
+
+**What:** Scanning `DATA_DIR` for `statcast_*.parquet` and auto-loading all matches.
+
+**Why bad:** Unpredictable. A leftover test file or backup would silently contaminate data. Makes debugging harder when you cannot tell which years loaded.
+
+**Instead:** Explicit `_YEARS = [2025, 2026]`. Add new years consciously.
+
+### Anti-Pattern 4: Separate Code Paths for Each Year
+
+**What:** `if year == 2025: load_2025_data()` style branching.
+
+**Why bad:** O(n) code for O(1) logic. Concat handles multi-year data in a single code path.
+
+**Instead:** List of paths, concat, filter, done.
+
+### Anti-Pattern 5: Making game_type Filtering Configurable
+
+**What:** Adding a `game_types: list[str] = ["R"]` parameter to `load_pitcher_data()`.
+
+**Why bad:** For this project, the policy is clear and permanent: exclude spring training and exhibition. Making it configurable adds API surface with no current use case. If a future feature needs spring training data, it can call `pl.read_parquet()` directly.
+
+**Instead:** Hardcode the exclusion in `_EXCLUDED_GAME_TYPES`. Simple, clear, not configurable.
+
+## Integration Points (Exhaustive Inventory)
+
+Every location in the codebase that references year-specific files or would be affected by multi-year / game_type changes:
+
+| File | Line(s) | Current Code | Change Required |
+|------|---------|--------------|-----------------|
+| `data.py` | 34 | `PARQUET_PATH = DATA_DIR / "statcast_2026.parquet"` | Replace with `PARQUET_PATHS` list |
+| `data.py` | 39-44 | `_SEASON_CSVS` dict, `"2026-"` prefixed | Generate from `_YEARS` x `_SEASON_GRAINS` |
+| `data.py` | 45-50 | `_APPEARANCE_CSVS` dict, `"2026-"` prefixed | Generate from `_YEARS` x `_APPEARANCE_GRAINS` |
+| `data.py` | 82-99 | `_load_csv_with_dates(filename: str, ...)` | Accept `filenames: list[str]`, concat, filter |
+| `data.py` | 102-118 | `load_statcast()` reads single parquet | Read `PARQUET_PATHS`, concat, filter game_type |
+| `data.py` | 131-147 | `load_agg_csvs()` iterates single-file dicts | Iterate multi-file grain lists |
+| `data.py` | 179-202 | `compute_season_baseline()` | No structural change needed |
+| `data.py` | 205-230 | `compute_pitch_type_baseline()` | No structural change needed |
+| `engine.py` | 1563 | `pl.read_csv(AGGS_DIR / "2026-pitcher_type.csv")` | Use `load_full_agg("pitcher_type")` |
+| `scout.py` | 115 | `_load_csv("2026-pitcher_appearance.csv")` | Use `load_full_agg("pitcher_appearance")` |
+| `scout.py` | 116 | `_load_csv("2026-pitcher_type_appearance.csv")` | Use `load_full_agg("pitcher_type_appearance")` |
+| `scout.py` | 117 | `_load_csv("2026-pitcher_type.csv")` | Use `load_full_agg("pitcher_type")` |
+| `scout.py` | 118 | `_load_csv("2026-pitcher.csv")` | Use `load_full_agg("pitcher")` |
+| `scout.py` | 121-124 | `level == "MLB"` filter only | Game_type handled by `load_full_agg`; keep `level` filter |
+| `scout.py` | 277-284 | `PARQUET_PATH` import + single read | Use `PARQUET_PATHS`, concat, filter game_type |
+| `resolver.py` | 18 | `from pitcher_narratives.data import PARQUET_PATH` | Import `PARQUET_PATHS` |
+| `resolver.py` | 110 | `pl.read_parquet(PARQUET_PATH, ...)` | Concat from `PARQUET_PATHS` (no game_type filter) |
+
+**Total: 17 locations across 4 files.** context.py, analyst.py, report.py, cli.py, ask_cli.py, curator.py, scout_cli.py need zero changes.
+
+## New Exports from data.py
+
+After changes, `data.py` should export these new items:
+
+| Export | Type | Purpose | Consumers |
+|--------|------|---------|-----------|
+| `PARQUET_PATHS` | `list[Path]` | Multi-year parquet paths | resolver.py, scout.py |
+| `load_full_agg(grain)` | `function` | Load unfiltered multi-year agg CSV with game_type filter | engine.py, scout.py |
+
+Existing exports (`PitcherData`, `load_statcast`, `load_agg_csvs`, `load_pitcher_data`, `load_run_values`, `RV_DF_PATH`, etc.) keep their signatures unchanged. `load_pitcher_data(pitcher_id, window_days)` does not gain new parameters.
+
+Internal additions (not exported):
+- `_YEARS: list[int]` -- year list
+- `_EXCLUDED_GAME_TYPES: frozenset[str]` -- game types to exclude
+- `_SEASON_GRAINS: list[str]` -- season-level CSV grain names
+- `_APPEARANCE_GRAINS: list[str]` -- appearance-level CSV grain names  
+- `_filter_game_type(df)` -- shared filter helper
 
 ## Suggested Build Order
 
-The build order follows dependency chains and enables incremental testing.
+Build order respects dependency flow: `data.py` is the foundation everything imports from.
 
-### Phase 1: Pitcher Name Resolution (`resolver.py`)
-**Rationale:** Foundation for the new CLI. Has zero LLM dependencies, pure Python + `rapidfuzz`. Can be built and thoroughly tested independently.
+| Step | What | Why This Order | Risk |
+|------|------|----------------|------|
+| 1 | `data.py`: Add `_YEARS`, `_EXCLUDED_GAME_TYPES`, `_filter_game_type`, `PARQUET_PATHS`, grain lists | Foundation constants everything else needs | Low -- additive, no existing behavior changes yet |
+| 2 | `data.py`: Update `_load_csv_with_dates()` to accept/concat multiple filenames | Internal helper used by `load_agg_csvs` and new `load_full_agg` | Medium -- changes internal API; `load_agg_csvs` must be updated in same step |
+| 3 | `data.py`: Update `load_statcast()` for multi-parquet + game_type filter | Feeds `PitcherData.statcast` and `classify_appearances` | Medium -- behavioral change; existing tests should verify |
+| 4 | `data.py`: Update `load_agg_csvs()` to use grain-based filename generation | Feeds baselines and all downstream agg data | Medium -- must match step 2's new `_load_csv_with_dates` signature |
+| 5 | `data.py`: Add `load_full_agg()` export | Needed by engine.py and scout.py before they can be updated | Low -- new function, no existing code changes |
+| 6 | `engine.py`: Replace line 1563 with `load_full_agg("pitcher_type")` | Single line change, depends on step 5 | Low |
+| 7 | `resolver.py`: Update to use `PARQUET_PATHS` | Depends on step 1; straightforward concat | Low |
+| 8 | `scout.py`: Replace hardcoded CSVs with `load_full_agg` calls + multi-parquet | Depends on step 5; most lines changed of any non-data.py file | Medium -- scout has its own baseline computation that must still work |
 
-Build:
-1. `resolver.py` with `build_pitcher_index()`, `resolve_pitcher()`, error types
-2. Unit tests: exact match, partial name, fuzzy match, ambiguous, no match, "Last, First" format, "First Last" format
-3. Add `rapidfuzz` to `pyproject.toml` dependencies
+Steps 6, 7, 8 are independent of each other and can be done in parallel after step 5.
 
-Dependencies: Only `data.py` (for CSV path constants). No other modules touched.
+**Recommended phasing for the GSD roadmap:**
+- **Phase 1**: Steps 1-5 (all data.py changes). This is the foundation. Ship it and verify `load_pitcher_data` still works end-to-end.
+- **Phase 2**: Steps 6-8 (engine.py, resolver.py, scout.py updates). These are leaf consumers that can be done independently.
 
-### Phase 2: Q&A Analyst Agent (`analyst.py`)
-**Rationale:** The core LLM integration. Depends on `PitcherContext` (which already exists and is unchanged). Can be tested with `TestModel` from pydantic-ai.
+## Verification Strategy
 
-Build:
-1. `analyst.py` with system prompt, agent factory, `ask_question()` function
-2. System prompt: grounded analyst voice, data-only answers, cite specific numbers
-3. Unit tests with `TestModel` (no real LLM calls): verify prompt assembly, verify context is included, verify streaming works
+After each phase, these checks confirm correctness:
 
-Dependencies: `context.py` (unchanged), `report.py` (imports `PROVIDERS`, `THINKING_LEVELS` constants).
-
-### Phase 3: Q&A CLI Entry Point (`ask_cli.py`)
-**Rationale:** Wires the previous two components together. Follows established CLI patterns.
-
-Build:
-1. `ask_cli.py` with `parse_args()` and `main()`
-2. Positional args for pitcher name and question
-3. Standard options: `-w`, `--provider`, `--thinking`
-4. Error handling for resolution failures and missing API keys
-5. `pyproject.toml` entry: `pitcher-ask = "pitcher_narratives.ask_cli:main"`
-6. Integration tests: end-to-end with `TestModel`
-
-Dependencies: `resolver.py` (Phase 1), `analyst.py` (Phase 2), `data.py` + `context.py` (unchanged).
-
-### Phase 4 (optional): Question-Aware Context Filtering
-**Rationale:** Only build if testing reveals the agent struggling with questions about specific pitch types or metrics. The 544-token context is likely small enough that the LLM handles it without filtering.
-
-Build:
-1. Keyword detection in questions (pitch type names, metric categories)
-2. Context section reordering or annotation
-3. Tests verifying filtering behavior
-
-Dependencies: `context.py` (would add a new method, not modify existing ones).
-
-## What Stays Unchanged
-
-| Module | Reason |
-|--------|--------|
-| `data.py` | Q&A uses `load_pitcher_data()` as-is. No API changes needed. |
-| `engine.py` | All 10 compute functions used indirectly through `assemble_pitcher_context()`. No changes. |
-| `context.py` | `PitcherContext` and `assemble_pitcher_context()` reused as-is. `to_prompt()` provides the Q&A context. |
-| `report.py` | Narrative pipeline is a separate consumer. Q&A does not touch it. Constants (`PROVIDERS`, `THINKING_LEVELS`) may be imported. |
-| `scout.py` | Appearance scoring is unrelated to Q&A. |
-| `curator.py` | Curation is unrelated to Q&A. |
-| `cli.py` | Existing narrative CLI unchanged. |
-| `scout_cli.py` | Existing scout CLI unchanged. |
-
-## What Gets Created
-
-| Module | Purpose | Size Estimate |
-|--------|---------|---------------|
-| `resolver.py` | Name-to-ID resolution | ~100-150 lines |
-| `analyst.py` | Q&A analyst agent | ~80-120 lines |
-| `ask_cli.py` | Q&A CLI entry point | ~80-100 lines |
-| `tests/test_resolver.py` | Resolver unit tests | ~150-200 lines |
-| `tests/test_analyst.py` | Agent unit tests | ~80-120 lines |
-| `tests/test_ask_cli.py` | CLI integration tests | ~80-120 lines |
-
-**Total new code:** ~570-810 lines across 6 files. No modifications to existing files except `pyproject.toml` (adding `pitcher-ask` entry point and `rapidfuzz` dependency).
+| Check | What It Validates |
+|-------|-------------------|
+| `load_pitcher_data(pitcher_id, 30)` returns data | Multi-year concat works, game_type filter did not strip all rows |
+| `PitcherData.statcast` has no `game_type == "S"` or `"E"` rows | Filter applied correctly |
+| `PitcherData.agg_csvs["pitcher"]` has rows from both 2025 and 2026 seasons | Multi-year CSV concat works |
+| `compute_season_baseline` returns one row per pitcher (not per season) | Grouping still correct across years |
+| `scout_appearances()` returns results | Scout's multi-year + game_type filter works |
+| `resolver.resolve("Cole")` still resolves | Multi-parquet name table works |
+| `compute_execution_metrics` includes xRV100 percentile | engine.py's `load_full_agg` call works |
 
 ## Scalability Considerations
 
-| Concern | v1.4 (current) | Future |
-|---------|-----------------|--------|
-| Name resolution speed | <5ms for 1,651 pitchers with rapidfuzz | Scales linearly, still fast at 10K+ |
-| Context size | 544 tokens (well within limits) | If context grows past 2K tokens, question-aware filtering or tools become worthwhile |
-| LLM latency | Single call, ~1-3 seconds | If multi-turn needed, consider tool-based approach |
-| Data loading | Full parquet scan per query (~1-2s) | Could cache PitcherData for repeated questions about same pitcher |
-| Pitcher index | Loaded from CSV per invocation | Could persist as a pickle/sqlite for <1ms startup |
+| Concern | 2 years (now) | 5 years | 10 years |
+|---------|---------------|---------|----------|
+| Parquet read time | Negligible (2 files, ~300K rows total) | Add column selection at read time | Partitioned parquet or LazyFrame |
+| CSV concat | Fine (16 CSVs, small files) | Still fine | Consider converting aggs to parquet |
+| Memory (statcast) | ~300K rows, well within Polars comfort | ~750K rows, still fine | Filter columns at read time |
+| Name table size | ~2K unique pitchers | ~4K pitchers | Still fine, dict lookup is O(1) |
 
-## Confidence Assessment
-
-| Decision | Confidence | Rationale |
-|----------|------------|-----------|
-| Standalone resolver (not LLM tool) | HIGH | Deterministic task, established pattern, tested in production systems |
-| Pre-assembled context (not tools) | HIGH | Context is 544 tokens, tools add latency for no benefit at this scale. Measured via `to_prompt()` output. |
-| Separate CLI script | HIGH | Established project pattern, zero breaking changes |
-| rapidfuzz for fuzzy matching | HIGH | Industry standard, MIT license, well-documented |
-| Single-call agent (no pipeline) | HIGH | Q&A is fundamentally different from narrative generation |
-| Skip question-aware filtering initially | MEDIUM | Likely unnecessary at 544 tokens, but may help with specific pitch-type questions |
-| `instructions` over `system_prompt` | HIGH | Future-proofs for multi-turn per STACK.md recommendation |
+For the 2-year scope of v1.6, plain eager concat of 2 parquet files and 16 CSVs is well within Polars' comfort zone. No lazy frames or column projection needed.
 
 ## Sources
 
-- [Pydantic AI - Function Tools documentation](https://ai.pydantic.dev/tools/)
-- [Pydantic AI - Dependencies and RunContext](https://ai.pydantic.dev/dependencies/)
-- [Pydantic AI - Agents](https://ai.pydantic.dev/agent/)
-- [RapidFuzz documentation](https://rapidfuzz.github.io/RapidFuzz/)
-- [RapidFuzz GitHub](https://github.com/rapidfuzz/RapidFuzz)
-- Existing codebase: `data.py`, `context.py`, `report.py`, `cli.py`, `scout_cli.py` (primary evidence for architecture decisions)
-- `.planning/research/STACK.md` (v1.4 stack research, reconciled in this document)
+- Direct code analysis of `data.py`, `engine.py`, `context.py`, `resolver.py`, `scout.py`, `analyst.py`, `cli.py`, `scout_cli.py` in the current repository (HIGH confidence -- primary source)
+- `PROJECT.md` for data schema documentation: game_type column values "R" (regular), "S" (spring training), "E" (exhibition) (HIGH confidence)
+- Polars `pl.concat()` for vertical DataFrame concatenation (HIGH confidence -- well-documented core API)
+- Polars `DataFrame.filter()` with `is_in()` for set-based filtering (HIGH confidence)

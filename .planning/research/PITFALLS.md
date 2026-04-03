@@ -1,354 +1,328 @@
-# Pitfalls Research
+# Domain Pitfalls: Multi-Year Data & Game Type Filtering
 
-**Domain:** Interactive Q&A over structured baseball data -- adding natural language questioning to an existing analytics CLI pipeline
-**Researched:** 2026-03-30
-**Confidence:** MEDIUM-HIGH (grounded in direct codebase analysis of 9 source modules and 200 tests, actual dataset analysis of 1,651 pitcher names showing real collision patterns, web-verified LLM tool-calling failure modes from Arize AI production field analysis and academic research, and pydantic-ai documentation)
+**Domain:** Adding multi-year (2025 + 2026) parquet/CSV loading and game_type filtering to an existing single-year pitcher analytics pipeline
+**Researched:** 2026-04-02
+**Confidence:** HIGH -- grounded in direct line-by-line analysis of data.py, engine.py, resolver.py, scout.py, context.py, analyst.py, and all 8 test files in the codebase
+
+---
 
 ## Critical Pitfalls
 
-### Pitfall 1: Fuzzy Name Resolution Returning the Wrong Pitcher
+Mistakes that cause data corruption, silent wrong answers, or require significant rework.
 
-**What goes wrong:**
-A user types `ask "What's Rodriguez throwing?"` and the system picks the first Rodriguez match -- say, Bradgley Rodriguez -- when the user meant Grayson Rodriguez, the Orioles ace. The system confidently generates an analytical response about the wrong pitcher. The user has no reason to doubt the answer because the system never indicated ambiguity. This is worse than an error message: it is a silent wrong answer.
+### Pitfall 1: Baseline Computation Poisoned by Spring Training Data
 
-The actual dataset contains **168 duplicate last-name families** across 1,651 pitchers. Rodriguez alone has **12 entries**. Garcia has 11. Anderson and Smith each have 9. Martinez has 8. These are not edge cases -- they are the most commonly searched names.
+**What goes wrong:** `compute_season_baseline()` (data.py:179) currently does a weighted average across ALL `game_type` rows per pitcher. The docstring explicitly says "Combines game_type rows (S/C/R) into a single row." This means spring training (S) and exhibition (E) pitch data is weighted into the season baseline that feeds every downstream computation: fastball deltas, arsenal usage shifts, P+/S+/L+ comparisons, execution metrics, and platoon splits. A pitcher who experimented with a new slider grip in spring training drags down his season S+ baseline, making his regular-season performance look better by comparison. Conversely, a pitcher who was dominant in spring training (small sample, weaker competition) inflates his baseline, making regular-season numbers look worse.
 
-Additionally, the dataset stores names with accented characters inconsistently: "Ramirez, Kelvin" (no accent) coexists with "Ramirez, Erasmo" (accent on i). "Perez, Adonys" coexists with "Perez, Cionel" (accent on e). A user typing "Perez" must match both "Perez" and "Perez" variants, but naive string comparison treats them as different names.
+The same pattern repeats in three other places:
+- `compute_pitch_type_baseline()` (data.py:205) -- same game_type-agnostic weighted average
+- `_compute_platoon_baseline()` (engine.py:355) -- duplicates the pattern for platoon splits
+- `_build_season_baseline()` and `_build_season_type_baseline()` (scout.py:231, 248) -- the scout module has its OWN baseline computation that independently repeats the same bug
 
-**Why it happens:**
-Developers reach for `rapidfuzz.process.extractOne()` with a threshold and call it done. This works for datasets with unique names but silently picks the highest-scoring match from a set of near-equal candidates. When "Rodriguez" matches 12 entries with the same last-name score, the "winner" is arbitrary -- determined by which first name happens to score slightly higher against the empty first-name input.
+**Why it happens:** The original design correctly identified that game_type rows need combining (the weighted average is the right math), but the intent was to collapse game_type as a dimension, not to include all game types indiscriminately. When there was only 2026 data with mostly regular season games, the spring training contamination was small enough to not notice. Adding 2025 data (which has a FULL spring training) significantly amplifies the problem because 2025 spring training represents a much larger fraction of the combined dataset.
 
-The accent problem compounds this: fuzzy matchers like Levenshtein or Jaro-Winkler treat "e" and "e" as different characters. Without Unicode normalization (NFKD decomposition + accent stripping), "Perez" matches "Perez, Adonys" at 100% but "Perez, Cionel" at ~85%. The user gets a false confidence match against the less well-known pitcher.
+**Consequences:**
+- Every delta string in the context document (velo trends, P+ trends, usage shifts) is computed against a poisoned baseline
+- The LLM generates insights like "fastball velocity down 1.2 mph from season" when it's actually down 0.3 mph from regular season -- the gap is spring training inflation
+- Scout scoring (scout.py) flags false positives and misses true signals because its baselines are independently contaminated
+- The xRV100 percentile computation (engine.py:1491) uses the full league pitcher_type CSV without filtering, meaning percentile ranks include spring training noise for ALL pitchers in the league distribution
 
-**How to avoid:**
-- **Require disambiguation when multiple candidates score above threshold.** If `extractOne()` returns a score of 85+ AND `extract()` returns 2+ candidates within 5 points of each other, present the list: "Multiple matches for 'Rodriguez': Grayson Rodriguez (BAL), Bradgley Rodriguez (NYY)... Which one?" This is not a failure -- it is correct behavior.
-- **Normalize Unicode before matching.** Apply `unicodedata.normalize('NFKD', name).encode('ascii', 'ignore').decode()` to both the query and the dataset names before scoring. This collapses "Perez" and "Perez" into the same candidate pool.
-- **Index by both "First Last" and "Last, First" forms.** Users will type "Grayson Rodriguez", but the data stores "Rodriguez, Grayson". Build the matcher against both forms. Also index common short forms (first initial + last name).
-- **Include team code or pitcher ID as disambiguation.** When multiple matches exist, show team affiliation from the data: "Rodriguez, Grayson (BAL)" vs "Rodriguez, Bradgley (NYY)". The user can then specify.
-- **Never auto-select from ambiguous results in a CLI tool.** The cost of a wrong answer is higher than the cost of asking for clarification. The existing report pipeline fails fast with "Pitcher not found" on bad IDs -- the Q&A pipeline should be equally strict about ambiguous names.
+**Prevention:**
+- Filter to `game_type == "R"` BEFORE baseline computation, not after
+- The filter belongs in the data loading layer (data.py), not scattered across consumers
+- Specifically: `load_agg_csvs()` should filter each DataFrame to `game_type == "R"` when the column exists, OR a new function should handle this
+- The statcast parquet also has a `game_type` column -- `load_statcast()` must filter it too
+- The hardcoded `full_pitcher_type_df = pl.read_csv(AGGS_DIR / "2026-pitcher_type.csv")` in engine.py:1563 bypasses all data.py abstractions and must also be filtered
+- scout.py:115-118 loads CSVs independently via `_load_csv()` -- these four loads must also filter
 
-**Warning signs:**
-- Tests only cover unique-name lookups (e.g., "Ohtani" which has no collisions) and never test common surnames.
-- No test for accented-character queries.
-- The name resolver has no "multiple match" code path -- only "found" and "not found."
-- Users report getting answers about pitchers they did not ask about.
+**Detection:**
+- A pitcher with 100 spring training pitches and 500 regular season pitches will have a baseline shifted by ~17% toward spring training values
+- Compare `compute_season_baseline()` output with and without game_type="R" filter -- if they differ for any pitcher who played spring training, the bug is present
+- Check if the `_ID_COLS` frozenset (data.py:53) still contains "game_type" after filtering -- if game_type is being used as a group-by key somewhere downstream, it will silently produce multiple rows
 
-**Phase to address:**
-Phase 1 (Name Resolution) -- this must be built with disambiguation from the start. Retrofitting disambiguation into a resolver that returns a single ID requires changing the entire downstream call chain.
-
----
-
-### Pitfall 2: Context Window Bloat -- Sending Full PitcherContext for Narrow Questions
-
-**What goes wrong:**
-The user asks "What is Corbin Burnes' fastball velocity?" -- a question answerable from 2 lines of the PitcherContext. But the system sends the entire `to_prompt()` output (~2,000 tokens of markdown covering 12 sections: executive summary, role, fastball, TTO, arsenal, execution, release point, hard-hit rate, platoon, first pitch, appearances, and workload). The LLM processes all 2,000 tokens, most of which are irrelevant, increasing latency and cost while diluting the model's attention on the actually relevant data.
-
-For a Q&A agent that handles many questions per session, this waste compounds. Ten questions about the same pitcher at 2,000 tokens each is 20,000 input tokens. With question-aware filtering, the same ten questions might use 500-800 tokens each -- a 60-75% reduction.
-
-Worse, the "lost in the middle" phenomenon means the LLM may actually answer less accurately with more context: research consistently shows that when relevant information is buried in a large context, LLMs miss it more often than when it is presented in isolation (Arize AI field analysis, 2025).
-
-**Why it happens:**
-The existing `PitcherContext.to_prompt()` method is designed for narrative generation, where every section is potentially relevant because the LLM needs the full picture to find narrative threads. Developers reuse it for Q&A because it already works and "more context is better" feels intuitively correct. It is not. The report pipeline and Q&A pipeline have opposite context needs: reports need breadth (all sections), Q&A needs depth (the right section).
-
-**How to avoid:**
-- **Build a question-aware context filter.** Before sending context to the LLM, classify the question into one of the existing PitcherContext sections (fastball, arsenal, execution, platoon, workload, etc.) and send only those sections. This can be a simple keyword/pattern match -- not an LLM call. "fastball velocity" maps to the fastball section. "pitch mix" maps to arsenal. "splits" maps to platoon. "workload" maps to workload + appearances.
-- **Create `PitcherContext.to_prompt_sections()` that returns a dict of section name to markdown.** The Q&A agent selects which sections to include. The report pipeline continues to use `to_prompt()` which joins all sections.
-- **Default to sending 2-3 relevant sections plus the executive summary**, not the full context. The executive summary provides enough meta-context for the LLM to frame the answer without reading every detail.
-- **Test with narrow questions.** If "What is his fastball velocity?" includes TTO data, platoon splits, and release point mechanics in the prompt, the filtering is not working.
-
-**Warning signs:**
-- All Q&A responses take roughly the same time regardless of question specificity.
-- Token usage per Q&A call is comparable to a full report generation call.
-- The LLM includes irrelevant details in its answer ("His fastball sits at 95.2 mph... and his platoon splits show...") when the user only asked about velocity.
-- Narrow questions get worse answers than expected because the LLM is "lost in the middle."
-
-**Phase to address:**
-Phase 2 or 3 (Context Filtering) -- this requires `PitcherContext` refactoring, which is a cross-cutting change. Build the Q&A agent first with full context (Phase 1-2), then add filtering as an optimization phase. But plan for it architecturally from the start: the Q&A agent should accept a `sections: list[str]` parameter even if Phase 1 passes `["all"]`.
+**Phase to address:** Phase 1 (Data Loading Restructure) -- this must be the FIRST change because every downstream computation depends on clean baselines.
 
 ---
 
-### Pitfall 3: Tool-Calling Agent Hallucinating Data Lookups
+### Pitfall 2: Double-Counting Pitchers Who Appear in Both 2025 and 2026
 
-**What goes wrong:**
-If the Q&A agent is built with pydantic-ai tools (e.g., a `lookup_pitcher` tool and a `get_pitch_metrics` tool), the LLM can hallucinate tool calls in several ways:
+**What goes wrong:** When loading multi-year parquet files and concatenating them, a pitcher who pitched in both 2025 and 2026 appears in BOTH DataFrames. If the code simply concatenates without deduplication awareness, several things break:
 
-1. **Fabricated parameters:** The LLM calls `get_pitch_metrics(pitcher_id=999999, pitch_type="KN")` with an ID it invented because it "knows" the pitcher throws a knuckleball from its training data, even though the pitcher is not in the dataset or does not throw that pitch in 2026.
+1. **Season baselines span two seasons.** `compute_season_baseline()` groups by `pitcher` and weight-averages. If the concatenated data has 2025 rows AND 2026 rows for the same pitcher, the "season" baseline becomes a career-fragment average. A pitcher who threw 95 mph in 2025 and 97 mph in 2026 gets a baseline of ~96 mph, which makes his current 97 mph look like only +1 mph gain instead of being right at his 2026 level.
 
-2. **Tool call when none is needed:** The user asks a general question ("What makes a good changeup?") and the LLM calls `lookup_pitcher()` anyway because it has been trained to use tools when available.
+2. **Pitch type baselines lose seasonal context.** If a pitcher added a sweeper in 2026 that he didn't throw in 2025, the sweeper's baseline gets diluted by zero 2025 usage, distorting usage-rate deltas.
 
-3. **Skipping the tool entirely:** The LLM has training-data knowledge about the pitcher and answers from memory instead of calling the data lookup tool. "Corbin Burnes throws his cutter at 88 mph" -- but the data says 86.4 mph. The answer sounds authoritative but is stale training data, not grounded in the actual dataset.
+3. **Appearance classification spans seasons.** `classify_appearances()` groups by game_pk/game_date but doesn't account for the semantic boundary between seasons. A pitcher who was a reliever all of 2025 but converted to starting in 2026 would have his 2025 RP appearances counted alongside 2026 SP appearances, making `_is_cold_start()` and lookback window logic behave incorrectly.
 
-4. **Wrong tool sequence:** In a multi-tool setup, the LLM calls `get_pitch_metrics()` before `lookup_pitcher()`, passing a fabricated pitcher_id instead of resolving the name first.
+4. **Lookback window math crosses the offseason.** `filter_to_window()` uses `max_date - timedelta(days=window_days)`. With a 30-day window in early April 2026, this catches late March 2026 data, which is fine. But if the statcast data starts from Opening Day 2025, a pitcher who hasn't pitched in early 2026 would have `max_date` in October 2025, and the window would look back into September 2025. This is correct behavior for 2025-only analysis but confusing if the user expects 2026 data.
 
-Research from Arize AI (2025) confirms that hallucinated arguments are a primary production failure mode: "Agents confidently invent parameters that 'feel' correct rather than admitting uncertainty."
+**Why it happens:** The current code assumes "season" = "all data in the file." With one parquet file per year, this is true. The moment you `pl.concat()` two years, "all data in the file" becomes "two seasons" and every function that computes baselines, windows, or trends silently changes meaning.
 
-**Why it happens:**
-LLMs treat tools as suggestions, not constraints. A tool called `get_pitch_metrics` with a parameter `pitcher_id: int` tells the LLM "you need an integer here" but does not tell it which integers are valid. The LLM fills in plausible-looking values from its training distribution. This is the tool-calling equivalent of hallucination.
+**Prevention:**
+- Do NOT concatenate years into a single DataFrame for baseline purposes. Load each year's agg CSVs separately and compute baselines per season, then select the appropriate season's baseline for the analysis being performed.
+- For the statcast parquet, concatenation is fine for the pitch-level data (appearances span only one game), but the window/baseline logic must know which season's data to use.
+- Add a `season` column filter wherever baselines are computed. The agg CSVs already have a `season` column -- use it.
+- When computing "season baseline," define which season you mean: the most recent one where the pitcher has data, not "everything we loaded."
+- PitcherData should carry a `season: int` field indicating the target analysis season.
 
-The "skip the tool" failure is particularly insidious with baseball data because LLMs have extensive baseball knowledge in their training data. The model can generate a plausible-sounding answer about any well-known pitcher without ever touching the tools.
+**Detection:**
+- Run `load_pitcher_data()` for a pitcher who pitched in both years and check if `season_baseline` has one row or multiple
+- Check if `appearances` DataFrame contains games from both seasons
+- Look for unreasonable delta values (e.g., velocity deltas > 3 mph for an established pitcher) which indicate cross-season averaging
 
-**How to avoid:**
-- **Prefer a single-tool or zero-tool architecture for v1.4.** The simplest Q&A agent receives the PitcherContext as user-message context (not via a tool) and answers questions directly. No tool calls, no hallucinated parameters, no wrong sequences. The data pipeline runs before the agent, not inside it. This matches the existing report pipeline pattern.
-- **If tools are used, validate all parameters against the dataset.** A `lookup_pitcher` tool should raise `ModelRetry("Pitcher ID 999999 not found in dataset")` so the LLM gets a clear error and can self-correct. pydantic-ai's `ModelRetry` exception is designed exactly for this.
-- **Explicitly instruct the agent NOT to use training data.** The system prompt must say: "Answer ONLY from the provided data. If the data does not contain information to answer the question, say so. Never fill in details from your general knowledge."
-- **Limit the tool count.** Research shows accuracy drops with more tools available. Keep to 2-3 tools maximum. The Q&A agent should need at most: (1) a name resolver and (2) a data lookup. Ideally, zero tools -- just context in the prompt.
-- **Add a grounding check.** After the LLM answers, verify that any numbers it cites actually appear in the context. The existing `check_hallucinated_metrics()` regex scanner from the report pipeline is a starting model.
-
-**Warning signs:**
-- The agent produces answers about pitchers not in the dataset.
-- The agent cites specific velocities or percentages that do not appear in the PitcherContext.
-- Tool call logs show fabricated pitcher IDs or pitch types.
-- The agent answers general baseball questions that are not grounded in data (working as a chatbot, not an analyst).
-
-**Phase to address:**
-Phase 2 (Q&A Agent Design) -- the tool vs. no-tool architecture decision must be made here. The recommendation is strongly toward no-tool (context-in-prompt) for v1.4 to avoid this entire category of failure.
+**Phase to address:** Phase 1 (Data Loading Restructure) -- the multi-year loading architecture must define season boundaries upfront.
 
 ---
 
-### Pitfall 4: Breaking the Existing Report Pipeline While Adding Q&A
+### Pitfall 3: Game Type Filtering at the Wrong Layer
 
-**What goes wrong:**
-The Q&A feature shares modules with the report pipeline: `data.py`, `engine.py`, and `context.py`. A developer modifying `data.py` to add a `resolve_pitcher_name()` function accidentally changes the import order, modifies `PitcherData` to add an optional field that breaks existing unpacking, or alters `load_pitcher_data()` to accept a name string alongside an ID, introducing a code path that existing tests do not cover. The 200 existing tests continue to pass because they test the ID-based path, but the shared module now has a regression that surfaces only in edge cases.
+**What goes wrong:** Instead of filtering in the data loading layer (data.py), each consumer (engine.py, scout.py, analyst.py, context.py) independently adds `game_type == "R"` filters. This produces three failure modes:
 
-More subtly, adding a Q&A entry point to `cli.py` (or a new `ask_cli.py`) that shares `parse_args()` can break the existing report CLI if argument parsing is modified to accommodate question input. argparse is sensitive to required/optional argument changes -- making `-p` optional (because Q&A might resolve by name) breaks every test that expects `-p` to be required.
+1. **Inconsistent filtering.** engine.py filters but scout.py doesn't (or vice versa), producing different baselines for the same pitcher. The narrative report says "P+ up 8 points" but the scout scorer doesn't flag it because it's using a different baseline.
 
-**Why it happens:**
-The existing codebase is a well-tested monolith with tightly coupled modules. The modules were designed for a single use case (ID-based report generation) and their interfaces reflect that assumption. Adding a second use case (name-based Q&A) requires touching the same modules, and "just add a parameter" changes ripple through the call chain.
+2. **Missed filter sites.** engine.py:1563 loads the full pitcher_type CSV directly (`pl.read_csv(AGGS_DIR / "2026-pitcher_type.csv")`) for league-wide percentile computation, bypassing data.py entirely. Any filtering in data.py doesn't touch this path. There are at least 5 independent CSV-loading code paths across the codebase (data.py:94, data.py:114, engine.py:1563, scout.py:81, scout.py:115-118).
 
-The danger is amplified because the existing 200 tests all pass -- creating false confidence that changes are safe. The tests cover the report pipeline thoroughly but do not exercise the Q&A code paths.
+3. **Filter after aggregation.** If the agg CSVs already have per-game_type rows pre-aggregated by the upstream Pitching+ pipeline, filtering `game_type == "R"` on the agg CSVs correctly selects regular-season rows. But if someone tries to filter game_type on the statcast parquet and THEN re-aggregate, they'll get different numbers than the agg CSVs because the Pitching+ model was trained on all game types. The filter must happen at the right grain.
 
-**How to avoid:**
-- **Create new modules for Q&A-specific logic.** Name resolution goes in `resolver.py`, not `data.py`. The Q&A agent goes in `qa.py`, not `report.py`. The Q&A CLI goes in `ask_cli.py`, not `cli.py`. The shared modules (`data.py`, `engine.py`, `context.py`) should not be modified unless absolutely necessary.
-- **Compose, do not modify.** The Q&A pipeline should call `load_pitcher_data(pitcher_id, window_days)` with a resolved ID, not modify `load_pitcher_data` to accept names. Name resolution happens upstream of the data pipeline.
-- **Separate CLI entry points.** Add a new `ask` subcommand or a separate `ask_cli.py` with its own `parse_args()`. Do not modify the existing `cli.py:parse_args()`. If both CLIs share a common runner, extract that to a shared module.
-- **Run the full existing test suite after every change.** This sounds obvious, but in practice developers run only the new Q&A tests during development and discover report regressions late.
-- **Add integration tests that exercise the report pipeline end-to-end** (not just unit tests) before starting Q&A work. If any Q&A change breaks the report pipeline, these tests catch it immediately.
+**Why it happens:** The path of least resistance is "add a filter where I need it." When you're modifying `compute_fastball_summary()`, it's tempting to add `.filter(pl.col("game_type") == "R")` right there. But engine.py has 12+ compute functions, scout.py has 4 baseline builders, and there's a direct CSV read in the percentile function. Remembering to filter in all of them is error-prone.
 
-**Warning signs:**
-- Any diff to `data.py`, `engine.py`, or `context.py` in a Q&A PR.
-- The existing `cli.py:parse_args()` function is modified.
-- New optional parameters added to `load_pitcher_data()` or `assemble_pitcher_context()`.
-- Test suite passes but a manual `uv run python -m pitcher_narratives.cli -p 592155` fails.
+**Prevention:**
+- Filter ONCE in data.py, at load time, for both parquet and CSV paths
+- `load_statcast()` filters to `game_type == "R"` before returning
+- `_load_csv_with_dates()` filters to `game_type == "R"` when the column exists
+- Eliminate the direct `pl.read_csv()` call in engine.py:1563 -- make it go through data.py so it gets the filter automatically
+- scout.py's `_load_csv()` should be eliminated; scout.py should use data.py's loading functions
+- Write a test that asserts no code outside data.py calls `pl.read_csv()` or `pl.read_parquet()` on data files
+- Consider making the filter configurable (defaulting to "R") rather than hardcoded, in case exhibition/spring data is needed for future features
 
-**Phase to address:**
-All phases -- this is a cross-cutting concern. The module boundary decision (new modules vs. modifying existing) must be made in Phase 1 (Architecture). Every subsequent phase must be verified against the existing test suite.
+**Detection:**
+- `grep -r "read_csv\|read_parquet" src/pitcher_narratives/ | grep -v data.py` reveals bypass loading
+- Differing baselines between report pipeline and scout pipeline for the same pitcher indicates inconsistent filtering
+- Tests that compare `compute_season_baseline()` output vs manual calculation on filtered data
 
----
-
-### Pitfall 5: Over-Engineering Question Understanding
-
-**What goes wrong:**
-A developer builds a full NLU pipeline for question classification: intent detection, entity extraction, slot filling, follow-up resolution, multi-turn state management. The Q&A agent gets a tool for each question type (velocity tool, arsenal tool, platoon tool, workload tool). The system prompt becomes a 3,000-token instruction manual explaining 15 question categories. The result is a fragile Rube Goldberg machine that fails on questions that do not fit neatly into a category ("Is he tipping his pitches?"), while a simple prompt with full context would have answered it directly.
-
-The academic research is clear on this: "Modern models handle JSON generation reliably enough that isolating schema generation into a separate tool wasn't worth the delegation cost. When in doubt, cutting hard logic and taking advantage of the multi-billion parameter model is often the right approach" (Elastic, 2025). For question answering over a 2,000-token context, the LLM does not need help understanding the question -- it needs the right context and clear instructions.
-
-**Why it happens:**
-Developers with NLP backgrounds default to structured classification pipelines. They decompose "What is his fastball velocity?" into `intent=velocity, entity=fastball, metric=speed` and route to a handler function. This was the right approach in 2020 with weak language models. With Claude Sonnet 4.6, the model can read 2,000 tokens of structured baseball data and answer any reasonable question about it without explicit routing.
-
-The over-engineering instinct is also driven by the fear of Pitfall 2 (context bloat). "If I classify the question, I can send less context." This is true but solves a $0.001 problem with a $100 solution. The context budget for Q&A (~2K tokens) is small enough that sending the full context is cheaper than building and maintaining a classification pipeline.
-
-**How to avoid:**
-- **Start with the simplest possible architecture: one agent, one prompt, full context.** The user's question goes into the user message. The PitcherContext goes into the user message. The system prompt says "You are an analytical baseball assistant. Answer the question using only the provided data." No tools, no routing, no classification.
-- **Add complexity only when the simple approach measurably fails.** If the simple agent cannot answer a specific class of questions, add targeted context filtering for that class. Do not pre-build routing for hypothetical question types.
-- **The Q&A agent should be a single pydantic-ai Agent with `output_type=str`.** This matches the existing editor agent pattern. No structured output needed for free-form Q&A responses.
-- **If context filtering is needed later, use keyword matching, not LLM classification.** A simple dict mapping `{"velocity": ["fastball"], "arsenal": ["arsenal", "mix", "pitch type"], ...}` is deterministic, zero-cost, and testable. An LLM classifier for the same task is non-deterministic, costs tokens, and adds latency.
-
-**Warning signs:**
-- The Q&A module has more lines of question-routing code than actual agent interaction code.
-- There are more than 2 tools registered on the Q&A agent.
-- The system prompt for Q&A is longer than the system prompt for the synthesizer (currently ~3,000 tokens).
-- Questions that seem simple ("How is he doing?") fail because they do not match a recognized intent category.
-
-**Phase to address:**
-Phase 2 (Q&A Agent Design) -- this is an architecture decision. The recommendation is to start with the simplest possible agent and resist adding complexity until there is evidence it is needed.
+**Phase to address:** Phase 1 (Data Loading Restructure) -- centralize before anything else builds on top.
 
 ---
 
-### Pitfall 6: Answering Questions the Data Cannot Support
+### Pitfall 4: Resolver Name Table Built from Single Parquet, Missing 2025-Only Pitchers
 
-**What goes wrong:**
-The user asks "Will Corbin Burnes get a Cy Young vote?" or "How does he compare to Gerrit Cole?" or "What happened in his game against the Dodgers last night?" The Q&A agent gamely attempts to answer, drawing on LLM training data rather than the provided context. The response sounds authoritative but is completely ungrounded: the dataset contains pitch-level Statcast data and Pitching+ metrics for 2026, not awards predictions, cross-pitcher comparisons, or game narratives.
+**What goes wrong:** `resolver.py:110` builds the name lookup table from `PARQUET_PATH`, which is currently `statcast_2026.parquet`. A pitcher who appeared in 2025 but not yet in 2026 (injury, retirement, minors assignment, not yet called up) will not be in the name table. The user types "Tyler Glasnow" (hypothetically only in the 2025 file), the resolver returns `not_found`, and the system reports "Pitcher not found" even though there's a full season of data available.
 
-This is the Q&A equivalent of the report pipeline's hallucination problem, but worse: the report pipeline has an anchor checker that catches drift. The Q&A pipeline has no equivalent guard because each question is independent -- there is no synthesis to check against.
+This is also a deduplication issue: if the name table is built from concatenated 2025+2026 parquets using `.unique(subset=["pitcher"])`, a pitcher whose `player_name` changed between years (name change, suffix addition, diacritics inconsistency) could appear as two different entries, one per year.
 
-**Why it happens:**
-LLMs are trained to be helpful. When asked a question, they answer it. They do not say "I cannot answer this from the provided data" unless explicitly instructed to do so, and even then they sometimes answer anyway. The instinct to be helpful overrides the instruction to be grounded.
+**Why it happens:** The resolver was built for a single-year system. `PARQUET_PATH` is a module-level constant pointing to one file. The name table is cached at module level (`_name_table`), so it builds once and never updates.
 
-The boundary between "answerable from data" and "requires external knowledge" is fuzzy. "Is his slider improving?" is answerable (Pitching+ trend data). "Is his slider the best in baseball?" is not (requires cross-pitcher comparison the dataset does not support). "Is his slider good enough to start?" is borderline (requires interpretation beyond the data).
+**Prevention:**
+- The resolver must build its name table from ALL available parquet files, not just one
+- Use `.unique(subset=["pitcher"])` on the concatenated result, keeping the MOST RECENT `player_name` per pitcher_id (in case of name changes)
+- Alternatively, build the name table from the agg CSVs (which are smaller) rather than the parquet files -- the pitcher-level CSVs already have pitcher/player_name pairs
+- Store both year-variants of a name in the index if they differ, both pointing to the same pitcher_id
+- Test with a pitcher ID that exists only in 2025 data
 
-**How to avoid:**
-- **Define scope explicitly in the system prompt.** "You can answer questions about this pitcher's velocity, pitch mix, Pitching+ metrics, platoon splits, workload, and execution. You CANNOT answer questions about: other pitchers, future predictions, awards, game narratives, or anything not in the provided data. If the question falls outside your scope, say so clearly."
-- **Include a "What I can answer" section in the help output.** The CLI should print a brief guide when invoked with `--help` or when the user's first question is ambiguous.
-- **Add scope-boundary examples to the system prompt.** Few-shot examples of out-of-scope questions with the correct refusal response anchor the model's behavior better than instructions alone.
-- **Reuse the anti-recitation patterns from the report pipeline.** The existing synthesizer and editor prompts have explicit "do not project future performance" and "report the math" instructions. Adapt these for Q&A.
-- **Test with deliberately out-of-scope questions.** "Who is the best pitcher in baseball?", "Will he make the All-Star team?", "How does he compare to [other pitcher]?" should all produce clear refusals.
+**Detection:**
+- Count unique pitcher IDs in combined parquets vs name table entries -- if they differ, pitchers are being dropped
+- Test resolver with a known 2025-only pitcher name
 
-**Warning signs:**
-- The Q&A agent answers comparative questions ("better than X") without flagging that it cannot compare pitchers.
-- The agent makes predictions ("He is likely to...") despite having only historical data.
-- The agent cites statistics that do not appear in the PitcherContext.
-- The agent answers about games, opponents, or events not in the Statcast data.
-
-**Phase to address:**
-Phase 2 (Q&A Agent Prompt Design) -- the scope boundary must be in the system prompt from the first version. Testing with out-of-scope questions should be in Phase 3 (Validation).
+**Phase to address:** Phase 1 (Data Loading Restructure) -- the resolver's data source must be updated alongside the parquet path changes.
 
 ---
 
-### Pitfall 7: Accent and Unicode Handling Silently Dropping Pitchers
+## Moderate Pitfalls
 
-**What goes wrong:**
-A user types `ask "How is Jose Berrios doing?"` and the system returns "No pitcher found matching 'Jose Berrios'" -- even though Jose Berrios (pitcher 621244) is in the dataset as "Berrios, Jose" with an accent on the e. The fuzzy matcher scores "Jose" vs "Jose" at ~90% (close but not identical), and the combined name score drops below threshold.
+Issues that cause incorrect analytics or degraded user experience but don't corrupt core data flow.
 
-The problem is asymmetric: 71 pitchers in the dataset have accented characters. Users typing on an English keyboard will never type those accents. The system must match "Ramirez" to both "Ramirez" (no accent, 1 pitcher) and "Ramirez" (accent, 5 pitchers) or it silently excludes ~4% of the roster.
+### Pitfall 5: Hardcoded "2026-" Prefixes Create a Maintenance Trap
 
-More insidiously, names with suffixes add noise: "Edwards Jr., Carl" should match "Carl Edwards", "Edwards Jr", and "Carl Edwards Jr" but not "Carl Edwards III" (a different fictional person). The dataset has 10 suffixed names (Jr., II, III, IV). Fuzzy matching on raw strings penalizes queries that omit suffixes.
+**What goes wrong:** The codebase has 16 hardcoded references to "2026-" prefixed filenames:
+- data.py lines 40-49: 8 CSV filename strings in `_SEASON_CSVS` and `_APPEARANCE_CSVS`
+- scout.py lines 115-118: 4 independent `_load_csv("2026-...")` calls
+- engine.py line 1563: 1 direct `pl.read_csv(AGGS_DIR / "2026-pitcher_type.csv")`
+- data.py line 34: 1 `PARQUET_PATH` pointing to `statcast_2026.parquet`
+- test_resolver.py line 4: docstring referencing `statcast_2026.parquet`
 
-**Why it happens:**
-String matching operates on bytes/codepoints by default. "e" (U+0065 + U+0301, combining acute) and "e" (U+0065) are different codepoints. Developers test with ASCII names and the matcher works perfectly. Accented names fail silently because the threshold drops them just below the match cutoff -- they do not throw errors, they just return "not found."
+Adding 2025 support by duplicating these references (adding 16 more "2025-" versions) creates 32 hardcoded paths. When 2027 data arrives, it's 48. Every year adds another copy-paste round.
 
-Suffix handling fails because "Edwards Jr., Carl" contains "Jr." as literal text that inflates the edit distance when the query omits it.
+**Why it happens:** The original single-year design didn't need parameterization. Constants were the simplest correct solution at the time.
 
-**How to avoid:**
-- **Normalize all names to ASCII before matching.** `unicodedata.normalize('NFKD', s).encode('ascii', 'ignore').decode()` strips all accents. Match against normalized names, then map back to the original accented form for display.
-- **Strip suffixes before matching.** Remove "Jr.", "Sr.", "II", "III", "IV" from both query and candidate names before scoring. Store the suffix separately for display.
-- **Build a test suite with every accented name in the dataset.** All 71 accented names should be matchable by their ASCII equivalent. All 10 suffixed names should be matchable without the suffix.
-- **Use `rapidfuzz` with `processor=rapidfuzz.utils.default_process`** which lowercases and strips non-alphanumeric characters. This helps but does not solve the accent problem -- explicit normalization is still needed.
+**Prevention:**
+- Define a `YEARS = [2025, 2026]` constant and derive filenames programmatically: `f"{year}-pitcher.csv"`
+- For parquets: `[DATA_DIR / f"statcast_{year}.parquet" for year in YEARS]`
+- Auto-discover available years from the filesystem: `sorted(path.stem.split("_")[1] for path in DATA_DIR.glob("statcast_*.parquet"))`
+- The CSV filename pattern is consistent (`{year}-{grain}.csv`), so derive all 8 grains x N years from the pattern
+- Make `load_agg_csvs()` accept a `years` parameter or discover years automatically
 
-**Warning signs:**
-- A user searches for a well-known pitcher with an accented name and gets "not found."
-- The name resolver's test suite uses only ASCII names.
-- No `unicodedata` import exists in the resolver module.
-- Suffixed names require the exact suffix to match.
+**Detection:**
+- `grep -r "2026" src/` should eventually return zero hits outside of test fixtures and documentation
+- A new data year should require changing at most 1 constant or 0 lines of code
 
-**Phase to address:**
-Phase 1 (Name Resolution) -- Unicode normalization must be in the matching pipeline from day one. It is trivial to add but impossible to retrofit without re-testing all name matching logic.
-
----
-
-### Pitfall 8: Q&A Agent Reciting Numbers Instead of Providing Insight
-
-**What goes wrong:**
-The user asks "How is his fastball doing?" and the Q&A agent responds: "His four-seam fastball averages 95.2 mph, with a P+ of 108, S+ of 112, L+ of 98. His movement is +0.3 inches horizontal and -0.2 inches vertical. His CSW% is 28.4% and his zone rate is 52.1%." This is a data dump, not an answer. The user could have read the PitcherContext themselves for the same information.
-
-The existing report pipeline spent three milestones (v1.0, v1.1, v1.3) building anti-recitation prompting patterns to prevent exactly this. The synthesizer has "absolute objectivity" and "report the math" instructions. The editor has "find the thread" and "pragmatic voice" instructions. These patterns are the core value of the project. If the Q&A agent regresses to number recitation, it undermines the entire product philosophy.
-
-**Why it happens:**
-The Q&A agent prompt is written from scratch without incorporating the hard-won anti-recitation patterns from the report pipeline. The developer thinks "Q&A is simpler than reports -- just answer the question." But "just answering" a question about structured data defaults to reciting the data, because that is what the data contains. Insight requires the same prompt engineering that the report pipeline invested in.
-
-**How to avoid:**
-- **Inherit the editorial voice from the report pipeline.** The Q&A system prompt should include the same anti-recitation principles: "Do not recite numbers. Interpret them. Tell the user what the numbers mean, not what the numbers are. Use the same pragmatic, analytical voice as a front-office analyst."
-- **Include delta-first framing.** "When discussing metrics, lead with the change (delta) and its significance, not the absolute value. 'His fastball has gained 1.5 mph since his season average, and his S+ is up 12 points, suggesting a real stuff improvement' -- not 'His fastball averages 95.2 mph with an S+ of 112.'"
-- **Test with a rubric.** For each Q&A test case, check: Does the answer contain more than 3 raw numbers? Does it start with a data point or with an insight? Does it use words like "suggests," "indicates," "this means" or just lists values?
-- **Consider reusing the synthesizer prompt's framing for the Q&A agent.** The synthesizer already knows how to extract signal from noise in PitcherContext data. The Q&A agent can be a targeted version of the same thing.
-
-**Warning signs:**
-- Q&A responses read like formatted tables or bullet-point lists of metrics.
-- The word "suggests" or "indicates" never appears in Q&A output.
-- Q&A output is shorter than 2 sentences (data dumps are terse; insights require explanation).
-- Users say "I could have read the data myself."
-
-**Phase to address:**
-Phase 2 (Q&A Agent Prompt Design) -- the anti-recitation patterns must be in the system prompt from the first version. This is a prompt engineering task, not a code change, but it requires intentional design.
+**Phase to address:** Phase 1 (Data Loading Restructure) -- this is the structural change that enables everything else.
 
 ---
 
-## Technical Debt Patterns
+### Pitfall 6: Scout Module Has Independent Data Loading, Will Diverge
 
-| Shortcut | Immediate Benefit | Long-term Cost | When Acceptable |
-|----------|-------------------|----------------|-----------------|
-| Sending full PitcherContext for every question | No need to build context filtering; reuse `to_prompt()` directly | ~60-75% wasted tokens per query; slower responses; "lost in the middle" accuracy degradation | v1.4 MVP only -- add section-level filtering before v1.5 |
-| Single-match name resolution (no disambiguation) | Simpler code, no interactive disambiguation flow | Silent wrong-pitcher answers for common names; trust erosion | Never -- disambiguation is table stakes for name resolution |
-| No scope boundary in Q&A prompt | Faster to write the prompt; model seems to "just work" in demos | Agent answers out-of-scope questions with hallucinated content; no way to detect this automatically | Never -- scope boundary must exist from first prompt version |
-| Reusing `cli.py:parse_args()` for Q&A arguments | Less code duplication; one CLI entry point | Report CLI breaks when Q&A-specific arguments are added; argparse changes ripple through tests | Never -- create separate entry point from day one |
-| No grounding check on Q&A output | Faster iteration; trust the model | No detection of training-data leakage into answers; users get stale data | v1.4 MVP only -- add grounding check before v1.5 |
-| Hardcoding name resolution to current parquet file | Works for single-season data; no need for data versioning | Breaks when 2027 data is loaded (different pitcher roster); name index is stale | Acceptable for v1.4 (single-season tool) but document the assumption |
+**What goes wrong:** `scout.py` has its own `_load_csv()` function (line 81) and its own baseline builders (`_build_season_baseline` at line 231, `_build_season_type_baseline` at line 248). These duplicate the logic in data.py but are completely independent code paths. When data.py is updated for multi-year loading and game_type filtering, scout.py must be updated separately -- and there's nothing forcing synchronization.
 
-## Integration Gotchas
+The scout module also hard-filters to `level == "MLB"` (lines 121-124) but does NOT filter by game_type. After adding game_type filtering to data.py, the scout module would still include spring training data unless separately updated.
 
-| Integration | Common Mistake | Correct Approach |
-|-------------|----------------|------------------|
-| Name resolver + `load_pitcher_data()` | Modifying `load_pitcher_data()` to accept a name string, coupling name resolution to data loading | Keep name resolution separate: `resolve_name("Rodriguez") -> [pitcher_ids]`, then `load_pitcher_data(pitcher_id)`. The data loader should only accept IDs. |
-| Q&A agent + PitcherContext | Creating a new context assembly function for Q&A instead of reusing `assemble_pitcher_context()` | Reuse the existing function. If section filtering is needed, add it as a post-processing step: `ctx = assemble_pitcher_context(data); filtered_prompt = ctx.to_prompt_sections(["fastball", "arsenal"])` |
-| Q&A CLI + report CLI | Adding Q&A subcommand by modifying `cli.py:parse_args()` with argparse subparsers | Create `ask_cli.py` with its own `parse_args()`. If subcommands are desired, create a new top-level `main_cli.py` that dispatches to both. |
-| Q&A prompt + existing anti-recitation patterns | Writing the Q&A system prompt from scratch, losing the editorial voice patterns from `_EDITOR_PROMPT` and `_SYNTHESIZER_PROMPT` | Extract the reusable anti-recitation principles into a shared prompt fragment. Both the report pipeline and Q&A agent import from the same source. |
-| Fuzzy matching library + existing dependencies | Adding `rapidfuzz` to `pyproject.toml` when a simpler approach (polars string operations + Levenshtein from stdlib) might suffice | Evaluate whether polars' built-in string similarity functions or `difflib.SequenceMatcher` (stdlib) are sufficient for 1,651 names before adding a dependency. For 1,651 entries, even O(n) brute-force is instant. |
-| pydantic-ai tool registration + existing agents | Registering data-lookup tools on the Q&A agent that overlap with the report pipeline's agent capabilities | Q&A agent should be a standalone Agent instance, not sharing tools with report agents. Different use case, different tool set (or no tools). |
+**Why it happens:** The scout module was designed as a standalone scoring tool ("Cheap triage before expensive narrative generation"). It loads data independently because it doesn't need the full PitcherData bundle -- it scans ALL pitchers, not one at a time. This is a valid architectural choice for performance, but it creates a parallel loading path that must be kept in sync.
 
-## Performance Traps
+**Prevention:**
+- Extract shared loading logic from data.py into functions that both data.py and scout.py use
+- At minimum, the game_type filter must be applied in scout.py's `_load_csv()`, not just data.py
+- Consider making scout.py use data.py's `_load_csv_with_dates()` (currently a module-private function) -- either promote it to public API or create a shared internal module
+- Write a cross-module test: for a given pitcher, assert that scout.py's baseline equals data.py's baseline
 
-| Trap | Symptoms | Prevention | When It Breaks |
-|------|----------|------------|----------------|
-| Loading full parquet for every question | 2-3 second latency before the LLM even starts; 145K rows read for a single name lookup | Cache the name-to-ID index in memory (1,651 entries, <100KB). Only load full pitcher data after ID resolution. | Immediately -- perceptible on first use |
-| Re-loading pitcher data for each question in a session | If the user asks multiple questions about the same pitcher, `load_pitcher_data()` re-reads parquet + 8 CSVs each time | Cache `PitcherData` by pitcher_id. A simple dict cache is sufficient for a CLI session. | After 2-3 questions about the same pitcher |
-| Full PitcherContext assembly for every question | `assemble_pitcher_context()` calls 10 engine functions, each doing polars computations. Unnecessary if the context was already assembled for the same pitcher+window. | Cache the assembled PitcherContext alongside PitcherData. | After 2-3 questions about the same pitcher |
-| Eager name index building on every CLI invocation | Building the full name index from parquet at startup adds 2-3 seconds even when the user already knows the pitcher ID | Build name index lazily on first name-based query, or build it once and cache to a lightweight file (JSON or pickle). | On every invocation if the user uses `--pitcher` ID directly |
-| Unicode normalization on every fuzzy match | Normalizing 1,651 names per query is O(n) string operations | Pre-normalize names when building the index. Normalize the query once. | Never a real bottleneck at this scale, but wasteful |
+**Detection:**
+- Differing results between `pitcher-scout` and `pitcher-narratives` for the same appearance
+- scout.py's `_build_season_baseline()` and data.py's `compute_season_baseline()` producing different numbers for the same pitcher
 
-## UX Pitfalls
+**Phase to address:** Phase 1 or 2 -- depends on whether scout.py is being updated in this milestone or deferred.
 
-| Pitfall | User Impact | Better Approach |
-|---------|-------------|-----------------|
-| Silently picking the wrong pitcher from ambiguous name | User gets a confident, detailed answer about the wrong person. Trust destroyed. | Show disambiguation prompt: "Found 12 pitchers matching 'Rodriguez'. Did you mean: [list with team codes]?" |
-| No indication of data scope | User asks about 2025 data or a pitcher not in the dataset; gets a vague "I don't have that information" | State scope upfront: "I have 2026 Statcast data for [pitcher name]. Ask me about their velocity, pitch mix, Pitching+ metrics, splits, or workload." |
-| Error messages that do not suggest next steps | "Pitcher not found" with no guidance | "No pitcher found matching 'Rodriguex'. Did you mean 'Rodriguez'? (12 pitchers). Try a more specific name like 'Grayson Rodriguez'." |
-| Q&A output format inconsistent with report output | Reports are polished prose; Q&A responses are terse one-liners or data dumps | Q&A responses should match the report's analytical voice. Not as long, but same quality of insight. |
-| No way to see what data the agent is working with | User cannot verify whether the agent has the right pitcher or the right data | After name resolution, print: "Analyzing [pitcher name] (ID: [id], [team], [throws]HP) -- [N] appearances in [window] day window" to stderr, matching the existing verbose output. |
-| Asking for a pitcher with no recent data | User asks about a pitcher who was DFA'd or injured and has no appearances in the lookback window | Handle gracefully: "Cam Booser has no appearances in the last 30 days. Try a longer window with --window 90." |
+---
 
-## "Looks Done But Isn't" Checklist
+### Pitfall 7: Test Fixtures Assume Single-Year, Single-Game-Type Data
 
-- [ ] **Name disambiguation:** Test with "Rodriguez", "Garcia", "Smith", "Anderson", "Martinez" -- all have 8+ collisions in the dataset. A single-match return is a bug for these names.
-- [ ] **Accent normalization:** Test with "Berrios", "Ramirez", "Perez", "Diaz", "Dominguez" -- all have accented variants in the dataset. Unaccented query must match accented entries.
-- [ ] **Suffix handling:** Test with "Edwards" (should match "Edwards Jr., Carl"), "Leiter" (should match "Leiter Jr., Mark"), "Lynch" (should match "Lynch IV, Daniel").
-- [ ] **Out-of-scope refusal:** Ask "Who is the best pitcher in baseball?", "How does he compare to [other pitcher]?", "Will he make the All-Star team?" -- all must be refused with a clear explanation, not answered.
-- [ ] **Grounding check:** Ask about a well-known pitcher and verify no answer content comes from LLM training data rather than the PitcherContext. Check that cited numbers appear in the context document.
-- [ ] **Existing tests pass:** All 200 existing tests pass with zero modifications to `data.py`, `engine.py`, `context.py`, or `report.py`.
-- [ ] **Report pipeline still works:** `uv run python -m pitcher_narratives.cli -p 592155 --provider openai` produces the same output as before Q&A was added.
-- [ ] **Empty result handling:** Ask about a pitcher with no appearances in the window. The system should explain the data gap, not crash or return a vague error.
-- [ ] **First-name-only queries:** "Grayson" should not match (too ambiguous). "Shohei" might match uniquely. Test both cases.
-- [ ] **Case insensitivity:** "grayson rodriguez", "GRAYSON RODRIGUEZ", "Grayson Rodriguez" should all produce the same result.
+**What goes wrong:** All tests use `TEST_PITCHER = 592155` (Booser, Cam) and call live data loading functions (`load_statcast`, `load_pitcher_data`, `load_agg_csvs`) against real data files. The tests make implicit assumptions:
 
-## Recovery Strategies
+1. **test_data.py:82** (`test_season_baseline_weighted`): Asserts `len(baseline) == 1`. After multi-year loading, a pitcher could have rows for both seasons, producing `len(baseline) == 2` if grouping by season.
 
-| Pitfall | Recovery Cost | Recovery Steps |
-|---------|---------------|----------------|
-| Wrong pitcher from ambiguous name (Pitfall 1) | LOW | Add disambiguation flow; change resolver to return list instead of single result; add interactive selection |
-| Context bloat (Pitfall 2) | MEDIUM | Refactor `PitcherContext.to_prompt()` into section-level methods; add section selection to Q&A agent call; requires touching context.py |
-| Tool hallucination (Pitfall 3) | LOW-MEDIUM | Remove tools and switch to context-in-prompt pattern (if over-engineered); add ModelRetry validation (if keeping tools) |
-| Report pipeline regression (Pitfall 4) | HIGH | Diagnose which module change caused the regression; may require reverting and re-implementing with proper module boundaries |
-| Over-engineered NLU (Pitfall 5) | MEDIUM | Remove classification pipeline; replace with simple agent + full context; discard routing code |
-| Out-of-scope answers (Pitfall 6) | LOW | Add scope boundary examples to system prompt; add out-of-scope test cases |
-| Unicode/accent failures (Pitfall 7) | LOW | Add `unicodedata.normalize()` to the resolver; add suffix stripping; add test cases for all 71 accented names |
-| Number recitation (Pitfall 8) | LOW | Revise system prompt with anti-recitation patterns from report pipeline; add insight-quality test rubric |
+2. **test_data.py:36** (`test_load_agg_csvs_all_grains`): Asserts exactly 8 keys. If multi-year loading changes the dict structure (e.g., keyed by `(year, grain)`), this breaks.
 
-## Pitfall-to-Phase Mapping
+3. **test_engine.py:142** (`test_identify_primary_fastball`): Asserts `result == "FC"`. If 2025 data is included and Booser threw a different primary fastball in 2025, the result changes.
 
-| Pitfall | Prevention Phase | Verification |
-|---------|------------------|--------------|
-| Wrong pitcher from ambiguous name | Phase 1 (Name Resolution) | Test with all 168 duplicate-last-name families. Disambiguation flow works for "Rodriguez" (12 matches). Single-name pitchers resolve directly. |
-| Context bloat | Phase 2/3 (Context Filtering) | Measure token count per Q&A call. Narrow questions (fastball velocity) should use <50% of full context tokens. Broad questions can use full context. |
-| Tool hallucination | Phase 2 (Agent Architecture) | If tools are used: verify all tool calls use valid pitcher IDs from the dataset. If no-tool: verify no tool registration on Q&A agent. Run 10 diverse questions and check no training-data leakage. |
-| Report pipeline regression | All Phases | Full test suite (200 tests) passes after every phase. Manual smoke test of report pipeline after each phase. Zero modifications to existing shared modules. |
-| Over-engineered NLU | Phase 2 (Agent Design) | Q&A module has fewer lines of code than report module's `_SYNTHESIZER_PROMPT`. No intent-classification code. Agent has 0-2 tools max. |
-| Out-of-scope answers | Phase 2 (Prompt Design) + Phase 3 (Validation) | 5+ out-of-scope test questions all produce clear refusals. No comparative or predictive answers. |
-| Unicode/accent failures | Phase 1 (Name Resolution) | All 71 accented names matchable by ASCII equivalent. All 10 suffixed names matchable without suffix. Automated test coverage for both. |
-| Number recitation | Phase 2 (Prompt Design) | 5+ Q&A test responses checked against rubric: fewer than 3 raw numbers, opens with insight not data point, uses interpretive language. |
+4. **test_resolver.py**: All name resolution tests assume `statcast_2026.parquet` as the data source. Multi-year resolution changes the name table contents, potentially changing disambiguation results (e.g., a "Johnson" test expects N candidates but 2025 data adds more Johnsons).
+
+5. **test_engine.py:54** (`TEST_PITCHER = 592155`): This pitcher may or may not exist in 2025 data. Tests that call `load_pitcher_data()` will get different results with different data files present.
+
+**Why it happens:** Integration tests against real data are fragile by nature. The existing tests verify behavior against a specific dataset snapshot. Changing the dataset (adding a year) changes the behavior.
+
+**Prevention:**
+- **Do not break existing tests first.** The multi-year loading should be backward-compatible: if only 2026 files exist, behavior is identical to today.
+- **Add game_type filtering first** (before multi-year). This changes baselines but in a smaller, predictable way. Update test assertions after confirming the filtered values are correct.
+- **For tests that assert specific numeric values** (e.g., primary fastball type, baseline row count), recalculate expected values against filtered data and update assertions.
+- **Consider adding a `PITCHER_NARRATIVES_YEARS` env var** that tests can set to `[2026]` to isolate from 2025 data during initial development.
+- **Tests for resolver should pin to a known-good state**: if adding 2025 data changes the name table, the "Johnson" disambiguation test needs updated expected counts.
+- **Add new tests for multi-year specific behavior**: pitcher exists in 2025 only, pitcher exists in both years, pitcher changed teams between years.
+
+**Detection:**
+- Run the existing test suite after each incremental change. If more than 2-3 tests fail simultaneously, you've likely broken a shared assumption rather than individual test logic.
+- Any test failure in `test_season_baseline_weighted` or `test_identify_primary_fastball` is a data shape change, not a logic bug.
+
+**Phase to address:** Every phase should run the full test suite before and after changes. Phase 1 will cause the most breakage; plan for test updates as part of that phase.
+
+---
+
+### Pitfall 8: xRV100 Percentile Computation Uses Hardcoded Direct CSV Load
+
+**What goes wrong:** engine.py line 1563 does:
+```python
+full_pitcher_type_df = pl.read_csv(AGGS_DIR / "2026-pitcher_type.csv")
+```
+
+This bypasses all data.py abstractions. It will not get multi-year data, will not get game_type filtering, and will not benefit from any centralized changes. The percentile rank for a pitcher's xRV100 will be computed against an unfiltered, single-year league distribution while the pitcher's own xRV100 comes from filtered, potentially multi-year data.
+
+This creates a subtle correctness issue: the pitcher's value is "regular season only" but the league distribution includes spring training. Since spring training P+ metrics are noisier (weaker hitters, experimental approaches), the league distribution is wider, pushing percentiles toward the middle. A pitcher who is 90th percentile in regular season might show as 80th when measured against a spring-training-diluted distribution.
+
+**Why it happens:** The percentile function needs the FULL league data for all pitchers (not filtered to one pitcher), which is a different access pattern than `load_agg_csvs()`. The expedient solution was to load the CSV directly.
+
+**Prevention:**
+- Add a `load_league_pitcher_type()` function to data.py that loads the full pitcher_type CSV with game_type filtering applied
+- The function should handle multi-year data: load all years, filter to `game_type == "R"`, return the combined result
+- Replace the direct read in engine.py with a call to this new function
+- The function should be called once per `compute_execution_metrics()` invocation, not once per pitch type (it's already structured this way)
+
+**Detection:**
+- `grep "read_csv\|read_parquet" src/pitcher_narratives/engine.py` should return zero results after the fix
+- Compare percentile values before and after filtering -- they should shift slightly for most pitchers
+
+**Phase to address:** Phase 1 (Data Loading Restructure) -- this is part of centralizing all data loading.
+
+---
+
+## Minor Pitfalls
+
+Issues that cause confusion, minor bugs, or technical debt but don't affect data correctness.
+
+### Pitfall 9: Module-Level PARQUET_PATH Evaluated at Import Time
+
+**What goes wrong:** `PARQUET_PATH = DATA_DIR / "statcast_2026.parquet"` (data.py:34) is evaluated when the module is first imported. If the plan is to make this dynamic (multiple parquets, year discovery), any code that imports `PARQUET_PATH` at module level will cache the old value. The resolver does this: `from pitcher_narratives.data import PARQUET_PATH` (resolver.py:18), then uses it in `_build_name_table()`.
+
+**Prevention:**
+- Replace module-level path constants with functions: `def get_parquet_paths() -> list[Path]`
+- Or use a lazy-loading pattern where the paths are computed on first access
+- The resolver's `_name_table` cache must be invalidated if the data source changes (e.g., new year added)
+
+**Phase to address:** Phase 1 (Data Loading Restructure).
+
+---
+
+### Pitfall 10: The _ID_COLS Frozenset Determines Baseline Metric Selection
+
+**What goes wrong:** `_ID_COLS` (data.py:53) is a frozenset that defines which columns are NOT metrics. Every column NOT in this set gets weight-averaged in the baseline computation. If new columns are added to the agg CSVs (e.g., a `season` column that varies between years), they'll be treated as metrics and weight-averaged, producing nonsense values.
+
+The current _ID_COLS includes "game_type" -- which means game_type is excluded from metrics (correct) but also excluded from the group_by in the weighted average (also correct for collapsing across game types). However, if you add "season" to _ID_COLS, it will be excluded from metrics (correct) but also from the group_by. If you DON'T add "season" to _ID_COLS, it'll be treated as a metric and weight-averaged (e.g., `(2025 * 500 + 2026 * 300) / 800 = 2025.375`).
+
+**Prevention:**
+- Add "season" to `_ID_COLS` immediately when multi-year CSVs are loaded
+- Also add it to the equivalent `id_cols` sets in engine.py:370 and scout.py:233, 251
+- Consider flipping the pattern: define `_METRIC_COLS` explicitly rather than computing them by exclusion. This is more verbose but safer against new columns.
+
+**Detection:**
+- If any baseline column has a value like 2025.6 that looks like a year, _ID_COLS is missing "season"
+- Print the metric columns being averaged and visually inspect for non-metric columns
+
+**Phase to address:** Phase 1 -- trivial fix but must happen before multi-year data is loaded.
+
+---
+
+### Pitfall 11: filter_to_window Uses Max Date from Potentially Multi-Year Data
+
+**What goes wrong:** `filter_to_window()` (data.py:233) computes `max_date = df["game_date"].max()` and subtracts the window. With multi-year data, this correctly finds the most recent date across all years. But there's a subtle issue: if 2026 data starts in late March but the user runs the tool in early April, the max date is in late March 2026, and a 30-day window captures late February/March 2026. This is fine.
+
+However, if only 2025 data exists for a pitcher (they didn't pitch in 2026), `max_date` is in October 2025, and the 30-day window captures September-October 2025. The user might not realize they're looking at 6-month-old data. There's no indication in the output that this is 2025 data, not current.
+
+**Prevention:**
+- When the window is drawn from a prior season's data, surface this to the user (e.g., in PitcherData or the context prompt: "Most recent data: 2025-10-01")
+- Consider adding a staleness check: if max_date is more than 90 days ago, warn the user
+- The `WorkloadContext` already surfaces appearance dates, but a top-level "data freshness" indicator would be clearer
+
+**Phase to address:** Phase 2 or 3 -- a UX concern, not a data correctness issue.
+
+---
+
+## Phase-Specific Warnings
+
+| Phase Topic | Likely Pitfall | Mitigation |
+|---|---|---|
+| Multi-year parquet loading | Double-counting across seasons (Pitfall 2) | Group baselines by season, select target season explicitly |
+| Multi-year CSV loading | 16 hardcoded "2026-" references (Pitfall 5) | Derive filenames from year list, auto-discover |
+| Game type filtering | Filter at wrong layer (Pitfall 3) | Filter ONCE in data.py at load time |
+| Game type filtering | Baseline contamination (Pitfall 1) | Filter BEFORE baseline computation |
+| Game type filtering | Scout module divergence (Pitfall 6) | Centralize loading or sync scout's filters |
+| Resolver update | Missing 2025-only pitchers (Pitfall 4) | Build name table from ALL parquets |
+| Engine percentile | Hardcoded CSV bypass (Pitfall 8) | New data.py function for league data |
+| Test suite update | Single-year assumptions (Pitfall 7) | Run tests incrementally, update assertions per phase |
+| Baseline computation | _ID_COLS missing "season" (Pitfall 10) | Add "season" to all id_col sets |
+| Window filtering | Stale data from prior season (Pitfall 11) | Surface data freshness to user |
+
+## Execution Order Recommendation
+
+Based on dependency analysis of these pitfalls:
+
+1. **First: Add game_type filtering in data.py** (addresses Pitfalls 1, 3, 8). This is the smallest change with the largest correctness impact. Filter to `game_type == "R"` in `_load_csv_with_dates()` and `load_statcast()`. Update the direct CSV read in engine.py:1563. Run tests -- some baseline values will shift.
+
+2. **Second: Parameterize year references** (addresses Pitfall 5). Replace hardcoded "2026-" with derived paths. This is a refactor, not a behavior change (if only 2026 files exist). Tests should pass unchanged.
+
+3. **Third: Add multi-year loading** (addresses Pitfalls 2, 4, 10). Load 2025 + 2026, add "season" to _ID_COLS, update resolver to scan all parquets. This is where most test breakage occurs.
+
+4. **Fourth: Sync scout.py** (addresses Pitfall 6). Either refactor to use shared loading or independently apply the same filters.
+
+5. **Fifth: Update tests** (addresses Pitfall 7). Should happen incrementally with each step above, not as a big-bang at the end.
 
 ## Sources
 
-- Direct dataset analysis: `statcast_2026.parquet` -- 1,651 unique pitchers, 168 duplicate last-name families, 71 accented names, 10 suffixed names (HIGH confidence -- read directly from data)
-- Direct codebase analysis: `data.py`, `engine.py`, `context.py`, `report.py`, `cli.py`, all 6 test files (HIGH confidence -- read directly)
-- [Arize AI: Why AI Agents Break: A Field Analysis of Production Failures](https://arize.com/blog/common-ai-agent-failures/) -- tool hallucination, context overload, instruction drift (MEDIUM confidence -- web source, 2025)
-- [DEV Community: Why LLM Agents Break When You Give Them Tools](https://dev.to/terzioglub/why-llm-agents-break-when-you-give-them-tools-and-what-to-do-about-it-f5) -- tool composition failures, prevention strategies (MEDIUM confidence -- web source)
-- [DEV Community: 3 Patterns That Fix LLM API Calling](https://dev.to/docat0209/3-patterns-that-fix-llm-api-calling-stop-getting-hallucinated-parameters-4n3b) -- hallucinated parameters, schema simplification (MEDIUM confidence -- web source, 2026)
-- [ArXiv: Are We Asking the Right Questions? On Ambiguity in NL Queries for Tabular Data Analysis](https://arxiv.org/html/2511.04584) -- question ambiguity taxonomy, five dimensions of procedural/data specification (MEDIUM confidence -- academic, 2025)
-- [ArXiv: Reducing Tool Hallucination via Reliability Alignment](https://arxiv.org/html/2412.04141v1) -- tool selection vs. tool usage hallucination taxonomy (MEDIUM confidence -- academic, 2024)
-- [Fuzzy Name Matching (Compass True North)](https://medium.com/compass-true-north/fuzzy-name-matching-dd7593754f19) -- practical fuzzy matching patterns, false positive risk (LOW confidence -- blog)
-- [RapidFuzz Documentation](https://rapidfuzz.github.io/RapidFuzz/) -- API reference, preprocessing defaults, scoring functions (HIGH confidence -- official docs)
-- [Pydantic AI Tools Documentation](https://ai.pydantic.dev/tools/) -- tool registration patterns, RunContext, ModelRetry (HIGH confidence -- official docs)
-- [Pydantic AI Function Tools](https://ai.pydantic.dev/tools/) -- best practices for tool definitions, docstring extraction (HIGH confidence -- official docs)
-- [Elastic: Context Engineering vs Prompt Engineering](https://www.elastic.co/search-labs/blog/context-engineering-vs-prompt-engineering) -- when to use tools vs direct prompting (MEDIUM confidence -- vendor blog, 2025)
-
----
-*Pitfalls research for: Interactive Q&A over structured baseball data (v1.4 milestone)*
-*Researched: 2026-03-30*
+- Direct analysis of `data.py`, `engine.py`, `scout.py`, `resolver.py`, `context.py`, `analyst.py` in the codebase
+- Direct analysis of all 8 test files in `tests/`
+- PROJECT.md v1.6 milestone definition confirming game_type values "R", "S", "E" in agg CSVs
+- The agg CSV schema (game_type column present in season-grain files) confirmed from _ID_COLS frozenset in data.py
