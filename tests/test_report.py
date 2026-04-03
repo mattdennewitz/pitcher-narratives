@@ -8,24 +8,24 @@ from pydantic_ai import CachePoint
 from pydantic_ai.agent import Agent
 from pydantic_ai.models.test import TestModel
 
+from pitcher_narratives.anchor import (
+    AnchorResult,
+    AnchorWarning,
+    WarningCategory,
+    build_revision_message,
+)
+from pitcher_narratives.config import MAX_REVISIONS
 from pitcher_narratives.context import assemble_pitcher_context
 from pitcher_narratives.data import load_pitcher_data
 from pitcher_narratives.report import (
-    MAX_REVISIONS,
+    HallucinationReport,
+    ReportResult,
     _EDITOR_PROMPT,
-    _FANTASY_PROMPT,
     _RP_SYNTH_GUIDANCE,
     _SP_SYNTH_GUIDANCE,
     _SYNTHESIZER_PROMPT,
-    AnchorResult,
-    AnchorWarning,
-    HallucinationReport,
-    ReportResult,
-    WarningCategory,
     _build_editor_message,
-    _build_fantasy_message,
     _build_stuff_message,
-    _build_revision_message,
     _build_synthesizer_message,
     _make_agents,
     check_hallucinated_metrics,
@@ -202,14 +202,14 @@ def test_editor_message_includes_synthesis(ctx):
 def test_revision_message_contains_synthesis():
     """Revision message includes the synthesis text."""
     warnings = [AnchorWarning(category="MISSED_SIGNAL", description="missed velo drop")]
-    msg = _prompt_text(_build_revision_message("test synthesis data", "test capsule", warnings))
+    msg = _prompt_text(build_revision_message("test synthesis data", "test capsule", warnings))
     assert "test synthesis data" in msg
 
 
 def test_revision_message_contains_capsule():
     """Revision message includes the current capsule."""
     warnings = [AnchorWarning(category="UNSUPPORTED", description="fabricated claim")]
-    msg = _prompt_text(_build_revision_message("synth", "my capsule text", warnings))
+    msg = _prompt_text(build_revision_message("synth", "my capsule text", warnings))
     assert "my capsule text" in msg
 
 
@@ -219,7 +219,7 @@ def test_revision_message_formats_warnings():
         AnchorWarning(category="MISSED_SIGNAL", description="missed velo drop"),
         AnchorWarning(category="UNSUPPORTED", description="fabricated trend"),
     ]
-    msg = _prompt_text(_build_revision_message("synth", "capsule", warnings))
+    msg = _prompt_text(build_revision_message("synth", "capsule", warnings))
     assert "- [MISSED_SIGNAL] missed velo drop" in msg
     assert "- [UNSUPPORTED] fabricated trend" in msg
 
@@ -227,7 +227,7 @@ def test_revision_message_formats_warnings():
 def test_revision_message_has_targeted_instruction():
     """Revision message instructs editor to fix only flagged issues."""
     warnings = [AnchorWarning(category="DIRECTION_ERROR", description="wrong direction")]
-    msg = _prompt_text(_build_revision_message("synth", "capsule", warnings))
+    msg = _prompt_text(build_revision_message("synth", "capsule", warnings))
     assert "ONLY the warnings listed above" in msg
     assert "Preserve the voice" in msg
     assert "Do not add new analysis" in msg
@@ -236,7 +236,7 @@ def test_revision_message_has_targeted_instruction():
 def test_revision_message_has_cache_point():
     """Revision message has a CachePoint after the synthesis section."""
     warnings = [AnchorWarning(category="OVERSTATED", description="small sample")]
-    parts = _build_revision_message("synth", "capsule", warnings)
+    parts = build_revision_message("synth", "capsule", warnings)
     cache_points = [p for p in parts if isinstance(p, CachePoint)]
     assert len(cache_points) == 1
     # CachePoint should be after the synthesis (index 1)
@@ -246,14 +246,14 @@ def test_revision_message_has_cache_point():
 def test_revision_message_returns_list():
     """Revision message returns a list (matching _UserPrompt type)."""
     warnings = [AnchorWarning(category="MISSED_SIGNAL", description="test")]
-    result = _build_revision_message("synth", "capsule", warnings)
+    result = build_revision_message("synth", "capsule", warnings)
     assert isinstance(result, list)
     assert len(result) == 3  # synthesis, CachePoint, capsule+warnings+instruction
 
 
 def test_revision_message_empty_warnings():
     """Revision message with empty warnings still has structure."""
-    parts = _build_revision_message("synth", "capsule", [])
+    parts = build_revision_message("synth", "capsule", [])
     msg = _prompt_text(parts)
     assert "synth" in msg
     assert "capsule" in msg
@@ -468,56 +468,11 @@ def test_report_result_narrative_matches_editor_output(ctx):
 # -- Phase 4: Fantasy analyst agent tests ----------------------------------------
 
 
-def test_fantasy_analyst_model_matches_provider():
-    """Fantasy analyst agent uses the correct model for the provider."""
-    (_, _, _, fantasy), _ = _make_agents(provider="claude")
-    assert "claude-sonnet-4-6" in str(fantasy.model)
-
-
-def test_fantasy_analyst_output_type_is_str():
-    """Fantasy analyst output_type is str."""
-    (_, _, _, fantasy), _ = _make_agents()
-    assert fantasy.output_type is str
-
-
-def test_fantasy_prompt_requires_three_bullets():
-    """Fantasy prompt requires exactly 3 bullet points."""
-    prompt_lower = _FANTASY_PROMPT.lower()
-    assert "3" in _FANTASY_PROMPT or "three" in prompt_lower
-    assert "bullet" in prompt_lower
-
-
-def test_fantasy_prompt_news_first_style():
-    """Fantasy prompt uses news-wire voice, not command-style verdicts."""
-    assert "axios" in _FANTASY_PROMPT.lower()
-    assert "news" in _FANTASY_PROMPT.lower()
-
-
-def test_fantasy_message_includes_pitcher_name(ctx):
-    """Fantasy message includes pitcher name."""
-    msg = _prompt_text(_build_fantasy_message(ctx, "test synthesis"))
-    assert ctx.pitcher_name in msg
-
-
-def test_fantasy_message_includes_synthesis(ctx):
-    """Fantasy message includes synthesis text."""
-    msg = _prompt_text(_build_fantasy_message(ctx, "Fastball velo down 1.5"))
-    assert "Fastball velo down 1.5" in msg
-
-
-def test_report_result_has_fantasy_insights(ctx):
-    """ReportResult has non-empty fantasy_insights field."""
-    result = generate_report_streaming(ctx, _model_override=TestModel())
-    assert isinstance(result, ReportResult)
-    assert result.fantasy_insights
-
-
 def test_report_result_all_fields_populated(ctx):
-    """ReportResult has all three fields populated."""
+    """ReportResult has narrative and stuff_summary populated."""
     result = generate_report_streaming(ctx, _model_override=TestModel())
     assert result.narrative
     assert result.stuff_summary
-    assert result.fantasy_insights
 
 
 # -- Anchor check model tests ---------------------------------------------------
@@ -567,20 +522,20 @@ def test_anchor_result_multiple_warnings():
 
 def test_report_result_revision_count_default():
     """ReportResult revision_count defaults to 0."""
-    r = ReportResult(narrative="n", stuff_summary="s", fantasy_insights="f", anchor_warnings=[])
+    r = ReportResult(narrative="n", stuff_summary="s", anchor_warnings=[])
     assert r.revision_count == 0
 
 
 def test_report_result_revision_count_explicit():
     """ReportResult revision_count can be set explicitly."""
-    r = ReportResult(narrative="n", stuff_summary="s", fantasy_insights="f", anchor_warnings=[], revision_count=2)
+    r = ReportResult(narrative="n", stuff_summary="s", anchor_warnings=[], revision_count=2)
     assert r.revision_count == 2
 
 
 def test_report_result_anchor_warnings_typed():
     """ReportResult anchor_warnings accepts AnchorWarning objects."""
     w = AnchorWarning(category="OVERSTATED", description="small sample")
-    r = ReportResult(narrative="n", stuff_summary="s", fantasy_insights="f", anchor_warnings=[w])
+    r = ReportResult(narrative="n", stuff_summary="s", anchor_warnings=[w])
     assert isinstance(r.anchor_warnings[0], AnchorWarning)
     assert r.anchor_warnings[0].category == "OVERSTATED"
 

@@ -16,7 +16,13 @@ from typing import cast
 
 import polars as pl
 
-from pitcher_narratives.data import AGGS_DIR
+from pitcher_narratives.data import (
+    AGGS_DIR,
+    PARQUET_PATH,
+    compute_pitch_type_baseline,
+    compute_season_baseline,
+    load_csv,
+)
 
 __all__ = ["ScoredAppearance", "scout_appearances"]
 
@@ -78,13 +84,6 @@ class ScoredAppearance:
         return " | ".join(f"{s.name}: {s.detail}" for s in self.signals)
 
 
-def _load_csv(filename: str) -> pl.DataFrame:
-    """Load a CSV from the aggs directory with date parsing."""
-    path = AGGS_DIR / filename
-    df = pl.read_csv(path)
-    if "game_date" in df.columns:
-        df = df.with_columns(pl.col("game_date").str.to_date("%Y-%m-%d"))
-    return df
 
 
 def _get_max_date(appearance_df: pl.DataFrame) -> date:
@@ -112,10 +111,10 @@ def scout_appearances(
         Ranked list of ScoredAppearance, highest score first.
     """
     # Load data
-    app_df = _load_csv("2026-pitcher_appearance.csv")
-    app_type_df = _load_csv("2026-pitcher_type_appearance.csv")
-    season_type_df = _load_csv("2026-pitcher_type.csv")
-    season_df = _load_csv("2026-pitcher.csv")
+    app_df = load_csv("2026-pitcher_appearance.csv")
+    app_type_df = load_csv("2026-pitcher_type_appearance.csv")
+    season_type_df = load_csv("2026-pitcher_type.csv")
+    season_df = load_csv("2026-pitcher.csv")
 
     # Filter to MLB regular season
     app_df = app_df.filter(pl.col("level") == "MLB")
@@ -131,8 +130,8 @@ def scout_appearances(
     )
 
     # Build season baselines per pitcher (weighted across game types)
-    season_baseline = _build_season_baseline(season_df)
-    season_type_baseline = _build_season_type_baseline(season_type_df)
+    season_baseline = compute_season_baseline(season_df)
+    season_type_baseline = compute_pitch_type_baseline(season_type_df)
 
     # Compute velocity baselines from statcast
     velo_baselines = _compute_velo_baselines()
@@ -225,48 +224,6 @@ def scout_appearances(
     return results[:top_n]
 
 
-# ── Season baseline helpers ──────────────────────────────────────────
-
-
-def _build_season_baseline(season_df: pl.DataFrame) -> pl.DataFrame:
-    """Weighted season baseline per pitcher across game types."""
-    id_cols = {"season", "level", "game_type", "pitcher", "player_name",
-               "p_throws", "team_code", "n_pitches"}
-    metric_cols = [c for c in season_df.columns if c not in id_cols]
-    weighted_exprs = [
-        (pl.col(c) * pl.col("n_pitches")).sum().truediv(pl.col("n_pitches").sum()).alias(c)
-        for c in metric_cols
-    ]
-    return season_df.group_by("pitcher").agg(
-        pl.col("n_pitches").sum(),
-        pl.col("player_name").first(),
-        pl.col("p_throws").first(),
-        *weighted_exprs,
-    )
-
-
-def _build_season_type_baseline(season_type_df: pl.DataFrame) -> pl.DataFrame:
-    """Weighted season baseline per pitcher per pitch type."""
-    df = season_type_df.filter(pl.col("pitch_type") != "")
-    id_cols = {"season", "level", "game_type", "pitcher", "player_name",
-               "p_throws", "team_code", "pitch_type", "n_pitches"}
-    metric_cols = [c for c in df.columns if c not in id_cols]
-    weighted_exprs = [
-        (pl.col(c) * pl.col("n_pitches")).sum().truediv(pl.col("n_pitches").sum()).alias(c)
-        for c in metric_cols
-    ]
-    # Also compute total pitches across all types for usage %
-    pitcher_totals = df.group_by("pitcher").agg(
-        pl.col("n_pitches").sum().alias("total_pitches"),
-    )
-    result = df.group_by(["pitcher", "pitch_type"]).agg(
-        pl.col("n_pitches").sum(),
-        pl.col("player_name").first(),
-        *weighted_exprs,
-    )
-    return result.join(pitcher_totals, on="pitcher").with_columns(
-        (pl.col("n_pitches") / pl.col("total_pitches") * 100).alias("usage_pct"),
-    )
 
 
 def _compute_velo_baselines() -> pl.DataFrame:
@@ -274,8 +231,6 @@ def _compute_velo_baselines() -> pl.DataFrame:
 
     Returns DataFrame with columns: pitcher, season_velo, and per-game velos.
     """
-    from pitcher_narratives.data import PARQUET_PATH
-
     if not PARQUET_PATH.exists():
         return pl.DataFrame(schema={"pitcher": pl.Int64, "season_velo": pl.Float64})
 

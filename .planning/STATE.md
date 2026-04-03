@@ -4,8 +4,8 @@ milestone: v1.7
 milestone_name: Multi-Year Data & Game Type Filtering
 status: roadmap_complete
 stopped_at: Roadmap created with 3 phases (16-18)
-last_updated: "2026-04-02T00:00:00.000Z"
-last_activity: 2026-04-02
+last_updated: "2026-04-03T00:00:00.000Z"
+last_activity: 2026-04-03
 progress:
   total_phases: 18
   completed_phases: 15
@@ -17,7 +17,7 @@ progress:
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-04-02)
+See: .planning/PROJECT.md (updated 2026-04-03)
 
 **Core value:** Reports must read like a scout wrote them -- surfacing changes, adaptations, and execution trends rather than reciting numbers.
 **Current focus:** Phase 16 -- Data Foundation (ready to plan)
@@ -27,9 +27,9 @@ See: .planning/PROJECT.md (updated 2026-04-02)
 Phase: 16 of 18 (Data Foundation)
 Plan: Not started
 Status: Ready to plan
-Last activity: 2026-04-02 -- Roadmap created for v1.7
+Last activity: 2026-04-03 -- Roadmap created for v1.7
 
-Progress: [==============░░░] 83% (15/18 phases)
+Progress: [===============░░░] 83% (15/18 phases)
 
 ## Accumulated Context
 
@@ -45,7 +45,7 @@ Recent decisions affecting current work:
 
 ### Pending Todos
 
-None yet.
+None.
 
 ### Blockers/Concerns
 
@@ -53,12 +53,8 @@ None yet.
 - 75.9% of 2026 statcast rows are spring training -- filtering is correctness-critical, not optional
 - Test assertions will break when filtering lands; new expected values must be computed against filtered data
 
-## Performance Metrics
-
-(Reset for new milestone)
-
 ## Session Continuity
 
-Last session: 2026-04-02
+Last session: 2026-04-03
 Stopped at: Roadmap created for v1.7 (3 phases 16-18, 11 requirements)
 Resume file: None

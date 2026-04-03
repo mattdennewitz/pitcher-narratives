@@ -1,4 +1,4 @@
-"""Five-phase report generation pipeline.
+"""Four-phase report generation pipeline.
 
 Phase 1 (Synthesizer): Extracts signal from noise — structured bullet
 points of key findings, deltas, and trends. No narrative.
@@ -11,11 +11,11 @@ to the synthesis. If warnings are found, the editor revises silently and the
 anchor re-checks -- up to MAX_REVISIONS passes. Only the final capsule
 proceeds to downstream phases.
 
-Phase 3 (Hook Writer): Distills the editor's capsule into a 1-2
-sentence social media hook for front-office audiences.
+Phase 3 (Stuff Explainer): Traces each pitch's S+ grade to its physical
+profile via stuff-only model predictions.
 
-Phase 4 (Fantasy Analyst): Produces 3 fantasy baseball insights
-from the capsule with specific metric citations.
+Phase 3+ (Executive Summary): 3 metrics-focused bullet points from the
+synthesis.
 """
 
 from __future__ import annotations
@@ -23,39 +23,44 @@ from __future__ import annotations
 import re
 import sys
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 
 from pydantic import BaseModel
 from pydantic_ai import Agent, CachePoint
-from pydantic_ai.models.google import GoogleModelSettings
-from pydantic_ai.settings import ModelSettings, ThinkingEffort
+from pydantic_ai.settings import ThinkingEffort
 
+from pitcher_narratives.anchor import (
+    ANCHOR_PROMPT,
+    AnchorResult,
+    AnchorWarning,
+    WarningCategory,
+    build_anchor_message,
+    build_revision_message,
+)
+from pitcher_narratives.config import (
+    MAX_REVISIONS,
+    PROVIDERS,
+    THINKING_LEVELS,
+    agent_kwargs,
+    make_model_settings,
+)
 from pitcher_narratives.context import PitcherContext
+from pitcher_narratives.engine import (
+    compute_league_baselines,
+    format_s_variant_comparisons,
+    outlier_tag,
+    render_league_baselines,
+)
 
 __all__ = [
-    "MAX_REVISIONS",
-    "PROVIDERS",
-    "THINKING_LEVELS",
-    "AnchorResult",
-    "AnchorWarning",
     "HallucinationReport",
     "ReportResult",
-    "WarningCategory",
     "check_hallucinated_metrics",
     "generate_report_streaming",
     "print_prompts",
     "write_data_file",
 ]
 
-THINKING_LEVELS: list[ThinkingEffort] = ["minimal", "low", "medium", "high", "xhigh"]
-PROVIDERS = {
-    "openai": "openai:gpt-5.4-mini",
-    "claude": "anthropic:claude-sonnet-4-6",
-    "gemini": "google-gla:gemini-3.1-pro-preview",
-}
-
-MAX_REVISIONS = 2
-"""Maximum number of editor revision passes before accepting the capsule."""
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -215,7 +220,7 @@ Additional focus for this reliever:
 
 _EDITOR_PROMPT = """\
 You are an elite, sabermetrically inclined baseball writer. You write \
-for front offices, advanced fantasy players, and data-driven fans. Your \
+for front offices and data-driven fans. Your \
 tone is pragmatic, cautious, and highly analytical. You do not use clichés.
 
 INPUT: A structured briefing document from your data analyst containing \
@@ -322,6 +327,13 @@ happening — start with what IS.
 STRICT CONSTRAINTS:
 - Rely entirely on the data provided in the input. Do not hallucinate \
 metrics or trends.
+- DIRECTIONAL CONSISTENCY: If the synthesis says a pitch is effective \
+(S+ above 100, negative xRV100), do not flip the narrative to negative. \
+If the synthesis says a pitch is weak, do not spin it positive. \
+Preserve the direction of each assessment.
+- If the synthesis shows a pitch has a meaningful strength (e.g., \
+xWhiff ≥ 25%), you must reconcile that strength before labeling the \
+pitch as poor or detrimental.
 - Ignore traditional outcome stats like Wins and basic ERA unless \
 provided as context. Base analysis on underlying metrics.
 - No bullet points. No headers. No introductory fluff.
@@ -346,14 +358,17 @@ model's stuff-only predictions (xWhiff_S, xSwing_S, xRV100_S).
 The chain is: physical pitch → model prediction → S+ grade. Your job \
 is to make that chain legible in plain language.
 
-Examples of the voice:
-- "The knuckle curve sits 81 mph with only 0.3 inches of horizontal \
-break and -1.2 inches of vertical movement. That velocity/movement \
-combination doesn't generate enough deception on its own — the model \
-expects just a 30% whiff rate on stuff alone, which is why S+ grades \
-out at 84."
-- "The four-seam at 96.8 with 1.4 inches of ride generates a 37% \
-stuff-only swing rate — enough raw swing-and-miss for an S+ of 113."
+INTERPRETATION RULES (use the League Baselines provided):
+- Compare every metric to the league baseline for that pitch type. \
+Cite the delta from average when claiming a metric is unusual.
+- If a pitch's velocity is within ±1.5 stddev of the league average, \
+it is NORMAL — do not cite velocity as a primary reason for a poor S+.
+- More vertical break on curveballs/sliders is typically POSITIVE. \
+Check the sign convention before calling a deviation good or bad.
+- DIRECTIONAL CONSISTENCY: S+ below 100 → xRV100_S positive (costly). \
+S+ above 100 → xRV100_S negative (saves runs). Do not contradict this.
+- If xWhiff_S ≥ 25%, reconcile this strength before calling the pitch \
+weak.
 
 Rules:
 - Cover the 2-3 most notable pitches (best, worst, or most changed S+).
@@ -364,91 +379,41 @@ Rules:
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# PHASE 4: THE FANTASY ANALYST
+# EXECUTIVE SUMMARY
 # ═══════════════════════════════════════════════════════════════════════
 
-_FANTASY_PROMPT = """\
-You are a fantasy baseball analyst who writes like a news wire. Your \
-audience is competitive league managers scanning for actionable intel. \
-Given key findings from a pitcher's latest appearance, write exactly 3 \
-bullet points — Axios-style: short, declarative, news-first.
+_EXECUTIVE_SUMMARY_PROMPT = """\
+You are a concise analyst producing a metrics-focused executive \
+summary for a front office reader.
 
-Voice and perspective:
-- Write as an analyst reporting news, not as a manager issuing roster moves.
-- Lead with the fact or trend, then explain why it matters for fantasy.
-- Frame implications as things to monitor ("keep an eye on," "worth watching") \
-rather than directives ("pick him up," "move him to the bench").
-- Cite one specific metric per bullet (P+, velocity delta, usage shift, \
-platoon split, workload flag).
-- No run-on sentences. No semicolons joining two thoughts. One idea per \
-bullet.
+Given a structured data synthesis of a pitcher's recent window, produce \
+exactly 3 bullet points. Each bullet states a finding and cites \
+the metric that supports it.
 
-What matters for fantasy: ownership changes, streaming value, matchup \
-dependency, injury/workload red flags, category impact (Ks, ERA, WHIP).
-
-Format: exactly 3 lines, each starting with "- ". Plain text — no bold, \
-no labels, no prefixes. Just the insight. Nothing else — no intro, no \
-summary, no headers."""
+RULES:
+- Exactly 3 bullets. Each is ONE sentence.
+- Every bullet MUST cite a specific number from the data \
+(S+, P+, xRV100, xWhiff_S, velocity, usage%, etc.).
+- State the finding directly. No labels like "Best outcome:" or \
+"Key trend:" — just the analytical observation.
+- DIRECTIONAL CONSISTENCY: S+ below 100 is below average. S+ above \
+100 is above average. Negative xRV100 is good for the pitcher.
+- Do not call normal metrics unusual. If a metric is within ±1.5 \
+stddev of the league average, it is normal.
+- Output ONLY the 3 bullet points. No headers, no intro, no outro.
+- Format: each line starts with "- " followed by the insight."""
 
 
 # ═══════════════════════════════════════════════════════════════════════
 # PHASE 2.5: THE ANCHOR CHECK (FACT-CHECKER)
 # ═══════════════════════════════════════════════════════════════════════
 
-_ANCHOR_PROMPT = """\
-You are a fact-checker for a baseball analytics newsletter. You receive \
-two documents: the data analyst's structured briefing (the synthesis) \
-and the editor's finished narrative (the capsule). Your job is to verify \
-that the capsule is faithfully anchored to the synthesis.
-
-Check for these specific problems:
-
-1. Missed Key Signals: The synthesis has a "Key Signal" section with the \
-most important improvement, concern, and development pitch. If the capsule \
-ignores any of these entirely, flag it.
-
-2. Unsupported Claims: If the capsule states a metric, trend, or fact \
-that does not appear anywhere in the synthesis, flag it. The capsule \
-should not invent data.
-
-3. Directional Errors: If the synthesis says a metric went up and the \
-capsule says it went down (or vice versa), flag it.
-
-4. Overstated Confidence: If the synthesis flags something as small \
-sample or uncertain, but the capsule presents it as definitive, flag it.
-
-For each problem found, report it with its category and a concise description.
-If everything checks out, return an empty list of warnings."""
-
-
-WarningCategory = Literal["MISSED_SIGNAL", "UNSUPPORTED", "DIRECTION_ERROR", "OVERSTATED"]
-"""Anchor check warning categories matching _ANCHOR_PROMPT output format."""
-
-
-class AnchorWarning(BaseModel):
-    """A single anchor check warning with typed category."""
-
-    category: WarningCategory
-    description: str
-
-
-class AnchorResult(BaseModel):
-    """Structured output from the anchor check agent."""
-
-    warnings: list[AnchorWarning]
-
-    @property
-    def is_clean(self) -> bool:
-        """True when the capsule is faithfully anchored to the synthesis."""
-        return len(self.warnings) == 0
-
-
 class ReportResult(BaseModel):
     """Structured output from the multi-phase report pipeline."""
 
     narrative: str
+    executive_summary: list[str] = []
     stuff_summary: str
-    fantasy_insights: str
     anchor_warnings: list[AnchorWarning]
     revision_count: int = 0
     """Number of revision passes (0 = passed first try)."""
@@ -467,7 +432,11 @@ def _make_agents(
     provider: str = "openai",
     thinking: ThinkingEffort = "high",
 ) -> _AgentSet:
-    """Create (or return cached) pipeline agents for the given provider and thinking level."""
+    """Create (or return cached) pipeline agents with role-specific temperatures.
+
+    Temperature split: synthesizer/stuff/summary=0.3 (data precision),
+    editor=0.7 (prose quality), anchor=0.1 (fact-checking).
+    """
     key = (provider, thinking)
     if key in _agent_cache:
         return _agent_cache[key]
@@ -476,28 +445,23 @@ def _make_agents(
         raise ValueError(f"Unknown provider {provider!r}, expected one of: {', '.join(PROVIDERS)}")
     model = PROVIDERS[provider]
 
-    if provider == "gemini":
-        # Gemini 3 uses GoogleModelSettings with thinking_level ('low' or 'high')
-        gemini_level = "high" if thinking in ("high", "xhigh") else "low"
-        settings: ModelSettings = GoogleModelSettings(
-            google_thinking_config={"thinking_level": gemini_level},
-            temperature=1.0,
-            max_tokens=16384,
-        )
-    elif provider == "claude":
-        # Anthropic's default max_tokens (4096) is too low when thinking is enabled
-        settings = ModelSettings(thinking=thinking, max_tokens=16384)
-    else:
-        settings = ModelSettings(thinking=thinking)
+    analyst_settings = make_model_settings(provider, thinking, 0.3)   # synthesizer + stuff explainer + summary
+    writer_settings = make_model_settings(provider, thinking, 0.7)    # editor
+    checker_settings = make_model_settings(provider, thinking, 0.1)   # anchor
 
-    str_prompts = (_SYNTHESIZER_PROMPT, _EDITOR_PROMPT, _STUFF_EXPLAINER_PROMPT, _FANTASY_PROMPT)
+    str_prompts_and_settings = [
+        (_SYNTHESIZER_PROMPT, analyst_settings),
+        (_EDITOR_PROMPT, writer_settings),
+        (_STUFF_EXPLAINER_PROMPT, analyst_settings),
+        (_EXECUTIVE_SUMMARY_PROMPT, analyst_settings),
+    ]
     str_agents: _StrAgents = tuple(  # type: ignore[assignment]
-        Agent(model, output_type=str, system_prompt=p, model_settings=settings, defer_model_check=True)
-        for p in str_prompts
+        Agent(model, output_type=str, system_prompt=p, model_settings=s, defer_model_check=True)
+        for p, s in str_prompts_and_settings
     )
     anchor_agent = Agent(
-        model, output_type=AnchorResult, system_prompt=_ANCHOR_PROMPT,
-        model_settings=settings, defer_model_check=True,
+        model, output_type=AnchorResult, system_prompt=ANCHOR_PROMPT,
+        model_settings=checker_settings, defer_model_check=True,
     )
     result: _AgentSet = (str_agents, anchor_agent)
     _agent_cache[key] = result
@@ -514,16 +478,18 @@ _UserPrompt = list[str | CachePoint]
 
 
 def _build_synthesizer_message(ctx: PitcherContext) -> _UserPrompt:
-    """Build the Phase 1 user message with cache breakpoint after role guidance.
+    """Build the Phase 1 user message with league baselines and role guidance.
 
-    Role guidance is stable across all pitchers of the same role (SP/RP),
-    so caching it avoids re-processing ~120 tokens per pitcher.
+    Includes league-average baselines so the synthesizer can ground claims
+    about velocity, movement, and S-variant metrics against league norms.
     """
     guidance = _SP_SYNTH_GUIDANCE if ctx.role == "SP" else _RP_SYNTH_GUIDANCE
+    pitch_types = [p.pitch_type for p in ctx.arsenal]
+    baselines = render_league_baselines(pitch_types)
     return [
         f"## Role-Specific Focus\n{guidance}",
         CachePoint(),
-        f"## Pitcher Data\n{ctx.to_prompt()}",
+        f"{baselines}\n\n## Pitcher Data\n{ctx.to_prompt()}",
     ]
 
 
@@ -537,88 +503,61 @@ def _build_editor_message(ctx: PitcherContext, synthesis: str) -> _UserPrompt:
     ]
 
 
-def _build_anchor_message(synthesis: str, capsule: str) -> _UserPrompt:
-    """Build the Phase 2.5 user message for the anchor check."""
-    return [
-        f"## Synthesis (Data Analyst's Briefing)\n{synthesis}",
-        CachePoint(),
-        f"## Capsule (Editor's Narrative)\n{capsule}\n\n"
-        "Check the capsule against the synthesis. Report any issues or respond CLEAN.",
-    ]
-
-
-def _build_revision_message(
-    synthesis: str,
-    capsule: str,
-    warnings: list[AnchorWarning],
-) -> _UserPrompt:
-    """Build a revision prompt for the editor to fix anchor-flagged issues.
-
-    Fixed-size context: synthesis + current capsule + formatted warnings +
-    targeted instruction. No message history (fresh prompt per revision).
-
-    Args:
-        synthesis: The data analyst's structured briefing.
-        capsule: The editor's current narrative capsule.
-        warnings: Anchor check warnings to address.
-
-    Returns:
-        User prompt parts with cache breakpoint after synthesis.
-    """
-    formatted_warnings = "\n".join(
-        f"- [{w.category}] {w.description}" for w in warnings
-    )
-    return [
-        f"## Data Analyst's Briefing\n{synthesis}",
-        CachePoint(),
-        f"## Current Capsule\n{capsule}\n\n"
-        f"## Anchor Check Warnings\n{formatted_warnings}\n\n"
-        "Revise the capsule to address ONLY the warnings listed above. "
-        "Preserve the voice, structure, and all unflagged material. "
-        "Do not add new analysis or metrics not in the briefing.",
-    ]
 
 
 def _build_stuff_message(ctx: PitcherContext, capsule: str) -> _UserPrompt:
-    """Build the Phase 3 user message with arsenal physical data and intermediates."""
-    # Provide the physical profile + S-variant data the explainer needs
+    """Build the Phase 3 user message with pre-computed outlier annotations."""
+    pitch_types = [p.pitch_type for p in ctx.arsenal]
+    rendered_baselines = render_league_baselines(pitch_types)
+    league_baselines = compute_league_baselines()
+    baseline_lookup = {b.pitch_type: b for b in league_baselines}
+
     arsenal_lines: list[str] = []
     for p in ctx.arsenal:
         sp = f"{p.window_s_plus:.0f}" if p.window_s_plus is not None else "--"
-        arsenal_lines.append(
-            f"- {p.pitch_name} ({p.pitch_type}): "
-            f"{p.window_velo:.1f} mph, "
-            f"pfx_x {p.window_pfx_x:.1f} in, pfx_z {p.window_pfx_z:.1f} in, "
-            f"S+ {sp}"
-        )
+        b = baseline_lookup.get(p.pitch_type)
+        if b is not None:
+            velo_d = p.window_velo - b.avg_velo
+            velo_t = outlier_tag(p.window_velo, b.avg_velo, b.velo_std)
+            pfx_x_d = p.window_pfx_x - b.avg_pfx_x
+            pfx_x_t = outlier_tag(p.window_pfx_x, b.avg_pfx_x, b.pfx_x_std)
+            pfx_z_d = p.window_pfx_z - b.avg_pfx_z
+            pfx_z_t = outlier_tag(p.window_pfx_z, b.avg_pfx_z, b.pfx_z_std)
+            arsenal_lines.append(
+                f"- {p.pitch_name} ({p.pitch_type}):\n"
+                f"    Velocity: {p.window_velo:.1f} mph ({velo_d:+.1f} vs avg) [{velo_t}]\n"
+                f"    pfx_x: {p.window_pfx_x:.1f} in ({pfx_x_d:+.1f} vs avg) [{pfx_x_t}]\n"
+                f"    pfx_z: {p.window_pfx_z:.1f} in ({pfx_z_d:+.1f} vs avg) [{pfx_z_t}]\n"
+                f"    S+: {sp}"
+            )
+        else:
+            arsenal_lines.append(
+                f"- {p.pitch_name} ({p.pitch_type}): "
+                f"{p.window_velo:.1f} mph, pfx_x {p.window_pfx_x:.1f} in, "
+                f"pfx_z {p.window_pfx_z:.1f} in, S+ {sp}"
+            )
+
     intermediates_lines: list[str] = []
     for im in ctx.intermediates:
-        xswing_s = f"{im.xswing_s * 100:.1f}%" if im.xswing_s is not None else "--"
-        xwhiff_s = f"{im.xwhiff_s * 100:.1f}%" if im.xwhiff_s is not None else "--"
-        xrv_s = f"{im.xrv100_s:.2f}" if im.xrv100_s is not None else "--"
-        intermediates_lines.append(
-            f"- {im.pitch_name} ({im.pitch_type}): "
-            f"xSwing_S {xswing_s}, xWhiff_S {xwhiff_s}, xRV100_S {xrv_s}"
-        )
+        b = baseline_lookup.get(im.pitch_type)
+        parts = format_s_variant_comparisons(b, im.xswing_s, im.xwhiff_s, im.xrv100_s)
+        intermediates_lines.append(f"- {im.pitch_name} ({im.pitch_type}): {', '.join(parts)}")
+
     return [
         f"## Pitcher\n{ctx.pitcher_name} ({ctx.throws}HP, {ctx.role})\n\n"
-        f"## Arsenal Physical Profile\n" + "\n".join(arsenal_lines) + "\n\n"
-        f"## Stuff-Only Model Predictions (S-variant)\n" + "\n".join(intermediates_lines) + "\n\n"
+        f"{rendered_baselines}\n\n"
+        f"## Arsenal Physical Profile (with league comparison)\n"
+        f"Each metric shows: value (delta from avg) [NORMAL/OUTLIER tag]\n"
+        + "\n".join(arsenal_lines) + "\n\n"
+        f"## Stuff-Only Model Predictions (S-variant, with league comparison)\n"
+        + "\n".join(intermediates_lines) + "\n\n"
         f"## Scouting Capsule\n{capsule}",
         CachePoint(),
         "Write a brief technical summary explaining each notable pitch's S+ grade "
-        "through its velocity, movement, and stuff-only model predictions.",
-    ]
-
-
-def _build_fantasy_message(ctx: PitcherContext, capsule: str) -> _UserPrompt:
-    """Build the Phase 4 user message from the editor's capsule."""
-    return [
-        f"## Pitcher\n{ctx.pitcher_name} ({ctx.throws}HP, {ctx.role})\n\n"
-        f"## Scouting Capsule\n{capsule}",
-        CachePoint(),
-        "Write exactly 3 bullet points of fantasy baseball insights. "
-        "Each bullet should flag what to watch and cite a specific metric or trend.",
+        "through its velocity, movement, and stuff-only model predictions. "
+        "If a metric is tagged NORMAL, do not cite it as a driver of the grade. "
+        "Every behavioral claim (e.g., 'hitters take it', 'generates swings') "
+        "must cite the specific metric (xSwing_S, xWhiff_S) that supports it.",
     ]
 
 
@@ -628,18 +567,17 @@ def _render_user_prompt(parts: _UserPrompt) -> str:
 
 
 def _build_all_phases(ctx: PitcherContext) -> list[tuple[str, str, _UserPrompt]]:
-    """Build (label, system_prompt, user_prompt) for all 5 phases."""
+    """Build (label, system_prompt, user_prompt) for all phases."""
     synth_placeholder = "<synthesis output would go here>"
     capsule_placeholder = "<editor capsule would go here>"
     return [
         ("PHASE 1: SYNTHESIZER", _SYNTHESIZER_PROMPT, _build_synthesizer_message(ctx)),
         ("PHASE 2: EDITOR", _EDITOR_PROMPT, _build_editor_message(ctx, synth_placeholder)),
         (
-            "PHASE 2.5: ANCHOR CHECK", _ANCHOR_PROMPT,
-            _build_anchor_message(synth_placeholder, capsule_placeholder),
+            "PHASE 2.5: ANCHOR CHECK", ANCHOR_PROMPT,
+            build_anchor_message(synth_placeholder, capsule_placeholder),
         ),
         ("PHASE 3: STUFF EXPLAINER", _STUFF_EXPLAINER_PROMPT, _build_stuff_message(ctx, capsule_placeholder)),
-        ("PHASE 4: FANTASY ANALYST", _FANTASY_PROMPT, _build_fantasy_message(ctx, capsule_placeholder)),
     ]
 
 
@@ -686,10 +624,11 @@ def generate_report_streaming(
         anchor re-checks -- up to MAX_REVISIONS passes. Exits immediately when
         the anchor returns clean.
     Phase 3 (Stuff Explainer): Traces each pitch's S+ grade to its physical profile.
-    Phase 4 (Fantasy Analyst): Produces 3 fantasy baseball bullets from the capsule.
+    Phase 3+ (Executive Summary): 3 metrics-focused bullet points.
 
-    Phases 3 and 4 receive the final capsule (post-revision if any), so they
-    inherit the editor's plausibility filters and any anchor-driven corrections.
+    Phase 3 and summary receive the final capsule (post-revision if any), so
+    they inherit the editor's plausibility filters and any anchor-driven
+    corrections.
 
     Only Phase 2 first draft is streamed to stdout. Revision passes run silently.
 
@@ -700,26 +639,16 @@ def generate_report_streaming(
         _model_override: Optional model override for testing (e.g., TestModel).
 
     Returns:
-        ReportResult with narrative, stuff_summary, fantasy_insights, and anchor_warnings.
+        ReportResult with narrative, stuff_summary, and anchor_warnings.
     """
-    (synthesizer, editor, stuff_explainer, fantasy_analyst), anchor_checker = _make_agents(provider, thinking)
-
-    synth_kwargs: dict[str, Any] = {"user_prompt": _build_synthesizer_message(ctx)}
-    if _model_override is not None:
-        synth_kwargs["model"] = _model_override
+    (synthesizer, editor, stuff_explainer, summary_agent), anchor_checker = _make_agents(provider, thinking)
 
     # Phase 1: Silent synthesis
-    synth_result = synthesizer.run_sync(**synth_kwargs)
+    synth_result = synthesizer.run_sync(**agent_kwargs(_build_synthesizer_message(ctx), _model_override))
     synthesis = synth_result.output
 
     # Phase 2: Streamed editorial
-    editor_kwargs: dict[str, Any] = {
-        "user_prompt": _build_editor_message(ctx, synthesis),
-    }
-    if _model_override is not None:
-        editor_kwargs["model"] = _model_override
-
-    stream = editor.run_stream_sync(**editor_kwargs)
+    stream = editor.run_stream_sync(**agent_kwargs(_build_editor_message(ctx, synthesis), _model_override))
     chunks: list[str] = []
     for delta in stream.stream_text(delta=True):
         print(delta, end="", flush=True)
@@ -731,60 +660,42 @@ def generate_report_streaming(
     # Phase 2.5: Anchor check + revision loop
     revision_count = 0
     for _ in range(MAX_REVISIONS):
-        anchor_kwargs: dict[str, Any] = {
-            "user_prompt": _build_anchor_message(synthesis, capsule),
-        }
-        if _model_override is not None:
-            anchor_kwargs["model"] = _model_override
-
-        anchor_result = anchor_checker.run_sync(**anchor_kwargs)
+        anchor_result = anchor_checker.run_sync(
+            **agent_kwargs(build_anchor_message(synthesis, capsule), _model_override)
+        )
         anchor_check = anchor_result.output
 
         if anchor_check.is_clean:
             break
 
         # Revise silently (no streaming)
-        revision_kwargs: dict[str, Any] = {
-            "user_prompt": _build_revision_message(synthesis, capsule, anchor_check.warnings),
-        }
-        if _model_override is not None:
-            revision_kwargs["model"] = _model_override
-
-        revision_result = editor.run_sync(**revision_kwargs)
+        revision_result = editor.run_sync(
+            **agent_kwargs(build_revision_message(synthesis, capsule, anchor_check.warnings), _model_override)
+        )
         capsule = revision_result.output
         revision_count += 1
     else:
-        # Exhausted MAX_REVISIONS -- final anchor check for surviving warnings
-        anchor_kwargs = {
-            "user_prompt": _build_anchor_message(synthesis, capsule),
-        }
-        if _model_override is not None:
-            anchor_kwargs["model"] = _model_override
-        anchor_result = anchor_checker.run_sync(**anchor_kwargs)
+        # Exhausted MAX_REVISIONS — final anchor check for surviving warnings
+        anchor_result = anchor_checker.run_sync(
+            **agent_kwargs(build_anchor_message(synthesis, capsule), _model_override)
+        )
         anchor_check = anchor_result.output
 
-    # Phase 3: Stuff explainer (silent) — traces S+ grades to physical pitch characteristics
-    stuff_kwargs: dict[str, Any] = {
-        "user_prompt": _build_stuff_message(ctx, capsule),
-    }
-    if _model_override is not None:
-        stuff_kwargs["model"] = _model_override
+    # Phase 3 + Summary: Run after capsule is finalized
+    stuff_result = stuff_explainer.run_sync(**agent_kwargs(_build_stuff_message(ctx, capsule), _model_override))
+    summary_result = summary_agent.run_sync(**agent_kwargs(f"## Synthesis\n{synthesis}", _model_override))
 
-    stuff_result = stuff_explainer.run_sync(**stuff_kwargs)
-
-    # Phase 4: Fantasy analyst (silent) — derived from capsule, not synthesis
-    fantasy_kwargs: dict[str, Any] = {
-        "user_prompt": _build_fantasy_message(ctx, capsule),
-    }
-    if _model_override is not None:
-        fantasy_kwargs["model"] = _model_override
-
-    fantasy_result = fantasy_analyst.run_sync(**fantasy_kwargs)
+    # Parse bullet lines from raw summary output
+    summary_bullets = [
+        line.lstrip("- ").strip()
+        for line in summary_result.output.strip().splitlines()
+        if line.strip().startswith("- ")
+    ]
 
     return ReportResult(
         narrative=capsule,
+        executive_summary=summary_bullets,
         stuff_summary=stuff_result.output,
-        fantasy_insights=fantasy_result.output,
         anchor_warnings=anchor_check.warnings,
         revision_count=revision_count,
     )

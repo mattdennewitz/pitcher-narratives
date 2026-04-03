@@ -16,6 +16,8 @@ from typing import cast
 import polars as pl
 
 __all__ = [
+    "AGGS_DIR",
+    "PARQUET_PATH",
     "RV_DF_PATH",
     "PitcherData",
     "classify_appearances",
@@ -23,6 +25,7 @@ __all__ = [
     "compute_season_baseline",
     "filter_to_window",
     "load_agg_csvs",
+    "load_csv",
     "load_pitcher_data",
     "load_run_values",
     "load_statcast",
@@ -79,7 +82,7 @@ class PitcherData:
     throws: str
 
 
-def _load_csv_with_dates(filename: str, pitcher_id: int | None) -> pl.DataFrame:
+def load_csv(filename: str, pitcher_id: int | None) -> pl.DataFrame:
     """Load a CSV agg file, parse dates, and optionally filter to pitcher.
 
     Args:
@@ -143,7 +146,7 @@ def load_agg_csvs(pitcher_id: int) -> dict[str, pl.DataFrame]:
     result: dict[str, pl.DataFrame] = {}
     for key, filename in all_csvs.items():
         pid = None if key == "team" else pitcher_id
-        result[key] = _load_csv_with_dates(filename, pid)
+        result[key] = load_csv(filename, pid)
     return result
 
 
@@ -206,13 +209,14 @@ def compute_pitch_type_baseline(pitcher_type_df: pl.DataFrame) -> pl.DataFrame:
     """Compute n_pitches-weighted baseline per pitch type across game types.
 
     Filters out empty pitch_type strings and combines game_type rows
-    using pitch-count weighting.
+    using pitch-count weighting. Includes ``usage_pct`` — the percentage
+    of total pitches thrown with each pitch type.
 
     Args:
-        pitcher_type_df: DataFrame from pitcher_type.csv filtered to one pitcher.
+        pitcher_type_df: DataFrame from pitcher_type.csv (one or many pitchers).
 
     Returns:
-        DataFrame with one row per pitch type and weighted average metrics.
+        DataFrame with one row per pitcher/pitch_type and weighted average metrics.
     """
     df = pitcher_type_df.filter(pl.col("pitch_type") != "")
     id_cols = _ID_COLS | {"pitch_type"}
@@ -221,13 +225,19 @@ def compute_pitch_type_baseline(pitcher_type_df: pl.DataFrame) -> pl.DataFrame:
         (pl.col(c) * pl.col("n_pitches")).sum().truediv(pl.col("n_pitches").sum()).alias(c)
         for c in metric_cols
     ]
-    return df.group_by(["pitcher", "pitch_type"]).agg(
+    result = df.group_by(["pitcher", "pitch_type"]).agg(
         pl.col("n_pitches").sum(),
         pl.col("player_name").first(),
         pl.col("p_throws").first(),
         pl.col("team_code").first(),
         *weighted_exprs,
     )
+    pitcher_totals = df.group_by("pitcher").agg(
+        pl.col("n_pitches").sum().alias("total_pitches"),
+    )
+    return result.join(pitcher_totals, on="pitcher").with_columns(
+        (pl.col("n_pitches") / pl.col("total_pitches") * 100).alias("usage_pct"),
+    ).drop("total_pitches")
 
 
 def filter_to_window(df: pl.DataFrame, window_days: int) -> pl.DataFrame:

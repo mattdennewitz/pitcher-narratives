@@ -2,7 +2,7 @@
 
 ## What This Is
 
-A CLI tool that generates LLM-written scouting reports for MLB pitchers and answers natural-language questions about their performance. Given a pitcher ID or name, it assembles pitch-level Statcast data and pre-computed Pitching+ aggregations, computes deltas and trend strings across a configurable lookback window, and either runs a five-phase LLM pipeline (synthesizer → editor → anchor check → hook writer → fantasy analyst) with a self-correcting reflection loop for full reports, or routes questions to a tool-calling analyst agent for focused Q&A. Includes a standalone scout CLI that scores appearances for interestingness and optionally curates via LLM.
+A CLI tool that generates LLM-written scouting reports for MLB pitchers and answers natural-language questions about their performance. Given a pitcher ID or name, it assembles pitch-level Statcast data and pre-computed Pitching+ aggregations, computes deltas and trend strings across a configurable lookback window, and runs either a multi-agent specialist pipeline (5 specialist micro-analysts → per-specialist audit → writer → anchor check) or the original single-agent pipeline with a self-correcting reflection loop. Also provides a tool-calling analyst agent for focused Q&A and a standalone scout CLI that scores appearances for interestingness.
 
 ## Core Value
 
@@ -46,10 +46,20 @@ The report must read like a scout wrote it — surfacing *changes, adaptations, 
 - Disambiguation UX: numbered candidate list for ambiguous names — v1.4
 - Streaming Q&A output via run_stream_sync matching report pipeline UX — v1.4
 
-- Intermediate probabilities (P and S variants) surfaced per pitch type from pitchingplus aggregation CSVs — v1.5
-- Component attribution: xRV decomposed into 13 outcome-level contributions per pitch type — v1.5
-- Analyst system prompt reasons from model internals (outcome probabilities, P/S location diagnosis, attribution) rather than opaque plus grades — v1.5
-- Analyst tools return intermediate probabilities, P/S comparisons, and component attribution alongside plus scores — v1.5
+- Intermediate probabilities (P and S variants) loaded from pitchingplus aggregation CSVs — v1.5
+- Component attribution: 13-outcome xRV decomposition per pitch type — v1.5
+- Analyst tools return intermediates, P/S comparisons, and attribution alongside plus scores — v1.5
+- Analyst prompt reasons from model internals (physical profile → stuff predictions → grade) — v1.5
+- Per-pitch-type velocity and movement (pfx_x/pfx_z) in arsenal data for Stuff+ explanation — v1.5
+- Stuff explainer phase replaces social hook: traces S+ grades to physical characteristics — v1.5
+
+- Multi-agent specialist pipeline with 5 parallel micro-analysts (stuff, location, run value, trends, game shape) — v1.6
+- Per-specialist audit loop: independent data auditor verifies each specialist before writer sees output — v1.6
+- Anti-hallucination guardrails: NORMAL/OUTLIER tags, directional consistency, temperature splitting — v1.6
+- Writer agent composes unified capsule from clean specialist outputs — v1.6
+- Executive summary agent runs concurrently with writer — v1.6
+- Pipeline Q&A mode via `pitcher-ask --pipeline` with audit flags and stuff summary — v1.6
+- Architecture cleanup: config.py, anchor.py modules; public pipeline API; consolidated baseline logic — v1.6
 
 ### Active
 
@@ -71,19 +81,19 @@ The report must read like a scout wrote it — surfacing *changes, adaptations, 
 - Real-time data ingestion — works against static parquet/CSV files
 - Team-level reports — individual pitcher reports only
 - Rich terminal formatting — plain text output for v1.0
-- Cross-pitcher comparison in Q&A — needs new data scanning layer, deferred to v1.6+
-- Multi-turn conversational Q&A — session state management, different UX paradigm, deferred to v1.6+
+- Cross-pitcher comparison in Q&A — needs new data scanning layer, deferred to v1.7+
+- Multi-turn conversational Q&A — session state management, different UX paradigm, deferred to v1.7+
 - SQL generation from natural language — existing engine computes meaningful derived metrics
 
 ## Context
 
-### Current State (v1.5 shipped)
+### Current State (v1.6 shipped)
 
-**Modules:** data.py (loading), engine.py (computation), context.py (assembly), report.py (5-phase LLM pipeline + reflection loop + hallucination guard), scout.py (appearance scoring), curator.py (LLM curation), cli.py (narrative CLI), scout_cli.py (scout CLI), resolver.py (fuzzy name resolution), analyst.py (tool-calling Q&A agent), ask_cli.py (Q&A CLI).
+**Modules:** config.py (shared constants), anchor.py (anchor quality gate), data.py (loading), engine.py (computation), context.py (assembly), report.py (single-agent LLM pipeline + reflection loop), pipeline.py (multi-agent specialist pipeline + audit loop), scout.py (appearance scoring), curator.py (LLM curation), cli.py (narrative CLI), scout_cli.py (scout CLI), resolver.py (fuzzy name resolution + question extraction), analyst.py (tool-calling Q&A agent), ask_cli.py (Q&A CLI).
 
 **Tech stack:** Python 3.14, polars 1.39, pydantic-ai 1.72, rapidfuzz 3.14, nameparser 1.1, multi-provider (OpenAI gpt-5.4-mini, Claude Sonnet 4.6, Gemini 3.1 Pro).
 
-**Key v1.5 additions:** Intermediate probabilities (P/S variants) pipeline in engine.py, component attribution (13-outcome xRV decomposition) in engine.py, updated analyst tools returning model internals, analyst prompt rewritten for model-internals-first reasoning with P/S location diagnosis and sign convention guidance.
+**Key v1.6 additions:** Multi-agent specialist pipeline (5 specialists + auditor + writer), per-specialist audit loop catching hallucinations before synthesis, NORMAL/OUTLIER tags on all metrics, temperature splitting by agent role. Architecture refactored: config.py and anchor.py extracted, private APIs promoted to public, duplicated logic consolidated. 286 tests passing, 7,875 LOC.
 
 ### Data Sources
 
@@ -128,6 +138,12 @@ The report must read like a scout wrote it — surfacing *changes, adaptations, 
 | `instructions` param over `system_prompt` | Excludes from message history; multi-turn Q&A a future freebie | ✓ Good |
 | Separate CLI per concern (pitcher-ask) | Matches pitcher-narratives and pitcher-scout pattern; no subcommand pollution | ✓ Good |
 | Capitalization heuristic for name extraction | Prevents common words like "about" from fuzzy-matching pitcher names like "Abbott" | ✓ Good |
+| 5 parallel specialist agents over monolithic synthesizer | Each specialist focuses on one analytical lens; writer composes rather than analyzing | ✓ Good |
+| Per-specialist audit before writer | Catches hallucinations early, before they compound in the writer's capsule | ✓ Good |
+| Temperature splitting (0.3/0.7/0.1) | Specialists need precision, writer needs voice, auditor/anchor need determinism | ✓ Good |
+| NORMAL/OUTLIER tags on all metrics | Prevents specialists from calling normal values "notable" | ✓ Good |
+| Game Shape specialist (5th agent) | TTO degradation and within-game mix shifts were missing from 4-agent prototype | ✓ Good |
+| Prototype Phase 15 without GSD plans | Experimental architecture; iteration faster than upfront planning | ✓ Good |
 
 ## Evolution
 
@@ -147,4 +163,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-04-02 after v1.7 milestone started — Multi-Year Data & Game Type Filtering*
+*Last updated: 2026-04-03 after v1.7 milestone started — Multi-Year Data & Game Type Filtering*

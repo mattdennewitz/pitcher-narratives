@@ -8,18 +8,25 @@ PitcherContext data via RunContext[QADeps] dependency injection.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import Any
 
 from pydantic_ai import Agent, RunContext
-from pydantic_ai.models.google import GoogleModelSettings
 from pydantic_ai.settings import ModelSettings, ThinkingEffort
 
+from pitcher_narratives.config import PROVIDERS, THINKING_LEVELS, make_model_settings
 from pitcher_narratives.context import PitcherContext
 from pitcher_narratives.data import PitcherData
-from pitcher_narratives.report import PROVIDERS, THINKING_LEVELS
+from pitcher_narratives.engine import compute_league_baselines
 
-__all__ = ["PITCH_TYPE_MAP", "QADeps", "ask_question_streaming"]
+__all__ = [
+    "ANALYST_INSTRUCTIONS", "ANSWERER_INSTRUCTIONS",
+    "PITCH_TYPE_MAP", "PipelineAnswer", "QADeps",
+    "ask_question_streaming", "ask_question_pipeline",
+]
+
+log = logging.getLogger("pitcher_narratives.analyst")
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -88,7 +95,7 @@ class QADeps:
 # AGENT INSTRUCTIONS
 # ═══════════════════════════════════════════════════════════════════════
 
-_ANALYST_INSTRUCTIONS = """\
+ANALYST_INSTRUCTIONS = """\
 You are a sabermetric scout answering questions about a specific pitcher. \
 You write the way an analyst talks to another analyst -- plain, specific, \
 conversational. Not the way a research paper reads.
@@ -182,6 +189,16 @@ what data IS available.
 advice, historical seasons, cross-pitcher comparisons), explain that your \
 data covers only this pitcher's recent performance window and describe \
 what you CAN answer.
+4. LEAGUE BASELINE COMPARISON: The tool output includes league baselines \
+with standard deviations. If a metric is within ±1.5 stddev of the \
+league average for that pitch type, it is NORMAL — do not characterize \
+it as unusually high or low. Only flag metrics that are genuine outliers.
+5. DIRECTIONAL CONSISTENCY: S+ below 100 → pitch grades below average, \
+xRV100_S should be positive (costly). S+ above 100 → above average, \
+xRV100_S should be negative (saves runs). If these don't align, note \
+the discrepancy rather than forcing a narrative.
+6. If xWhiff_S ≥ 25%, that is a meaningful whiff rate. Reconcile this \
+strength before labeling any pitch as detrimental or poor.
 
 RESPONSE FORMAT:
 - For broad questions ("How is he pitching?"): 2-3 paragraphs. Find the \
@@ -209,7 +226,7 @@ _analyst_agent = Agent(
     "openai:gpt-5.4-mini",
     deps_type=QADeps,
     output_type=str,
-    instructions=_ANALYST_INSTRUCTIONS,
+    instructions=ANALYST_INSTRUCTIONS,
     defer_model_check=True,
 )
 
@@ -217,7 +234,34 @@ _analyst_agent = Agent(
 @_analyst_agent.tool
 def get_pitcher_summary(ctx: RunContext[QADeps]) -> str:
     """Get the full scouting context for the pitcher including all arsenal, execution, and trend data."""
-    return ctx.deps.context.to_prompt()
+    # Inject league baselines so the agent can ground claims
+    baselines = compute_league_baselines()
+    lookup = {b.pitch_type: b for b in baselines}
+    pitch_types = [p.pitch_type for p in ctx.deps.context.arsenal]
+
+    baseline_lines = [
+        "## League Baselines (2026, all pitchers)",
+        "Use these to determine whether a metric is an outlier or normal.",
+        "A metric within ±1.5 stddev of the league average is NORMAL.\n",
+    ]
+    for pt in pitch_types:
+        b = lookup.get(pt)
+        if b is None:
+            continue
+        baseline_lines.append(f"### {b.pitch_name} ({b.pitch_type})")
+        baseline_lines.append(
+            f"- Velocity: {b.avg_velo:.1f} mph (stddev {b.velo_std:.1f}, "
+            f"normal range {b.avg_velo - 1.5 * b.velo_std:.1f}–{b.avg_velo + 1.5 * b.velo_std:.1f})"
+        )
+        baseline_lines.append(f"- pfx_x: {b.avg_pfx_x:.1f} in (stddev {b.pfx_x_std:.1f})")
+        baseline_lines.append(f"- pfx_z: {b.avg_pfx_z:.1f} in (stddev {b.pfx_z_std:.1f})")
+        if b.avg_s_plus is not None:
+            xw = f"{b.avg_xwhiff_s * 100:.1f}%" if b.avg_xwhiff_s else "--"
+            xr = f"{b.avg_xrv100_s:.2f}" if b.avg_xrv100_s else "--"
+            baseline_lines.append(f"- S-variant avg: S+ {b.avg_s_plus:.0f}, xWhiff_S {xw}, xRV100_S {xr}")
+        baseline_lines.append("")
+
+    return "\n".join(baseline_lines) + "\n\n" + ctx.deps.context.to_prompt()
 
 
 @_analyst_agent.tool
@@ -408,17 +452,7 @@ def _make_analyst(
         raise ValueError(f"Unknown provider {provider!r}, expected one of: {', '.join(PROVIDERS)}")
     model = PROVIDERS[provider]
 
-    if provider == "gemini":
-        gemini_level = "high" if thinking in ("high", "xhigh") else "low"
-        settings: ModelSettings = GoogleModelSettings(
-            google_thinking_config={"thinking_level": gemini_level},
-            temperature=1.0,
-            max_tokens=16384,
-        )
-    elif provider == "claude":
-        settings = ModelSettings(thinking=thinking, max_tokens=16384)
-    else:
-        settings = ModelSettings(thinking=thinking)
+    settings = make_model_settings(provider, thinking, 1.0)
 
     result = (model, settings)
     _settings_cache[key] = result
@@ -469,3 +503,183 @@ def ask_question_streaming(
         chunks.append(delta)
     print()
     return "".join(chunks)
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# MULTI-AGENT Q&A (PIPELINE APPROACH)
+# ═══════════════════════════════════════════════════════════════════════
+
+
+@dataclass
+class PipelineAnswer:
+    """Result from the multi-agent Q&A pipeline."""
+
+    answer: str
+    stuff_summary: str
+    executive_summary: list[str] | None = None
+    audit_flags: list[Any] | None = None
+
+ANSWERER_INSTRUCTIONS = """\
+You are a sabermetric scout answering a specific question about a pitcher. \
+You have five specialist analyses available as context — stuff, location, \
+run value decomposition, trends, and game shape. Use them as your evidence base.
+
+APPROACH:
+- Read the question carefully. Answer ONLY what was asked.
+- Draw from whichever specialist analyses are relevant. A question about \
+a specific pitch's stuff should lean on the stuff analysis. A question \
+about trends should lean on the trend analysis. A broad question should \
+synthesize across all five.
+- The specialist analyses are your ONLY source of truth. Do not invent \
+metrics or cite numbers not present in the analyses.
+
+INTERPRETATION RULES:
+- DIRECTIONAL CONSISTENCY: If a specialist says a pitch is effective \
+(S+ above 100, negative xRV100), do not flip the narrative. If a \
+specialist says a pitch is weak, do not spin it positive.
+- If a pitch shows xWhiff_S ≥ 25%, that is a meaningful whiff rate. \
+Reconcile this strength before labeling the pitch as poor.
+- If DATA AUDIT FLAGS are present, those specialist claims have been \
+flagged as inaccurate. Do NOT repeat flagged claims — use the \
+suggested correction instead.
+
+VOICE:
+- Write like an analyst talking to another analyst. Plain, specific, \
+conversational.
+- Vary sentence length. Short sentences land points.
+- Use scouting language: stuff, feel, finding a groove, getting tagged.
+- No clichés, no formulaic transitions, no "the data shows."
+- Never use: "degradation," "binary," "profiles as," "dominant," \
+"elite," "massive spike."
+- Start immediately with the answer. No preamble.
+
+FORMAT:
+- For specific pitch questions: 1-2 focused paragraphs.
+- For broad questions: 2-3 paragraphs. Find the thread first.
+- No bullet lists or tables. Prose only.
+
+OUT OF SCOPE (decline gracefully):
+- Predictions or projections
+- Fantasy baseball advice
+- Historical season-over-season comparisons
+- Cross-pitcher comparisons
+"""
+
+
+def ask_question_pipeline(
+    question: str,
+    context: PitcherContext,
+    data: PitcherData,
+    *,
+    provider: str = "gemini",
+    thinking: ThinkingEffort = "high",
+    _model_override: Any = None,
+) -> PipelineAnswer:
+    """Ask a question using the specialist→auditor→answerer pipeline.
+
+    Phase 1: 5 specialists run concurrently on the full context.
+    Phase 1.5: Data auditor validates specialist outputs against ground truth.
+    Phase 2: Answerer composes a focused response (streamed).
+
+    Args:
+        question: The user's question in natural language.
+        context: Assembled PitcherContext for the pitcher.
+        data: Loaded PitcherData for the pitcher.
+        provider: LLM provider key.
+        thinking: Thinking effort level.
+        _model_override: Optional model override for testing.
+
+    Returns:
+        PipelineAnswer with the streamed answer, stuff summary, and audit flags.
+    """
+    import asyncio
+
+    from pitcher_narratives.config import agent_kwargs
+    from pitcher_narratives.pipeline import (
+        audit_and_revise_specialists,
+        build_writer_input,
+        make_pipeline_agents,
+        run_specialists,
+    )
+
+    agents = make_pipeline_agents(provider, thinking)
+
+    async def _run() -> PipelineAnswer:
+        # Phase 1: Run specialists concurrently
+        log.info("Running specialists...")
+        raw_specialists = await run_specialists(
+            agents.stuff, agents.location, agents.runvalue, agents.trends,
+            agents.game_shape, context, _model_override,
+        )
+
+        # Phase 1.5: Per-specialist audit + revision loop
+        log.info("Auditing...")
+        specialist_agents = {
+            "stuff": agents.stuff, "location": agents.location,
+            "runvalue": agents.runvalue, "trends": agents.trends,
+            "game_shape": agents.game_shape,
+        }
+        specialists, audit_flags = await audit_and_revise_specialists(
+            raw_specialists, specialist_agents, agents.auditor, context, _model_override,
+        )
+        log.info("Answering...")
+
+        # Phase 2: Answerer composes from clean specialist outputs (streamed)
+        model_name, model_settings = _make_analyst(provider, thinking)
+        answerer = Agent(
+            _model_override if _model_override is not None else model_name,
+            output_type=str,
+            instructions=ANSWERER_INSTRUCTIONS,
+            model_settings=model_settings,
+            defer_model_check=True,
+        )
+
+        # Answerer gets clean specialist outputs — no flags section needed
+        answerer_input = "\n\n".join([
+            f"## Question\n{question}\n",
+            f"## Pitcher: {context.pitcher_name} ({context.throws}HP, {context.role})\n",
+            f"## Specialist Analysis: Stuff\n{specialists.stuff}\n",
+            f"## Specialist Analysis: Location\n{specialists.location}\n",
+            f"## Specialist Analysis: Run Value\n{specialists.runvalue}\n",
+            f"## Specialist Analysis: Trends\n{specialists.trends}\n",
+            f"## Specialist Analysis: Game Shape\n{specialists.game_shape}",
+        ])
+
+        # Build summary input from clean specialist outputs
+        summary_input = build_writer_input(
+            context, specialists.stuff, specialists.location,
+            specialists.runvalue, specialists.trends, specialists.game_shape,
+        )
+
+        # Run summary in background while answerer streams
+        summary_task = asyncio.create_task(
+            agents.summary.run(**agent_kwargs(summary_input, _model_override))
+        )
+
+        chunks: list[str] = []
+        async with answerer.run_stream(answerer_input) as stream:
+            async for delta in stream.stream_text(delta=True):
+                print(delta, end="", flush=True)
+                chunks.append(delta)
+        print()
+
+        # Await and parse summary bullets — non-critical, don't crash if it fails
+        try:
+            summary_result = await summary_task
+            summary_bullets = [
+                line.lstrip("- ").strip()
+                for line in summary_result.output.strip().splitlines()
+                if line.strip().startswith("- ")
+            ]
+        except Exception:
+            log.warning("Executive summary agent failed, skipping.", exc_info=True)
+            summary_bullets = []
+
+        return PipelineAnswer(
+            answer="".join(chunks),
+            stuff_summary=specialists.stuff,
+            executive_summary=summary_bullets or None,
+            audit_flags=audit_flags or None,
+        )
+
+    return asyncio.run(_run())

@@ -10,6 +10,7 @@ import argparse
 import os
 import sys
 
+from pitcher_narratives.config import API_KEYS
 from pitcher_narratives.scout import scout_appearances
 
 
@@ -116,8 +117,7 @@ def main() -> None:
 
     if args.curate:
         # Check API key
-        _API_KEYS = {"openai": "OPENAI_API_KEY", "claude": "ANTHROPIC_API_KEY", "gemini": "GEMINI_API_KEY"}
-        env_var = _API_KEYS[args.provider]
+        env_var = API_KEYS[args.provider]
         if not os.environ.get(env_var):
             print(f"\nError: {env_var} not set.", file=sys.stderr)
             sys.exit(1)

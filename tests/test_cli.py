@@ -8,8 +8,7 @@ import sys
 
 import pytest
 
-from pitcher_narratives.cli import _print_revision_status, parse_args
-from pitcher_narratives.report import AnchorWarning, ReportResult
+from pitcher_narratives.cli import parse_args
 
 
 def test_parse_pitcher_flag(monkeypatch):
@@ -183,82 +182,11 @@ def test_cli_missing_api_key():
     assert "API_KEY" in result.stderr
 
 
-# ── Revision status tests ──
+# ── Integration: revision status in output ──
 
 
-def _make_result(
-    revision_count: int = 0,
-    anchor_warnings: list[AnchorWarning] | None = None,
-) -> ReportResult:
-    """Build a minimal ReportResult for revision status tests."""
-    return ReportResult(
-        narrative="n",
-        stuff_summary="s",
-        fantasy_insights="f",
-        anchor_warnings=anchor_warnings or [],
-        revision_count=revision_count,
-    )
-
-
-def test_revision_status_first_try_clean(capsys):
-    """UX-03: First-try clean capsule prints 'Passed anchor check'."""
-    _print_revision_status(_make_result(revision_count=0, anchor_warnings=[]))
-    err = capsys.readouterr().err
-    assert "Passed anchor check" in err
-
-
-def test_revision_status_revised_and_converged(capsys):
-    """UX-03: Revised once and converged prints revision count + passed."""
-    _print_revision_status(_make_result(revision_count=1))
-    err = capsys.readouterr().err
-    assert "Revised 1 time(s) -- anchor check passed" in err
-
-
-def test_revision_status_revised_twice_converged(capsys):
-    """UX-03: Revised twice and converged prints revision count + passed."""
-    _print_revision_status(_make_result(revision_count=2))
-    err = capsys.readouterr().err
-    assert "Revised 2 time(s) -- anchor check passed" in err
-
-
-def test_revision_status_exhausted_with_warnings(capsys):
-    """UX-03: Exhausted with warnings prints count + warning lines."""
-    result = _make_result(
-        revision_count=2,
-        anchor_warnings=[
-            AnchorWarning(category="MISSED_SIGNAL", description="Fastball velocity drop not addressed"),
-        ],
-    )
-    _print_revision_status(result)
-    err = capsys.readouterr().err
-    assert "Revised 2 time(s) -- anchor check found issues:" in err
-    assert "[MISSED_SIGNAL] Fastball velocity drop not addressed" in err
-
-
-def test_revision_status_exhausted_multiple_warnings(capsys):
-    """UX-03: Multiple surviving warnings all appear in stderr."""
-    result = _make_result(
-        revision_count=2,
-        anchor_warnings=[
-            AnchorWarning(category="MISSED_SIGNAL", description="Fastball velocity drop not addressed"),
-            AnchorWarning(category="UNSUPPORTED", description="Too many raw numbers in opening"),
-        ],
-    )
-    _print_revision_status(result)
-    err = capsys.readouterr().err
-    assert "[MISSED_SIGNAL] Fastball velocity drop not addressed" in err
-    assert "[UNSUPPORTED] Too many raw numbers in opening" in err
-
-
-# ── Integration: revision loop end-to-end ──
-
-
-def test_cli_revision_exhausted_shows_warnings():
-    """Integration: TestModel exhausts revisions and stderr shows status.
-
-    LOOP-03 + UX-03: TestModel always returns dirty anchor (is_clean=False),
-    so the loop exhausts MAX_REVISIONS and prints surviving warnings to stderr.
-    """
+def test_cli_anchor_check_in_output():
+    """Integration: Anchor check section appears in stdout output."""
     result = subprocess.run(
         [sys.executable, "-m", "pitcher_narratives.cli", "-p", "592155"],
         capture_output=True,
@@ -267,8 +195,4 @@ def test_cli_revision_exhausted_shows_warnings():
         env=_test_env(PITCHER_NARRATIVES_TEST_MODEL="1"),
     )
     assert result.returncode == 0
-    # Must contain revision count message (TestModel always dirty -> exhausted)
-    assert "Revised" in result.stderr
-    assert "anchor check found issues" in result.stderr
-    # Must contain at least one [CATEGORY] formatted warning
-    assert "[" in result.stderr and "]" in result.stderr
+    assert "# Anchor Check" in result.stdout
