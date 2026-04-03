@@ -13,7 +13,7 @@ from typing import Any, cast
 
 import polars as pl
 
-from pitcher_narratives.data import AGGS_DIR, PitcherData, load_run_values
+from pitcher_narratives.data import AGGS_DIR, PARQUET_PATH, PitcherData, load_run_values
 
 
 def _float(val: Any) -> float:
@@ -196,8 +196,6 @@ def compute_league_baselines() -> list[LeagueBaseline]:
     global _league_baselines_cache
     if _league_baselines_cache is not None:
         return _league_baselines_cache
-
-    from pitcher_narratives.data import PARQUET_PATH
 
     df = pl.read_parquet(
         PARQUET_PATH,

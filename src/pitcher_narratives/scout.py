@@ -18,6 +18,7 @@ import polars as pl
 
 from pitcher_narratives.data import (
     AGGS_DIR,
+    PARQUET_PATH,
     compute_pitch_type_baseline,
     compute_season_baseline,
     load_csv,
@@ -230,8 +231,6 @@ def _compute_velo_baselines() -> pl.DataFrame:
 
     Returns DataFrame with columns: pitcher, season_velo, and per-game velos.
     """
-    from pitcher_narratives.data import PARQUET_PATH
-
     if not PARQUET_PATH.exists():
         return pl.DataFrame(schema={"pitcher": pl.Int64, "season_velo": pl.Float64})
 
