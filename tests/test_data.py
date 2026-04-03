@@ -2,16 +2,22 @@ import polars as pl
 import pytest
 
 from pitcher_narratives.data import (
+    _ALLOWED_GAME_TYPES,
+    _ID_COLS,
+    _YEARS,
     classify_appearances,
     compute_pitch_type_baseline,
     compute_season_baseline,
+    filter_game_type,
     filter_to_window,
     load_agg_csvs,
+    load_csv,
     load_pitcher_data,
     load_statcast,
 )
 
-TEST_PITCHER = 592155  # Booser, Cam -- 12 appearances, 1 SP + 11 RP
+TEST_PITCHER = 592155  # Booser, Cam -- 1 regular-season RP appearance
+SWINGMAN_PITCHER = 676571  # Poulin, PJ -- 4 R-game appearances: 1 SP + 3 RP
 
 
 def test_load_statcast_filters_by_pitcher():
@@ -118,9 +124,10 @@ def test_window_filter():
 
 def test_classify_starter():
     """ROLE-01: Appearance with first_inning==1 gets role 'SP'."""
-    df = load_statcast(TEST_PITCHER)
+    df = load_statcast(SWINGMAN_PITCHER)
     appearances = classify_appearances(df)
     starters = appearances.filter(pl.col("role") == "SP")
+    assert len(starters) > 0, "Need at least one SP appearance"
     assert (starters["first_inning"] == 1).all()
 
 
@@ -141,10 +148,10 @@ def test_role_column_exists():
 
 def test_swingman_classification():
     """ROLE-03: Pitcher with both SP and RP appearances gets both roles."""
-    df = load_statcast(TEST_PITCHER)
+    df = load_statcast(SWINGMAN_PITCHER)
     appearances = classify_appearances(df)
     roles = appearances["role"].unique().sort().to_list()
-    # Booser has 1 start and 11 relief appearances
+    # Poulin has 1 start and 3 relief appearances in regular season
     assert roles == ["RP", "SP"]
 
 
@@ -157,3 +164,66 @@ def test_load_pitcher_data_returns_complete_bundle():
     assert hasattr(data, "pitch_type_baseline")
     assert hasattr(data, "agg_csvs")
     assert hasattr(data, "window_appearances")
+
+
+def test_filter_game_type_no_column():
+    """DFND-01: filter_game_type passes through DataFrames without game_type column."""
+    df = pl.DataFrame({"pitcher": [1, 2], "velo": [95.0, 93.0]})
+    result = filter_game_type(df)
+    assert result.shape == df.shape
+    assert result.equals(df)
+
+
+def test_filter_game_type_exported():
+    """DFND-04: filter_game_type is in __all__ exports."""
+    import pitcher_narratives.data as data_mod
+
+    assert "filter_game_type" in data_mod.__all__
+
+
+def test_load_statcast_filters_game_type():
+    """DFND-01: load_statcast excludes spring training and exhibition rows."""
+    df = load_statcast(TEST_PITCHER)
+    if "game_type" in df.columns:
+        actual_types = set(df["game_type"].unique().to_list())
+        assert actual_types <= {"R", "F", "D", "L", "W"}, f"Unexpected game types: {actual_types}"
+
+
+def test_load_csv_filters_game_type():
+    """DFND-01: load_csv applies game type filter."""
+    from pitcher_narratives.data import AGGS_DIR, _YEARS
+
+    filename = f"{_YEARS[-1]}-pitcher.csv"
+    df = load_csv(filename, TEST_PITCHER)
+    if "game_type" in df.columns:
+        actual_types = set(df["game_type"].unique().to_list())
+        assert actual_types <= {"R", "F", "D", "L", "W"}, f"Unexpected game types: {actual_types}"
+
+
+def test_no_hardcoded_year_in_csv_dicts():
+    """DFND-02: No hardcoded year prefixes in CSV filename generation."""
+    import inspect
+
+    import pitcher_narratives.data as data_mod
+
+    source = inspect.getsource(data_mod)
+    # The old _SEASON_CSVS and _APPEARANCE_CSVS dicts with "2026-" values should not exist
+    assert '"2026-pitcher.csv"' not in source, "Hardcoded 2026-pitcher.csv found in data.py"
+    assert '"2026-pitcher_type.csv"' not in source, "Hardcoded 2026-pitcher_type.csv found"
+    assert '"2026-all_pitches.csv"' not in source, "Hardcoded 2026-all_pitches.csv found"
+
+
+def test_years_constant_drives_paths():
+    """DFND-02: _YEARS constant exists and drives path generation."""
+    from pitcher_narratives.data import PARQUET_PATH, _YEARS
+
+    assert isinstance(_YEARS, list)
+    assert 2026 in _YEARS
+    assert str(PARQUET_PATH).endswith(f"statcast_{_YEARS[-1]}.parquet")
+
+
+def test_season_in_id_cols():
+    """DFND-03: season is an identity column, not a metric."""
+    from pitcher_narratives.data import _ID_COLS
+
+    assert "season" in _ID_COLS

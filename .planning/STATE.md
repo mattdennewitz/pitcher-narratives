@@ -1,16 +1,16 @@
 ---
 gsd_state_version: 1.0
 milestone: v1.7
-milestone_name: Multi-Year Data & Game Type Filtering
-status: roadmap_complete
-stopped_at: Roadmap created with 3 phases (16-18)
-last_updated: "2026-04-03T00:00:00.000Z"
+milestone_name: Multi-Year Data Foundation
+status: in_progress
+stopped_at: Completed 16-01-PLAN.md
+last_updated: "2026-04-03"
 last_activity: 2026-04-03
 progress:
-  total_phases: 18
-  completed_phases: 15
-  total_plans: 0
-  completed_plans: 0
+  total_phases: 1
+  completed_phases: 0
+  total_plans: 1
+  completed_plans: 1
 ---
 
 # Project State
@@ -20,28 +20,24 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-03)
 
 **Core value:** Reports must read like a scout wrote them -- surfacing changes, adaptations, and execution trends rather than reciting numbers.
-**Current focus:** Phase 16 -- Data Foundation (ready to plan)
+**Current focus:** v1.7 Phase 16 -- Data Foundation (game type filtering and year parameterization)
 
 ## Current Position
 
-Phase: 16 of 18 (Data Foundation)
-Plan: Not started
-Status: Ready to plan
-Last activity: 2026-04-03 -- Roadmap created for v1.7
-
-Progress: [===============░░░] 83% (15/18 phases)
+Phase: 16 (Data Foundation) -- Plan 01 COMPLETE
+Plan: 1 of 1 in current wave
+Status: Phase 16-01 complete
+Last activity: 2026-04-03
 
 ## Accumulated Context
 
 ### Decisions
 
 Decisions are logged in PROJECT.md Key Decisions table.
-Recent decisions affecting current work:
 
-- [v1.7]: Filter once in data.py at load time, all downstream consumers receive clean data
-- [v1.7]: Explicit _YEARS constant over filesystem auto-discovery (sufficient for 2 years)
-- [v1.7]: Per-season baselines (not cross-season averaged) to prevent double-counting artifacts
-- [v1.7]: Export filter_game_type as public API for consumer modules
+- Allowlist (is_in) over exclusion list for game type filtering -- unknown game types default to excluded
+- Grain tuples + f-string generation over hardcoded CSV filename dicts -- _YEARS drives all paths
+- Pitcher 676571 (Poulin, PJ) as swingman test fixture -- 4 R-game appearances with SP+RP roles
 
 ### Pending Todos
 
@@ -50,11 +46,17 @@ None.
 ### Blockers/Concerns
 
 - pitchingplus model internals at ~/src/pitchingplus/packages/plus -- external dependency, changes there affect this project's data pipeline
-- 75.9% of 2026 statcast rows are spring training -- filtering is correctness-critical, not optional
-- Test assertions will break when filtering lands; new expected values must be computed against filtered data
+- test_engine.py::test_fastball_velocity_delta needs fixture update for filtered data (Phase 18 scope)
+- RV_df.csv missing from aggs/ directory -- pre-existing, affects test_analyst.py and test_ask_cli.py
+
+## Performance Metrics
+
+| Phase-Plan | Duration | Tasks | Files |
+|-----------|----------|-------|-------|
+| 16-01 | 5min | 2 | 2 |
 
 ## Session Continuity
 
 Last session: 2026-04-03
-Stopped at: Roadmap created for v1.7 (3 phases 16-18, 11 requirements)
+Stopped at: Completed 16-01-PLAN.md
 Resume file: None
