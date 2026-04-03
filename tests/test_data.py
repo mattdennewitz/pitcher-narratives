@@ -13,7 +13,9 @@ from pitcher_narratives.data import (
     filter_game_type,
     filter_to_window,
     load_agg_csvs,
+    load_all_statcast,
     load_csv,
+    load_full_agg,
     load_pitcher_data,
     load_statcast,
 )
@@ -371,3 +373,174 @@ def test_pitch_type_baseline_per_season():
     # Usage pct should be 100% for both since FF is the only pitch per season
     assert abs(row_2025["usage_pct"][0] - 100.0) < 0.01
     assert abs(row_2026["usage_pct"][0] - 100.0) < 0.01
+
+
+# ---------------------------------------------------------------------------
+# Tests for load_all_statcast() and load_full_agg()
+# ---------------------------------------------------------------------------
+
+
+def test_load_all_statcast_returns_all_pitchers():
+    """CSMR-01: load_all_statcast() returns data with multiple unique pitcher IDs."""
+    df = load_all_statcast()
+    assert not df.is_empty()
+    assert df["pitcher"].n_unique() > 1, "Expected multiple pitchers in unfiltered load"
+
+
+def test_load_all_statcast_filters_game_type():
+    """CSMR-01: load_all_statcast() only returns allowed game types."""
+    df = load_all_statcast()
+    if "game_type" in df.columns:
+        actual_types = set(df["game_type"].unique().to_list())
+        assert actual_types <= {"R", "F", "D", "L", "W"}, f"Unexpected game types: {actual_types}"
+
+
+def test_load_all_statcast_columns_param():
+    """CSMR-01: load_all_statcast(columns=...) returns only requested columns."""
+    df = load_all_statcast(columns=["pitcher", "player_name"])
+    assert set(df.columns) == {"pitcher", "player_name"}
+
+
+def test_load_all_statcast_multi_year(tmp_path, monkeypatch):
+    """CSMR-01: load_all_statcast reads and concatenates parquet files for all years."""
+    cols = {
+        "pitcher": [12345, 67890],
+        "player_name": ["Pitcher A", "Pitcher B"],
+        "p_throws": ["R", "L"],
+        "game_type": ["R", "R"],
+        "game_year": [2025, 2025],
+        "inning": [1, 5],
+    }
+    df_2025 = pl.DataFrame(cols)
+    df_2026 = pl.DataFrame({**cols, "game_year": [2026, 2026]})
+
+    df_2025.write_parquet(tmp_path / "statcast_2025.parquet")
+    df_2026.write_parquet(tmp_path / "statcast_2026.parquet")
+
+    import pitcher_narratives.data as data_mod
+
+    monkeypatch.setattr(data_mod, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(data_mod, "_YEARS", [2025, 2026])
+
+    result = load_all_statcast()
+    assert set(result["game_year"].unique().to_list()) == {2025, 2026}
+    assert len(result) == 4
+
+
+def test_load_all_statcast_missing_year(tmp_path, monkeypatch):
+    """CSMR-01: load_all_statcast skips missing year files gracefully."""
+    cols = {
+        "pitcher": [12345],
+        "player_name": ["Pitcher A"],
+        "game_type": ["R"],
+        "game_year": [2026],
+        "inning": [1],
+    }
+    df_2026 = pl.DataFrame(cols)
+    df_2026.write_parquet(tmp_path / "statcast_2026.parquet")
+    # No 2025 file created
+
+    import pitcher_narratives.data as data_mod
+
+    monkeypatch.setattr(data_mod, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(data_mod, "_YEARS", [2025, 2026])
+
+    result = load_all_statcast()
+    assert not result.is_empty()
+    assert set(result["game_year"].unique().to_list()) == {2026}
+
+
+def test_load_full_agg_returns_all_pitchers():
+    """CSMR-01: load_full_agg() returns data with multiple unique pitcher IDs."""
+    df = load_full_agg("pitcher_type")
+    assert not df.is_empty()
+    assert df["pitcher"].n_unique() > 1, "Expected multiple pitchers in unfiltered load"
+
+
+def test_load_full_agg_filters_game_type():
+    """CSMR-01: load_full_agg() only returns allowed game types."""
+    df = load_full_agg("pitcher_type")
+    if "game_type" in df.columns:
+        actual_types = set(df["game_type"].unique().to_list())
+        assert actual_types <= {"R", "F", "D", "L", "W"}, f"Unexpected game types: {actual_types}"
+
+
+def test_load_full_agg_parses_dates():
+    """CSMR-01: load_full_agg parses game_date to pl.Date when present."""
+    df = load_full_agg("pitcher_type_appearance")
+    if not df.is_empty() and "game_date" in df.columns:
+        assert df["game_date"].dtype == pl.Date, (
+            f"game_date is {df['game_date'].dtype}, expected Date"
+        )
+
+
+def test_load_full_agg_multi_year(tmp_path, monkeypatch):
+    """CSMR-01: load_full_agg reads and concatenates CSVs for all years."""
+    aggs_dir = tmp_path / "aggs"
+    aggs_dir.mkdir()
+
+    for year in [2025, 2026]:
+        df = pl.DataFrame(
+            {
+                "season": [year],
+                "game_type": ["R"],
+                "pitcher": [12345],
+                "pitch_type": ["FF"],
+                "player_name": ["Test Pitcher"],
+                "p_throws": ["R"],
+                "team_code": ["NYY"],
+                "n_pitches": [100],
+                "stuff_plus": [100.0 + (year - 2025) * 10],
+            }
+        )
+        df.write_csv(aggs_dir / f"{year}-pitcher_type.csv")
+
+    import pitcher_narratives.data as data_mod
+
+    monkeypatch.setattr(data_mod, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(data_mod, "AGGS_DIR", aggs_dir)
+    monkeypatch.setattr(data_mod, "_YEARS", [2025, 2026])
+
+    result = load_full_agg("pitcher_type")
+    assert set(result["season"].unique().to_list()) == {2025, 2026}
+    assert len(result) == 2
+
+
+def test_load_full_agg_missing_year(tmp_path, monkeypatch):
+    """CSMR-01: load_full_agg skips missing year CSV files gracefully."""
+    aggs_dir = tmp_path / "aggs"
+    aggs_dir.mkdir()
+
+    df = pl.DataFrame(
+        {
+            "season": [2026],
+            "game_type": ["R"],
+            "pitcher": [12345],
+            "pitch_type": ["FF"],
+            "player_name": ["Test Pitcher"],
+            "p_throws": ["R"],
+            "team_code": ["NYY"],
+            "n_pitches": [100],
+            "stuff_plus": [105.0],
+        }
+    )
+    df.write_csv(aggs_dir / f"2026-pitcher_type.csv")
+    # No 2025 file created
+
+    import pitcher_narratives.data as data_mod
+
+    monkeypatch.setattr(data_mod, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(data_mod, "AGGS_DIR", aggs_dir)
+    monkeypatch.setattr(data_mod, "_YEARS", [2025, 2026])
+
+    result = load_full_agg("pitcher_type")
+    assert not result.is_empty()
+    assert set(result["season"].unique().to_list()) == {2026}
+
+
+def test_new_functions_in_all():
+    """CSMR-01: load_all_statcast and load_full_agg are in data.__all__."""
+    import pitcher_narratives.data as data_mod
+
+    assert "load_all_statcast" in data_mod.__all__
+    assert "load_full_agg" in data_mod.__all__
