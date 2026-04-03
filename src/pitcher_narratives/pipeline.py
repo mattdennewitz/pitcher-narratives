@@ -783,10 +783,10 @@ def write_pipeline_data_file(
 
     if question is not None:
         # Ask pipeline: answerer phase
-        from pitcher_narratives.analyst import _ANSWERER_INSTRUCTIONS
+        from pitcher_narratives.analyst import ANSWERER_INSTRUCTIONS
 
         sections.append(f"\n{sep}\nANSWERER\n{sep}\n")
-        sections.append(f"## System Prompt\n\n{_ANSWERER_INSTRUCTIONS}\n")
+        sections.append(f"## System Prompt\n\n{ANSWERER_INSTRUCTIONS}\n")
         sections.append(
             f"## User Message\n\n"
             f"## Question\n{question}\n\n"

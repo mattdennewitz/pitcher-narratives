@@ -158,13 +158,13 @@ def main() -> None:
         # Stuff analysis
         print(f"\n\n# Stuff Analysis\n\n{pipeline_result.stuff_summary}")
     else:
-        from pitcher_narratives.analyst import _ANALYST_INSTRUCTIONS, ask_question_streaming
+        from pitcher_narratives.analyst import ANALYST_INSTRUCTIONS, ask_question_streaming
         from pathlib import Path
 
         # Write prompt data for single-agent path
         data_sections = [
             f"{'═' * 72}\nANALYST AGENT\n{'═' * 72}\n",
-            f"## System Prompt\n\n{_ANALYST_INSTRUCTIONS}\n",
+            f"## System Prompt\n\n{ANALYST_INSTRUCTIONS}\n",
             f"## User Question\n\n{args.question}\n",
             f"## Tool: get_pitcher_summary\n\n[Returns full pitcher context with league baselines]\n",
             f"## Tool: get_pitch_detail\n\n[Returns per-pitch detail on demand]\n",

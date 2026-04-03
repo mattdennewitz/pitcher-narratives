@@ -20,7 +20,11 @@ from pitcher_narratives.context import PitcherContext
 from pitcher_narratives.data import PitcherData
 from pitcher_narratives.engine import compute_league_baselines
 
-__all__ = ["PITCH_TYPE_MAP", "PipelineAnswer", "QADeps", "ask_question_streaming", "ask_question_pipeline"]
+__all__ = [
+    "ANALYST_INSTRUCTIONS", "ANSWERER_INSTRUCTIONS",
+    "PITCH_TYPE_MAP", "PipelineAnswer", "QADeps",
+    "ask_question_streaming", "ask_question_pipeline",
+]
 
 log = logging.getLogger("pitcher_narratives.analyst")
 
@@ -91,7 +95,7 @@ class QADeps:
 # AGENT INSTRUCTIONS
 # ═══════════════════════════════════════════════════════════════════════
 
-_ANALYST_INSTRUCTIONS = """\
+ANALYST_INSTRUCTIONS = """\
 You are a sabermetric scout answering questions about a specific pitcher. \
 You write the way an analyst talks to another analyst -- plain, specific, \
 conversational. Not the way a research paper reads.
@@ -222,7 +226,7 @@ _analyst_agent = Agent(
     "openai:gpt-5.4-mini",
     deps_type=QADeps,
     output_type=str,
-    instructions=_ANALYST_INSTRUCTIONS,
+    instructions=ANALYST_INSTRUCTIONS,
     defer_model_check=True,
 )
 
@@ -515,7 +519,7 @@ class PipelineAnswer:
     executive_summary: list[str] | None = None
     audit_flags: list[Any] | None = None
 
-_ANSWERER_INSTRUCTIONS = """\
+ANSWERER_INSTRUCTIONS = """\
 You are a sabermetric scout answering a specific question about a pitcher. \
 You have five specialist analyses available as context — stuff, location, \
 run value decomposition, trends, and game shape. Use them as your evidence base.
@@ -625,7 +629,7 @@ def ask_question_pipeline(
         answerer = Agent(
             _model_override if _model_override is not None else model_name,
             output_type=str,
-            instructions=_ANSWERER_INSTRUCTIONS,
+            instructions=ANSWERER_INSTRUCTIONS,
             model_settings=model_settings,
             defer_model_check=True,
         )
