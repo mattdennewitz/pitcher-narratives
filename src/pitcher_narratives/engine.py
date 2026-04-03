@@ -27,6 +27,7 @@ def _float(val: Any) -> float:
 __all__ = [
     "AppearanceWorkload",
     "ComponentAttribution",
+    "CrossSeasonSummary",
     "ExecutionMetrics",
     "FastballSummary",
     "FirstPitchEntry",
@@ -47,6 +48,7 @@ __all__ = [
     "WorkloadContext",
     "compute_arsenal_summary",
     "compute_component_attribution",
+    "compute_cross_season_summary",
     "compute_execution_metrics",
     "compute_fastball_summary",
     "compute_first_pitch_weaponry",
@@ -454,6 +456,103 @@ def _safe_metric(df: pl.DataFrame, col: str, default: float = 0.0) -> float:
     if df.is_empty() or col not in df.columns:
         return default
     return float(df[col][0])
+
+
+def _per_season_velo(statcast: pl.DataFrame) -> dict[int, float]:
+    """Compute mean fastball velocity per season from statcast release_speed.
+
+    Filters to _FASTBALL_TYPES pitch types and groups by game_year.
+
+    Args:
+        statcast: Pitch-level statcast DataFrame with pitch_type,
+            release_speed, and game_year columns.
+
+    Returns:
+        Dict mapping season year to mean fastball velocity.
+        Empty dict if no fastball pitches exist.
+    """
+    fb = statcast.filter(pl.col("pitch_type").is_in(list(_FASTBALL_TYPES)))
+    if fb.is_empty():
+        return {}
+    result = fb.group_by("game_year").agg(
+        pl.col("release_speed").mean().alias("avg_velo")
+    )
+    return {
+        int(row["game_year"]): float(row["avg_velo"])
+        for row in result.iter_rows(named=True)
+    }
+
+
+def _per_season_workload(
+    statcast: pl.DataFrame, appearances: pl.DataFrame,
+) -> dict[int, dict]:
+    """Compute workload stats per season from appearances and statcast.
+
+    For each season (extracted from appearances game_date year):
+    - appearance_count: number of appearances
+    - avg_pitches: mean pitches per appearance
+    - decimal_ip: total innings pitched as decimal (e.g., 5.667 not 5.2)
+
+    IP is computed by counting outs in statcast events per season.
+
+    Args:
+        statcast: Pitch-level statcast DataFrame with events and game_year.
+        appearances: Appearance-level DataFrame with game_date and n_pitches.
+
+    Returns:
+        Dict mapping season year to workload stats dict.
+    """
+    # Appearance counts and mean pitches per season
+    apps_with_year = appearances.with_columns(
+        pl.col("game_date").dt.year().alias("season")
+    )
+    by_season = apps_with_year.group_by("season").agg(
+        pl.len().alias("appearance_count"),
+        pl.col("n_pitches").mean().alias("avg_pitches"),
+    )
+
+    # IP per season: count outs from statcast events
+    all_outs = _OUT_EVENTS | _DOUBLE_OUT_EVENTS
+    events_df = statcast.filter(
+        pl.col("events").is_not_null()
+    )
+    # Count single-out events and double-out events per season
+    single_outs = events_df.filter(
+        pl.col("events").is_in(list(_OUT_EVENTS))
+    ).group_by("game_year").agg(
+        pl.len().alias("single_out_count")
+    )
+    double_outs = events_df.filter(
+        pl.col("events").is_in(list(_DOUBLE_OUT_EVENTS))
+    ).group_by("game_year").agg(
+        pl.len().alias("double_out_count")
+    )
+
+    # Build result dict
+    result: dict[int, dict] = {}
+    for row in by_season.iter_rows(named=True):
+        season = int(row["season"])
+        result[season] = {
+            "appearance_count": int(row["appearance_count"]),
+            "avg_pitches": float(row["avg_pitches"]),
+            "decimal_ip": 0.0,
+        }
+
+    # Add IP from out counts
+    single_map: dict[int, int] = {}
+    for row in single_outs.iter_rows(named=True):
+        single_map[int(row["game_year"])] = int(row["single_out_count"])
+
+    double_map: dict[int, int] = {}
+    for row in double_outs.iter_rows(named=True):
+        double_map[int(row["game_year"])] = int(row["double_out_count"])
+
+    for season in result:
+        # Each _OUT_EVENTS event = 1 out, each _DOUBLE_OUT_EVENTS event = 1 extra out
+        total_thirds = single_map.get(season, 0) + double_map.get(season, 0)
+        result[season]["decimal_ip"] = total_thirds / 3.0
+
+    return result
 
 
 def _pplus_delta_strings(
@@ -1001,6 +1100,47 @@ class WorkloadContext:
 
     workload_concern: bool
     """True when max_consecutive_days >= 3."""
+
+
+@dataclass
+class CrossSeasonSummary:
+    """Year-over-year pitcher-level metric deltas.
+
+    Produced by compute_cross_season_summary(). None when the pitcher
+    has only one season of data.
+    """
+
+    current_season: int
+    prior_season: int
+
+    # Velocity
+    current_velo: float
+    prior_velo: float
+    velo_delta: str
+    """Qualitative YoY velocity delta, e.g., 'Up 1.2 mph'."""
+
+    # P+ / S+ / L+
+    current_p_plus: float
+    prior_p_plus: float
+    p_plus_delta: str
+
+    current_s_plus: float
+    prior_s_plus: float
+    s_plus_delta: str
+
+    current_l_plus: float
+    prior_l_plus: float
+    l_plus_delta: str
+
+    # Workload
+    current_appearances: int
+    prior_appearances: int
+    current_ip: float
+    """Total innings pitched (decimal, not baseball notation)."""
+    prior_ip: float
+    current_avg_pitches: float
+    """Mean pitches per appearance."""
+    prior_avg_pitches: float
 
 
 @dataclass
@@ -2003,6 +2143,78 @@ def compute_workload_context(data: PitcherData) -> WorkloadContext:
         appearances=workload_entries,
         max_consecutive_days=max_consec,
         workload_concern=max_consec >= 3,
+    )
+
+
+def compute_cross_season_summary(data: PitcherData) -> CrossSeasonSummary | None:
+    """Compute cross-season YoY deltas for pitcher-level metrics.
+
+    Compares current (max) season baselines with prior-season baselines
+    to produce year-over-year delta strings for velocity, P+, S+, L+,
+    and basic workload metrics (appearances, IP, avg pitches).
+
+    Returns None when prior-season data is missing (SDLT-03).
+
+    Args:
+        data: PitcherData bundle from data.load_pitcher_data.
+
+    Returns:
+        CrossSeasonSummary with YoY deltas, or None for single-season pitchers.
+    """
+    if data.prior_season_baseline.is_empty():
+        return None
+
+    # Extract season years
+    current_season = int(data.season_baseline["season"][0])
+    prior_seasons = data.prior_season_baseline["season"].unique().to_list()
+    prior_season = int(max(prior_seasons))
+
+    # P+ / S+ / L+ from season baselines (SDLT-01)
+    current_p_plus = _safe_metric(data.season_baseline, "P+")
+    current_s_plus = _safe_metric(data.season_baseline, "S+")
+    current_l_plus = _safe_metric(data.season_baseline, "L+")
+
+    prior_p_plus = _safe_metric(data.prior_season_baseline, "P+")
+    prior_s_plus = _safe_metric(data.prior_season_baseline, "S+")
+    prior_l_plus = _safe_metric(data.prior_season_baseline, "L+")
+
+    # Velocity from statcast release_speed per season (SDLT-01)
+    velo_by_season = _per_season_velo(data.statcast)
+    current_velo = velo_by_season.get(current_season, 0.0)
+    prior_velo = velo_by_season.get(prior_season, 0.0)
+
+    # Delta strings reusing existing functions (SDLT-02)
+    velo_delta = _velo_delta_string(current_velo - prior_velo)
+    p_plus_delta = _pplus_delta_string(current_p_plus - prior_p_plus)
+    s_plus_delta = _pplus_delta_string(current_s_plus - prior_s_plus)
+    l_plus_delta = _pplus_delta_string(current_l_plus - prior_l_plus)
+
+    # Workload per season
+    workload = _per_season_workload(data.statcast, data.appearances)
+    current_wl = workload.get(current_season, {})
+    prior_wl = workload.get(prior_season, {})
+
+    return CrossSeasonSummary(
+        current_season=current_season,
+        prior_season=prior_season,
+        current_velo=current_velo,
+        prior_velo=prior_velo,
+        velo_delta=velo_delta,
+        current_p_plus=current_p_plus,
+        prior_p_plus=prior_p_plus,
+        p_plus_delta=p_plus_delta,
+        current_s_plus=current_s_plus,
+        prior_s_plus=prior_s_plus,
+        s_plus_delta=s_plus_delta,
+        current_l_plus=current_l_plus,
+        prior_l_plus=prior_l_plus,
+        l_plus_delta=l_plus_delta,
+        current_appearances=int(current_wl.get("appearance_count", 0)),
+        prior_appearances=int(prior_wl.get("appearance_count", 0)),
+        current_ip=float(current_wl.get("decimal_ip", 0.0)),
+        prior_ip=float(prior_wl.get("decimal_ip", 0.0)),
+        current_avg_pitches=float(current_wl.get("avg_pitches", 0.0)),
+        prior_avg_pitches=float(prior_wl.get("avg_pitches", 0.0)),
     )
 
 
