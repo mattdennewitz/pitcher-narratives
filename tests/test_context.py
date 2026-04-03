@@ -216,6 +216,12 @@ def _make_arsenal_trend() -> ArsenalTrend:
                 prior_velo=92.1,
                 current_velo=93.5,
                 velo_delta="Up 1.4 mph",
+                prior_pfx_x=-6.0,
+                current_pfx_x=-8.0,
+                pfx_x_delta="Down 2.0 in",
+                prior_pfx_z=14.0,
+                current_pfx_z=13.0,
+                pfx_z_delta="Down 1.0 in",
             ),
             PitchTrend(
                 pitch_type="SL",
@@ -232,6 +238,12 @@ def _make_arsenal_trend() -> ArsenalTrend:
                 prior_velo=85.0,
                 current_velo=85.2,
                 velo_delta="Steady (+0.2 mph)",
+                prior_pfx_x=2.0,
+                current_pfx_x=2.1,
+                pfx_x_delta="Steady (+0.1 in)",
+                prior_pfx_z=3.0,
+                current_pfx_z=3.1,
+                pfx_z_delta="Steady (+0.1 in)",
             ),
         ],
     )
@@ -556,3 +568,26 @@ def test_to_prompt_yoy_workload_comparison():
     # Should mention appearances and IP
     assert "10 app" in prompt or "10 appearances" in prompt
     assert "45" in prompt  # current IP
+
+
+def test_to_prompt_yoy_renders_movement_deltas():
+    """YoY section includes H-mov/V-mov for non-Steady movement changes."""
+    at = _make_arsenal_trend()
+    ctx = _make_synthetic_ctx(arsenal_trend=at)
+    prompt = ctx.to_prompt()
+    # FF has non-Steady movement: pfx_x_delta="Down 2.0 in", pfx_z_delta="Down 1.0 in"
+    assert "H-mov" in prompt
+    assert "V-mov" in prompt
+    assert "Down 2.0 in" in prompt
+    assert "Down 1.0 in" in prompt
+    # Slider has all Steady movement -- "Steady (+0.1 in)" should NOT produce H-mov/V-mov lines
+    yoy_start = prompt.find("Year-over-Year")
+    assert yoy_start >= 0
+    yoy_section = prompt[yoy_start:]
+    yoy_end = yoy_section.find("\n## ", 1)
+    if yoy_end > 0:
+        yoy_text = yoy_section[:yoy_end]
+    else:
+        yoy_text = yoy_section
+    # Slider's Steady movement should not appear
+    assert "Steady (+0.1 in)" not in yoy_text

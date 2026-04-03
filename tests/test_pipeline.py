@@ -519,6 +519,10 @@ def _make_test_at() -> ArsenalTrend:
                 s_plus_delta="Up 7 points",
                 prior_velo=92.1, current_velo=93.5,
                 velo_delta="Up 1.4 mph",
+                prior_pfx_x=-6.0, current_pfx_x=-8.0,
+                pfx_x_delta="Down 2.0 in",
+                prior_pfx_z=14.0, current_pfx_z=13.0,
+                pfx_z_delta="Down 1.0 in",
             ),
         ],
     )
@@ -578,6 +582,14 @@ class TestStuffInputYoY:
         assert "Sweeper" in output
         assert "Knuckle Curve" in output
 
+    def test_stuff_input_yoy_movement_deltas(self, yoy_ctx, monkeypatch):
+        """Stuff input contains per-pitch movement YoY deltas for non-Steady pitches."""
+        _patch_league_baselines(monkeypatch)
+        output = _build_stuff_input(yoy_ctx)
+        # FF has non-Steady movement: pfx_x_delta="Down 2.0 in", pfx_z_delta="Down 1.0 in"
+        assert "movement" in output.lower()
+        assert "H-mov" in output or "V-mov" in output
+
     def test_stuff_input_no_yoy_when_absent(self, no_yoy_ctx, monkeypatch):
         """CPMT-03: Stuff input has no YoY when cross-season data is absent."""
         _patch_league_baselines(monkeypatch)
@@ -625,6 +637,13 @@ class TestGameShapeInputYoY:
         _patch_league_baselines(monkeypatch)
         output = _build_game_shape_input(yoy_ctx)
         assert "Down 7.0 pp" in output or "usage" in output
+
+    def test_game_shape_input_movement_shifts(self, yoy_ctx, monkeypatch):
+        """Game Shape input contains per-pitch movement deltas for non-Steady pitches."""
+        _patch_league_baselines(monkeypatch)
+        output = _build_game_shape_input(yoy_ctx)
+        # FF has non-Steady movement: should see H-mov or V-mov in output
+        assert "H-mov" in output or "V-mov" in output
 
     def test_game_shape_input_no_yoy_when_absent(self, no_yoy_ctx, monkeypatch):
         """CPMT-03: Game Shape input has no YoY when cross-season data is absent."""
