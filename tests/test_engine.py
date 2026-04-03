@@ -1090,7 +1090,6 @@ def test_component_attribution_pitch_names():
         )
 
 
-<<<<<<< HEAD
 # -- Cross-season summary --
 
 
