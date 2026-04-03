@@ -65,6 +65,9 @@ __all__ = [
     "compute_workload_context",
     "LeagueBaseline",
     "compute_league_baselines",
+    "AppearancePitchTrendRecord",
+    "AppearancePitchTrends",
+    "compute_appearance_pitch_trends",
     "format_s_variant_comparisons",
     "outlier_tag",
     "render_league_baselines",
@@ -3135,4 +3138,256 @@ def compute_arsenal_trends(data: PitcherData) -> ArsenalTrend | None:
         added_pitches=added_pitches,
         dropped_pitches=dropped_pitches,
         pitch_trends=pitch_trends,
+    )
+
+
+# ── Appearance Pitch Trends ─────────────────────────────────────────
+
+
+@dataclass
+class AppearancePitchTrendRecord:
+    """Per-pitch-type three-way comparison: last start vs window avg vs prior season."""
+
+    pitch_type: str
+    """Pitch type code, e.g., 'FF'."""
+
+    pitch_name: str
+    """Human-readable name, e.g., '4-Seam Fastball'."""
+
+    n_pitches_last: int
+    """Pitch count in the most recent appearance."""
+
+    last_start_velo: float
+    """Average velocity (mph) in most recent appearance."""
+
+    window_avg_velo: float
+    """Average velocity (mph) across lookback window."""
+
+    prior_season_velo: float | None
+    """Average velocity (mph) in prior season, None if single-season."""
+
+    last_vs_window_velo: str
+    """Qualitative delta string for last start vs window avg velocity."""
+
+    last_vs_prior_velo: str
+    """Qualitative delta string for last start vs prior season velocity, or '--' if no prior."""
+
+    last_start_pfx_x: float
+    """Horizontal movement (inches) in most recent appearance."""
+
+    window_avg_pfx_x: float
+    """Horizontal movement (inches) across lookback window."""
+
+    prior_season_pfx_x: float | None
+    """Horizontal movement (inches) in prior season, None if single-season."""
+
+    last_vs_window_pfx_x: str
+    """Qualitative delta string for H-mov last vs window."""
+
+    last_vs_prior_pfx_x: str
+    """Qualitative delta string for H-mov last vs prior, or '--' if no prior."""
+
+    last_start_pfx_z: float
+    """Vertical movement (inches) in most recent appearance."""
+
+    window_avg_pfx_z: float
+    """Vertical movement (inches) across lookback window."""
+
+    prior_season_pfx_z: float | None
+    """Vertical movement (inches) in prior season, None if single-season."""
+
+    last_vs_window_pfx_z: str
+    """Qualitative delta string for V-mov last vs window."""
+
+    last_vs_prior_pfx_z: str
+    """Qualitative delta string for V-mov last vs prior, or '--' if no prior."""
+
+    pattern_label: str
+    """One of: 'one-off', 'sustained change', 'something new', 'steady'."""
+
+
+@dataclass
+class AppearancePitchTrends:
+    """Per-appearance pitch trend analysis across the lookback window."""
+
+    last_game_date: str
+    """ISO date of the most recent appearance."""
+
+    records: list[AppearancePitchTrendRecord]
+    """Per-pitch-type trend records, sorted by n_pitches_last descending."""
+
+
+def _classify_pattern(
+    last_vs_window_delta: float,
+    last_vs_prior_delta: float | None,
+) -> str:
+    """Classify the velo pattern based on three-way comparison.
+
+    Args:
+        last_vs_window_delta: last_start_velo - window_avg_velo.
+        last_vs_prior_delta: last_start_velo - prior_season_velo, or None if no prior.
+
+    Returns:
+        Pattern label: 'steady', 'one-off', 'sustained change', or 'something new'.
+    """
+    lw_sig = abs(last_vs_window_delta) >= _VELO_THRESHOLD
+    if last_vs_prior_delta is None:
+        return "one-off" if lw_sig else "steady"
+    lp_sig = abs(last_vs_prior_delta) >= _VELO_THRESHOLD
+    if not lw_sig and not lp_sig:
+        return "steady"
+    if lw_sig and not lp_sig:
+        return "one-off"
+    if not lw_sig and lp_sig:
+        return "sustained change"
+    return "something new"
+
+
+def compute_appearance_pitch_trends(data: PitcherData) -> AppearancePitchTrends | None:
+    """Compute per-pitch-type three-way comparison for appearance trends.
+
+    Compares each pitch type across three levels:
+    1. Most recent appearance (last start)
+    2. Lookback window average
+    3. Prior season baseline (when available)
+
+    This enables the trends specialist to distinguish:
+    - one-off regression (last != window, last ~ prior)
+    - sustained change (last ~ window, both != prior)
+    - something new (last != both)
+
+    Args:
+        data: PitcherData bundle from data.load_pitcher_data.
+
+    Returns:
+        AppearancePitchTrends with per-pitch-type records, or None if
+        insufficient data (empty statcast or no window appearances).
+    """
+    # 1. Get window game dates
+    window_dates = _get_window_game_dates(data)
+    if not window_dates:
+        return None
+
+    # 2. Find most recent game_date
+    last_game_date = max(window_dates)
+    last_game_date_str = str(last_game_date)
+    max_year = last_game_date.year if hasattr(last_game_date, "year") else int(str(last_game_date)[:4])
+
+    statcast = data.statcast
+    if statcast.is_empty():
+        return None
+
+    # 3. Filter statcast to current season
+    current_season_sc = statcast.filter(pl.col("game_date").dt.year() == max_year)
+    if current_season_sc.is_empty():
+        return None
+
+    # 4. Filter to window game dates
+    window_sc = statcast.filter(pl.col("game_date").is_in(window_dates))
+
+    # 5. Filter to last start only
+    last_sc = statcast.filter(pl.col("game_date") == last_game_date)
+
+    # 6. Group each level by pitch_type, compute metrics
+    def _agg_by_pitch(df: pl.DataFrame) -> pl.DataFrame:
+        return (
+            df.group_by("pitch_type")
+            .agg(
+                pl.len().alias("n_pitches"),
+                pl.col("release_speed").mean().alias("avg_velo"),
+                (pl.col("pfx_x").mean() * 12).alias("avg_pfx_x_in"),
+                (pl.col("pfx_z").mean() * 12).alias("avg_pfx_z_in"),
+            )
+        )
+
+    last_agg = _agg_by_pitch(last_sc)
+    window_agg = _agg_by_pitch(window_sc)
+
+    # 7. Prior season: filter to years before max_year
+    prior_sc = statcast.filter(pl.col("game_date").dt.year() < max_year)
+    prior_agg = _agg_by_pitch(prior_sc) if not prior_sc.is_empty() else None
+
+    # Build name map
+    name_map = _build_name_map(statcast)
+
+    # 8. Build records for each pitch_type with >= _MIN_PITCHES in last start
+    records: list[AppearancePitchTrendRecord] = []
+    for row in last_agg.iter_rows(named=True):
+        pt = row["pitch_type"]
+        n_last = int(row["n_pitches"])
+        if n_last < _MIN_PITCHES:
+            continue
+
+        last_velo = float(row["avg_velo"])
+        last_pfx_x = float(row["avg_pfx_x_in"])
+        last_pfx_z = float(row["avg_pfx_z_in"])
+
+        # Window averages
+        win_row = window_agg.filter(pl.col("pitch_type") == pt)
+        if win_row.is_empty():
+            continue
+        win_velo = _float(win_row["avg_velo"][0])
+        win_pfx_x = _float(win_row["avg_pfx_x_in"][0])
+        win_pfx_z = _float(win_row["avg_pfx_z_in"][0])
+
+        # Prior season
+        prior_velo: float | None = None
+        prior_pfx_x: float | None = None
+        prior_pfx_z: float | None = None
+        if prior_agg is not None:
+            prior_row = prior_agg.filter(pl.col("pitch_type") == pt)
+            if not prior_row.is_empty():
+                prior_velo = _float(prior_row["avg_velo"][0])
+                prior_pfx_x = _float(prior_row["avg_pfx_x_in"][0])
+                prior_pfx_z = _float(prior_row["avg_pfx_z_in"][0])
+
+        # Delta strings
+        lw_velo_delta = last_velo - win_velo
+        lw_pfx_x_delta = last_pfx_x - win_pfx_x
+        lw_pfx_z_delta = last_pfx_z - win_pfx_z
+
+        lp_velo_delta: float | None = None
+        if prior_velo is not None:
+            lp_velo_delta = last_velo - prior_velo
+
+        records.append(
+            AppearancePitchTrendRecord(
+                pitch_type=pt,
+                pitch_name=name_map.get(pt, pt),
+                n_pitches_last=n_last,
+                last_start_velo=last_velo,
+                window_avg_velo=win_velo,
+                prior_season_velo=prior_velo,
+                last_vs_window_velo=_velo_delta_string(lw_velo_delta),
+                last_vs_prior_velo=(
+                    _velo_delta_string(lp_velo_delta) if lp_velo_delta is not None else "--"
+                ),
+                last_start_pfx_x=last_pfx_x,
+                window_avg_pfx_x=win_pfx_x,
+                prior_season_pfx_x=prior_pfx_x,
+                last_vs_window_pfx_x=_movement_delta_string(lw_pfx_x_delta),
+                last_vs_prior_pfx_x=(
+                    _movement_delta_string(last_pfx_x - prior_pfx_x) if prior_pfx_x is not None else "--"
+                ),
+                last_start_pfx_z=last_pfx_z,
+                window_avg_pfx_z=win_pfx_z,
+                prior_season_pfx_z=prior_pfx_z,
+                last_vs_window_pfx_z=_movement_delta_string(lw_pfx_z_delta),
+                last_vs_prior_pfx_z=(
+                    _movement_delta_string(last_pfx_z - prior_pfx_z) if prior_pfx_z is not None else "--"
+                ),
+                pattern_label=_classify_pattern(lw_velo_delta, lp_velo_delta),
+            )
+        )
+
+    # 9. Sort by n_pitches_last descending
+    records.sort(key=lambda r: r.n_pitches_last, reverse=True)
+
+    if not records:
+        return None
+
+    # 10. Return
+    return AppearancePitchTrends(
+        last_game_date=last_game_date_str,
+        records=records,
     )
