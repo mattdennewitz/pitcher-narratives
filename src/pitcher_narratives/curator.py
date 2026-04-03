@@ -9,7 +9,7 @@ from __future__ import annotations
 from pydantic_ai import Agent
 from pydantic_ai.settings import ModelSettings
 
-from pitcher_narratives.report import PROVIDERS
+from pitcher_narratives.config import PROVIDERS
 from pitcher_narratives.scout import ScoredAppearance
 
 __all__ = ["curate_appearances"]

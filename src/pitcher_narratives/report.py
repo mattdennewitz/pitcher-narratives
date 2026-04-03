@@ -27,9 +27,15 @@ from typing import Any, Literal
 
 from pydantic import BaseModel
 from pydantic_ai import Agent, CachePoint
-from pydantic_ai.models.google import GoogleModelSettings
-from pydantic_ai.settings import ModelSettings, ThinkingEffort
+from pydantic_ai.settings import ThinkingEffort
 
+from pitcher_narratives.config import (
+    MAX_REVISIONS,
+    PROVIDERS,
+    THINKING_LEVELS,
+    agent_kwargs,
+    make_model_settings,
+)
 from pitcher_narratives.context import PitcherContext
 from pitcher_narratives.engine import (
     compute_league_baselines,
@@ -39,9 +45,6 @@ from pitcher_narratives.engine import (
 )
 
 __all__ = [
-    "MAX_REVISIONS",
-    "PROVIDERS",
-    "THINKING_LEVELS",
     "AnchorResult",
     "AnchorWarning",
     "HallucinationReport",
@@ -53,23 +56,6 @@ __all__ = [
     "write_data_file",
 ]
 
-def _agent_kwargs(prompt: Any, _model_override: Any = None) -> dict[str, Any]:
-    """Build kwargs for an agent.run() call, optionally injecting a model override."""
-    kwargs: dict[str, Any] = {"user_prompt": prompt}
-    if _model_override is not None:
-        kwargs["model"] = _model_override
-    return kwargs
-
-
-THINKING_LEVELS: list[ThinkingEffort] = ["minimal", "low", "medium", "high", "xhigh"]
-PROVIDERS = {
-    "openai": "openai:gpt-5.4-mini",
-    "claude": "anthropic:claude-sonnet-4-6",
-    "gemini": "google-gla:gemini-3.1-pro-preview",
-}
-
-MAX_REVISIONS = 2
-"""Maximum number of editor revision passes before accepting the capsule."""
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -502,22 +488,9 @@ def _make_agents(
         raise ValueError(f"Unknown provider {provider!r}, expected one of: {', '.join(PROVIDERS)}")
     model = PROVIDERS[provider]
 
-    def _settings(temperature: float) -> ModelSettings:
-        if provider == "gemini":
-            gemini_level = "high" if thinking in ("high", "xhigh") else "low"
-            return GoogleModelSettings(
-                google_thinking_config={"thinking_level": gemini_level},
-                temperature=temperature,
-                max_tokens=16384,
-            )
-        elif provider == "claude":
-            return ModelSettings(thinking=thinking, temperature=temperature, max_tokens=16384)
-        else:
-            return ModelSettings(thinking=thinking, temperature=temperature)
-
-    analyst_settings = _settings(0.3)   # synthesizer + stuff explainer + summary
-    writer_settings = _settings(0.7)    # editor
-    checker_settings = _settings(0.1)   # anchor
+    analyst_settings = make_model_settings(provider, thinking, 0.3)   # synthesizer + stuff explainer + summary
+    writer_settings = make_model_settings(provider, thinking, 0.7)    # editor
+    checker_settings = make_model_settings(provider, thinking, 0.1)   # anchor
 
     str_prompts_and_settings = [
         (_SYNTHESIZER_PROMPT, analyst_settings),
@@ -754,11 +727,11 @@ def generate_report_streaming(
     (synthesizer, editor, stuff_explainer, summary_agent), anchor_checker = _make_agents(provider, thinking)
 
     # Phase 1: Silent synthesis
-    synth_result = synthesizer.run_sync(**_agent_kwargs(_build_synthesizer_message(ctx), _model_override))
+    synth_result = synthesizer.run_sync(**agent_kwargs(_build_synthesizer_message(ctx), _model_override))
     synthesis = synth_result.output
 
     # Phase 2: Streamed editorial
-    stream = editor.run_stream_sync(**_agent_kwargs(_build_editor_message(ctx, synthesis), _model_override))
+    stream = editor.run_stream_sync(**agent_kwargs(_build_editor_message(ctx, synthesis), _model_override))
     chunks: list[str] = []
     for delta in stream.stream_text(delta=True):
         print(delta, end="", flush=True)
@@ -771,7 +744,7 @@ def generate_report_streaming(
     revision_count = 0
     for _ in range(MAX_REVISIONS):
         anchor_result = anchor_checker.run_sync(
-            **_agent_kwargs(_build_anchor_message(synthesis, capsule), _model_override)
+            **agent_kwargs(_build_anchor_message(synthesis, capsule), _model_override)
         )
         anchor_check = anchor_result.output
 
@@ -780,20 +753,20 @@ def generate_report_streaming(
 
         # Revise silently (no streaming)
         revision_result = editor.run_sync(
-            **_agent_kwargs(_build_revision_message(synthesis, capsule, anchor_check.warnings), _model_override)
+            **agent_kwargs(_build_revision_message(synthesis, capsule, anchor_check.warnings), _model_override)
         )
         capsule = revision_result.output
         revision_count += 1
     else:
         # Exhausted MAX_REVISIONS — final anchor check for surviving warnings
         anchor_result = anchor_checker.run_sync(
-            **_agent_kwargs(_build_anchor_message(synthesis, capsule), _model_override)
+            **agent_kwargs(_build_anchor_message(synthesis, capsule), _model_override)
         )
         anchor_check = anchor_result.output
 
     # Phase 3 + Summary: Run after capsule is finalized
-    stuff_result = stuff_explainer.run_sync(**_agent_kwargs(_build_stuff_message(ctx, capsule), _model_override))
-    summary_result = summary_agent.run_sync(**_agent_kwargs(f"## Synthesis\n{synthesis}", _model_override))
+    stuff_result = stuff_explainer.run_sync(**agent_kwargs(_build_stuff_message(ctx, capsule), _model_override))
+    summary_result = summary_agent.run_sync(**agent_kwargs(f"## Synthesis\n{synthesis}", _model_override))
 
     # Parse bullet lines from raw summary output
     summary_bullets = [

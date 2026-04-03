@@ -13,13 +13,12 @@ from dataclasses import dataclass
 from typing import Any
 
 from pydantic_ai import Agent, RunContext
-from pydantic_ai.models.google import GoogleModelSettings
 from pydantic_ai.settings import ModelSettings, ThinkingEffort
 
+from pitcher_narratives.config import PROVIDERS, THINKING_LEVELS, make_model_settings
 from pitcher_narratives.context import PitcherContext
 from pitcher_narratives.data import PitcherData
 from pitcher_narratives.engine import compute_league_baselines
-from pitcher_narratives.report import PROVIDERS, THINKING_LEVELS
 
 __all__ = ["PITCH_TYPE_MAP", "PipelineAnswer", "QADeps", "ask_question_streaming", "ask_question_pipeline"]
 
@@ -449,17 +448,7 @@ def _make_analyst(
         raise ValueError(f"Unknown provider {provider!r}, expected one of: {', '.join(PROVIDERS)}")
     model = PROVIDERS[provider]
 
-    if provider == "gemini":
-        gemini_level = "high" if thinking in ("high", "xhigh") else "low"
-        settings: ModelSettings = GoogleModelSettings(
-            google_thinking_config={"thinking_level": gemini_level},
-            temperature=1.0,
-            max_tokens=16384,
-        )
-    elif provider == "claude":
-        settings = ModelSettings(thinking=thinking, max_tokens=16384)
-    else:
-        settings = ModelSettings(thinking=thinking)
+    settings = make_model_settings(provider, thinking, 1.0)
 
     result = (model, settings)
     _settings_cache[key] = result
@@ -601,8 +590,8 @@ def ask_question_pipeline(
     """
     import asyncio
 
+    from pitcher_narratives.config import agent_kwargs
     from pitcher_narratives.pipeline import (
-        _agent_kwargs,
         _audit_and_revise_specialists,
         _build_writer_input,
         _make_pipeline_agents,
@@ -660,7 +649,7 @@ def ask_question_pipeline(
 
         # Run summary in background while answerer streams
         summary_task = asyncio.create_task(
-            agents.summary.run(**_agent_kwargs(summary_input, _model_override))
+            agents.summary.run(**agent_kwargs(summary_input, _model_override))
         )
 
         chunks: list[str] = []

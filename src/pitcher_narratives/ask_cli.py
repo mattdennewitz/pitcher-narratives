@@ -14,15 +14,11 @@ import sys
 
 from dotenv import load_dotenv
 
+from pitcher_narratives.config import API_KEYS, setup_logging
+
 __all__ = ["main", "parse_args"]
 
 log = logging.getLogger("pitcher_narratives")
-
-_API_KEYS = {
-    "openai": "OPENAI_API_KEY",
-    "claude": "ANTHROPIC_API_KEY",
-    "gemini": "GEMINI_API_KEY",
-}
 
 
 def _extract_pitcher_name(
@@ -132,20 +128,11 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def _setup_logging() -> None:
-    """Configure logging for pitcher_narratives to stderr."""
-    handler = logging.StreamHandler(sys.stderr)
-    handler.setFormatter(logging.Formatter("%(name)s: %(message)s"))
-    root = logging.getLogger("pitcher_narratives")
-    root.addHandler(handler)
-    root.setLevel(logging.INFO)
-
-
 def main() -> None:
     """Entry point: parse question, resolve pitcher, load data, stream answer."""
     load_dotenv()
     args = parse_args()
-    _setup_logging()
+    setup_logging()
 
     if not args.question:
         print(
@@ -178,8 +165,8 @@ def main() -> None:
         model_override = TestModel()
 
     # Pre-flight API key check -- fail fast instead of hanging on missing key
-    if model_override is None and not os.environ.get(_API_KEYS[args.provider]):
-        env_var = _API_KEYS[args.provider]
+    if model_override is None and not os.environ.get(API_KEYS[args.provider]):
+        env_var = API_KEYS[args.provider]
         log.error("%s not set.", env_var)
         sys.exit(1)
 

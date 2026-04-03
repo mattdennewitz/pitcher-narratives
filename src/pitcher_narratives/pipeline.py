@@ -36,9 +36,14 @@ from typing import Any, NamedTuple
 
 from pydantic import BaseModel
 from pydantic_ai import Agent
-from pydantic_ai.models.google import GoogleModelSettings
-from pydantic_ai.settings import ModelSettings, ThinkingEffort
+from pydantic_ai.settings import ThinkingEffort
 
+from pitcher_narratives.config import (
+    MAX_REVISIONS,
+    PROVIDERS,
+    agent_kwargs,
+    make_model_settings,
+)
 from pitcher_narratives.context import PitcherContext
 from pitcher_narratives.engine import (
     LeagueBaseline,
@@ -48,8 +53,6 @@ from pitcher_narratives.engine import (
     render_league_baselines,
 )
 from pitcher_narratives.report import (
-    MAX_REVISIONS,
-    PROVIDERS,
     AnchorResult,
     AnchorWarning,
     _ANCHOR_PROMPT,
@@ -67,12 +70,6 @@ __all__ = [
 log = logging.getLogger("pitcher_narratives.pipeline")
 
 
-def _agent_kwargs(prompt: Any, _model_override: Any = None) -> dict[str, Any]:
-    """Build kwargs for an agent.run() call, optionally injecting a model override."""
-    kwargs: dict[str, Any] = {"user_prompt": prompt}
-    if _model_override is not None:
-        kwargs["model"] = _model_override
-    return kwargs
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -675,7 +672,7 @@ async def _audit_and_revise_specialists(
             audit_input = _build_specialist_audit_input(
                 ground_truths[name], outputs[name],
             )
-            result = await auditor.run(**_agent_kwargs(audit_input, _model_override))
+            result = await auditor.run(**agent_kwargs(audit_input, _model_override))
             return name, result.output
         except Exception:
             log.warning("Audit failed for %s specialist, treating as clean.", name, exc_info=True)
@@ -708,7 +705,7 @@ async def _audit_and_revise_specialists(
                 ground_truths[name], outputs[name], flags,
             )
             agent = specialist_agents[name]
-            result = await agent.run(**_agent_kwargs(revision_input, _model_override))
+            result = await agent.run(**agent_kwargs(revision_input, _model_override))
             return name, result.output
         except Exception:
             log.warning("Revision failed for %s specialist, keeping original.", name, exc_info=True)
@@ -877,22 +874,9 @@ def _make_pipeline_agents(
 
     # Split temperature by role: specialists need precision, writer needs voice,
     # auditor/anchor need maximum determinism.
-    def _settings(temperature: float) -> ModelSettings:
-        if provider == "gemini":
-            gemini_level = "high" if thinking in ("high", "xhigh") else "low"
-            return GoogleModelSettings(
-                google_thinking_config={"thinking_level": gemini_level},
-                temperature=temperature,
-                max_tokens=16384,
-            )
-        elif provider == "claude":
-            return ModelSettings(thinking=thinking, temperature=temperature, max_tokens=16384)
-        else:
-            return ModelSettings(thinking=thinking, temperature=temperature)
-
-    specialist_settings = _settings(0.3)
-    writer_settings = _settings(0.7)
-    checker_settings = _settings(0.1)
+    specialist_settings = make_model_settings(provider, thinking, 0.3)
+    writer_settings = make_model_settings(provider, thinking, 0.7)
+    checker_settings = make_model_settings(provider, thinking, 0.1)
 
     def _specialist(prompt: str) -> Agent[None, str]:
         return Agent(model, output_type=str, system_prompt=prompt,
@@ -940,7 +924,7 @@ async def _run_specialists(
     }
 
     async def _run(agent: Agent[None, str], prompt: str) -> str:
-        result = await agent.run(**_agent_kwargs(prompt, _model_override))
+        result = await agent.run(**agent_kwargs(prompt, _model_override))
         return result.output
 
     tasks = {
@@ -1002,11 +986,11 @@ async def _run_pipeline(
         ctx, specialists.stuff, specialists.location,
         specialists.runvalue, specialists.trends, specialists.game_shape,
     )
-    writer_kwargs = _agent_kwargs(writer_input, _model_override)
+    writer_kwargs = agent_kwargs(writer_input, _model_override)
 
     # Run summary in background while writer streams (same input as writer)
     summary_task = asyncio.create_task(
-        agents.summary.run(**_agent_kwargs(writer_input, _model_override))
+        agents.summary.run(**agent_kwargs(writer_input, _model_override))
     )
 
     async with agents.writer.run_stream(**writer_kwargs) as stream:
@@ -1043,7 +1027,7 @@ async def _run_pipeline(
 
     for _ in range(MAX_REVISIONS):
         anchor_result = await agents.anchor.run(
-            **_agent_kwargs(_build_anchor_message(synthesis, capsule), _model_override)
+            **agent_kwargs(_build_anchor_message(synthesis, capsule), _model_override)
         )
         anchor_check = anchor_result.output
 
@@ -1051,14 +1035,14 @@ async def _run_pipeline(
             break
 
         revision_result = await agents.writer.run(
-            **_agent_kwargs(_build_revision_message(synthesis, capsule, anchor_check.warnings), _model_override)
+            **agent_kwargs(_build_revision_message(synthesis, capsule, anchor_check.warnings), _model_override)
         )
         capsule = revision_result.output
         revision_count += 1
     else:
         # Exhausted MAX_REVISIONS without a clean pass — final check for surviving warnings
         anchor_result = await agents.anchor.run(
-            **_agent_kwargs(_build_anchor_message(synthesis, capsule), _model_override)
+            **agent_kwargs(_build_anchor_message(synthesis, capsule), _model_override)
         )
         anchor_check = anchor_result.output
 
