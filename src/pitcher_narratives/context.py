@@ -47,8 +47,6 @@ from pitcher_narratives.engine import (
 
 __all__ = ["PitcherContext", "assemble_pitcher_context"]
 
-_MAX_PITCH_TYPES = 4
-"""Token budget: keep top 4 pitch types only in arsenal and execution tables."""
 
 
 class PitcherContext(BaseModel):
@@ -366,7 +364,7 @@ class PitcherContext(BaseModel):
         lines = ["## Arsenal"]
         lines.append("| Pitch | Velo | H-mov | V-mov | Usage | P+ | S+ | L+ | Deltas |")
         lines.append("|-------|------|-------|-------|-------|----|----|----|---------  |")
-        for p in self.arsenal[:_MAX_PITCH_TYPES]:
+        for p in self.arsenal:
             wp = f"{p.window_p_plus:.0f}" if p.window_p_plus is not None else "--"
             ws = f"{p.window_s_plus:.0f}" if p.window_s_plus is not None else "--"
             wl = f"{p.window_l_plus:.0f}" if p.window_l_plus is not None else "--"
@@ -387,7 +385,7 @@ class PitcherContext(BaseModel):
         lines = ["## Execution"]
         lines.append("| Pitch | CSW% | Zone% | Chase% | xWhiff | xSwing | xRV100 pctl |")
         lines.append("|-------|------|-------|--------|--------|--------|-------------|")
-        for e in self.execution[:_MAX_PITCH_TYPES]:
+        for e in self.execution:
             pctl = f"{e.xrv100_percentile}" if e.xrv100_percentile is not None else "--"
             xwhiff = f"{e.xwhiff_p:.3f}" if e.xwhiff_p is not None else "--"
             xswing = f"{e.xswing_p:.3f}" if e.xswing_p is not None else "--"
@@ -438,7 +436,7 @@ class PitcherContext(BaseModel):
             "|---------|-------|----------|-------|"
         )
 
-        for im in self.intermediates[:_MAX_PITCH_TYPES]:
+        for im in self.intermediates:
             lines.append(
                 f"| {im.pitch_name} ({im.pitch_type}) "
                 f"| {_pct(im.xswing_s)} "
@@ -459,7 +457,7 @@ class PitcherContext(BaseModel):
         if not rp.pitch_types:
             return ""
 
-        entries = rp.pitch_types[:_MAX_PITCH_TYPES]
+        entries = rp.pitch_types
         all_cold = all(pt.cold_start for pt in entries)
 
         lines = ["## Release Point"]
@@ -650,8 +648,8 @@ class PitcherContext(BaseModel):
                     f"{p.pitch_name} ({p.usage_pct:.0f}%)" for p in at.dropped_pitches
                 )
                 lines.append(f"- Dropped: {dropped}")
-            # Show non-Steady pitch trend deltas (limit to _MAX_PITCH_TYPES)
-            for pt in at.pitch_trends[:_MAX_PITCH_TYPES]:
+            # Show non-Steady pitch trend deltas
+            for pt in at.pitch_trends:
                 deltas = []
                 if "Steady" not in pt.usage_delta:
                     deltas.append(f"usage {pt.usage_delta}")
@@ -666,7 +664,8 @@ class PitcherContext(BaseModel):
                 if "Steady" not in pt.pfx_z_delta:
                     deltas.append(f"V-mov {pt.pfx_z_delta}")
                 if deltas:
-                    lines.append(f"- {pt.pitch_name}: {', '.join(deltas)}")
+                    sample_tag = " *(small sample)*" if pt.small_sample else ""
+                    lines.append(f"- {pt.pitch_name}: {', '.join(deltas)}{sample_tag}")
 
         return "\n".join(lines)
 
@@ -697,12 +696,12 @@ def assemble_pitcher_context(data: PitcherData) -> PitcherContext:
     """
     fastball = compute_fastball_summary(data)
     velocity_arc = compute_velocity_arc(data, fastball.pitch_type) if fastball else None
-    arsenal = compute_arsenal_summary(data)[:_MAX_PITCH_TYPES]
+    arsenal = compute_arsenal_summary(data)
     platoon_mix = compute_platoon_mix(data)
     first_pitch = compute_first_pitch_weaponry(data)
-    execution = compute_execution_metrics(data)[:_MAX_PITCH_TYPES]
-    intermediates = compute_intermediate_probabilities(data)[:_MAX_PITCH_TYPES]
-    attributions = compute_component_attribution(data)[:_MAX_PITCH_TYPES]
+    execution = compute_execution_metrics(data)
+    intermediates = compute_intermediate_probabilities(data)
+    attributions = compute_component_attribution(data)
     hard_hit_rate = compute_hard_hit_rate(data)
     release_point = compute_release_point_metrics(data)
     workload = compute_workload_context(data)

@@ -624,13 +624,28 @@ def ask_question_pipeline(
         )
         log.info("Answering...")
 
+        # Debug: print each specialist's output before synthesis
+        for label, text in [
+            ("Stuff", specialists.stuff),
+            ("Location", specialists.location),
+            ("Run Value", specialists.runvalue),
+            ("Trends", specialists.trends),
+            ("Game Shape", specialists.game_shape),
+        ]:
+            print(f"\n{'═' * 60}")
+            print(f"SPECIALIST: {label}")
+            print(f"{'═' * 60}\n")
+            print(text)
+        print(f"\n{'═' * 60}\n")
+
         # Phase 2: Answerer composes from clean specialist outputs (streamed)
-        model_name, model_settings = _make_analyst(provider, thinking)
+        model_name = PROVIDERS[provider]
+        answerer_settings = make_model_settings(provider, thinking, 0.3)
         answerer = Agent(
             _model_override if _model_override is not None else model_name,
             output_type=str,
             instructions=ANSWERER_INSTRUCTIONS,
-            model_settings=model_settings,
+            model_settings=answerer_settings,
             defer_model_check=True,
         )
 

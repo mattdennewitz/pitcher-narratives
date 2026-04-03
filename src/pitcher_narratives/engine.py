@@ -2940,6 +2940,9 @@ class PitchTrend:
     pfx_z_delta: str
     """Qualitative vertical movement delta string."""
 
+    small_sample: bool = False
+    """True when current season pitch count is below _MIN_PITCHES."""
+
 
 @dataclass
 class ArsenalTrend:
@@ -3007,17 +3010,19 @@ def compute_arsenal_trends(data: PitcherData) -> ArsenalTrend | None:
     # Build pitch_type -> pitch_name mapping from statcast data
     name_map = _build_name_map(data.statcast)
 
-    # Identify pitch types per season (above _MIN_PITCHES threshold)
+    # Prior season: only established pitches (>= _MIN_PITCHES) qualify
     prior_types = set(
         prior_df.filter(pl.col("n_pitches") >= _MIN_PITCHES)["pitch_type"].to_list()
     )
-    current_types = set(
-        current_df.filter(pl.col("n_pitches") >= _MIN_PITCHES)["pitch_type"].to_list()
+    # Current season: any usage counts as present (catches early-season
+    # low-volume pitches that haven't yet hit _MIN_PITCHES)
+    current_types_all = set(
+        current_df.filter(pl.col("n_pitches") > 0)["pitch_type"].to_list()
     )
 
-    # Added: in current but not prior
+    # Added: in current but not an established prior pitch
     added_pitches: list[AddedDroppedPitch] = []
-    for pt in sorted(current_types - prior_types):
+    for pt in sorted(current_types_all - prior_types):
         row = current_df.filter(pl.col("pitch_type") == pt)
         if row.is_empty():
             continue
@@ -3031,9 +3036,9 @@ def compute_arsenal_trends(data: PitcherData) -> ArsenalTrend | None:
             )
         )
 
-    # Dropped: in prior but not current
+    # Dropped: established prior pitch with zero throws this season
     dropped_pitches: list[AddedDroppedPitch] = []
-    for pt in sorted(prior_types - current_types):
+    for pt in sorted(prior_types - current_types_all):
         row = prior_df.filter(pl.col("pitch_type") == pt)
         if row.is_empty():
             continue
@@ -3047,8 +3052,8 @@ def compute_arsenal_trends(data: PitcherData) -> ArsenalTrend | None:
             )
         )
 
-    # Shared pitches: compute YoY deltas
-    shared_types = prior_types & current_types
+    # Shared pitches: established prior pitch still thrown this season
+    shared_types = prior_types & current_types_all
     pitch_trends: list[PitchTrend] = []
     for pt in shared_types:
         prior_row = prior_df.filter(pl.col("pitch_type") == pt)
@@ -3104,6 +3109,7 @@ def compute_arsenal_trends(data: PitcherData) -> ArsenalTrend | None:
             else 0.0
         )
 
+        current_n = int(_safe_metric(current_row, "n_pitches"))
         pitch_trends.append(
             PitchTrend(
                 pitch_type=pt,
@@ -3126,6 +3132,7 @@ def compute_arsenal_trends(data: PitcherData) -> ArsenalTrend | None:
                 prior_pfx_z=prior_pfx_z,
                 current_pfx_z=current_pfx_z,
                 pfx_z_delta=_movement_delta_string(current_pfx_z - prior_pfx_z),
+                small_sample=current_n < _MIN_PITCHES,
             )
         )
 
