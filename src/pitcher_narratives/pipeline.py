@@ -61,8 +61,10 @@ from pitcher_narratives.anchor import (
 )
 
 __all__ = [
-    "AuditFlag", "AuditResult", "ExecutiveSummary", "PipelineResult",
-    "generate_pipeline_streaming", "write_pipeline_data_file",
+    "AuditFlag", "AuditResult", "ExecutiveSummary", "PipelineAgents", "PipelineResult",
+    "audit_and_revise_specialists", "build_writer_input",
+    "generate_pipeline_streaming", "make_pipeline_agents", "run_specialists",
+    "write_pipeline_data_file",
 ]
 
 log = logging.getLogger("pitcher_narratives.pipeline")
@@ -575,7 +577,7 @@ def _build_game_shape_input(ctx: PitcherContext) -> str:
     return "\n\n".join(s for s in sections if s)
 
 
-def _build_writer_input(
+def build_writer_input(
     ctx: PitcherContext,
     stuff: str,
     location: str,
@@ -639,7 +641,7 @@ def _get_specialist_input(name: str, ctx: PitcherContext) -> str:
     return builders[name](ctx)
 
 
-async def _audit_and_revise_specialists(
+async def audit_and_revise_specialists(
     specialists: "SpecialistOutputs",
     specialist_agents: dict[str, "Agent[None, str]"],
     auditor: "Agent[None, AuditResult]",
@@ -861,7 +863,7 @@ class PipelineAgents(NamedTuple):
     summary: Agent[None, str]
 
 
-def _make_pipeline_agents(
+def make_pipeline_agents(
     provider: str = "gemini",
     thinking: ThinkingEffort = "high",
 ) -> PipelineAgents:
@@ -902,7 +904,7 @@ def _make_pipeline_agents(
 # ORCHESTRATION
 # ═══════════════════════════════════════════════════════════════════════
 
-async def _run_specialists(
+async def run_specialists(
     stuff_agent: Agent[None, str],
     location_agent: Agent[None, str],
     runvalue_agent: Agent[None, str],
@@ -956,11 +958,11 @@ async def _run_pipeline(
     Phase 2: Writer composes capsule (with audit flags if any).
     Phase 2.5: Anchor check + revision loop.
     """
-    agents = _make_pipeline_agents(provider, thinking)
+    agents = make_pipeline_agents(provider, thinking)
 
     # Phase 1: Run specialists concurrently
     log.info("Running specialists...")
-    raw_specialists = await _run_specialists(
+    raw_specialists = await run_specialists(
         agents.stuff, agents.location, agents.runvalue, agents.trends,
         agents.game_shape, ctx, _model_override,
     )
@@ -973,13 +975,13 @@ async def _run_pipeline(
         "runvalue": agents.runvalue, "trends": agents.trends,
         "game_shape": agents.game_shape,
     }
-    specialists, audit_flags = await _audit_and_revise_specialists(
+    specialists, audit_flags = await audit_and_revise_specialists(
         raw_specialists, specialist_agents, agents.auditor, ctx, _model_override,
     )
 
     # Phase 2: Writer + Executive Summary run concurrently
     # Writer gets clean specialist outputs (flagged claims already revised).
-    writer_input = _build_writer_input(
+    writer_input = build_writer_input(
         ctx, specialists.stuff, specialists.location,
         specialists.runvalue, specialists.trends, specialists.game_shape,
     )

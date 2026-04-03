@@ -25,10 +25,10 @@ from pitcher_narratives.pipeline import (
     PipelineAgents,
     PipelineResult,
     SpecialistOutputs,
-    _audit_and_revise_specialists,
     _build_stuff_input,
-    _make_pipeline_agents,
+    audit_and_revise_specialists,
     generate_pipeline_streaming,
+    make_pipeline_agents,
 )
 
 
@@ -198,16 +198,16 @@ class TestBuildStuffInput:
 
 class TestMakePipelineAgents:
     def test_returns_named_tuple(self):
-        agents = _make_pipeline_agents("gemini", "high")
+        agents = make_pipeline_agents("gemini", "high")
         assert isinstance(agents, PipelineAgents)
 
     def test_all_fields_populated(self):
-        agents = _make_pipeline_agents("gemini", "high")
+        agents = make_pipeline_agents("gemini", "high")
         for name in PipelineAgents._fields:
             assert getattr(agents, name) is not None
 
     def test_named_access(self):
-        agents = _make_pipeline_agents("gemini", "high")
+        agents = make_pipeline_agents("gemini", "high")
         assert agents.stuff is not None
         assert agents.auditor is not None
         assert agents.anchor is not None
@@ -215,7 +215,7 @@ class TestMakePipelineAgents:
 
     def test_invalid_provider_raises(self):
         with pytest.raises(ValueError, match="Unknown provider"):
-            _make_pipeline_agents("invalid", "high")
+            make_pipeline_agents("invalid", "high")
 
 
 # ── Audit loop smoke tests ───────────────────────────────────────────
@@ -234,7 +234,7 @@ class TestAuditAndReviseSpecialists:
 
     @pytest.fixture
     def agents(self):
-        return _make_pipeline_agents("gemini", "high")
+        return make_pipeline_agents("gemini", "high")
 
     def test_clean_audit_returns_originals(self, specialists, agents):
         """When auditor returns clean, specialist outputs pass through unchanged."""
@@ -255,7 +255,7 @@ class TestAuditAndReviseSpecialists:
             data = load_pitcher_data(TEST_PITCHER, window_days=30)
             ctx = assemble_pitcher_context(data)
 
-            result, flags = await _audit_and_revise_specialists(
+            result, flags = await audit_and_revise_specialists(
                 specialists, specialist_agents, clean_auditor, ctx,
                 _model_override=clean_model,
             )
@@ -285,7 +285,7 @@ class TestAuditAndReviseSpecialists:
             data = load_pitcher_data(TEST_PITCHER, window_days=30)
             ctx = assemble_pitcher_context(data)
 
-            result, flags = await _audit_and_revise_specialists(
+            result, flags = await audit_and_revise_specialists(
                 specialists, specialist_agents, auditor, ctx,
                 _model_override=test_model,
             )

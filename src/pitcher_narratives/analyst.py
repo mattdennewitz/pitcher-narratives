@@ -592,18 +592,18 @@ def ask_question_pipeline(
 
     from pitcher_narratives.config import agent_kwargs
     from pitcher_narratives.pipeline import (
-        _audit_and_revise_specialists,
-        _build_writer_input,
-        _make_pipeline_agents,
-        _run_specialists,
+        audit_and_revise_specialists,
+        build_writer_input,
+        make_pipeline_agents,
+        run_specialists,
     )
 
-    agents = _make_pipeline_agents(provider, thinking)
+    agents = make_pipeline_agents(provider, thinking)
 
     async def _run() -> PipelineAnswer:
         # Phase 1: Run specialists concurrently
         log.info("Running specialists...")
-        raw_specialists = await _run_specialists(
+        raw_specialists = await run_specialists(
             agents.stuff, agents.location, agents.runvalue, agents.trends,
             agents.game_shape, context, _model_override,
         )
@@ -615,7 +615,7 @@ def ask_question_pipeline(
             "runvalue": agents.runvalue, "trends": agents.trends,
             "game_shape": agents.game_shape,
         }
-        specialists, audit_flags = await _audit_and_revise_specialists(
+        specialists, audit_flags = await audit_and_revise_specialists(
             raw_specialists, specialist_agents, agents.auditor, context, _model_override,
         )
         log.info("Answering...")
@@ -642,7 +642,7 @@ def ask_question_pipeline(
         ])
 
         # Build summary input from clean specialist outputs
-        summary_input = _build_writer_input(
+        summary_input = build_writer_input(
             context, specialists.stuff, specialists.location,
             specialists.runvalue, specialists.trends, specialists.game_shape,
         )
