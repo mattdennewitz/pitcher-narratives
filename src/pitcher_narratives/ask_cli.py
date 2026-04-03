@@ -140,17 +140,8 @@ def main() -> None:
             _model_override=model_override,
         )
 
-        # Data audit
-        print("\n\n# Data Audit\n")
-        if pipeline_result.audit_flags:
-            for f in pipeline_result.audit_flags:
-                print(f"- **[{f.category}]** {f.specialist}: {f.claim}")
-                print(f"  - Data shows: {f.data_shows}")
-        else:
-            print("Clean — no issues found.")
-
-        # Stuff analysis
-        print(f"\n\n# Stuff Analysis\n\n{pipeline_result.stuff_summary}")
+        # Ask CLI outputs the answer only — no exec summary, audit, or stuff analysis.
+        # The narratives CLI (cli.py) has the full treatment.
     else:
         from pitcher_narratives.analyst import ANALYST_INSTRUCTIONS, ask_question_streaming
         from pathlib import Path
