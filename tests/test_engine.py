@@ -1326,6 +1326,8 @@ def _make_statcast(
                 "pitch_type": pl.String,
                 "pitch_name": pl.String,
                 "release_speed": pl.Float64,
+                "pfx_x": pl.Float64,
+                "pfx_z": pl.Float64,
                 "inning": pl.Int64,
                 "p_throws": pl.String,
                 "player_name": pl.String,
@@ -1341,6 +1343,8 @@ def _make_statcast(
             "pitch_type": r["pitch_type"],
             "pitch_name": r["pitch_name"],
             "release_speed": r["release_speed"],
+            "pfx_x": r.get("pfx_x", 0.0),
+            "pfx_z": r.get("pfx_z", 0.0),
             "inning": r.get("inning", 1),
             "p_throws": r.get("p_throws", "R"),
             "player_name": r.get("player_name", "Test Pitcher"),
@@ -1717,3 +1721,52 @@ def test_arsenal_trends_steady_deltas():
     assert "Steady" in ff.s_plus_delta
     # Small velo change (0.2 mph) => Steady
     assert "Steady" in ff.velo_delta
+
+
+def test_arsenal_trends_movement_deltas():
+    """Movement deltas are computed from statcast pfx_x/pfx_z per pitch type per season."""
+    data = _make_pitcher_data_for_trends(
+        pitcher_type_rows=[
+            {"season": 2025, "pitch_type": "FF", "n_pitches": 200, "P+": 105.0, "S+": 110.0},
+            {"season": 2025, "pitch_type": "SL", "n_pitches": 100, "P+": 95.0, "S+": 90.0},
+            {"season": 2026, "pitch_type": "FF", "n_pitches": 200, "P+": 108.0, "S+": 112.0},
+            {"season": 2026, "pitch_type": "SL", "n_pitches": 100, "P+": 98.0, "S+": 95.0},
+        ],
+        statcast_rows=[
+            # 2025 FF: pfx_x=-6.0, pfx_z=14.0
+            {"game_date": date(2025, 6, 1), "pitch_type": "FF", "pitch_name": "4-Seam Fastball",
+             "release_speed": 94.0, "pfx_x": -6.0, "pfx_z": 14.0},
+            # 2026 FF: pfx_x=-8.0, pfx_z=14.0 (H-mov changed by -2.0, V-mov steady)
+            {"game_date": date(2026, 4, 1), "pitch_type": "FF", "pitch_name": "4-Seam Fastball",
+             "release_speed": 95.0, "pfx_x": -8.0, "pfx_z": 14.0},
+            # 2025 SL: pfx_x=2.0, pfx_z=3.0
+            {"game_date": date(2025, 6, 1), "pitch_type": "SL", "pitch_name": "Slider",
+             "release_speed": 85.0, "pfx_x": 2.0, "pfx_z": 3.0},
+            # 2026 SL: pfx_x=2.1, pfx_z=3.2 (both steady, below threshold)
+            {"game_date": date(2026, 4, 1), "pitch_type": "SL", "pitch_name": "Slider",
+             "release_speed": 86.0, "pfx_x": 2.1, "pfx_z": 3.2},
+        ],
+    )
+    result = compute_arsenal_trends(data)
+    assert result is not None
+
+    ff = [t for t in result.pitch_trends if t.pitch_type == "FF"][0]
+    # FF horizontal movement changed from -6.0 to -8.0 (delta = -2.0) => "Down 2.0 in"
+    assert ff.prior_pfx_x == -6.0
+    assert ff.current_pfx_x == -8.0
+    assert "Down" in ff.pfx_x_delta
+    assert "2.0" in ff.pfx_x_delta
+    # FF vertical movement stayed at 14.0 => Steady
+    assert ff.prior_pfx_z == 14.0
+    assert ff.current_pfx_z == 14.0
+    assert "Steady" in ff.pfx_z_delta
+
+    sl = [t for t in result.pitch_trends if t.pitch_type == "SL"][0]
+    # SL horizontal movement: 2.0 -> 2.1 (delta = 0.1) => Steady
+    assert abs(sl.prior_pfx_x - 2.0) < 0.01
+    assert abs(sl.current_pfx_x - 2.1) < 0.01
+    assert "Steady" in sl.pfx_x_delta
+    # SL vertical movement: 3.0 -> 3.2 (delta = 0.2) => Steady
+    assert abs(sl.prior_pfx_z - 3.0) < 0.01
+    assert abs(sl.current_pfx_z - 3.2) < 0.01
+    assert "Steady" in sl.pfx_z_delta
