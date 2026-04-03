@@ -33,7 +33,10 @@ Plans:
   2. `resolver.py` builds its pitcher name table from all available parquet files (not just 2026), so pitchers who appeared only in 2025 are discoverable
   3. `scout.py` no longer contains any direct CSV or parquet reads -- all data access routes through `data.py` functions including the velocity baseline computation
   4. Running `grep "read_csv\|read_parquet" src/pitcher_narratives/ | grep -v data.py` returns zero results (no bypass loads remain)
-**Plans**: TBD
+**Plans:** 2 plans
+Plans:
+- [ ] 18-01-PLAN.md -- Add load_all_statcast() and load_full_agg() league-wide data functions to data.py
+- [ ] 18-02-PLAN.md -- Refactor engine.py, resolver.py, scout.py to use data.py functions; fix test assertions
 
 ## Progress
 
@@ -59,7 +62,7 @@ Phases execute in numeric order: 16 -> 17 -> 18
 | 15. Specialist-Writer Architecture | v1.6 | prototyped | Complete | 2026-04-03 |
 | 16. Data Foundation | v1.7 | 1/1 | Complete    | 2026-04-03 |
 | 17. Multi-Year Loading | v1.7 | 1/1 | Complete    | 2026-04-03 |
-| 18. Consumer Module Updates | v1.7 | 0/0 | Not started | -- |
+| 18. Consumer Module Updates | v1.7 | 0/2 | Not started | -- |
 
 ---
 *Full phase details archived in `.planning/milestones/`*
