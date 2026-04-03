@@ -13,7 +13,7 @@ from typing import Any, cast
 
 import polars as pl
 
-from pitcher_narratives.data import AGGS_DIR, PARQUET_PATH, PitcherData, load_run_values
+from pitcher_narratives.data import PitcherData, load_all_statcast, load_full_agg, load_run_values
 
 
 def _float(val: Any) -> float:
@@ -197,8 +197,7 @@ def compute_league_baselines() -> list[LeagueBaseline]:
     if _league_baselines_cache is not None:
         return _league_baselines_cache
 
-    df = pl.read_parquet(
-        PARQUET_PATH,
+    df = load_all_statcast(
         columns=["pitch_type", "pitch_name", "release_speed", "pfx_x", "pfx_z", "zone", "description"],
     )
     df = df.filter(pl.col("release_speed").is_not_null())
@@ -227,9 +226,8 @@ def compute_league_baselines() -> list[LeagueBaseline]:
 
     # --- S-variant benchmarks from pitcher_type CSV ---
     s_variant_lookup: dict[str, dict[str, float]] = {}
-    pitcher_type_path = AGGS_DIR / "2026-pitcher_type.csv"
-    if pitcher_type_path.exists():
-        pt_df = pl.read_csv(pitcher_type_path)
+    pt_df = load_full_agg("pitcher_type")
+    if not pt_df.is_empty():
         # Weighted average across all pitchers per pitch type
         s_agg = (
             pt_df.filter(pl.col("n_pitches") >= 10)
@@ -1788,9 +1786,7 @@ def compute_execution_metrics(data: PitcherData) -> list[ExecutionMetrics]:
     pitch_types = baseline["pitch_type"].to_list()
 
     # Load full pitcher_type CSV once for percentile computation
-    full_pitcher_type_df = pl.read_csv(AGGS_DIR / "2026-pitcher_type.csv")
-    if "game_date" in full_pitcher_type_df.columns:
-        full_pitcher_type_df = full_pitcher_type_df.with_columns(pl.col("game_date").str.to_date("%Y-%m-%d"))
+    full_pitcher_type_df = load_full_agg("pitcher_type")
 
     results: list[ExecutionMetrics] = []
 

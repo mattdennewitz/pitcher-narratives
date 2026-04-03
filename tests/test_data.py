@@ -2,6 +2,11 @@ import polars as pl
 import pytest
 
 from pitcher_narratives.data import (
+    _ALLOWED_GAME_TYPES,
+    _APPEARANCE_GRAINS,
+    _ID_COLS,
+    _SEASON_GRAINS,
+    _YEARS,
     classify_appearances,
     compute_pitch_type_baseline,
     compute_season_baseline,
@@ -15,7 +20,8 @@ from pitcher_narratives.data import (
     load_statcast,
 )
 
-TEST_PITCHER = 592155  # Booser, Cam -- 12 appearances, 1 SP + 11 RP
+TEST_PITCHER = 592155  # Booser, Cam -- 1 regular-season RP appearance
+SWINGMAN_PITCHER = 676571  # Poulin, PJ -- 4 R-game appearances: 1 SP + 3 RP
 
 
 def test_load_statcast_filters_by_pitcher():
@@ -83,7 +89,8 @@ def test_season_baseline_weighted():
     """DATA-03: Season baseline uses n_pitches-weighted averaging."""
     csvs = load_agg_csvs(TEST_PITCHER)
     baseline = compute_season_baseline(csvs["pitcher"])
-    assert len(baseline) == 1  # single row for the pitcher
+    # Single-season pitcher (only 2026 data after MYLD-03 skip) -> 1 row
+    assert len(baseline) == 1
     assert "n_pitches" in baseline.columns
     assert baseline["n_pitches"][0] > 0
 
@@ -122,9 +129,10 @@ def test_window_filter():
 
 def test_classify_starter():
     """ROLE-01: Appearance with first_inning==1 gets role 'SP'."""
-    df = load_statcast(TEST_PITCHER)
+    df = load_statcast(SWINGMAN_PITCHER)
     appearances = classify_appearances(df)
     starters = appearances.filter(pl.col("role") == "SP")
+    assert len(starters) > 0, "Need at least one SP appearance"
     assert (starters["first_inning"] == 1).all()
 
 
@@ -145,10 +153,10 @@ def test_role_column_exists():
 
 def test_swingman_classification():
     """ROLE-03: Pitcher with both SP and RP appearances gets both roles."""
-    df = load_statcast(TEST_PITCHER)
+    df = load_statcast(SWINGMAN_PITCHER)
     appearances = classify_appearances(df)
     roles = appearances["role"].unique().sort().to_list()
-    # Booser has 1 start and 11 relief appearances
+    # Poulin has 1 start and 3 relief appearances in regular season
     assert roles == ["RP", "SP"]
 
 
@@ -161,7 +169,6 @@ def test_load_pitcher_data_returns_complete_bundle():
     assert hasattr(data, "pitch_type_baseline")
     assert hasattr(data, "agg_csvs")
     assert hasattr(data, "window_appearances")
-
 
 
 def test_filter_game_type_no_column():

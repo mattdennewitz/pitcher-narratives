@@ -23,6 +23,7 @@ __all__ = [
     "classify_appearances",
     "compute_pitch_type_baseline",
     "compute_season_baseline",
+    "filter_game_type",
     "filter_to_window",
     "load_agg_csvs",
     "load_all_statcast",
@@ -36,23 +37,19 @@ __all__ = [
 _DEFAULT_DATA_DIR = Path(__file__).resolve().parent.parent.parent
 _data_dir_override = os.environ.get("PITCHER_NARRATIVES_DATA_DIR")
 DATA_DIR = Path(_data_dir_override) if _data_dir_override else _DEFAULT_DATA_DIR
-PARQUET_PATH = DATA_DIR / "statcast_2026.parquet"
+_YEARS: list[int] = [2025, 2026]
+PARQUET_PATH = DATA_DIR / f"statcast_{_YEARS[-1]}.parquet"
 AGGS_DIR = DATA_DIR / "aggs"
 RV_DF_PATH = AGGS_DIR / "RV_df.csv"
 
-# CSV filenames organized by grain
-_SEASON_CSVS = {
-    "pitcher": "2026-pitcher.csv",
-    "pitcher_type": "2026-pitcher_type.csv",
-    "pitcher_type_platoon": "2026-pitcher_type_platoon.csv",
-    "team": "2026-team.csv",
-}
-_APPEARANCE_CSVS = {
-    "pitcher_appearance": "2026-pitcher_appearance.csv",
-    "pitcher_type_appearance": "2026-pitcher_type_appearance.csv",
-    "pitcher_type_platoon_appearance": "2026-pitcher_type_platoon_appearance.csv",
-    "all_pitches": "2026-all_pitches.csv",
-}
+# CSV grain names -- filenames derived as f"{year}-{grain}.csv"
+_SEASON_GRAINS = ("pitcher", "pitcher_type", "pitcher_type_platoon", "team")
+_APPEARANCE_GRAINS = (
+    "pitcher_appearance",
+    "pitcher_type_appearance",
+    "pitcher_type_platoon_appearance",
+    "all_pitches",
+)
 
 # Columns that are identifiers, not metrics (used in baseline computation)
 _ID_COLS = frozenset(
@@ -67,6 +64,8 @@ _ID_COLS = frozenset(
         "n_pitches",
     }
 )
+
+_ALLOWED_GAME_TYPES = frozenset({"R", "F", "D", "L", "W"})
 
 
 @dataclass
@@ -84,8 +83,29 @@ class PitcherData:
     throws: str
 
 
+def filter_game_type(df: pl.DataFrame) -> pl.DataFrame:
+    """Filter DataFrame to regular-season and postseason game types.
+
+    Retains rows where game_type is one of: R (Regular Season),
+    F (Wild Card), D (Division Series), L (League Championship),
+    W (World Series). Removes spring training, exhibition, and
+    other non-competitive game types.
+
+    If the DataFrame has no game_type column, returns it unchanged.
+
+    Args:
+        df: Input DataFrame, possibly containing a game_type column.
+
+    Returns:
+        Filtered DataFrame with only allowed game type rows.
+    """
+    if "game_type" not in df.columns:
+        return df
+    return df.filter(pl.col("game_type").is_in(list(_ALLOWED_GAME_TYPES)))
+
+
 def load_csv(filename: str, pitcher_id: int | None) -> pl.DataFrame:
-    """Load a CSV agg file, parse dates, and optionally filter to pitcher.
+    """Load a CSV agg file, filter game types, parse dates, and optionally filter to pitcher.
 
     Args:
         filename: CSV filename within the aggs directory.
@@ -97,6 +117,7 @@ def load_csv(filename: str, pitcher_id: int | None) -> pl.DataFrame:
     """
     path = AGGS_DIR / filename
     df = pl.read_csv(path)
+    df = filter_game_type(df)
     if "game_date" in df.columns:
         df = df.with_columns(pl.col("game_date").str.to_date("%Y-%m-%d"))
     if pitcher_id is not None and "pitcher" in df.columns:
@@ -107,20 +128,34 @@ def load_csv(filename: str, pitcher_id: int | None) -> pl.DataFrame:
 def load_statcast(pitcher_id: int) -> pl.DataFrame:
     """Load Statcast pitch-level data filtered to a single pitcher.
 
+    Reads parquet files for all configured years in ``_YEARS``, filters
+    each to allowed game types (excluding spring training and exhibition),
+    filters to the given pitcher, and concatenates results. Missing year
+    files are skipped gracefully.
+
     Args:
         pitcher_id: MLB pitcher ID to filter on.
 
     Returns:
-        Polars DataFrame containing only rows for the given pitcher.
+        Polars DataFrame containing only regular-season rows for the given pitcher
+        across all available years.
 
     Raises:
-        ValueError: If no rows found for the given pitcher ID.
+        ValueError: If no rows found for the given pitcher ID after filtering.
     """
-    df = pl.read_parquet(PARQUET_PATH)
-    result = df.filter(pl.col("pitcher") == pitcher_id)
-    if result.is_empty():
+    frames: list[pl.DataFrame] = []
+    for year in _YEARS:
+        path = DATA_DIR / f"statcast_{year}.parquet"
+        if not path.exists():
+            continue
+        df = pl.read_parquet(path)
+        df = filter_game_type(df)
+        filtered = df.filter(pl.col("pitcher") == pitcher_id)
+        if not filtered.is_empty():
+            frames.append(filtered)
+    if not frames:
         raise ValueError(f"Pitcher {pitcher_id} not found")
-    return result
+    return pl.concat(frames)
 
 
 def load_run_values() -> pl.DataFrame:
@@ -136,6 +171,9 @@ def load_run_values() -> pl.DataFrame:
 def load_agg_csvs(pitcher_id: int) -> dict[str, pl.DataFrame]:
     """Load all 8 Pitching+ CSV aggregation files filtered to a pitcher.
 
+    Reads year-prefixed CSV files for all configured years in ``_YEARS``
+    and concatenates per grain. Missing year files are skipped gracefully.
+
     Args:
         pitcher_id: MLB pitcher ID to filter on.
 
@@ -144,11 +182,21 @@ def load_agg_csvs(pitcher_id: int) -> dict[str, pl.DataFrame]:
         'pitcher_appearance') with filtered polars DataFrames as values.
         The 'team' key contains unfiltered team-level data.
     """
-    all_csvs = {**_SEASON_CSVS, **_APPEARANCE_CSVS}
+    all_grains = [*_SEASON_GRAINS, *_APPEARANCE_GRAINS]
     result: dict[str, pl.DataFrame] = {}
-    for key, filename in all_csvs.items():
-        pid = None if key == "team" else pitcher_id
-        result[key] = load_csv(filename, pid)
+    for grain in all_grains:
+        frames: list[pl.DataFrame] = []
+        for year in _YEARS:
+            filename = f"{year}-{grain}.csv"
+            path = AGGS_DIR / filename
+            if not path.exists():
+                continue
+            pid = None if grain == "team" else pitcher_id
+            frames.append(load_csv(filename, pid))
+        if frames:
+            result[grain] = pl.concat(frames)
+        else:
+            result[grain] = pl.DataFrame()
     return result
 
 
@@ -253,23 +301,25 @@ def classify_appearances(statcast: pl.DataFrame) -> pl.DataFrame:
 
 
 def compute_season_baseline(pitcher_df: pl.DataFrame) -> pl.DataFrame:
-    """Compute n_pitches-weighted season baseline across all game types.
+    """Compute n_pitches-weighted per-season baseline for a pitcher.
 
-    Combines game_type rows (S/C/R) into a single row per pitcher using
-    pitch-count weighting for mathematically correct averaging.
+    Data is already filtered to regular-season and postseason game types
+    by load_csv(). Combines any remaining game_type rows into a single
+    row per pitcher per season using pitch-count weighting.
 
     Args:
         pitcher_df: DataFrame from pitcher.csv filtered to one pitcher.
 
     Returns:
-        Single-row DataFrame with weighted average metric values.
+        DataFrame with one row per pitcher per season with weighted average
+        metric values.
     """
     metric_cols = [c for c in pitcher_df.columns if c not in _ID_COLS]
     weighted_exprs = [
         (pl.col(c) * pl.col("n_pitches")).sum().truediv(pl.col("n_pitches").sum()).alias(c)
         for c in metric_cols
     ]
-    return pitcher_df.group_by("pitcher").agg(
+    return pitcher_df.group_by(["pitcher", "season"]).agg(
         pl.col("n_pitches").sum(),
         pl.col("player_name").first(),
         pl.col("p_throws").first(),
@@ -279,17 +329,18 @@ def compute_season_baseline(pitcher_df: pl.DataFrame) -> pl.DataFrame:
 
 
 def compute_pitch_type_baseline(pitcher_type_df: pl.DataFrame) -> pl.DataFrame:
-    """Compute n_pitches-weighted baseline per pitch type across game types.
+    """Compute n_pitches-weighted baseline per pitch type per season.
 
     Filters out empty pitch_type strings and combines game_type rows
-    using pitch-count weighting. Includes ``usage_pct`` — the percentage
-    of total pitches thrown with each pitch type.
+    using pitch-count weighting. Includes ``usage_pct`` -- the percentage
+    of total pitches thrown with each pitch type within a season.
 
     Args:
         pitcher_type_df: DataFrame from pitcher_type.csv (one or many pitchers).
 
     Returns:
-        DataFrame with one row per pitcher/pitch_type and weighted average metrics.
+        DataFrame with one row per pitcher/season/pitch_type and weighted
+        average metrics.
     """
     df = pitcher_type_df.filter(pl.col("pitch_type") != "")
     id_cols = _ID_COLS | {"pitch_type"}
@@ -298,17 +349,17 @@ def compute_pitch_type_baseline(pitcher_type_df: pl.DataFrame) -> pl.DataFrame:
         (pl.col(c) * pl.col("n_pitches")).sum().truediv(pl.col("n_pitches").sum()).alias(c)
         for c in metric_cols
     ]
-    result = df.group_by(["pitcher", "pitch_type"]).agg(
+    result = df.group_by(["pitcher", "season", "pitch_type"]).agg(
         pl.col("n_pitches").sum(),
         pl.col("player_name").first(),
         pl.col("p_throws").first(),
         pl.col("team_code").first(),
         *weighted_exprs,
     )
-    pitcher_totals = df.group_by("pitcher").agg(
+    pitcher_totals = df.group_by(["pitcher", "season"]).agg(
         pl.col("n_pitches").sum().alias("total_pitches"),
     )
-    return result.join(pitcher_totals, on="pitcher").with_columns(
+    return result.join(pitcher_totals, on=["pitcher", "season"]).with_columns(
         (pl.col("n_pitches") / pl.col("total_pitches") * 100).alias("usage_pct"),
     ).drop("total_pitches")
 
