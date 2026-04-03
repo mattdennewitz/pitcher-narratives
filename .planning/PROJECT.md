@@ -70,12 +70,22 @@ The report must read like a scout wrote it — surfacing *changes, adaptations, 
 
 ### Active
 
-(None — next milestone to be defined)
+(See Current Milestone below)
+
+## Current Milestone: v1.8 Cross-Season Trend Analysis
+
+**Goal:** Enable season-over-season and appearance-over-appearance comparisons so reports and Q&A surface what changed, when, and how — from macro shifts (dropped a pitch to LHH this year) to micro trends (curveball shape changed between last two starts).
+
+**Target features:**
+- Cross-season baselines in PitcherData (current + prior season)
+- Season-over-season delta engine (pitch mix, velocity, movement, platoon splits)
+- Appearance-over-appearance trends (pitch shape evolution, mix adjustments, command shifts across recent outings)
+- Context layer enrichment with "Year-over-Year Changes" and "Recent Appearance Trends" sections
+- LLM prompt updates to discuss what changed and why
 
 ### Out of Scope
 
 - Web UI or API — this is a CLI script
-- Historical season-over-season comparisons — multi-year loading supports 2025+2026, but cross-season trend analysis deferred
 - Batter-side analysis — pitcher-focused reports only
 - Real-time data ingestion — works against static parquet/CSV files
 - Team-level reports — individual pitcher reports only
@@ -167,4 +177,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-04-03 after v1.7 milestone shipped — Multi-Year Data & Game Type Filtering*
+*Last updated: 2026-04-03 after v1.8 milestone started — Cross-Season Trend Analysis*
