@@ -12,11 +12,10 @@ import re
 import unicodedata
 from dataclasses import dataclass, field
 
-import polars as pl
 from nameparser import HumanName
 from rapidfuzz import fuzz, process
 
-from pitcher_narratives.data import PARQUET_PATH
+from pitcher_narratives.data import load_all_statcast
 
 __all__ = ["ResolveResult", "extract_pitcher_from_question", "resolve"]
 
@@ -108,7 +107,7 @@ def _build_name_table() -> _NameTable:
     if _name_table is not None:
         return _name_table
 
-    df = pl.read_parquet(PARQUET_PATH, columns=["pitcher", "player_name"])
+    df = load_all_statcast(columns=["pitcher", "player_name"])
     unique = df.unique(subset=["pitcher"])
 
     full_index: dict[str, tuple[int, str]] = {}

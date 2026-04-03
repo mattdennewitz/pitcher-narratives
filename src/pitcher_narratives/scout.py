@@ -17,11 +17,10 @@ from typing import cast
 import polars as pl
 
 from pitcher_narratives.data import (
-    AGGS_DIR,
-    PARQUET_PATH,
     compute_pitch_type_baseline,
     compute_season_baseline,
-    load_csv,
+    load_all_statcast,
+    load_full_agg,
 )
 
 __all__ = ["ScoredAppearance", "scout_appearances"]
@@ -111,10 +110,10 @@ def scout_appearances(
         Ranked list of ScoredAppearance, highest score first.
     """
     # Load data
-    app_df = load_csv("2026-pitcher_appearance.csv")
-    app_type_df = load_csv("2026-pitcher_type_appearance.csv")
-    season_type_df = load_csv("2026-pitcher_type.csv")
-    season_df = load_csv("2026-pitcher.csv")
+    app_df = load_full_agg("pitcher_appearance")
+    app_type_df = load_full_agg("pitcher_type_appearance")
+    season_type_df = load_full_agg("pitcher_type")
+    season_df = load_full_agg("pitcher")
 
     # Filter to MLB regular season
     app_df = app_df.filter(pl.col("level") == "MLB")
@@ -152,18 +151,22 @@ def scout_appearances(
         game_pk = row["game_pk"]
         game_date = row["game_date"]
 
-        # Get this pitcher's season baseline
+        # Get this pitcher's season baseline (most recent season only)
         pitcher_baseline = season_baseline.filter(pl.col("pitcher") == pitcher_id)
         if pitcher_baseline.is_empty():
             continue
+        pitcher_baseline = pitcher_baseline.sort("season", descending=True).head(1)
 
         # Get per-pitch-type data for this appearance
         game_types = app_type_window.filter(
             (pl.col("pitcher") == pitcher_id) & (pl.col("game_pk") == game_pk)
         )
 
-        # Get pitcher's season pitch type baselines
+        # Get pitcher's season pitch type baselines (most recent season only)
         pitcher_type_bl = season_type_baseline.filter(pl.col("pitcher") == pitcher_id)
+        max_season = pitcher_type_bl["season"].max()
+        if max_season is not None:
+            pitcher_type_bl = pitcher_type_bl.filter(pl.col("season") == max_season)
 
         signals: list[Signal] = []
 
@@ -231,14 +234,11 @@ def _compute_velo_baselines() -> pl.DataFrame:
 
     Returns DataFrame with columns: pitcher, season_velo, and per-game velos.
     """
-    if not PARQUET_PATH.exists():
-        return pl.DataFrame(schema={"pitcher": pl.Int64, "season_velo": pl.Float64})
-
-    # Only load the columns we need
-    df = pl.read_parquet(
-        PARQUET_PATH,
+    df = load_all_statcast(
         columns=["pitcher", "game_pk", "game_date", "pitch_type", "release_speed"],
     )
+    if df.is_empty():
+        return pl.DataFrame(schema={"pitcher": pl.Int64, "season_velo": pl.Float64})
     fastballs = df.filter(pl.col("pitch_type").is_in(["FF", "SI", "FC"]))
 
     season = fastballs.group_by("pitcher").agg(
