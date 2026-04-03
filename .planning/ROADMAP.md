@@ -87,7 +87,7 @@
 | 19. Cross-Season Baseline Exposure | v1.8 | 0/0 | Not started | - |
 | 20. Season-Delta Engine | v1.8 | 0/0 | Not started | - |
 | 21. Arsenal Trend Engine | v1.8 | 0/0 | Not started | - |
-| 22. Context Assembly & Prompt Rendering | v1.8 | 0/0 | Not started | - |
+| 22. Context Assembly & Prompt Rendering | v1.8 | 1/1 | Complete | 2026-04-03 |
 
 ---
 *Full phase details archived in `.planning/milestones/`*
