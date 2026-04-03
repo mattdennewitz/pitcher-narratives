@@ -87,7 +87,8 @@ def test_season_baseline_weighted():
     """DATA-03: Season baseline uses n_pitches-weighted averaging."""
     csvs = load_agg_csvs(TEST_PITCHER)
     baseline = compute_season_baseline(csvs["pitcher"])
-    assert len(baseline) == 1  # single row for the pitcher
+    # Single-season pitcher (only 2026 data after MYLD-03 skip) -> 1 row
+    assert len(baseline) == 1
     assert "n_pitches" in baseline.columns
     assert baseline["n_pitches"][0] > 0
 
@@ -318,3 +319,55 @@ def test_load_agg_csvs_missing_year_skipped():
     result = load_agg_csvs(TEST_PITCHER)
     assert not result["pitcher"].is_empty()
     assert set(result["pitcher"]["season"].unique().to_list()) == {2026}
+
+
+def test_season_baseline_per_season():
+    """MYLD-04: compute_season_baseline produces separate rows per season."""
+    df = pl.DataFrame(
+        {
+            "season": [2025, 2026],
+            "game_type": ["R", "R"],
+            "pitcher": [12345, 12345],
+            "player_name": ["Test", "Test"],
+            "p_throws": ["R", "R"],
+            "team_code": ["NYY", "NYY"],
+            "n_pitches": [100, 150],
+            "stuff_plus": [95.0, 105.0],
+        }
+    )
+    baseline = compute_season_baseline(df)
+    assert len(baseline) == 2  # one row per season, not 1 cross-season average
+    row_2025 = baseline.filter(pl.col("season") == 2025)
+    row_2026 = baseline.filter(pl.col("season") == 2026)
+    assert len(row_2025) == 1
+    assert len(row_2026) == 1
+    assert abs(row_2025["stuff_plus"][0] - 95.0) < 0.01
+    assert abs(row_2026["stuff_plus"][0] - 105.0) < 0.01
+
+
+def test_pitch_type_baseline_per_season():
+    """MYLD-04: compute_pitch_type_baseline produces separate rows per season per pitch type."""
+    df = pl.DataFrame(
+        {
+            "season": [2025, 2026],
+            "game_type": ["R", "R"],
+            "pitcher": [12345, 12345],
+            "pitch_type": ["FF", "FF"],
+            "player_name": ["Test", "Test"],
+            "p_throws": ["R", "R"],
+            "team_code": ["NYY", "NYY"],
+            "n_pitches": [80, 120],
+            "stuff_plus": [100.0, 110.0],
+        }
+    )
+    baseline = compute_pitch_type_baseline(df)
+    assert len(baseline) == 2  # one row per season for FF, not 1
+    row_2025 = baseline.filter(pl.col("season") == 2025)
+    row_2026 = baseline.filter(pl.col("season") == 2026)
+    assert len(row_2025) == 1
+    assert len(row_2026) == 1
+    assert abs(row_2025["stuff_plus"][0] - 100.0) < 0.01
+    assert abs(row_2026["stuff_plus"][0] - 110.0) < 0.01
+    # Usage pct should be 100% for both since FF is the only pitch per season
+    assert abs(row_2025["usage_pct"][0] - 100.0) < 0.01
+    assert abs(row_2026["usage_pct"][0] - 100.0) < 0.01
