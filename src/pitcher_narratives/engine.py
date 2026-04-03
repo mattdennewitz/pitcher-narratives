@@ -8,10 +8,13 @@ delta helpers used across all analysis facets.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import Any, cast
 
 import polars as pl
+
+_log = logging.getLogger(__name__)
 
 from pitcher_narratives.data import PitcherData, load_all_statcast, load_full_agg, load_run_values
 
@@ -2543,8 +2546,10 @@ def compute_component_attribution(
         return []
 
     # Load run values lookup table
-    rv_df = load_run_values()
-    if rv_df.is_empty():
+    try:
+        rv_df = load_run_values()
+    except FileNotFoundError as exc:
+        _log.warning("Skipping component attribution: %s", exc)
         return []
 
     # Filter to specific appearance if requested

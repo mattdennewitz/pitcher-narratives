@@ -162,11 +162,11 @@ def load_run_values() -> pl.DataFrame:
 
     Returns:
         DataFrame with columns: balls, strikes, model_classes, delta_run_exp.
-        156 rows: 12 counts x 13 outcomes. Returns empty DataFrame if
-        the file is missing.
+        156 rows: 12 counts x 13 outcomes.
+
+    Raises:
+        FileNotFoundError: If RV_df.csv is missing from the aggs directory.
     """
-    if not RV_DF_PATH.exists():
-        return pl.DataFrame()
     return pl.read_csv(RV_DF_PATH)
 
 
