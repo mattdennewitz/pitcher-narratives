@@ -506,6 +506,14 @@ def _build_stuff_input(ctx: PitcherContext) -> str:
             if at.dropped_pitches:
                 dropped = ", ".join(p.pitch_name for p in at.dropped_pitches)
                 lines.append(f"- Dropped pitches: {dropped}")
+            for pt in at.pitch_trends[:4]:
+                mov_parts = []
+                if "Steady" not in pt.pfx_x_delta:
+                    mov_parts.append(f"H-mov {pt.pfx_x_delta}")
+                if "Steady" not in pt.pfx_z_delta:
+                    mov_parts.append(f"V-mov {pt.pfx_z_delta}")
+                if mov_parts:
+                    lines.append(f"- {pt.pitch_name} movement: {', '.join(mov_parts)}")
 
     return "\n".join(lines)
 
@@ -611,8 +619,15 @@ def _build_game_shape_input(ctx: PitcherContext) -> str:
             )
         if at is not None:
             for pt in at.pitch_trends[:4]:
+                parts = []
                 if "Steady" not in pt.usage_delta:
-                    yoy_lines.append(f"- {pt.pitch_name} usage: {pt.usage_delta}")
+                    parts.append(f"usage {pt.usage_delta}")
+                if "Steady" not in pt.pfx_x_delta:
+                    parts.append(f"H-mov {pt.pfx_x_delta}")
+                if "Steady" not in pt.pfx_z_delta:
+                    parts.append(f"V-mov {pt.pfx_z_delta}")
+                if parts:
+                    yoy_lines.append(f"- {pt.pitch_name}: {', '.join(parts)}")
             if at.added_pitches:
                 yoy_lines.append(
                     f"- Added: {', '.join(p.pitch_name for p in at.added_pitches)}"

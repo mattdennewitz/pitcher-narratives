@@ -580,6 +580,10 @@ class PitcherContext(BaseModel):
                     deltas.append(f"S+ {pt.s_plus_delta}")
                 if "Steady" not in pt.velo_delta:
                     deltas.append(f"velo {pt.velo_delta}")
+                if "Steady" not in pt.pfx_x_delta:
+                    deltas.append(f"H-mov {pt.pfx_x_delta}")
+                if "Steady" not in pt.pfx_z_delta:
+                    deltas.append(f"V-mov {pt.pfx_z_delta}")
                 if deltas:
                     lines.append(f"- {pt.pitch_name}: {', '.join(deltas)}")
 
