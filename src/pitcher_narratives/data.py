@@ -69,13 +69,24 @@ _ALLOWED_GAME_TYPES = frozenset({"R", "F", "D", "L", "W"})
 
 @dataclass
 class PitcherData:
-    """Bundle of all loaded and processed data for a pitcher."""
+    """Bundle of all loaded and processed data for a pitcher.
+
+    Baseline fields:
+        season_baseline: Current (max) season pitcher-level baselines.
+        pitch_type_baseline: Current (max) season per-pitch-type baselines.
+        prior_season_baseline: Previous season pitcher-level baselines.
+            Empty DataFrame (same schema, zero rows) when only one season exists.
+        prior_pitch_type_baseline: Previous season per-pitch-type baselines.
+            Empty DataFrame (same schema, zero rows) when only one season exists.
+    """
 
     statcast: pl.DataFrame
     appearances: pl.DataFrame
     window_appearances: pl.DataFrame
     season_baseline: pl.DataFrame
     pitch_type_baseline: pl.DataFrame
+    prior_season_baseline: pl.DataFrame
+    prior_pitch_type_baseline: pl.DataFrame
     agg_csvs: dict[str, pl.DataFrame]
     pitcher_id: int
     pitcher_name: str
