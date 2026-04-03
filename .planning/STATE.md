@@ -1,8 +1,8 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.0
-milestone_name: milestone
-status: completed
+milestone: v1.7
+milestone_name: Multi-Year Data & Game Type Filtering
+status: in_progress
 stopped_at: Completed 16-01-PLAN.md
 last_updated: "2026-04-03T02:36:55.733Z"
 last_activity: 2026-04-03
@@ -21,27 +21,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-03)
 
 **Core value:** Reports must read like a scout wrote them -- surfacing changes, adaptations, and execution trends rather than reciting numbers.
-<<<<<<< Updated upstream
-**Current focus:** v1.7 Phase 16 -- Data Foundation (game type filtering and year parameterization)
+**Current focus:** Phase 17 -- Multi-Year Loading (next phase)
 
 ## Current Position
 
-Phase: 16
+Phase: 17 of 18 (Multi-Year Loading)
 Plan: Not started
-Status: Phase 16-01 complete
-Last activity: 2026-04-03
-=======
-**Current focus:** Phase 16 — Data Foundation
+Status: Ready to plan
+Last activity: 2026-04-03 -- Phase 16 complete
 
-## Current Position
-
-Phase: 16 (Data Foundation) — EXECUTING
-Plan: 1 of 1
-Status: Executing Phase 16
-Last activity: 2026-04-03 -- Phase 16 execution started
-
-Progress: [===============░░░] 83% (15/18 phases)
->>>>>>> Stashed changes
+Progress: [================░░] 89% (16/18 phases)
 
 ## Accumulated Context
 
