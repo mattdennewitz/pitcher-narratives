@@ -25,7 +25,9 @@ __all__ = [
     "compute_season_baseline",
     "filter_to_window",
     "load_agg_csvs",
+    "load_all_statcast",
     "load_csv",
+    "load_full_agg",
     "load_pitcher_data",
     "load_run_values",
     "load_statcast",
@@ -148,6 +150,77 @@ def load_agg_csvs(pitcher_id: int) -> dict[str, pl.DataFrame]:
         pid = None if key == "team" else pitcher_id
         result[key] = load_csv(filename, pid)
     return result
+
+
+def load_all_statcast(columns: list[str] | None = None) -> pl.DataFrame:
+    """Load Statcast pitch-level data for ALL pitchers across all years.
+
+    Reads parquet files for all configured years in ``_YEARS``, filters
+    each to allowed game types (excluding spring training and exhibition),
+    and concatenates results. Missing year files are skipped gracefully.
+
+    Unlike ``load_statcast()``, this does NOT filter by pitcher ID --
+    it returns league-wide data suitable for baselines and percentile
+    computation.
+
+    Args:
+        columns: Optional list of column names to read. When provided,
+            only these columns are loaded from the parquet files,
+            reducing memory usage for large datasets.
+
+    Returns:
+        Polars DataFrame containing regular-season rows for all pitchers
+        across all available years.  Returns an empty DataFrame if no
+        year files exist on disk.
+    """
+    frames: list[pl.DataFrame] = []
+    for year in _YEARS:
+        path = DATA_DIR / f"statcast_{year}.parquet"
+        if not path.exists():
+            continue
+        if columns is not None:
+            df = pl.read_parquet(path, columns=columns)
+        else:
+            df = pl.read_parquet(path)
+        df = filter_game_type(df)
+        if not df.is_empty():
+            frames.append(df)
+    if not frames:
+        return pl.DataFrame()
+    return pl.concat(frames)
+
+
+def load_full_agg(grain: str) -> pl.DataFrame:
+    """Load a Pitching+ CSV aggregation for ALL pitchers across all years.
+
+    Reads year-prefixed CSV files for all configured years in ``_YEARS``
+    and concatenates results. Each file is loaded via ``load_csv()`` with
+    ``pitcher_id=None`` so game-type filtering and date parsing are applied
+    but no pitcher filter. Missing year files are skipped gracefully.
+
+    Unlike ``load_agg_csvs()``, this loads a single grain rather than
+    all 8 grains, and does NOT filter by pitcher ID.
+
+    Args:
+        grain: CSV grain name (e.g., 'pitcher_type', 'pitcher_appearance').
+
+    Returns:
+        Polars DataFrame containing all rows for the given grain across
+        all available years.  Returns an empty DataFrame if no year
+        files exist on disk.
+    """
+    frames: list[pl.DataFrame] = []
+    for year in _YEARS:
+        filename = f"{year}-{grain}.csv"
+        path = AGGS_DIR / filename
+        if not path.exists():
+            continue
+        df = load_csv(filename, None)
+        if not df.is_empty():
+            frames.append(df)
+    if not frames:
+        return pl.DataFrame()
+    return pl.concat(frames)
 
 
 def classify_appearances(statcast: pl.DataFrame) -> pl.DataFrame:
