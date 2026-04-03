@@ -23,12 +23,20 @@ from __future__ import annotations
 import re
 import sys
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 
 from pydantic import BaseModel
 from pydantic_ai import Agent, CachePoint
 from pydantic_ai.settings import ThinkingEffort
 
+from pitcher_narratives.anchor import (
+    ANCHOR_PROMPT,
+    AnchorResult,
+    AnchorWarning,
+    WarningCategory,
+    build_anchor_message,
+    build_revision_message,
+)
 from pitcher_narratives.config import (
     MAX_REVISIONS,
     PROVIDERS,
@@ -45,11 +53,8 @@ from pitcher_narratives.engine import (
 )
 
 __all__ = [
-    "AnchorResult",
-    "AnchorWarning",
     "HallucinationReport",
     "ReportResult",
-    "WarningCategory",
     "check_hallucinated_metrics",
     "generate_report_streaming",
     "print_prompts",
@@ -403,54 +408,6 @@ stddev of the league average, it is normal.
 # PHASE 2.5: THE ANCHOR CHECK (FACT-CHECKER)
 # ═══════════════════════════════════════════════════════════════════════
 
-_ANCHOR_PROMPT = """\
-You are a fact-checker for a baseball analytics newsletter. You receive \
-two documents: the data analyst's structured briefing (the synthesis) \
-and the editor's finished narrative (the capsule). Your job is to verify \
-that the capsule is faithfully anchored to the synthesis.
-
-Check for these specific problems:
-
-1. Missed Key Signals: The synthesis has a "Key Signal" section with the \
-most important improvement, concern, and development pitch. If the capsule \
-ignores any of these entirely, flag it.
-
-2. Unsupported Claims: If the capsule states a metric, trend, or fact \
-that does not appear anywhere in the synthesis, flag it. The capsule \
-should not invent data.
-
-3. Directional Errors: If the synthesis says a metric went up and the \
-capsule says it went down (or vice versa), flag it.
-
-4. Overstated Confidence: If the synthesis flags something as small \
-sample or uncertain, but the capsule presents it as definitive, flag it.
-
-For each problem found, report it with its category and a concise description.
-If everything checks out, return an empty list of warnings."""
-
-
-WarningCategory = Literal["MISSED_SIGNAL", "UNSUPPORTED", "DIRECTION_ERROR", "OVERSTATED"]
-"""Anchor check warning categories matching _ANCHOR_PROMPT output format."""
-
-
-class AnchorWarning(BaseModel):
-    """A single anchor check warning with typed category."""
-
-    category: WarningCategory
-    description: str
-
-
-class AnchorResult(BaseModel):
-    """Structured output from the anchor check agent."""
-
-    warnings: list[AnchorWarning]
-
-    @property
-    def is_clean(self) -> bool:
-        """True when the capsule is faithfully anchored to the synthesis."""
-        return len(self.warnings) == 0
-
-
 class ReportResult(BaseModel):
     """Structured output from the multi-phase report pipeline."""
 
@@ -503,7 +460,7 @@ def _make_agents(
         for p, s in str_prompts_and_settings
     )
     anchor_agent = Agent(
-        model, output_type=AnchorResult, system_prompt=_ANCHOR_PROMPT,
+        model, output_type=AnchorResult, system_prompt=ANCHOR_PROMPT,
         model_settings=checker_settings, defer_model_check=True,
     )
     result: _AgentSet = (str_agents, anchor_agent)
@@ -546,46 +503,6 @@ def _build_editor_message(ctx: PitcherContext, synthesis: str) -> _UserPrompt:
     ]
 
 
-def _build_anchor_message(synthesis: str, capsule: str) -> _UserPrompt:
-    """Build the Phase 2.5 user message for the anchor check."""
-    return [
-        f"## Synthesis (Data Analyst's Briefing)\n{synthesis}",
-        CachePoint(),
-        f"## Capsule (Editor's Narrative)\n{capsule}\n\n"
-        "Check the capsule against the synthesis. Report any issues or respond CLEAN.",
-    ]
-
-
-def _build_revision_message(
-    synthesis: str,
-    capsule: str,
-    warnings: list[AnchorWarning],
-) -> _UserPrompt:
-    """Build a revision prompt for the editor to fix anchor-flagged issues.
-
-    Fixed-size context: synthesis + current capsule + formatted warnings +
-    targeted instruction. No message history (fresh prompt per revision).
-
-    Args:
-        synthesis: The data analyst's structured briefing.
-        capsule: The editor's current narrative capsule.
-        warnings: Anchor check warnings to address.
-
-    Returns:
-        User prompt parts with cache breakpoint after synthesis.
-    """
-    formatted_warnings = "\n".join(
-        f"- [{w.category}] {w.description}" for w in warnings
-    )
-    return [
-        f"## Data Analyst's Briefing\n{synthesis}",
-        CachePoint(),
-        f"## Current Capsule\n{capsule}\n\n"
-        f"## Anchor Check Warnings\n{formatted_warnings}\n\n"
-        "Revise the capsule to address ONLY the warnings listed above. "
-        "Preserve the voice, structure, and all unflagged material. "
-        "Do not add new analysis or metrics not in the briefing.",
-    ]
 
 
 def _build_stuff_message(ctx: PitcherContext, capsule: str) -> _UserPrompt:
@@ -657,8 +574,8 @@ def _build_all_phases(ctx: PitcherContext) -> list[tuple[str, str, _UserPrompt]]
         ("PHASE 1: SYNTHESIZER", _SYNTHESIZER_PROMPT, _build_synthesizer_message(ctx)),
         ("PHASE 2: EDITOR", _EDITOR_PROMPT, _build_editor_message(ctx, synth_placeholder)),
         (
-            "PHASE 2.5: ANCHOR CHECK", _ANCHOR_PROMPT,
-            _build_anchor_message(synth_placeholder, capsule_placeholder),
+            "PHASE 2.5: ANCHOR CHECK", ANCHOR_PROMPT,
+            build_anchor_message(synth_placeholder, capsule_placeholder),
         ),
         ("PHASE 3: STUFF EXPLAINER", _STUFF_EXPLAINER_PROMPT, _build_stuff_message(ctx, capsule_placeholder)),
     ]
@@ -744,7 +661,7 @@ def generate_report_streaming(
     revision_count = 0
     for _ in range(MAX_REVISIONS):
         anchor_result = anchor_checker.run_sync(
-            **agent_kwargs(_build_anchor_message(synthesis, capsule), _model_override)
+            **agent_kwargs(build_anchor_message(synthesis, capsule), _model_override)
         )
         anchor_check = anchor_result.output
 
@@ -753,14 +670,14 @@ def generate_report_streaming(
 
         # Revise silently (no streaming)
         revision_result = editor.run_sync(
-            **agent_kwargs(_build_revision_message(synthesis, capsule, anchor_check.warnings), _model_override)
+            **agent_kwargs(build_revision_message(synthesis, capsule, anchor_check.warnings), _model_override)
         )
         capsule = revision_result.output
         revision_count += 1
     else:
         # Exhausted MAX_REVISIONS — final anchor check for surviving warnings
         anchor_result = anchor_checker.run_sync(
-            **agent_kwargs(_build_anchor_message(synthesis, capsule), _model_override)
+            **agent_kwargs(build_anchor_message(synthesis, capsule), _model_override)
         )
         anchor_check = anchor_result.output
 

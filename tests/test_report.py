@@ -8,22 +8,24 @@ from pydantic_ai import CachePoint
 from pydantic_ai.agent import Agent
 from pydantic_ai.models.test import TestModel
 
+from pitcher_narratives.anchor import (
+    AnchorResult,
+    AnchorWarning,
+    WarningCategory,
+    build_revision_message,
+)
+from pitcher_narratives.config import MAX_REVISIONS
 from pitcher_narratives.context import assemble_pitcher_context
 from pitcher_narratives.data import load_pitcher_data
 from pitcher_narratives.report import (
-    MAX_REVISIONS,
+    HallucinationReport,
+    ReportResult,
     _EDITOR_PROMPT,
     _RP_SYNTH_GUIDANCE,
     _SP_SYNTH_GUIDANCE,
     _SYNTHESIZER_PROMPT,
-    AnchorResult,
-    AnchorWarning,
-    HallucinationReport,
-    ReportResult,
-    WarningCategory,
     _build_editor_message,
     _build_stuff_message,
-    _build_revision_message,
     _build_synthesizer_message,
     _make_agents,
     check_hallucinated_metrics,
@@ -200,14 +202,14 @@ def test_editor_message_includes_synthesis(ctx):
 def test_revision_message_contains_synthesis():
     """Revision message includes the synthesis text."""
     warnings = [AnchorWarning(category="MISSED_SIGNAL", description="missed velo drop")]
-    msg = _prompt_text(_build_revision_message("test synthesis data", "test capsule", warnings))
+    msg = _prompt_text(build_revision_message("test synthesis data", "test capsule", warnings))
     assert "test synthesis data" in msg
 
 
 def test_revision_message_contains_capsule():
     """Revision message includes the current capsule."""
     warnings = [AnchorWarning(category="UNSUPPORTED", description="fabricated claim")]
-    msg = _prompt_text(_build_revision_message("synth", "my capsule text", warnings))
+    msg = _prompt_text(build_revision_message("synth", "my capsule text", warnings))
     assert "my capsule text" in msg
 
 
@@ -217,7 +219,7 @@ def test_revision_message_formats_warnings():
         AnchorWarning(category="MISSED_SIGNAL", description="missed velo drop"),
         AnchorWarning(category="UNSUPPORTED", description="fabricated trend"),
     ]
-    msg = _prompt_text(_build_revision_message("synth", "capsule", warnings))
+    msg = _prompt_text(build_revision_message("synth", "capsule", warnings))
     assert "- [MISSED_SIGNAL] missed velo drop" in msg
     assert "- [UNSUPPORTED] fabricated trend" in msg
 
@@ -225,7 +227,7 @@ def test_revision_message_formats_warnings():
 def test_revision_message_has_targeted_instruction():
     """Revision message instructs editor to fix only flagged issues."""
     warnings = [AnchorWarning(category="DIRECTION_ERROR", description="wrong direction")]
-    msg = _prompt_text(_build_revision_message("synth", "capsule", warnings))
+    msg = _prompt_text(build_revision_message("synth", "capsule", warnings))
     assert "ONLY the warnings listed above" in msg
     assert "Preserve the voice" in msg
     assert "Do not add new analysis" in msg
@@ -234,7 +236,7 @@ def test_revision_message_has_targeted_instruction():
 def test_revision_message_has_cache_point():
     """Revision message has a CachePoint after the synthesis section."""
     warnings = [AnchorWarning(category="OVERSTATED", description="small sample")]
-    parts = _build_revision_message("synth", "capsule", warnings)
+    parts = build_revision_message("synth", "capsule", warnings)
     cache_points = [p for p in parts if isinstance(p, CachePoint)]
     assert len(cache_points) == 1
     # CachePoint should be after the synthesis (index 1)
@@ -244,14 +246,14 @@ def test_revision_message_has_cache_point():
 def test_revision_message_returns_list():
     """Revision message returns a list (matching _UserPrompt type)."""
     warnings = [AnchorWarning(category="MISSED_SIGNAL", description="test")]
-    result = _build_revision_message("synth", "capsule", warnings)
+    result = build_revision_message("synth", "capsule", warnings)
     assert isinstance(result, list)
     assert len(result) == 3  # synthesis, CachePoint, capsule+warnings+instruction
 
 
 def test_revision_message_empty_warnings():
     """Revision message with empty warnings still has structure."""
-    parts = _build_revision_message("synth", "capsule", [])
+    parts = build_revision_message("synth", "capsule", [])
     msg = _prompt_text(parts)
     assert "synth" in msg
     assert "capsule" in msg

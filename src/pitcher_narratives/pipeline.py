@@ -52,14 +52,12 @@ from pitcher_narratives.engine import (
     outlier_tag,
     render_league_baselines,
 )
-from pitcher_narratives.report import (
+from pitcher_narratives.anchor import (
+    ANCHOR_PROMPT,
     AnchorResult,
     AnchorWarning,
-    _ANCHOR_PROMPT,
-
-    _build_anchor_message,
-
-    _build_revision_message,
+    build_anchor_message,
+    build_revision_message,
 )
 
 __all__ = [
@@ -809,9 +807,8 @@ def write_pipeline_data_file(
             "[Receives: same input as writer]\n"
         )
 
-        from pitcher_narratives.report import _ANCHOR_PROMPT
         sections.append(f"\n{sep}\nANCHOR CHECK\n{sep}\n")
-        sections.append(f"## System Prompt\n\n{_ANCHOR_PROMPT}\n")
+        sections.append(f"## System Prompt\n\n{ANCHOR_PROMPT}\n")
         sections.append(
             "## User Message\n\n"
             "[Receives: concatenated specialist outputs + writer capsule]\n"
@@ -895,7 +892,7 @@ def _make_pipeline_agents(
         writer=_writer(_WRITER_PROMPT),
         auditor=Agent(model, output_type=AuditResult, system_prompt=_DATA_AUDITOR_PROMPT,
                       model_settings=checker_settings, defer_model_check=True),
-        anchor=Agent(model, output_type=AnchorResult, system_prompt=_ANCHOR_PROMPT,
+        anchor=Agent(model, output_type=AnchorResult, system_prompt=ANCHOR_PROMPT,
                      model_settings=checker_settings, defer_model_check=True),
         summary=_specialist(_EXECUTIVE_SUMMARY_PROMPT),
     )
@@ -1027,7 +1024,7 @@ async def _run_pipeline(
 
     for _ in range(MAX_REVISIONS):
         anchor_result = await agents.anchor.run(
-            **agent_kwargs(_build_anchor_message(synthesis, capsule), _model_override)
+            **agent_kwargs(build_anchor_message(synthesis, capsule), _model_override)
         )
         anchor_check = anchor_result.output
 
@@ -1035,14 +1032,14 @@ async def _run_pipeline(
             break
 
         revision_result = await agents.writer.run(
-            **agent_kwargs(_build_revision_message(synthesis, capsule, anchor_check.warnings), _model_override)
+            **agent_kwargs(build_revision_message(synthesis, capsule, anchor_check.warnings), _model_override)
         )
         capsule = revision_result.output
         revision_count += 1
     else:
         # Exhausted MAX_REVISIONS without a clean pass — final check for surviving warnings
         anchor_result = await agents.anchor.run(
-            **agent_kwargs(_build_anchor_message(synthesis, capsule), _model_override)
+            **agent_kwargs(build_anchor_message(synthesis, capsule), _model_override)
         )
         anchor_check = anchor_result.output
 
