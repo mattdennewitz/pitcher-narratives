@@ -61,17 +61,16 @@ The report must read like a scout wrote it — surfacing *changes, adaptations, 
 - Pipeline Q&A mode via `pitcher-ask --pipeline` with audit flags and stuff summary — v1.6
 - Architecture cleanup: config.py, anchor.py modules; public pipeline API; consolidated baseline logic — v1.6
 
+- Game type filtering: allowlist (R/F/D/L/W) applied at load time, excluding spring training and exhibition data — v1.7
+- Year-parameterized paths via `_YEARS` constant, no hardcoded year prefixes — v1.7
+- Multi-year parquet and CSV loading across all configured years with graceful missing-file handling — v1.7
+- Per-season baselines (not cross-season averaged) via pitcher+season grouping — v1.7
+- All data access centralized through data.py: zero bypass reads in engine.py, resolver.py, scout.py — v1.7
+- Resolver builds pitcher name table from all available years — v1.7
+
 ### Active
 
-## Current Milestone: v1.7 Multi-Year Data & Game Type Filtering
-
-**Goal:** Add 2025 season data alongside existing 2026, restructure data loading for multi-year support, and filter out spring training and exhibition games.
-
-**Target features:**
-- Multi-year parquet loading (2025 + 2026 statcast files)
-- Multi-year agg CSV loading (2025 + 2026 prefixed CSVs)
-- Game type filtering: exclude spring training ("S") and exhibition ("E") data from pipelines
-- Restructure hardcoded single-year paths into year-aware/multi-year architecture
+(None — next milestone to be defined)
 
 ### Out of Scope
 
@@ -87,19 +86,19 @@ The report must read like a scout wrote it — surfacing *changes, adaptations, 
 
 ## Context
 
-### Current State (v1.6 shipped)
+### Current State (v1.7 shipped)
 
-**Modules:** config.py (shared constants), anchor.py (anchor quality gate), data.py (loading), engine.py (computation), context.py (assembly), report.py (single-agent LLM pipeline + reflection loop), pipeline.py (multi-agent specialist pipeline + audit loop), scout.py (appearance scoring), curator.py (LLM curation), cli.py (narrative CLI), scout_cli.py (scout CLI), resolver.py (fuzzy name resolution + question extraction), analyst.py (tool-calling Q&A agent), ask_cli.py (Q&A CLI).
+**Modules:** config.py (shared constants), anchor.py (anchor quality gate), data.py (loading with multi-year support and game type filtering), engine.py (computation via data.py), context.py (assembly), report.py (single-agent LLM pipeline + reflection loop), pipeline.py (multi-agent specialist pipeline + audit loop), scout.py (appearance scoring via data.py), curator.py (LLM curation), cli.py (narrative CLI), scout_cli.py (scout CLI), resolver.py (fuzzy name resolution via data.py), analyst.py (tool-calling Q&A agent), ask_cli.py (Q&A CLI).
 
 **Tech stack:** Python 3.14, polars 1.39, pydantic-ai 1.72, rapidfuzz 3.14, nameparser 1.1, multi-provider (OpenAI gpt-5.4-mini, Claude Sonnet 4.6, Gemini 3.1 Pro).
 
-**Key v1.6 additions:** Multi-agent specialist pipeline (5 specialists + auditor + writer), per-specialist audit loop catching hallucinations before synthesis, NORMAL/OUTLIER tags on all metrics, temperature splitting by agent role. Architecture refactored: config.py and anchor.py extracted, private APIs promoted to public, duplicated logic consolidated. 286 tests passing, 7,875 LOC.
+**Key v1.7 additions:** Game type filtering at load time (allowlist: R/F/D/L/W). Multi-year data loading via `_YEARS = [2025, 2026]` with graceful missing-file handling. Per-season baselines (group by pitcher+season). All data access centralized through data.py — zero direct `read_csv`/`read_parquet` calls outside data.py. New league-wide loading functions: `load_all_statcast()` and `load_full_agg()`. 179 tests passing across data/engine/resolver modules.
 
 ### Data Sources
 
-**Statcast parquet** (`statcast_2025.parquet`, `statcast_2026.parquet`): Pitch-level rows, 114 columns. Standard Baseball Savant schema. game_type column distinguishes regular season ("R"), spring training ("S"), and exhibition ("E").
+**Statcast parquet** (`statcast_2025.parquet`, `statcast_2026.parquet`): Pitch-level rows, 114 columns. Standard Baseball Savant schema. game_type column distinguishes regular season ("R"), spring training ("S"), and exhibition ("E"). 75.9% of 2026 data is spring training — filtering is correctness-critical.
 
-**Pitching+ aggregations** (`aggs/`): Pre-computed P+, S+, L+ metrics at 8 grains (season, appearance, pitch type, platoon, and combinations). Year-prefixed CSV files (e.g., `2025-pitcher.csv`, `2026-pitcher.csv`).
+**Pitching+ aggregations** (`aggs/`): Pre-computed P+, S+, L+ metrics at 8 grains (season, appearance, pitch type, platoon, and combinations). Year-prefixed CSV files (e.g., `2025-pitcher.csv`, `2026-pitcher.csv`). All contain only game_type "R" rows.
 
 ### Report Philosophy
 
@@ -144,6 +143,11 @@ The report must read like a scout wrote it — surfacing *changes, adaptations, 
 | NORMAL/OUTLIER tags on all metrics | Prevents specialists from calling normal values "notable" | ✓ Good |
 | Game Shape specialist (5th agent) | TTO degradation and within-game mix shifts were missing from 4-agent prototype | ✓ Good |
 | Prototype Phase 15 without GSD plans | Experimental architecture; iteration faster than upfront planning | ✓ Good |
+| Allowlist game types (is_in) over exclusion list | Unknown game types default to excluded; safer than denylist | ✓ Good |
+| _YEARS constant over filesystem auto-discovery | Explicit control, sufficient for 2 years; auto-discovery is premature | ✓ Good |
+| Per-season baseline grouping | Prevents cross-season averaging artifacts (e.g., season=2025.375) | ✓ Good |
+| filter_game_type at load time (not computation) | Data flows clean from the gate; no unfiltered data escapes | ✓ Good |
+| Centralize all data access through data.py | Game type filtering + multi-year applied consistently everywhere | ✓ Good |
 
 ## Evolution
 
@@ -163,4 +167,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-04-03 after v1.7 milestone started — Multi-Year Data & Game Type Filtering*
+*Last updated: 2026-04-03 after v1.7 milestone shipped — Multi-Year Data & Game Type Filtering*
