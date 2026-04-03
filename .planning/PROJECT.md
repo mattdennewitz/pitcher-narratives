@@ -46,22 +46,27 @@ The report must read like a scout wrote it — surfacing *changes, adaptations, 
 - Disambiguation UX: numbered candidate list for ambiguous names — v1.4
 - Streaming Q&A output via run_stream_sync matching report pipeline UX — v1.4
 
+- Intermediate probabilities (P and S variants) surfaced per pitch type from pitchingplus aggregation CSVs — v1.5
+- Component attribution: xRV decomposed into 13 outcome-level contributions per pitch type — v1.5
+- Analyst system prompt reasons from model internals (outcome probabilities, P/S location diagnosis, attribution) rather than opaque plus grades — v1.5
+- Analyst tools return intermediate probabilities, P/S comparisons, and component attribution alongside plus scores — v1.5
+
 ### Active
 
-## Current Milestone: v1.5 Model-Explainable Narratives
+## Current Milestone: v1.6 Multi-Year Data & Game Type Filtering
 
-**Goal:** Invert the analyst from treating Pitching+ scores as opaque numbers to explaining *why* the model scores pitches the way it does, using intermediate probabilities and component attribution from the CatBoost pipeline.
+**Goal:** Add 2025 season data alongside existing 2026, restructure data loading for multi-year support, and filter out spring training and exhibition games.
 
 **Target features:**
-- Surface existing intermediate probabilities (xSwing, xWhiff, xGOr, xPUr, xHR100, BBE_prob) alongside plus scores
-- Compare P vs S variants to isolate location impact
-- Component attribution: decompose xRV into 13 outcome contributions (probability x run_value per outcome)
-- Update analyst system prompt to reason from model internals rather than opaque plus grades
+- Multi-year parquet loading (2025 + 2026 statcast files)
+- Multi-year agg CSV loading (2025 + 2026 prefixed CSVs)
+- Game type filtering: exclude spring training ("S") and exhibition ("E") data from pipelines
+- Restructure hardcoded single-year paths into year-aware/multi-year architecture
 
 ### Out of Scope
 
 - Web UI or API — this is a CLI script
-- Historical season-over-season comparisons — single-season 2026 data only
+- Historical season-over-season comparisons — multi-year loading supports 2025+2026, but cross-season trend analysis deferred
 - Batter-side analysis — pitcher-focused reports only
 - Real-time data ingestion — works against static parquet/CSV files
 - Team-level reports — individual pitcher reports only
@@ -72,19 +77,19 @@ The report must read like a scout wrote it — surfacing *changes, adaptations, 
 
 ## Context
 
-### Current State (v1.4 shipped)
+### Current State (v1.5 shipped)
 
 **Modules:** data.py (loading), engine.py (computation), context.py (assembly), report.py (5-phase LLM pipeline + reflection loop + hallucination guard), scout.py (appearance scoring), curator.py (LLM curation), cli.py (narrative CLI), scout_cli.py (scout CLI), resolver.py (fuzzy name resolution), analyst.py (tool-calling Q&A agent), ask_cli.py (Q&A CLI).
 
 **Tech stack:** Python 3.14, polars 1.39, pydantic-ai 1.72, rapidfuzz 3.14, nameparser 1.1, multi-provider (OpenAI gpt-5.4-mini, Claude Sonnet 4.6, Gemini 3.1 Pro).
 
-**Key v1.4 additions:** resolver.py with 5-tier fuzzy matching pipeline (1,651 pitchers, 168 duplicate last-name families), analyst.py with tool-calling pydantic-ai agent (get_pitcher_summary, get_pitch_detail), ask_cli.py composing resolver + analyst into `pitcher-ask` command. 239 tests passing.
+**Key v1.5 additions:** Intermediate probabilities (P/S variants) pipeline in engine.py, component attribution (13-outcome xRV decomposition) in engine.py, updated analyst tools returning model internals, analyst prompt rewritten for model-internals-first reasoning with P/S location diagnosis and sign convention guidance.
 
 ### Data Sources
 
-**Statcast parquet** (`statcast_2026.parquet`): 145K pitch-level rows, 114 columns. Standard Baseball Savant schema.
+**Statcast parquet** (`statcast_2025.parquet`, `statcast_2026.parquet`): Pitch-level rows, 114 columns. Standard Baseball Savant schema. game_type column distinguishes regular season ("R"), spring training ("S"), and exhibition ("E").
 
-**Pitching+ aggregations** (`aggs/`): Pre-computed P+, S+, L+ metrics at 8 grains (season, appearance, pitch type, platoon, and combinations).
+**Pitching+ aggregations** (`aggs/`): Pre-computed P+, S+, L+ metrics at 8 grains (season, appearance, pitch type, platoon, and combinations). Year-prefixed CSV files (e.g., `2025-pitcher.csv`, `2026-pitcher.csv`).
 
 ### Report Philosophy
 
@@ -142,4 +147,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-03-31 after v1.5 milestone started — Model-Explainable Narratives*
+*Last updated: 2026-04-02 after v1.6 milestone started — Multi-Year Data & Game Type Filtering*
