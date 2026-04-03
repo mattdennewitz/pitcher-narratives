@@ -84,7 +84,7 @@
 | 16. Data Foundation | v1.7 | 1/1 | Complete | 2026-04-03 |
 | 17. Multi-Year Loading | v1.7 | 1/1 | Complete | 2026-04-03 |
 | 18. Consumer Module Updates | v1.7 | 2/2 | Complete | 2026-04-03 |
-| 19. Cross-Season Baseline Exposure | v1.8 | 0/0 | Not started | - |
+| 19. Cross-Season Baseline Exposure | v1.8 | 1/1 | Complete | 2026-04-03 |
 | 20. Season-Delta Engine | v1.8 | 0/0 | Not started | - |
 | 21. Arsenal Trend Engine | v1.8 | 0/0 | Not started | - |
 | 22. Context Assembly & Prompt Rendering | v1.8 | 0/0 | Not started | - |
