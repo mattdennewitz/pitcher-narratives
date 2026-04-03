@@ -1,28 +1,31 @@
-# Requirements: Pitcher Narratives v1.5
+# Requirements: Pitcher Narratives v1.7
 
-**Defined:** 2026-03-31
+**Defined:** 2026-04-02
 **Core Value:** The report must read like a scout wrote it -- surfacing changes, adaptations, and execution trends rather than reciting numbers.
 
-## v1.5 Requirements
+## v1.7 Requirements
 
-Requirements for Model-Explainable Narratives milestone. Each maps to roadmap phases.
+Requirements for Multi-Year Data & Game Type Filtering milestone. Each maps to roadmap phases.
 
-### Data Pipeline
+### Data Foundation
 
-- [x] **DATA-01**: Analyst context includes per-pitch-type intermediate probabilities (xSwing, xWhiff, xGOr, xPUr, xHR100, BBE_prob) from pitchingplus aggregations
-- [x] **DATA-02**: Analyst context includes P vs S variants of intermediates so location impact is quantifiable
-- [x] **DATA-03**: xRV is decomposed into 13 outcome-level contributions (probability x run_value per outcome) per pitch type
+- [ ] **DFND-01**: Data pipeline filters to allowed game types (R, F, D, L, W) at load time, excluding spring training and exhibition data
+- [ ] **DFND-02**: Year-specific hardcoded paths (statcast_2026.parquet, 2026-*.csv) replaced with parameterized loading from a _YEARS constant
+- [ ] **DFND-03**: "season" added to _ID_COLS so year values are not weight-averaged as metrics
+- [ ] **DFND-04**: _filter_game_type helper exported as public API for use by consumer modules
 
-### Analyst Intelligence
+### Multi-Year Loading
 
-- [x] **ANLST-01**: Analyst system prompt frames reasoning around model internals (outcome probabilities, component attribution) rather than opaque plus grades
-- [x] **ANLST-02**: Analyst diagnoses location impact by comparing P-variant vs S-variant probabilities (e.g., "swing rate drops 9% with location factored in")
-- [x] **ANLST-03**: Analyst identifies which outcome class is the dominant run-value driver for a given pitch type (e.g., "whiffs contribute 1.4 runs saved per 100")
+- [ ] **MYLD-01**: load_statcast() reads and concatenates parquet files for all configured years
+- [ ] **MYLD-02**: load_agg_csvs() reads and concatenates CSV files for all configured years per grain
+- [ ] **MYLD-03**: Pipeline gracefully handles missing year files (skips without crashing)
+- [ ] **MYLD-04**: Season baselines computed per-season (not cross-season averaged) using the season column
 
-### Tool Interface
+### Consumer Updates
 
-- [x] **TOOL-01**: get_pitcher_summary tool returns intermediate probabilities and P/S comparisons alongside existing plus scores
-- [x] **TOOL-02**: get_pitch_detail tool returns component attribution breakdown (13 outcome contributions to xRV) for a specific pitch type
+- [ ] **CSMR-01**: engine.py direct CSV read eliminated and routed through data.py load_full_agg()
+- [ ] **CSMR-02**: resolver.py builds name table from all available parquet files (not just 2026)
+- [ ] **CSMR-03**: scout.py hardcoded CSV loads and parquet reads replaced with data.py functions
 
 ## Future Requirements
 
@@ -52,14 +55,11 @@ Explicitly excluded. Documented to prevent scope creep.
 
 | Feature | Reason |
 |---------|--------|
-| SHAP/feature-level explanations | Requires adding SHAP computation to pitchingplus pipeline; component attribution answers "why" without it |
-| CatBoost feature importance export | Model debugging tool, not narrative generation |
-| Modifications to pitchingplus package | Read-only consumer; new computation happens in pitcher-narratives |
-| Per-pitch (non-aggregated) model outputs | Aggregated metrics are what narratives need; per-pitch is noise |
-| SQL generation from natural language | Existing engine computes meaningful derived metrics |
-| Fantasy advice in Q&A answers | Speculative and ungrounded -- use full report pipeline |
-| Cross-pitcher comparison | Needs new data scanning layer -- deferred to v1.6+ |
-| Multi-turn conversation | Session state management, different UX paradigm -- deferred to v1.6+ |
+| Auto-discovery of years from filesystem | Explicit _YEARS constant is sufficient for 2 years |
+| Converting agg CSVs to parquet | Valid at 5+ years, not needed at 2 |
+| Cross-season trend analysis | Multi-year loading supports it, but narrative integration deferred |
+| User-visible data freshness indicator | Nice-to-have, not correctness-critical |
+| CLI flag for game type selection | Allowlist is correct for all use cases; no user override needed |
 
 ## Traceability
 
@@ -67,20 +67,13 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| DATA-01 | Phase 11 | Complete |
-| DATA-02 | Phase 11 | Complete |
-| DATA-03 | Phase 12 | Complete |
-| ANLST-01 | Phase 14 | Complete |
-| ANLST-02 | Phase 14 | Complete |
-| ANLST-03 | Phase 14 | Complete |
-| TOOL-01 | Phase 13 | Complete |
-| TOOL-02 | Phase 13 | Complete |
+| (populated by roadmapper) | | |
 
 **Coverage:**
-- v1.5 requirements: 8 total
-- Mapped to phases: 8
-- Unmapped: 0 ✓
+- v1.7 requirements: 11 total
+- Mapped to phases: 0
+- Unmapped: 11
 
 ---
-*Requirements defined: 2026-03-31*
-*Last updated: 2026-03-31 after roadmap creation*
+*Requirements defined: 2026-04-02*
+*Last updated: 2026-04-02 after initial definition*

@@ -53,7 +53,7 @@ The report must read like a scout wrote it — surfacing *changes, adaptations, 
 
 ### Active
 
-## Current Milestone: v1.6 Multi-Year Data & Game Type Filtering
+## Current Milestone: v1.7 Multi-Year Data & Game Type Filtering
 
 **Goal:** Add 2025 season data alongside existing 2026, restructure data loading for multi-year support, and filter out spring training and exhibition games.
 
@@ -147,4 +147,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-04-02 after v1.6 milestone started — Multi-Year Data & Game Type Filtering*
+*Last updated: 2026-04-02 after v1.7 milestone started — Multi-Year Data & Game Type Filtering*

@@ -1,6 +1,6 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.6
+milestone: v1.7
 milestone_name: Multi-Year Data & Game Type Filtering
 status: planning
 stopped_at: null
@@ -20,14 +20,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-02)
 
 **Core value:** Reports must read like a scout wrote them -- surfacing changes, adaptations, and execution trends rather than reciting numbers.
-**Current focus:** Defining requirements for v1.6
+**Current focus:** Defining requirements for v1.7
 
 ## Current Position
 
 Phase: Not started (defining requirements)
 Plan: —
 Status: Defining requirements
-Last activity: 2026-04-02 — Milestone v1.6 started
+Last activity: 2026-04-02 — Milestone v1.7 started
 
 ## Accumulated Context
 
@@ -58,5 +58,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-04-02
-Stopped at: Milestone v1.6 initialization
+Stopped at: Milestone v1.7 initialization
 Resume file: None
