@@ -16,6 +16,8 @@ from pitcher_narratives.data import PitcherData, load_pitcher_data
 from pitcher_narratives.engine import (
     _CSW_DESCRIPTIONS,
     AddedDroppedPitch,
+    AppearancePitchTrendRecord,
+    AppearancePitchTrends,
     AppearanceWorkload,
     ArsenalTrend,
     ComponentAttribution,
@@ -44,6 +46,7 @@ from pitcher_narratives.engine import (
     _stand_to_platoon,
     _usage_delta_string,
     _velo_delta_string,
+    compute_appearance_pitch_trends,
     compute_arsenal_summary,
     compute_arsenal_trends,
     compute_component_attribution,
@@ -1770,3 +1773,306 @@ def test_arsenal_trends_movement_deltas():
     assert abs(sl.prior_pfx_z - 3.0) < 0.01
     assert abs(sl.current_pfx_z - 3.2) < 0.01
     assert "Steady" in sl.pfx_z_delta
+
+
+# ── Appearance Pitch Trends ──────────────────────────────────────────
+
+
+def _make_pitcher_data_for_appearance_trends(
+    pitcher_id: int = 999999,
+    statcast_rows: list[dict] | None = None,
+    pitcher_type_rows: list[dict] | None = None,
+    window_days: int = 30,
+) -> PitcherData:
+    """Build a PitcherData with synthetic data for appearance pitch trend tests.
+
+    Unlike _make_pitcher_data_for_trends, this helper also populates
+    window_appearances from the statcast rows (unique game_date/game_pk
+    combinations filtered to within window_days of the max game_date).
+    """
+    if statcast_rows is None:
+        statcast_rows = []
+    if pitcher_type_rows is None:
+        pitcher_type_rows = []
+
+    statcast = _make_statcast(pitcher_id, statcast_rows)
+
+    # Build appearances from unique game_date/game_pk in statcast
+    if not statcast.is_empty():
+        apps = (
+            statcast.select(["game_date", "game_pk"])
+            .unique()
+            .with_columns(
+                pl.lit("SP").alias("role"),
+                pl.lit(90).alias("n_pitches"),
+            )
+        )
+        # Window: filter to within window_days of max game_date
+        max_date = statcast["game_date"].max()
+        from datetime import timedelta
+
+        cutoff = max_date - timedelta(days=window_days)
+        window_apps = apps.filter(pl.col("game_date") >= cutoff)
+    else:
+        apps = pl.DataFrame(
+            schema={
+                "game_date": pl.Date,
+                "game_pk": pl.Int64,
+                "role": pl.String,
+                "n_pitches": pl.Int64,
+            }
+        )
+        window_apps = apps.clone()
+
+    pitcher_type_df = _make_pitcher_type_agg(pitcher_id, pitcher_type_rows) if pitcher_type_rows else pl.DataFrame()
+
+    return PitcherData(
+        statcast=statcast,
+        appearances=apps,
+        window_appearances=window_apps,
+        season_baseline=pl.DataFrame(),
+        pitch_type_baseline=pl.DataFrame(),
+        prior_season_baseline=pl.DataFrame(),
+        prior_pitch_type_baseline=pl.DataFrame(),
+        agg_csvs={"pitcher_type": pitcher_type_df} if pitcher_type_rows else {},
+        pitcher_id=pitcher_id,
+        pitcher_name="Test Pitcher",
+        throws="R",
+    )
+
+
+def _ff_rows(game_date: date, n: int, velo: float, pfx_x: float, pfx_z: float, game_pk: int = 700000) -> list[dict]:
+    """Generate n rows of FF statcast data for a single appearance."""
+    return [
+        {
+            "game_date": game_date,
+            "game_pk": game_pk,
+            "pitch_type": "FF",
+            "pitch_name": "4-Seam Fastball",
+            "release_speed": velo,
+            "pfx_x": pfx_x,
+            "pfx_z": pfx_z,
+        }
+        for _ in range(n)
+    ]
+
+
+def _sl_rows(game_date: date, n: int, velo: float, pfx_x: float = 0.15, pfx_z: float = 0.02, game_pk: int = 700100) -> list[dict]:
+    """Generate n rows of SL statcast data for a single appearance."""
+    return [
+        {
+            "game_date": game_date,
+            "game_pk": game_pk,
+            "pitch_type": "SL",
+            "pitch_name": "Slider",
+            "release_speed": velo,
+            "pfx_x": pfx_x,
+            "pfx_z": pfx_z,
+        }
+        for _ in range(n)
+    ]
+
+
+def test_appearance_pitch_trends_three_way_comparison():
+    """Multi-appearance data produces correct last_start / window_avg / prior_season values."""
+    # 3 appearances of FF (Apr 1, Apr 8, Apr 15; velo: 93, 94, 96; pfx_x in feet: 0.05, 0.06, 0.08; pfx_z: 0.12, 0.11, 0.13)
+    # Prior season FF: velo 94, pfx_x 0.055, pfx_z 0.115
+    rows = []
+    # Prior season: 2025
+    rows.extend(_ff_rows(date(2025, 7, 1), 15, 94.0, 0.055, 0.115, game_pk=600001))
+    # Current season: 2026
+    rows.extend(_ff_rows(date(2026, 4, 1), 15, 93.0, 0.05, 0.12, game_pk=700001))
+    rows.extend(_ff_rows(date(2026, 4, 8), 15, 94.0, 0.06, 0.11, game_pk=700002))
+    rows.extend(_ff_rows(date(2026, 4, 15), 15, 96.0, 0.08, 0.13, game_pk=700003))
+
+    data = _make_pitcher_data_for_appearance_trends(statcast_rows=rows, window_days=30)
+    result = compute_appearance_pitch_trends(data)
+    assert result is not None
+    assert result.last_game_date == "2026-04-15"
+    assert len(result.records) == 1
+
+    ff = result.records[0]
+    assert ff.pitch_type == "FF"
+    assert ff.n_pitches_last == 15
+
+    # Last start velo = 96.0
+    assert abs(ff.last_start_velo - 96.0) < 0.01
+    # Window avg velo = mean(93, 94, 96) = 94.333...
+    assert abs(ff.window_avg_velo - 94.333) < 0.1
+    # Prior season velo = 94.0
+    assert ff.prior_season_velo is not None
+    assert abs(ff.prior_season_velo - 94.0) < 0.01
+
+    # Movement in INCHES: pfx_x * 12
+    # Last start pfx_x = 0.08 * 12 = 0.96
+    assert abs(ff.last_start_pfx_x - 0.96) < 0.01
+    # Window avg pfx_x = mean(0.05, 0.06, 0.08) * 12 = 0.076 * 12 = 0.76
+    assert abs(ff.window_avg_pfx_x - 0.76) < 0.1
+    # Prior season pfx_x = 0.055 * 12 = 0.66
+    assert ff.prior_season_pfx_x is not None
+    assert abs(ff.prior_season_pfx_x - 0.66) < 0.01
+
+    # Delta strings should be present
+    assert isinstance(ff.last_vs_window_velo, str)
+    assert isinstance(ff.last_vs_prior_velo, str)
+
+
+def test_appearance_pitch_trends_min_pitches_filter():
+    """Pitch type with fewer than _MIN_PITCHES in most recent appearance is excluded."""
+    rows = []
+    # Current season: FF with 15 pitches (above threshold), SL with 5 (below)
+    rows.extend(_ff_rows(date(2026, 4, 15), 15, 94.0, 0.05, 0.12, game_pk=700001))
+    rows.extend(_sl_rows(date(2026, 4, 15), 5, 84.0, game_pk=700001))
+
+    data = _make_pitcher_data_for_appearance_trends(statcast_rows=rows, window_days=30)
+    result = compute_appearance_pitch_trends(data)
+    assert result is not None
+    # Only FF should be in records (SL excluded due to < 10 pitches in last start)
+    pitch_types = [r.pitch_type for r in result.records]
+    assert "FF" in pitch_types
+    assert "SL" not in pitch_types
+
+
+def test_appearance_pitch_trends_single_season():
+    """Single-season pitcher has prior_season fields as None and prior deltas as '--'."""
+    rows = _ff_rows(date(2026, 4, 1), 15, 93.0, 0.05, 0.12, game_pk=700001)
+    rows.extend(_ff_rows(date(2026, 4, 8), 15, 95.0, 0.06, 0.13, game_pk=700002))
+
+    data = _make_pitcher_data_for_appearance_trends(statcast_rows=rows, window_days=30)
+    result = compute_appearance_pitch_trends(data)
+    assert result is not None
+
+    ff = result.records[0]
+    assert ff.prior_season_velo is None
+    assert ff.prior_season_pfx_x is None
+    assert ff.prior_season_pfx_z is None
+    assert ff.last_vs_prior_velo == "--"
+    assert ff.last_vs_prior_pfx_x == "--"
+    assert ff.last_vs_prior_pfx_z == "--"
+
+
+def test_appearance_pitch_trends_empty_statcast():
+    """Returns None when statcast is empty."""
+    data = _make_pitcher_data_for_appearance_trends(statcast_rows=[])
+    result = compute_appearance_pitch_trends(data)
+    assert result is None
+
+
+def test_appearance_pitch_trends_no_window_appearances():
+    """Returns None when window has no appearances."""
+    data = _make_pitcher_data_for_appearance_trends(statcast_rows=[])
+    # Force empty window_appearances
+    data.window_appearances = pl.DataFrame(
+        schema={"game_date": pl.Date, "game_pk": pl.Int64, "role": pl.String, "n_pitches": pl.Int64}
+    )
+    result = compute_appearance_pitch_trends(data)
+    assert result is None
+
+
+def test_appearance_pitch_trends_multiple_pitch_types_sorted():
+    """Multiple pitch types each get their own record, sorted by total pitch count desc."""
+    rows = []
+    # FF: 20 pitches in last start, SL: 15 pitches
+    rows.extend(_ff_rows(date(2026, 4, 15), 20, 94.0, 0.05, 0.12, game_pk=700001))
+    rows.extend(_sl_rows(date(2026, 4, 15), 15, 84.0, game_pk=700001))
+
+    data = _make_pitcher_data_for_appearance_trends(statcast_rows=rows, window_days=30)
+    result = compute_appearance_pitch_trends(data)
+    assert result is not None
+    assert len(result.records) == 2
+    # FF (20 pitches) should come before SL (15 pitches)
+    assert result.records[0].pitch_type == "FF"
+    assert result.records[1].pitch_type == "SL"
+    assert result.records[0].n_pitches_last >= result.records[1].n_pitches_last
+
+
+def test_appearance_pitch_trends_pattern_labels():
+    """Pattern labels correctly classify one-off, sustained change, something new, steady."""
+    # Steady: last ~ window ~ prior (all similar)
+    # We need multiple appearances to get a window_avg
+    rows = []
+    # Prior season: velo 94
+    rows.extend(_ff_rows(date(2025, 7, 1), 15, 94.0, 0.05, 0.12, game_pk=600001))
+    # Current season window: velo 94.2, 94.1 => window avg ~ 94.15
+    rows.extend(_ff_rows(date(2026, 4, 1), 15, 94.2, 0.05, 0.12, game_pk=700001))
+    # Last start: velo 94.1 (close to both window and prior)
+    rows.extend(_ff_rows(date(2026, 4, 8), 15, 94.1, 0.05, 0.12, game_pk=700002))
+
+    data = _make_pitcher_data_for_appearance_trends(statcast_rows=rows, window_days=30)
+    result = compute_appearance_pitch_trends(data)
+    assert result is not None
+    ff = result.records[0]
+    assert ff.pattern_label == "steady"
+
+    # One-off: last != window_avg but last ~ prior
+    rows2 = []
+    rows2.extend(_ff_rows(date(2025, 7, 1), 15, 94.0, 0.05, 0.12, game_pk=600001))
+    # Window: velo 94.0 (matches prior)
+    rows2.extend(_ff_rows(date(2026, 4, 1), 15, 94.0, 0.05, 0.12, game_pk=700001))
+    # Last start: velo 96.0 (different from window avg, but this is a blip)
+    # However the label is about last vs window AND last vs prior
+    # one-off: abs(last - window) >= threshold AND abs(last - prior) < threshold
+    # Here: last=96, window_avg=mean(94,96)=95, prior=94
+    # last-window = 96-95 = 1.0 >= 0.5 (yes)
+    # last-prior = 96-94 = 2.0 >= 0.5 (no, that's "something new")
+    # So let's adjust: prior=95.8 => last-prior = 0.2 < 0.5
+    rows2 = []
+    rows2.extend(_ff_rows(date(2025, 7, 1), 15, 95.8, 0.05, 0.12, game_pk=600001))
+    rows2.extend(_ff_rows(date(2026, 4, 1), 15, 94.0, 0.05, 0.12, game_pk=700001))
+    rows2.extend(_ff_rows(date(2026, 4, 8), 15, 96.0, 0.05, 0.12, game_pk=700002))
+    # window_avg = mean(94, 96) = 95.0, last=96, prior=95.8
+    # last-window = 1.0 >= 0.5, last-prior = 0.2 < 0.5 => one-off
+    data2 = _make_pitcher_data_for_appearance_trends(statcast_rows=rows2, window_days=30)
+    result2 = compute_appearance_pitch_trends(data2)
+    assert result2 is not None
+    ff2 = result2.records[0]
+    assert ff2.pattern_label == "one-off"
+
+    # Sustained change: last ~ window_avg but both != prior
+    rows3 = []
+    rows3.extend(_ff_rows(date(2025, 7, 1), 15, 92.0, 0.05, 0.12, game_pk=600001))
+    rows3.extend(_ff_rows(date(2026, 4, 1), 15, 94.0, 0.05, 0.12, game_pk=700001))
+    rows3.extend(_ff_rows(date(2026, 4, 8), 15, 94.2, 0.05, 0.12, game_pk=700002))
+    # window_avg = mean(94.0, 94.2) = 94.1, last=94.2, prior=92.0
+    # last-window = 0.1 < 0.5, last-prior = 2.2 >= 0.5 => sustained change
+    data3 = _make_pitcher_data_for_appearance_trends(statcast_rows=rows3, window_days=30)
+    result3 = compute_appearance_pitch_trends(data3)
+    assert result3 is not None
+    ff3 = result3.records[0]
+    assert ff3.pattern_label == "sustained change"
+
+    # Something new: last != window_avg AND last != prior
+    rows4 = []
+    rows4.extend(_ff_rows(date(2025, 7, 1), 15, 92.0, 0.05, 0.12, game_pk=600001))
+    rows4.extend(_ff_rows(date(2026, 4, 1), 15, 93.0, 0.05, 0.12, game_pk=700001))
+    rows4.extend(_ff_rows(date(2026, 4, 8), 15, 96.0, 0.05, 0.12, game_pk=700002))
+    # window_avg = mean(93.0, 96.0) = 94.5, last=96.0, prior=92.0
+    # last-window = 1.5 >= 0.5, last-prior = 4.0 >= 0.5 => something new
+    data4 = _make_pitcher_data_for_appearance_trends(statcast_rows=rows4, window_days=30)
+    result4 = compute_appearance_pitch_trends(data4)
+    assert result4 is not None
+    ff4 = result4.records[0]
+    assert ff4.pattern_label == "something new"
+
+
+def test_appearance_pitch_trends_no_prior_pattern():
+    """Single-season: can only be 'steady' or 'one-off'."""
+    # Steady case
+    rows_steady = []
+    rows_steady.extend(_ff_rows(date(2026, 4, 1), 15, 94.0, 0.05, 0.12, game_pk=700001))
+    rows_steady.extend(_ff_rows(date(2026, 4, 8), 15, 94.2, 0.05, 0.12, game_pk=700002))
+    data_s = _make_pitcher_data_for_appearance_trends(statcast_rows=rows_steady, window_days=30)
+    result_s = compute_appearance_pitch_trends(data_s)
+    assert result_s is not None
+    assert result_s.records[0].pattern_label == "steady"
+
+    # One-off case (no prior => can never be sustained or something-new)
+    rows_oneoff = []
+    rows_oneoff.extend(_ff_rows(date(2026, 4, 1), 15, 93.0, 0.05, 0.12, game_pk=700001))
+    rows_oneoff.extend(_ff_rows(date(2026, 4, 8), 15, 96.0, 0.05, 0.12, game_pk=700002))
+    # window_avg = mean(93, 96) = 94.5, last=96.0
+    # last-window = 1.5 >= 0.5, no prior => one-off
+    data_o = _make_pitcher_data_for_appearance_trends(statcast_rows=rows_oneoff, window_days=30)
+    result_o = compute_appearance_pitch_trends(data_o)
+    assert result_o is not None
+    assert result_o.records[0].pattern_label == "one-off"
