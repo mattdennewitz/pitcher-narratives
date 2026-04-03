@@ -3,7 +3,9 @@ import pytest
 
 from pitcher_narratives.data import (
     _ALLOWED_GAME_TYPES,
+    _APPEARANCE_GRAINS,
     _ID_COLS,
+    _SEASON_GRAINS,
     _YEARS,
     classify_appearances,
     compute_pitch_type_baseline,
@@ -214,11 +216,11 @@ def test_no_hardcoded_year_in_csv_dicts():
 
 
 def test_years_constant_drives_paths():
-    """DFND-02: _YEARS constant exists and drives path generation."""
+    """DFND-02/MYLD-01: _YEARS includes both years and drives path generation."""
     from pitcher_narratives.data import PARQUET_PATH, _YEARS
 
     assert isinstance(_YEARS, list)
-    assert 2026 in _YEARS
+    assert _YEARS == [2025, 2026]
     assert str(PARQUET_PATH).endswith(f"statcast_{_YEARS[-1]}.parquet")
 
 
@@ -227,3 +229,92 @@ def test_season_in_id_cols():
     from pitcher_narratives.data import _ID_COLS
 
     assert "season" in _ID_COLS
+
+
+def test_load_statcast_multi_year(tmp_path, monkeypatch):
+    """MYLD-01: load_statcast reads and concatenates parquet files for all years."""
+    # Create minimal parquets for 2025 and 2026
+    cols = {
+        "pitcher": [12345, 12345, 12345],
+        "player_name": ["Test Pitcher", "Test Pitcher", "Test Pitcher"],
+        "p_throws": ["R", "R", "R"],
+        "game_type": ["R", "R", "R"],
+        "game_year": [2025, 2025, 2025],
+        "inning": [1, 1, 2],
+    }
+    df_2025 = pl.DataFrame(cols)
+    df_2026 = pl.DataFrame({**cols, "game_year": [2026, 2026, 2026]})
+
+    df_2025.write_parquet(tmp_path / "statcast_2025.parquet")
+    df_2026.write_parquet(tmp_path / "statcast_2026.parquet")
+
+    import pitcher_narratives.data as data_mod
+
+    monkeypatch.setattr(data_mod, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(data_mod, "AGGS_DIR", tmp_path / "aggs")
+    monkeypatch.setattr(data_mod, "_YEARS", [2025, 2026])
+
+    result = load_statcast(12345)
+    assert set(result["game_year"].unique().to_list()) == {2025, 2026}
+    assert len(result) == 6
+
+
+def test_load_statcast_missing_year_skipped():
+    """MYLD-03: load_statcast skips missing year files without crashing."""
+    # With _YEARS=[2025, 2026] and no statcast_2025.parquet on disk,
+    # load_statcast should succeed with only 2026 data.
+    result = load_statcast(TEST_PITCHER)
+    assert not result.is_empty()
+    assert set(result["game_year"].unique().to_list()) == {2026}
+
+
+def test_load_agg_csvs_multi_year(tmp_path, monkeypatch):
+    """MYLD-02: load_agg_csvs reads and concatenates CSV files for all years per grain."""
+    aggs_dir = tmp_path / "aggs"
+    aggs_dir.mkdir()
+
+    for year in [2025, 2026]:
+        for grain in [*_SEASON_GRAINS, *_APPEARANCE_GRAINS]:
+            base_cols = {
+                "season": [year],
+                "game_type": ["R"],
+                "player_name": ["Test Pitcher"],
+                "p_throws": ["R"],
+                "team_code": ["NYY"],
+                "n_pitches": [100],
+                "stuff_plus": [100.0 + (year - 2025) * 10],
+            }
+            if grain != "team":
+                base_cols["pitcher"] = [12345]
+            if "type" in grain:
+                base_cols["pitch_type"] = ["FF"]
+            if "platoon" in grain:
+                base_cols["platoon"] = ["vs_R"]
+            if "appearance" in grain:
+                base_cols["game_date"] = [f"{year}-06-01"]
+                base_cols["game_pk"] = [100000 + year]
+            if grain == "all_pitches":
+                base_cols["game_date"] = [f"{year}-06-01"]
+                base_cols["game_pk"] = [100000 + year]
+
+            df = pl.DataFrame(base_cols)
+            df.write_csv(aggs_dir / f"{year}-{grain}.csv")
+
+    import pitcher_narratives.data as data_mod
+
+    monkeypatch.setattr(data_mod, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(data_mod, "AGGS_DIR", aggs_dir)
+    monkeypatch.setattr(data_mod, "_YEARS", [2025, 2026])
+
+    result = load_agg_csvs(12345)
+    # Pitcher grain should have data from both years
+    assert set(result["pitcher"]["season"].unique().to_list()) == {2025, 2026}
+
+
+def test_load_agg_csvs_missing_year_skipped():
+    """MYLD-03: load_agg_csvs skips missing year CSV files without crashing."""
+    # With _YEARS=[2025, 2026] and no 2025 CSVs on disk,
+    # load_agg_csvs should succeed with only 2026 data.
+    result = load_agg_csvs(TEST_PITCHER)
+    assert not result["pitcher"].is_empty()
+    assert set(result["pitcher"]["season"].unique().to_list()) == {2026}
