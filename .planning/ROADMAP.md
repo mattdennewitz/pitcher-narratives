@@ -21,7 +21,9 @@
   3. The `season` column is treated as an identity column (not weight-averaged as a metric) so multi-year data does not produce nonsense values like "2025.375"
   4. A public `filter_game_type()` function is exported from data.py for use by consumer modules that load data independently
   5. All existing tests pass after assertions are updated for filtered (regular-season-only) values
-**Plans**: TBD
+**Plans:** 1 plan
+Plans:
+- [ ] 16-01-PLAN.md -- Game type filtering, year parameterization, and test fixture updates
 
 ### Phase 17: Multi-Year Loading
 **Goal**: The data pipeline loads and concatenates parquet and CSV files across all configured years, with per-season baselines that prevent cross-season averaging artifacts
@@ -68,7 +70,7 @@ Phases execute in numeric order: 16 -> 17 -> 18
 | 13. Tool Interface Updates | v1.5 | 1/1 | Complete | 2026-03-31 |
 | 14. Analyst Prompt Rewrite | v1.5 | 1/1 | Complete | 2026-03-31 |
 | 15. Specialist-Writer Architecture | v1.6 | prototyped | Complete | 2026-04-03 |
-| 16. Data Foundation | v1.7 | 0/0 | Not started | -- |
+| 16. Data Foundation | v1.7 | 0/1 | In progress | -- |
 | 17. Multi-Year Loading | v1.7 | 0/0 | Not started | -- |
 | 18. Consumer Module Updates | v1.7 | 0/0 | Not started | -- |
 
