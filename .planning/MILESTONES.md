@@ -1,5 +1,19 @@
 # Milestones
 
+## v1.6 Multi-Agent Pipeline (Shipped: 2026-04-03)
+
+**Phases completed:** 1 phase (prototyped), 23 commits, 8 architecture refactors
+
+**Key accomplishments:**
+
+- Multi-agent specialist pipeline: 5 parallel micro-agents (stuff, location, run value, trends, game shape) each producing focused analysis with league baselines injected for grounding
+- Per-specialist audit loop: independent data auditor verifies each specialist's output against raw data before the writer sees it
+- Anti-hallucination guardrails: NORMAL/OUTLIER tags on every metric, directional consistency enforcement, temperature splitting (specialists=0.3, writer=0.7, auditor=0.1)
+- Architecture cleanup (PLUS-1 through PLUS-15): extracted config.py, anchor.py; promoted private APIs to public; consolidated duplicated baseline logic; eliminated 20+ encapsulation violations
+- Pipeline Q&A integration: specialist pipeline available via `pitcher-ask --pipeline` with audit flags and stuff summary in output
+
+---
+
 ## v1.4 Interactive Pitcher Q&A (Shipped: 2026-03-30)
 
 **Phases completed:** 10 phases, 15 plans, 21 tasks
