@@ -20,9 +20,9 @@
   2. `load_agg_csvs()` reads year-prefixed CSV files for all configured years and returns concatenated DataFrames per grain
   3. When a year's files are missing (e.g., 2025 parquet does not exist), the pipeline skips that year without crashing and loads available years
   4. Season baselines are computed per-season -- a pitcher who threw 95 mph in 2025 and 97 mph in 2026 has a 2026 baseline of 97, not 96
-**Plans:** 1 plan
+**Plans:** 1/1 plans complete
 Plans:
-- [ ] 17-01-PLAN.md -- Multi-year parquet/CSV loading with missing-file handling and per-season baselines
+- [x] 17-01-PLAN.md -- Multi-year parquet/CSV loading with missing-file handling and per-season baselines
 
 ### Phase 18: Consumer Module Updates
 **Goal**: All modules that bypass data.py to read CSV or parquet files directly are refactored to use data.py's loading functions, ensuring game type filtering and multi-year support are applied consistently everywhere
@@ -58,7 +58,7 @@ Phases execute in numeric order: 16 -> 17 -> 18
 | 14. Analyst Prompt Rewrite | v1.5 | 1/1 | Complete | 2026-03-31 |
 | 15. Specialist-Writer Architecture | v1.6 | prototyped | Complete | 2026-04-03 |
 | 16. Data Foundation | v1.7 | 1/1 | Complete    | 2026-04-03 |
-| 17. Multi-Year Loading | v1.7 | 0/1 | Planned | -- |
+| 17. Multi-Year Loading | v1.7 | 1/1 | Complete   | 2026-04-03 |
 | 18. Consumer Module Updates | v1.7 | 0/0 | Not started | -- |
 
 ---

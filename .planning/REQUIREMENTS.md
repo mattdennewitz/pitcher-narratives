@@ -16,10 +16,10 @@ Requirements for Multi-Year Data & Game Type Filtering milestone. Each maps to r
 
 ### Multi-Year Loading
 
-- [ ] **MYLD-01**: load_statcast() reads and concatenates parquet files for all configured years
-- [ ] **MYLD-02**: load_agg_csvs() reads and concatenates CSV files for all configured years per grain
-- [ ] **MYLD-03**: Pipeline gracefully handles missing year files (skips without crashing)
-- [ ] **MYLD-04**: Season baselines computed per-season (not cross-season averaged) using the season column
+- [x] **MYLD-01**: load_statcast() reads and concatenates parquet files for all configured years
+- [x] **MYLD-02**: load_agg_csvs() reads and concatenates CSV files for all configured years per grain
+- [x] **MYLD-03**: Pipeline gracefully handles missing year files (skips without crashing)
+- [x] **MYLD-04**: Season baselines computed per-season (not cross-season averaged) using the season column
 
 ### Consumer Updates
 
@@ -71,10 +71,10 @@ Which phases cover which requirements. Updated during roadmap creation.
 | DFND-02 | Phase 16 | Pending |
 | DFND-03 | Phase 16 | Pending |
 | DFND-04 | Phase 16 | Pending |
-| MYLD-01 | Phase 17 | Pending |
-| MYLD-02 | Phase 17 | Pending |
-| MYLD-03 | Phase 17 | Pending |
-| MYLD-04 | Phase 17 | Pending |
+| MYLD-01 | Phase 17 | Complete |
+| MYLD-02 | Phase 17 | Complete |
+| MYLD-03 | Phase 17 | Complete |
+| MYLD-04 | Phase 17 | Complete |
 | CSMR-01 | Phase 18 | Pending |
 | CSMR-02 | Phase 18 | Pending |
 | CSMR-03 | Phase 18 | Pending |
