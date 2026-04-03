@@ -47,8 +47,15 @@ None.
 - pitchingplus model internals at ~/src/pitchingplus/packages/plus -- external dependency, changes there affect this project's data pipeline
 - Only 2 years of data exist (2025 parquet may not exist on all machines) -- tests must use synthetic multi-year data
 
+### Quick Tasks Completed
+
+| # | Description | Date | Commit | Directory |
+|---|-------------|------|--------|-----------|
+| 260403-cr4 | Add per-pitch-type movement and velocity deltas to YoY arsenal trends | 2026-04-03 | 3d714bc | [260403-cr4-add-per-pitch-type-movement-and-velocity](./quick/260403-cr4-add-per-pitch-type-movement-and-velocity/) |
+
 ## Session Continuity
 
-Last session: 2026-04-02
-Stopped at: Roadmap created for v1.8
+Last session: 2026-04-03
+Last activity: 2026-04-03 - Completed quick task 260403-cr4: Add per-pitch-type movement deltas to YoY
+Stopped at: v1.8 milestone complete + quick task for movement deltas
 Resume file: None
