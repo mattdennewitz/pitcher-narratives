@@ -39,7 +39,9 @@
   1. Engine produces a cross-season summary dataclass with YoY deltas for velocity, P+, S+, L+ at the pitcher level
   2. Delta strings use the same qualitative language as within-season deltas ("Up sharply", "Down modestly", "Steady") so the LLM prompt stays consistent
   3. When prior-season data is missing, the cross-season summary is None (not empty strings or zeroes)
-**Plans**: TBD
+**Plans:** 1 plan
+Plans:
+- [ ] 20-01-PLAN.md -- CrossSeasonSummary dataclass + compute_cross_season_summary with tests
 
 ### Phase 21: Arsenal Trend Engine
 **Goal**: Users see which pitches a pitcher added, dropped, or significantly changed year-over-year
@@ -85,7 +87,7 @@
 | 17. Multi-Year Loading | v1.7 | 1/1 | Complete | 2026-04-03 |
 | 18. Consumer Module Updates | v1.7 | 2/2 | Complete | 2026-04-03 |
 | 19. Cross-Season Baseline Exposure | v1.8 | 1/1 | Complete    | 2026-04-03 |
-| 20. Season-Delta Engine | v1.8 | 0/0 | Not started | - |
+| 20. Season-Delta Engine | v1.8 | 0/1 | Planned | - |
 | 21. Arsenal Trend Engine | v1.8 | 0/0 | Not started | - |
 | 22. Context Assembly & Prompt Rendering | v1.8 | 0/0 | Not started | - |
 
