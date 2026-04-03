@@ -89,8 +89,8 @@ def test_season_baseline_weighted():
     """DATA-03: Season baseline uses n_pitches-weighted averaging."""
     csvs = load_agg_csvs(TEST_PITCHER)
     baseline = compute_season_baseline(csvs["pitcher"])
-    # Single-season pitcher (only 2026 data after MYLD-03 skip) -> 1 row
-    assert len(baseline) == 1
+    # Per-season grouping: one row per season with data for this pitcher
+    assert len(baseline) >= 1
     assert "n_pitches" in baseline.columns
     assert baseline["n_pitches"][0] > 0
 
@@ -262,13 +262,18 @@ def test_load_statcast_multi_year(tmp_path, monkeypatch):
     assert len(result) == 6
 
 
-def test_load_statcast_missing_year_skipped():
+def test_load_statcast_missing_year_skipped(monkeypatch):
     """MYLD-03: load_statcast skips missing year files without crashing."""
-    # With _YEARS=[2025, 2026] and no statcast_2025.parquet on disk,
-    # load_statcast should succeed with only 2026 data.
+    import pitcher_narratives.data as data_mod
+
+    # Add a year that doesn't have a parquet file on disk
+    monkeypatch.setattr(data_mod, "_YEARS", [2024, 2025, 2026])
     result = load_statcast(TEST_PITCHER)
     assert not result.is_empty()
-    assert set(result["game_year"].unique().to_list()) == {2026}
+    # 2024 parquet doesn't exist, should be skipped gracefully
+    years = set(result["game_year"].unique().to_list())
+    assert 2024 not in years
+    assert years <= {2025, 2026}
 
 
 def test_load_agg_csvs_multi_year(tmp_path, monkeypatch):
@@ -314,13 +319,18 @@ def test_load_agg_csvs_multi_year(tmp_path, monkeypatch):
     assert set(result["pitcher"]["season"].unique().to_list()) == {2025, 2026}
 
 
-def test_load_agg_csvs_missing_year_skipped():
+def test_load_agg_csvs_missing_year_skipped(monkeypatch):
     """MYLD-03: load_agg_csvs skips missing year CSV files without crashing."""
-    # With _YEARS=[2025, 2026] and no 2025 CSVs on disk,
-    # load_agg_csvs should succeed with only 2026 data.
+    import pitcher_narratives.data as data_mod
+
+    # Add a year that doesn't have CSV files on disk
+    monkeypatch.setattr(data_mod, "_YEARS", [2024, 2025, 2026])
     result = load_agg_csvs(TEST_PITCHER)
     assert not result["pitcher"].is_empty()
-    assert set(result["pitcher"]["season"].unique().to_list()) == {2026}
+    # 2024 CSVs don't exist, should be skipped gracefully
+    seasons = set(result["pitcher"]["season"].unique().to_list())
+    assert 2024 not in seasons
+    assert seasons <= {2025, 2026}
 
 
 def test_season_baseline_per_season():

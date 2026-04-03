@@ -240,17 +240,19 @@ def _compute_velo_baselines() -> pl.DataFrame:
     if df.is_empty():
         return pl.DataFrame(schema={"pitcher": pl.Int64, "season_velo": pl.Float64})
     fastballs = df.filter(pl.col("pitch_type").is_in(["FF", "SI", "FC"]))
+    fastballs = fastballs.with_columns(pl.col("game_date").dt.year().alias("_year"))
 
-    season = fastballs.group_by("pitcher").agg(
+    season = fastballs.group_by(["pitcher", "_year"]).agg(
         pl.col("release_speed").mean().alias("season_velo"),
     )
 
     game = fastballs.group_by(["pitcher", "game_pk"]).agg(
         pl.col("release_speed").mean().alias("game_velo"),
         pl.col("game_date").first(),
+        pl.col("_year").first(),
     )
 
-    return game.join(season, on="pitcher")
+    return game.join(season, on=["pitcher", "_year"]).drop("_year")
 
 
 def _find_consecutive_day_pitchers(app_df: pl.DataFrame) -> dict[int, int]:

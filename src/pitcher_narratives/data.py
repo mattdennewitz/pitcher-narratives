@@ -17,7 +17,6 @@ import polars as pl
 
 __all__ = [
     "AGGS_DIR",
-    "PARQUET_PATH",
     "RV_DF_PATH",
     "PitcherData",
     "classify_appearances",
@@ -155,7 +154,7 @@ def load_statcast(pitcher_id: int) -> pl.DataFrame:
             frames.append(filtered)
     if not frames:
         raise ValueError(f"Pitcher {pitcher_id} not found")
-    return pl.concat(frames)
+    return pl.concat(frames, how="diagonal_relaxed")
 
 
 def load_run_values() -> pl.DataFrame:
@@ -163,8 +162,11 @@ def load_run_values() -> pl.DataFrame:
 
     Returns:
         DataFrame with columns: balls, strikes, model_classes, delta_run_exp.
-        156 rows: 12 counts x 13 outcomes.
+        156 rows: 12 counts x 13 outcomes. Returns empty DataFrame if
+        the file is missing.
     """
+    if not RV_DF_PATH.exists():
+        return pl.DataFrame()
     return pl.read_csv(RV_DF_PATH)
 
 
@@ -194,7 +196,7 @@ def load_agg_csvs(pitcher_id: int) -> dict[str, pl.DataFrame]:
             pid = None if grain == "team" else pitcher_id
             frames.append(load_csv(filename, pid))
         if frames:
-            result[grain] = pl.concat(frames)
+            result[grain] = pl.concat(frames, how="diagonal_relaxed")
         else:
             result[grain] = pl.DataFrame()
     return result
@@ -226,16 +228,21 @@ def load_all_statcast(columns: list[str] | None = None) -> pl.DataFrame:
         path = DATA_DIR / f"statcast_{year}.parquet"
         if not path.exists():
             continue
-        if columns is not None:
-            df = pl.read_parquet(path, columns=columns)
+        read_cols = columns
+        if read_cols is not None and "game_type" not in read_cols:
+            read_cols = [*read_cols, "game_type"]
+        if read_cols is not None:
+            df = pl.read_parquet(path, columns=read_cols)
         else:
             df = pl.read_parquet(path)
         df = filter_game_type(df)
+        if columns is not None and "game_type" not in columns:
+            df = df.drop("game_type")
         if not df.is_empty():
             frames.append(df)
     if not frames:
         return pl.DataFrame()
-    return pl.concat(frames)
+    return pl.concat(frames, how="diagonal_relaxed")
 
 
 def load_full_agg(grain: str) -> pl.DataFrame:
@@ -268,7 +275,7 @@ def load_full_agg(grain: str) -> pl.DataFrame:
             frames.append(df)
     if not frames:
         return pl.DataFrame()
-    return pl.concat(frames)
+    return pl.concat(frames, how="diagonal_relaxed")
 
 
 def classify_appearances(statcast: pl.DataFrame) -> pl.DataFrame:
@@ -406,8 +413,21 @@ def load_pitcher_data(pitcher_id: int, window_days: int = 30) -> PitcherData:
     agg_csvs = load_agg_csvs(pitcher_id)
     appearances = classify_appearances(statcast)
     window_appearances = filter_to_window(appearances, window_days)
-    season_baseline = compute_season_baseline(agg_csvs["pitcher"])
-    pitch_type_baseline = compute_pitch_type_baseline(agg_csvs["pitcher_type"])
+    season_baseline_all = compute_season_baseline(agg_csvs["pitcher"])
+    pitch_type_baseline_all = compute_pitch_type_baseline(agg_csvs["pitcher_type"])
+
+    # Filter baselines to most recent season for engine consumption
+    if "season" in season_baseline_all.columns and not season_baseline_all.is_empty():
+        max_season = season_baseline_all["season"].max()
+        season_baseline = season_baseline_all.filter(pl.col("season") == max_season)
+    else:
+        season_baseline = season_baseline_all
+
+    if "season" in pitch_type_baseline_all.columns and not pitch_type_baseline_all.is_empty():
+        max_season = pitch_type_baseline_all["season"].max()
+        pitch_type_baseline = pitch_type_baseline_all.filter(pl.col("season") == max_season)
+    else:
+        pitch_type_baseline = pitch_type_baseline_all
     pitcher_name = str(statcast["player_name"][0])
     throws = str(statcast["p_throws"][0])
 

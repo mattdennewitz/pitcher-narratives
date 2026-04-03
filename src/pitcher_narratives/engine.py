@@ -2544,6 +2544,8 @@ def compute_component_attribution(
 
     # Load run values lookup table
     rv_df = load_run_values()
+    if rv_df.is_empty():
+        return []
 
     # Filter to specific appearance if requested
     if game_pk is not None:
