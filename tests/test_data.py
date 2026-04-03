@@ -16,7 +16,8 @@ from pitcher_narratives.data import (
     load_statcast,
 )
 
-TEST_PITCHER = 592155  # Booser, Cam -- 12 appearances, 1 SP + 11 RP
+TEST_PITCHER = 592155  # Booser, Cam -- 1 regular-season RP appearance
+SWINGMAN_PITCHER = 676571  # Poulin, PJ -- 4 R-game appearances: 1 SP + 3 RP
 
 
 def test_load_statcast_filters_by_pitcher():
@@ -123,9 +124,10 @@ def test_window_filter():
 
 def test_classify_starter():
     """ROLE-01: Appearance with first_inning==1 gets role 'SP'."""
-    df = load_statcast(TEST_PITCHER)
+    df = load_statcast(SWINGMAN_PITCHER)
     appearances = classify_appearances(df)
     starters = appearances.filter(pl.col("role") == "SP")
+    assert len(starters) > 0, "Need at least one SP appearance"
     assert (starters["first_inning"] == 1).all()
 
 
@@ -146,10 +148,10 @@ def test_role_column_exists():
 
 def test_swingman_classification():
     """ROLE-03: Pitcher with both SP and RP appearances gets both roles."""
-    df = load_statcast(TEST_PITCHER)
+    df = load_statcast(SWINGMAN_PITCHER)
     appearances = classify_appearances(df)
     roles = appearances["role"].unique().sort().to_list()
-    # Booser has 1 start and 11 relief appearances
+    # Poulin has 1 start and 3 relief appearances in regular season
     assert roles == ["RP", "SP"]
 
 
