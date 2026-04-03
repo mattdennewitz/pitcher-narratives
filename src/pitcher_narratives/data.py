@@ -427,18 +427,25 @@ def load_pitcher_data(pitcher_id: int, window_days: int = 30) -> PitcherData:
     season_baseline_all = compute_season_baseline(agg_csvs["pitcher"])
     pitch_type_baseline_all = compute_pitch_type_baseline(agg_csvs["pitcher_type"])
 
-    # Filter baselines to most recent season for engine consumption
+    # Split baselines into current (max) season and prior season
     if "season" in season_baseline_all.columns and not season_baseline_all.is_empty():
         max_season = season_baseline_all["season"].max()
         season_baseline = season_baseline_all.filter(pl.col("season") == max_season)
+        prior_season_baseline = season_baseline_all.filter(pl.col("season") < max_season)
     else:
         season_baseline = season_baseline_all
+        prior_season_baseline = season_baseline_all.clear()
 
     if "season" in pitch_type_baseline_all.columns and not pitch_type_baseline_all.is_empty():
-        max_season = pitch_type_baseline_all["season"].max()
-        pitch_type_baseline = pitch_type_baseline_all.filter(pl.col("season") == max_season)
+        max_season_pt = pitch_type_baseline_all["season"].max()
+        pitch_type_baseline = pitch_type_baseline_all.filter(pl.col("season") == max_season_pt)
+        prior_pitch_type_baseline = pitch_type_baseline_all.filter(
+            pl.col("season") < max_season_pt
+        )
     else:
         pitch_type_baseline = pitch_type_baseline_all
+        prior_pitch_type_baseline = pitch_type_baseline_all.clear()
+
     pitcher_name = str(statcast["player_name"][0])
     throws = str(statcast["p_throws"][0])
 
@@ -448,6 +455,8 @@ def load_pitcher_data(pitcher_id: int, window_days: int = 30) -> PitcherData:
         window_appearances=window_appearances,
         season_baseline=season_baseline,
         pitch_type_baseline=pitch_type_baseline,
+        prior_season_baseline=prior_season_baseline,
+        prior_pitch_type_baseline=prior_pitch_type_baseline,
         agg_csvs=agg_csvs,
         pitcher_id=pitcher_id,
         pitcher_name=pitcher_name,
