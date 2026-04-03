@@ -15,9 +15,9 @@ Requirements for Cross-Season Trend Analysis milestone. Each maps to roadmap pha
 
 ### Season Deltas
 
-- [ ] **SDLT-01**: Engine computes year-over-year deltas for pitcher-level metrics (velocity, P+, S+, L+) comparing current season baseline to prior season baseline
-- [ ] **SDLT-02**: YoY delta strings use the same qualitative thresholds and language as within-season deltas (Steady / Up modestly / Down sharply / etc.)
-- [ ] **SDLT-03**: Cross-season summary is None when prior-season data is missing (no fabricated comparisons)
+- [x] **SDLT-01**: Engine computes year-over-year deltas for pitcher-level metrics (velocity, P+, S+, L+) comparing current season baseline to prior season baseline
+- [x] **SDLT-02**: YoY delta strings use the same qualitative thresholds and language as within-season deltas (Steady / Up modestly / Down sharply / etc.)
+- [x] **SDLT-03**: Cross-season summary is None when prior-season data is missing (no fabricated comparisons)
 
 ### Arsenal Trends
 
@@ -74,9 +74,9 @@ Which phases cover which requirements. Updated during roadmap creation.
 | XSBL-01 | Phase 19 | Complete |
 | XSBL-02 | Phase 19 | Complete |
 | XSBL-03 | Phase 19 | Complete |
-| SDLT-01 | Phase 20 | Pending |
-| SDLT-02 | Phase 20 | Pending |
-| SDLT-03 | Phase 20 | Pending |
+| SDLT-01 | Phase 20 | Complete |
+| SDLT-02 | Phase 20 | Complete |
+| SDLT-03 | Phase 20 | Complete |
 | ATRN-01 | Phase 21 | Pending |
 | ATRN-02 | Phase 21 | Pending |
 | ATRN-03 | Phase 21 | Pending |
@@ -91,4 +91,4 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 ---
 *Requirements defined: 2026-04-02*
-*Last updated: 2026-04-03 after Phase 19 completion*
+*Last updated: 2026-04-03 after Phase 20 completion*

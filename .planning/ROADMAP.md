@@ -15,7 +15,7 @@
 **Milestone Goal:** Reports surface year-over-year changes -- a pitcher who added a sweeper, gained 2 mph, or saw Stuff+ collapse gets that story told automatically.
 
 - [x] **Phase 19: Cross-Season Baseline Exposure** - Make prior-season baselines available to engine computations (completed 2026-04-03)
-- [ ] **Phase 20: Season-Delta Engine** - Compute year-over-year deltas for top-level pitcher metrics
+- [x] **Phase 20: Season-Delta Engine** - Compute year-over-year deltas for top-level pitcher metrics (completed 2026-04-03)
 - [ ] **Phase 21: Arsenal Trend Engine** - Compute year-over-year deltas per pitch type (added/dropped pitches, usage shifts, grade changes)
 - [ ] **Phase 22: Context Assembly & Prompt Rendering** - Integrate cross-season insights into PitcherContext and LLM prompt
 
@@ -41,7 +41,7 @@
   3. When prior-season data is missing, the cross-season summary is None (not empty strings or zeroes)
 **Plans:** 1 plan
 Plans:
-- [ ] 20-01-PLAN.md -- CrossSeasonSummary dataclass + compute_cross_season_summary with tests
+- [x] 20-01-PLAN.md -- CrossSeasonSummary dataclass + compute_cross_season_summary with tests
 
 ### Phase 21: Arsenal Trend Engine
 **Goal**: Users see which pitches a pitcher added, dropped, or significantly changed year-over-year
@@ -87,7 +87,7 @@ Plans:
 | 17. Multi-Year Loading | v1.7 | 1/1 | Complete | 2026-04-03 |
 | 18. Consumer Module Updates | v1.7 | 2/2 | Complete | 2026-04-03 |
 | 19. Cross-Season Baseline Exposure | v1.8 | 1/1 | Complete    | 2026-04-03 |
-| 20. Season-Delta Engine | v1.8 | 0/1 | Planned | - |
+| 20. Season-Delta Engine | v1.8 | 1/1 | Complete | 2026-04-03 |
 | 21. Arsenal Trend Engine | v1.8 | 0/0 | Not started | - |
 | 22. Context Assembly & Prompt Rendering | v1.8 | 0/0 | Not started | - |
 

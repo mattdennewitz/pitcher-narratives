@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.8
 milestone_name: Cross-Season Trend Analysis
 status: executing
-stopped_at: Roadmap created for v1.8
-last_updated: "2026-04-03T05:13:02.699Z"
+stopped_at: Completed 20-01-PLAN.md
+last_updated: "2026-04-03T11:19:10Z"
 last_activity: 2026-04-03
 progress:
   total_phases: 4
   completed_phases: 1
-  total_plans: 1
-  completed_plans: 1
+  total_plans: 2
+  completed_plans: 2
 ---
 
 # Project State
@@ -20,13 +20,13 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-03)
 
 **Core value:** Reports must read like a scout wrote them -- surfacing changes, adaptations, and execution trends rather than reciting numbers.
-**Current focus:** Phase 19 — cross-season-baseline-exposure
+**Current focus:** Phase 20 — season-delta-engine
 
 ## Current Position
 
 Phase: 20
-Plan: Not started
-Status: Executing Phase 19
+Plan: 1/1 complete
+Status: Executing
 Last activity: 2026-04-03
 
 ## Accumulated Context
@@ -37,6 +37,9 @@ Decisions are logged in PROJECT.md Key Decisions table.
 
 - v1.7: Per-season baseline grouping (not cross-season averaged) -- foundation for v1.8
 - v1.7: load_pitcher_data() filters baselines to max season -- v1.8 Phase 19 removes this filter
+- v1.8-P20: P+/S+/L+ accessed as column names matching real pitchingplus CSV output
+- v1.8-P20: Velocity computed from statcast release_speed, not from CSV baselines
+- v1.8-P20: IP computed as decimal from out-event counting per season
 
 ### Pending Todos
 
@@ -49,6 +52,6 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-04-02
-Stopped at: Roadmap created for v1.8
+Last session: 2026-04-03
+Stopped at: Completed 20-01-PLAN.md
 Resume file: None
