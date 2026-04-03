@@ -1,31 +1,35 @@
-# Requirements: Pitcher Narratives v1.7
+# Requirements: Pitcher Narratives v1.8
 
 **Defined:** 2026-04-02
 **Core Value:** The report must read like a scout wrote it -- surfacing changes, adaptations, and execution trends rather than reciting numbers.
 
-## v1.7 Requirements
+## v1.8 Requirements
 
-Requirements for Multi-Year Data & Game Type Filtering milestone. Each maps to roadmap phases.
+Requirements for Cross-Season Trend Analysis milestone. Each maps to roadmap phases.
 
-### Data Foundation
+### Cross-Season Baselines
 
-- [ ] **DFND-01**: Data pipeline filters to allowed game types (R, F, D, L, W) at load time, excluding spring training and exhibition data
-- [ ] **DFND-02**: Year-specific hardcoded paths (statcast_2026.parquet, 2026-*.csv) replaced with parameterized loading from a _YEARS constant
-- [ ] **DFND-03**: "season" added to _ID_COLS so year values are not weight-averaged as metrics
-- [ ] **DFND-04**: _filter_game_type helper exported as public API for use by consumer modules
+- [ ] **XSBL-01**: PitcherData exposes prior-season baselines alongside current-season baselines (both season-level and pitch-type-level)
+- [ ] **XSBL-02**: load_pitcher_data() retains all per-season baseline rows instead of filtering to max season only
+- [ ] **XSBL-03**: Prior-season baselines are empty DataFrames (not crashes) when pitcher has only one season of data
 
-### Multi-Year Loading
+### Season Deltas
 
-- [x] **MYLD-01**: load_statcast() reads and concatenates parquet files for all configured years
-- [x] **MYLD-02**: load_agg_csvs() reads and concatenates CSV files for all configured years per grain
-- [x] **MYLD-03**: Pipeline gracefully handles missing year files (skips without crashing)
-- [x] **MYLD-04**: Season baselines computed per-season (not cross-season averaged) using the season column
+- [ ] **SDLT-01**: Engine computes year-over-year deltas for pitcher-level metrics (velocity, P+, S+, L+) comparing current season baseline to prior season baseline
+- [ ] **SDLT-02**: YoY delta strings use the same qualitative thresholds and language as within-season deltas (Steady / Up modestly / Down sharply / etc.)
+- [ ] **SDLT-03**: Cross-season summary is None when prior-season data is missing (no fabricated comparisons)
 
-### Consumer Updates
+### Arsenal Trends
 
-- [ ] **CSMR-01**: engine.py direct CSV read eliminated and routed through data.py load_full_agg()
-- [ ] **CSMR-02**: resolver.py builds name table from all available parquet files (not just 2026)
-- [ ] **CSMR-03**: scout.py hardcoded CSV loads and parquet reads replaced with data.py functions
+- [ ] **ATRN-01**: Engine identifies pitches added (present in current season, absent in prior) and dropped (present in prior, absent in current) using a minimum-pitch threshold
+- [ ] **ATRN-02**: Engine computes per-pitch-type YoY deltas for usage rate, P+, S+, and velocity for pitches present in both seasons
+- [ ] **ATRN-03**: Arsenal trend output is None when pitcher has only one season of data
+
+### Context & Prompt
+
+- [ ] **CPMT-01**: PitcherContext model includes optional cross-season summary and arsenal trend fields
+- [ ] **CPMT-02**: to_prompt() renders a Year-over-Year section with top-level deltas and arsenal changes when multi-season data exists, omits it entirely for single-season pitchers
+- [ ] **CPMT-03**: Specialist pipeline agents (stuff, trends, game shape) receive cross-season data in their context blocks
 
 ## Future Requirements
 
@@ -55,11 +59,11 @@ Explicitly excluded. Documented to prevent scope creep.
 
 | Feature | Reason |
 |---------|--------|
-| Auto-discovery of years from filesystem | Explicit _YEARS constant is sufficient for 2 years |
-| Converting agg CSVs to parquet | Valid at 5+ years, not needed at 2 |
-| Cross-season trend analysis | Multi-year loading supports it, but narrative integration deferred |
-| User-visible data freshness indicator | Nice-to-have, not correctness-critical |
-| CLI flag for game type selection | Allowlist is correct for all use cases; no user override needed |
+| Cross-season trend for analyst Q&A tools | Analyst tools work on single-pitcher single-season; extend after v1.8 if needed |
+| Automatic narrative style change for YoY data | LLM already adapts prose from context; no prompt engineering needed beyond data injection |
+| Three-or-more season trend lines | Only 2 years of data exist; generalize when 3+ years available |
+| Cross-season workload comparison | Workload is inherently recent-window; YoY workload comparison adds noise |
+| Visual charts or sparklines | CLI text output; no terminal graphics |
 
 ## Traceability
 
@@ -67,21 +71,22 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| DFND-01 | Phase 16 | Pending |
-| DFND-02 | Phase 16 | Pending |
-| DFND-03 | Phase 16 | Pending |
-| DFND-04 | Phase 16 | Pending |
-| MYLD-01 | Phase 17 | Complete |
-| MYLD-02 | Phase 17 | Complete |
-| MYLD-03 | Phase 17 | Complete |
-| MYLD-04 | Phase 17 | Complete |
-| CSMR-01 | Phase 18 | Pending |
-| CSMR-02 | Phase 18 | Pending |
-| CSMR-03 | Phase 18 | Pending |
+| XSBL-01 | Phase 19 | Pending |
+| XSBL-02 | Phase 19 | Pending |
+| XSBL-03 | Phase 19 | Pending |
+| SDLT-01 | Phase 20 | Pending |
+| SDLT-02 | Phase 20 | Pending |
+| SDLT-03 | Phase 20 | Pending |
+| ATRN-01 | Phase 21 | Pending |
+| ATRN-02 | Phase 21 | Pending |
+| ATRN-03 | Phase 21 | Pending |
+| CPMT-01 | Phase 22 | Pending |
+| CPMT-02 | Phase 22 | Pending |
+| CPMT-03 | Phase 22 | Pending |
 
 **Coverage:**
-- v1.7 requirements: 11 total
-- Mapped to phases: 11
+- v1.8 requirements: 12 total
+- Mapped to phases: 12
 - Unmapped: 0
 
 ---
