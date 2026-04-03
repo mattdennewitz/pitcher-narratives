@@ -25,7 +25,9 @@ def _float(val: Any) -> float:
 
 
 __all__ = [
+    "AddedDroppedPitch",
     "AppearanceWorkload",
+    "ArsenalTrend",
     "ComponentAttribution",
     "ExecutionMetrics",
     "FastballSummary",
@@ -34,6 +36,7 @@ __all__ = [
     "HardHitRate",
     "IntermediateProbabilities",
     "OutcomeContribution",
+    "PitchTrend",
     "PitchTypeSummary",
     "PlatoonMix",
     "PlatoonSplit",
@@ -46,6 +49,7 @@ __all__ = [
     "VelocityArc",
     "WorkloadContext",
     "compute_arsenal_summary",
+    "compute_arsenal_trends",
     "compute_component_attribution",
     "compute_execution_metrics",
     "compute_fastball_summary",
@@ -2632,3 +2636,245 @@ def compute_component_attribution(
 
     results.sort(key=lambda x: x.n_pitches, reverse=True)
     return results
+
+
+# ── Arsenal Trend Engine (Year-over-Year) ────────────────────────────
+
+
+@dataclass
+class AddedDroppedPitch:
+    """A pitch type that was added or dropped between seasons."""
+
+    pitch_type: str
+    """Pitch type code, e.g., 'SV'."""
+
+    pitch_name: str
+    """Human-readable name, e.g., 'Sweeper'."""
+
+    usage_pct: float
+    """Usage rate (percentage) in the season where the pitch existed."""
+
+    n_pitches: int
+    """Number of pitches thrown in the season where the pitch existed."""
+
+    season: int
+    """The season in which this pitch was present."""
+
+
+@dataclass
+class PitchTrend:
+    """Year-over-year delta for a single pitch type present in both seasons."""
+
+    pitch_type: str
+    """Pitch type code, e.g., 'FF'."""
+
+    pitch_name: str
+    """Human-readable name, e.g., '4-Seam Fastball'."""
+
+    prior_usage_pct: float
+    """Usage rate (percentage) in prior season."""
+
+    current_usage_pct: float
+    """Usage rate (percentage) in current season."""
+
+    usage_delta: str
+    """Qualitative usage delta string, e.g., 'Up 7.0 pp'."""
+
+    prior_p_plus: float
+    """P+ grade in prior season."""
+
+    current_p_plus: float
+    """P+ grade in current season."""
+
+    p_plus_delta: str
+    """Qualitative P+ delta string, e.g., 'Up 8 points'."""
+
+    prior_s_plus: float
+    """S+ grade in prior season."""
+
+    current_s_plus: float
+    """S+ grade in current season."""
+
+    s_plus_delta: str
+    """Qualitative S+ delta string, e.g., 'Down sharply (-15 points)'."""
+
+    prior_velo: float
+    """Average velocity in prior season (mph)."""
+
+    current_velo: float
+    """Average velocity in current season (mph)."""
+
+    velo_delta: str
+    """Qualitative velocity delta string, e.g., 'Up 1.5 mph'."""
+
+
+@dataclass
+class ArsenalTrend:
+    """Year-over-year arsenal evolution for a pitcher."""
+
+    prior_season: int
+    """The earlier season year, e.g., 2025."""
+
+    current_season: int
+    """The later season year, e.g., 2026."""
+
+    added_pitches: list[AddedDroppedPitch]
+    """Pitches present in current season but absent in prior."""
+
+    dropped_pitches: list[AddedDroppedPitch]
+    """Pitches present in prior season but absent in current."""
+
+    pitch_trends: list[PitchTrend]
+    """YoY deltas for pitches present in both seasons, sorted by current usage descending."""
+
+
+def compute_arsenal_trends(data: PitcherData) -> ArsenalTrend | None:
+    """Compute year-over-year per-pitch-type arsenal evolution.
+
+    Compares the pitcher's arsenal between their two most recent seasons
+    to identify added/dropped pitches and compute deltas for shared pitches.
+
+    Uses the pitcher_type aggregation CSVs (already filtered by game type)
+    to compute per-season pitch_type baselines, then compares them.
+
+    Pitches with fewer than ``_MIN_PITCHES`` in a season are excluded from
+    added/dropped detection to avoid noise from occasional experimental
+    pitches.
+
+    Args:
+        data: PitcherData bundle from data.load_pitcher_data.
+
+    Returns:
+        ArsenalTrend with added/dropped pitches and per-pitch-type deltas,
+        or None if the pitcher has fewer than 2 seasons of data.
+    """
+    from pitcher_narratives.data import compute_pitch_type_baseline
+
+    pitcher_type_df = data.agg_csvs.get("pitcher_type")
+    if pitcher_type_df is None or pitcher_type_df.is_empty():
+        return None
+
+    # Compute per-season/pitch_type baselines from the raw agg data
+    pt_baseline = compute_pitch_type_baseline(pitcher_type_df)
+    if pt_baseline.is_empty() or "season" not in pt_baseline.columns:
+        return None
+
+    # Identify distinct seasons
+    seasons = sorted(pt_baseline["season"].unique().to_list())
+    if len(seasons) < 2:
+        return None
+
+    # Use the two most recent seasons
+    prior_season = seasons[-2]
+    current_season = seasons[-1]
+
+    prior_df = pt_baseline.filter(pl.col("season") == prior_season)
+    current_df = pt_baseline.filter(pl.col("season") == current_season)
+
+    # Build pitch_type -> pitch_name mapping from statcast data
+    name_map = _build_name_map(data.statcast)
+
+    # Identify pitch types per season (above _MIN_PITCHES threshold)
+    prior_types = set(
+        prior_df.filter(pl.col("n_pitches") >= _MIN_PITCHES)["pitch_type"].to_list()
+    )
+    current_types = set(
+        current_df.filter(pl.col("n_pitches") >= _MIN_PITCHES)["pitch_type"].to_list()
+    )
+
+    # Added: in current but not prior
+    added_pitches: list[AddedDroppedPitch] = []
+    for pt in sorted(current_types - prior_types):
+        row = current_df.filter(pl.col("pitch_type") == pt)
+        if row.is_empty():
+            continue
+        added_pitches.append(
+            AddedDroppedPitch(
+                pitch_type=pt,
+                pitch_name=name_map.get(pt, pt),
+                usage_pct=_safe_metric(row, "usage_pct"),
+                n_pitches=int(_safe_metric(row, "n_pitches")),
+                season=current_season,
+            )
+        )
+
+    # Dropped: in prior but not current
+    dropped_pitches: list[AddedDroppedPitch] = []
+    for pt in sorted(prior_types - current_types):
+        row = prior_df.filter(pl.col("pitch_type") == pt)
+        if row.is_empty():
+            continue
+        dropped_pitches.append(
+            AddedDroppedPitch(
+                pitch_type=pt,
+                pitch_name=name_map.get(pt, pt),
+                usage_pct=_safe_metric(row, "usage_pct"),
+                n_pitches=int(_safe_metric(row, "n_pitches")),
+                season=prior_season,
+            )
+        )
+
+    # Shared pitches: compute YoY deltas
+    shared_types = prior_types & current_types
+    pitch_trends: list[PitchTrend] = []
+    for pt in shared_types:
+        prior_row = prior_df.filter(pl.col("pitch_type") == pt)
+        current_row = current_df.filter(pl.col("pitch_type") == pt)
+        if prior_row.is_empty() or current_row.is_empty():
+            continue
+
+        prior_usage = _safe_metric(prior_row, "usage_pct")
+        current_usage = _safe_metric(current_row, "usage_pct")
+        prior_p = _safe_metric(prior_row, "P+")
+        current_p = _safe_metric(current_row, "P+")
+        prior_s = _safe_metric(prior_row, "S+")
+        current_s = _safe_metric(current_row, "S+")
+
+        # Velocity from statcast data (more accurate than agg CSVs)
+        prior_statcast = data.statcast.filter(
+            (pl.col("pitch_type") == pt) & (pl.col("game_date").dt.year() == prior_season)
+        )
+        current_statcast = data.statcast.filter(
+            (pl.col("pitch_type") == pt) & (pl.col("game_date").dt.year() == current_season)
+        )
+
+        prior_velo = (
+            _float(prior_statcast["release_speed"].mean())
+            if not prior_statcast.is_empty()
+            else _safe_metric(prior_row, "release_speed")
+        )
+        current_velo = (
+            _float(current_statcast["release_speed"].mean())
+            if not current_statcast.is_empty()
+            else _safe_metric(current_row, "release_speed")
+        )
+
+        pitch_trends.append(
+            PitchTrend(
+                pitch_type=pt,
+                pitch_name=name_map.get(pt, pt),
+                prior_usage_pct=prior_usage,
+                current_usage_pct=current_usage,
+                usage_delta=_usage_delta_string(current_usage - prior_usage),
+                prior_p_plus=prior_p,
+                current_p_plus=current_p,
+                p_plus_delta=_pplus_delta_string(current_p - prior_p),
+                prior_s_plus=prior_s,
+                current_s_plus=current_s,
+                s_plus_delta=_pplus_delta_string(current_s - prior_s),
+                prior_velo=prior_velo,
+                current_velo=current_velo,
+                velo_delta=_velo_delta_string(current_velo - prior_velo),
+            )
+        )
+
+    # Sort trends by current usage descending
+    pitch_trends.sort(key=lambda x: x.current_usage_pct, reverse=True)
+
+    return ArsenalTrend(
+        prior_season=prior_season,
+        current_season=current_season,
+        added_pitches=added_pitches,
+        dropped_pitches=dropped_pitches,
+        pitch_trends=pitch_trends,
+    )
