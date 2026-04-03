@@ -10,7 +10,9 @@ from pydantic import BaseModel, ConfigDict
 
 from pitcher_narratives.data import PitcherData
 from pitcher_narratives.engine import (
+    ArsenalTrend,
     ComponentAttribution,
+    CrossSeasonSummary,
     ExecutionMetrics,
     FastballSummary,
     FirstPitchWeaponry,
@@ -25,7 +27,9 @@ from pitcher_narratives.engine import (
     VelocityArc,
     WorkloadContext,
     compute_arsenal_summary,
+    compute_arsenal_trends,
     compute_component_attribution,
+    compute_cross_season_summary,
     compute_execution_metrics,
     compute_fastball_summary,
     compute_first_pitch_weaponry,
@@ -74,6 +78,12 @@ class PitcherContext(BaseModel):
     workload: WorkloadContext
     tto: TTOAnalysis | None
 
+    cross_season_summary: CrossSeasonSummary | None = None
+    """Year-over-year pitcher-level metric deltas. None for single-season pitchers."""
+
+    arsenal_trend: ArsenalTrend | None = None
+    """Year-over-year arsenal evolution (added/dropped/changed pitches). None for single-season pitchers."""
+
     def to_prompt(self) -> str:
         """Render as prompt-ready markdown under 2,000 tokens."""
         sections: list[str] = []
@@ -113,6 +123,9 @@ class PitcherContext(BaseModel):
 
         # First-pitch tendencies
         sections.append(self._render_first_pitch_section())
+
+        # Year-over-year changes (when multi-season data exists)
+        sections.append(self._render_yoy_section())
 
         # Recent appearances
         sections.append(self._render_appearances_section())
@@ -520,6 +533,58 @@ class PitcherContext(BaseModel):
             )
         return "\n".join(lines)
 
+    def _render_yoy_section(self) -> str:
+        """Render year-over-year changes section.
+
+        Returns "" when both cross_season_summary and arsenal_trend are None,
+        which causes to_prompt() to omit the section entirely for single-season
+        pitchers (CPMT-02).
+        """
+        if self.cross_season_summary is None and self.arsenal_trend is None:
+            return ""
+
+        lines = ["## Year-over-Year Changes"]
+
+        css = self.cross_season_summary
+        if css is not None:
+            lines.append(f"Comparing {css.current_season} vs {css.prior_season}:")
+            lines.append(f"- Velocity: {css.velo_delta}")
+            lines.append(f"- P+: {css.p_plus_delta}")
+            lines.append(f"- S+: {css.s_plus_delta}")
+            lines.append(f"- L+: {css.l_plus_delta}")
+            lines.append(
+                f"- Workload: {css.current_appearances} app / {css.current_ip:.0f} IP "
+                f"(prior: {css.prior_appearances} app / {css.prior_ip:.0f} IP)"
+            )
+
+        at = self.arsenal_trend
+        if at is not None:
+            if at.added_pitches:
+                added = ", ".join(
+                    f"{p.pitch_name} ({p.usage_pct:.0f}%)" for p in at.added_pitches
+                )
+                lines.append(f"- Added: {added}")
+            if at.dropped_pitches:
+                dropped = ", ".join(
+                    f"{p.pitch_name} ({p.usage_pct:.0f}%)" for p in at.dropped_pitches
+                )
+                lines.append(f"- Dropped: {dropped}")
+            # Show non-Steady pitch trend deltas (limit to _MAX_PITCH_TYPES)
+            for pt in at.pitch_trends[:_MAX_PITCH_TYPES]:
+                deltas = []
+                if "Steady" not in pt.usage_delta:
+                    deltas.append(f"usage {pt.usage_delta}")
+                if "Steady" not in pt.p_plus_delta:
+                    deltas.append(f"P+ {pt.p_plus_delta}")
+                if "Steady" not in pt.s_plus_delta:
+                    deltas.append(f"S+ {pt.s_plus_delta}")
+                if "Steady" not in pt.velo_delta:
+                    deltas.append(f"velo {pt.velo_delta}")
+                if deltas:
+                    lines.append(f"- {pt.pitch_name}: {', '.join(deltas)}")
+
+        return "\n".join(lines)
+
     def _render_appearances_section(self) -> str:
         lines = ["## Recent Appearances"]
         lines.append("| Date | IP | Pitches | Rest |")
@@ -557,6 +622,8 @@ def assemble_pitcher_context(data: PitcherData) -> PitcherContext:
     release_point = compute_release_point_metrics(data)
     workload = compute_workload_context(data)
     tto = compute_tto_analysis(data)
+    cross_season_summary = compute_cross_season_summary(data)
+    arsenal_trend = compute_arsenal_trends(data)
 
     # Determine role from most recent appearance
     most_recent = data.appearances.sort("game_date", descending=True).row(0, named=True)
@@ -579,4 +646,6 @@ def assemble_pitcher_context(data: PitcherData) -> PitcherContext:
         release_point=release_point,
         workload=workload,
         tto=tto,
+        cross_season_summary=cross_season_summary,
+        arsenal_trend=arsenal_trend,
     )
