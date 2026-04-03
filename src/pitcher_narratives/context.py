@@ -648,7 +648,8 @@ class PitcherContext(BaseModel):
                     f"{p.pitch_name} ({p.usage_pct:.0f}%)" for p in at.dropped_pitches
                 )
                 lines.append(f"- Dropped: {dropped}")
-            # Show non-Steady pitch trend deltas
+            # Show pitch trend deltas — suppress Steady for grades/usage
+            # but always show movement with actual values to prevent fabrication
             for pt in at.pitch_trends:
                 deltas = []
                 if "Steady" not in pt.usage_delta:
@@ -659,10 +660,13 @@ class PitcherContext(BaseModel):
                     deltas.append(f"S+ {pt.s_plus_delta}")
                 if "Steady" not in pt.velo_delta:
                     deltas.append(f"velo {pt.velo_delta}")
-                if "Steady" not in pt.pfx_x_delta:
-                    deltas.append(f"H-mov {pt.pfx_x_delta}")
-                if "Steady" not in pt.pfx_z_delta:
-                    deltas.append(f"V-mov {pt.pfx_z_delta}")
+                # Always show movement with prior→current to anchor the LLM
+                deltas.append(
+                    f"H-mov {pt.prior_pfx_x:.1f}→{pt.current_pfx_x:.1f} in ({pt.pfx_x_delta})"
+                )
+                deltas.append(
+                    f"V-mov {pt.prior_pfx_z:.1f}→{pt.current_pfx_z:.1f} in ({pt.pfx_z_delta})"
+                )
                 if deltas:
                     sample_tag = " *(small sample)*" if pt.small_sample else ""
                     lines.append(f"- {pt.pitch_name}: {', '.join(deltas)}{sample_tag}")
