@@ -9,8 +9,8 @@ last_activity: 2026-04-03
 progress:
   total_phases: 1
   completed_phases: 1
-  total_plans: 0
-  completed_plans: 0
+  total_plans: 2
+  completed_plans: 2
 ---
 
 # Project State
@@ -24,9 +24,9 @@ See: .planning/PROJECT.md (updated 2026-04-03)
 
 ## Current Position
 
-Phase: 15 (Specialist-Writer Architecture) — COMPLETE
-Plan: Prototyped (no formal plans)
-Status: v1.6 milestone shipped
+Phase: 18 (Consumer Module Updates) — COMPLETE
+Plan: 2 of 2 complete
+Status: Phase 18 complete -- all data access centralized in data.py
 Last activity: 2026-04-03
 
 ## Accumulated Context
@@ -34,6 +34,9 @@ Last activity: 2026-04-03
 ### Decisions
 
 Decisions are logged in PROJECT.md Key Decisions table.
+
+- Phase 18-02: Accept FF/FC ties in test assertions (non-deterministic sort for equal n_pitches)
+- Phase 18-02: Filter multi-row season baselines to max season (simple approach vs per-appearance matching)
 
 ### Pending Todos
 
@@ -46,5 +49,5 @@ None.
 ## Session Continuity
 
 Last session: 2026-04-03
-Stopped at: v1.6 milestone complete
+Stopped at: Completed 18-02-PLAN.md
 Resume file: None
