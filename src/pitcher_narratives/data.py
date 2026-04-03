@@ -410,6 +410,12 @@ def load_pitcher_data(pitcher_id: int, window_days: int = 30) -> PitcherData:
     classifies appearances, computes baselines, and filters to the lookback
     window.
 
+    Baselines are split by season:
+    - ``season_baseline`` / ``pitch_type_baseline``: current (max) season only.
+    - ``prior_season_baseline`` / ``prior_pitch_type_baseline``: all seasons
+      before max season. Empty DataFrames (same schema, zero rows) when the
+      pitcher has only one season of data.
+
     Args:
         pitcher_id: MLB pitcher ID.
         window_days: Lookback window in days (default 30).
