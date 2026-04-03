@@ -72,16 +72,9 @@ The report must read like a scout wrote it — surfacing *changes, adaptations, 
 
 (See Current Milestone below)
 
-## Current Milestone: v1.8 Cross-Season Trend Analysis
+## Current Milestone: None (v1.8 shipped)
 
-**Goal:** Enable season-over-season and appearance-over-appearance comparisons so reports and Q&A surface what changed, when, and how — from macro shifts (dropped a pitch to LHH this year) to micro trends (curveball shape changed between last two starts).
-
-**Target features:**
-- Cross-season baselines in PitcherData (current + prior season)
-- Season-over-season delta engine (pitch mix, velocity, movement, platoon splits)
-- Appearance-over-appearance trends (pitch shape evolution, mix adjustments, command shifts across recent outings)
-- Context layer enrichment with "Year-over-Year Changes" and "Recent Appearance Trends" sections
-- LLM prompt updates to discuss what changed and why
+v1.8 Cross-Season Trend Analysis shipped 2026-04-03. Run `/gsd:new-milestone` to start the next milestone.
 
 ### Out of Scope
 
@@ -96,13 +89,13 @@ The report must read like a scout wrote it — surfacing *changes, adaptations, 
 
 ## Context
 
-### Current State (v1.7 shipped)
+### Current State (v1.8 shipped)
 
-**Modules:** config.py (shared constants), anchor.py (anchor quality gate), data.py (loading with multi-year support and game type filtering), engine.py (computation via data.py), context.py (assembly), report.py (single-agent LLM pipeline + reflection loop), pipeline.py (multi-agent specialist pipeline + audit loop), scout.py (appearance scoring via data.py), curator.py (LLM curation), cli.py (narrative CLI), scout_cli.py (scout CLI), resolver.py (fuzzy name resolution via data.py), analyst.py (tool-calling Q&A agent), ask_cli.py (Q&A CLI).
+**Modules:** config.py (shared constants), anchor.py (anchor quality gate), data.py (loading with multi-year support, game type filtering, cross-season baselines), engine.py (computation via data.py, including cross-season delta and arsenal trend engines), context.py (assembly with YoY prompt section), report.py (single-agent LLM pipeline + reflection loop), pipeline.py (multi-agent specialist pipeline + audit loop, 3 specialists receive YoY context), scout.py (appearance scoring via data.py), curator.py (LLM curation), cli.py (narrative CLI), scout_cli.py (scout CLI), resolver.py (fuzzy name resolution via data.py), analyst.py (tool-calling Q&A agent), ask_cli.py (Q&A CLI).
 
 **Tech stack:** Python 3.14, polars 1.39, pydantic-ai 1.72, rapidfuzz 3.14, nameparser 1.1, multi-provider (OpenAI gpt-5.4-mini, Claude Sonnet 4.6, Gemini 3.1 Pro).
 
-**Key v1.7 additions:** Game type filtering at load time (allowlist: R/F/D/L/W). Multi-year data loading via `_YEARS = [2025, 2026]` with graceful missing-file handling. Per-season baselines (group by pitcher+season). All data access centralized through data.py — zero direct `read_csv`/`read_parquet` calls outside data.py. New league-wide loading functions: `load_all_statcast()` and `load_full_agg()`. 179 tests passing across data/engine/resolver modules.
+**Key v1.8 additions:** Cross-season baseline exposure (prior_season_baseline, prior_pitch_type_baseline on PitcherData). Season-delta engine (CrossSeasonSummary with YoY velocity/P+/S+/L+/workload deltas). Arsenal trend engine (ArsenalTrend with added/dropped pitch detection and per-pitch-type deltas). Context assembly wires YoY into to_prompt() and 3 specialist pipeline agents (stuff, trends, game_shape). 367 tests passing across all modules.
 
 ### Data Sources
 
@@ -177,4 +170,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-04-03 after v1.8 milestone started — Cross-Season Trend Analysis*
+*Last updated: 2026-04-03 after v1.8 milestone shipped — Cross-Season Trend Analysis*
