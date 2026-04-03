@@ -2919,6 +2919,24 @@ class PitchTrend:
     velo_delta: str
     """Qualitative velocity delta string, e.g., 'Up 1.5 mph'."""
 
+    prior_pfx_x: float
+    """Horizontal movement (inches) in prior season."""
+
+    current_pfx_x: float
+    """Horizontal movement (inches) in current season."""
+
+    pfx_x_delta: str
+    """Qualitative horizontal movement delta string."""
+
+    prior_pfx_z: float
+    """Vertical movement (inches) in prior season."""
+
+    current_pfx_z: float
+    """Vertical movement (inches) in current season."""
+
+    pfx_z_delta: str
+    """Qualitative vertical movement delta string."""
+
 
 @dataclass
 class ArsenalTrend:
@@ -3061,6 +3079,28 @@ def compute_arsenal_trends(data: PitcherData) -> ArsenalTrend | None:
             else _safe_metric(current_row, "release_speed")
         )
 
+        # Movement from statcast data (pfx_x = horizontal, pfx_z = vertical)
+        prior_pfx_x = (
+            _float(prior_statcast["pfx_x"].mean())
+            if not prior_statcast.is_empty() and "pfx_x" in prior_statcast.columns
+            else 0.0
+        )
+        current_pfx_x = (
+            _float(current_statcast["pfx_x"].mean())
+            if not current_statcast.is_empty() and "pfx_x" in current_statcast.columns
+            else 0.0
+        )
+        prior_pfx_z = (
+            _float(prior_statcast["pfx_z"].mean())
+            if not prior_statcast.is_empty() and "pfx_z" in prior_statcast.columns
+            else 0.0
+        )
+        current_pfx_z = (
+            _float(current_statcast["pfx_z"].mean())
+            if not current_statcast.is_empty() and "pfx_z" in current_statcast.columns
+            else 0.0
+        )
+
         pitch_trends.append(
             PitchTrend(
                 pitch_type=pt,
@@ -3077,6 +3117,12 @@ def compute_arsenal_trends(data: PitcherData) -> ArsenalTrend | None:
                 prior_velo=prior_velo,
                 current_velo=current_velo,
                 velo_delta=_velo_delta_string(current_velo - prior_velo),
+                prior_pfx_x=prior_pfx_x,
+                current_pfx_x=current_pfx_x,
+                pfx_x_delta=_movement_delta_string(current_pfx_x - prior_pfx_x),
+                prior_pfx_z=prior_pfx_z,
+                current_pfx_z=current_pfx_z,
+                pfx_z_delta=_movement_delta_string(current_pfx_z - prior_pfx_z),
             )
         )
 
