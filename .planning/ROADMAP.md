@@ -60,7 +60,9 @@
   2. to_prompt() renders a "Year-over-Year" section with top-level deltas and arsenal changes when multi-season data exists
   3. to_prompt() omits the cross-season section entirely for single-season pitchers (no empty headers, no "N/A" placeholders)
   4. Specialist pipeline agents receive cross-season data in their context blocks
-**Plans**: TBD
+**Plans:** 1 plan
+Plans:
+- [ ] 22-01-PLAN.md -- Wire cross-season fields into PitcherContext, to_prompt(), and 3 specialist input builders
 
 ## Progress
 
@@ -87,7 +89,7 @@
 | 19. Cross-Season Baseline Exposure | v1.8 | 0/0 | Not started | - |
 | 20. Season-Delta Engine | v1.8 | 0/0 | Not started | - |
 | 21. Arsenal Trend Engine | v1.8 | 1/1 | Complete    | 2026-04-03 |
-| 22. Context Assembly & Prompt Rendering | v1.8 | 0/0 | Not started | - |
+| 22. Context Assembly & Prompt Rendering | v1.8 | 0/1 | Planned | - |
 
 ---
 *Full phase details archived in `.planning/milestones/`*
