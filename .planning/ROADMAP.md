@@ -58,7 +58,7 @@ Phases execute in numeric order: 16 -> 17 -> 18
 | 14. Analyst Prompt Rewrite | v1.5 | 1/1 | Complete | 2026-03-31 |
 | 15. Specialist-Writer Architecture | v1.6 | prototyped | Complete | 2026-04-03 |
 | 16. Data Foundation | v1.7 | 1/1 | Complete    | 2026-04-03 |
-| 17. Multi-Year Loading | v1.7 | 1/1 | Complete   | 2026-04-03 |
+| 17. Multi-Year Loading | v1.7 | 1/1 | Complete    | 2026-04-03 |
 | 18. Consumer Module Updates | v1.7 | 0/0 | Not started | -- |
 
 ---
