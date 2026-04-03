@@ -555,6 +555,11 @@ class PitcherContext(BaseModel):
         if apt is None or not apt.records:
             return ""
 
+        # Filter out steady records — only show pitches with actual changes
+        active_records = [r for r in apt.records if r.pattern_label != "steady"]
+        if not active_records:
+            return ""
+
         lines = [f"## Appearance Pitch Trends (last start vs window vs prior season)"]
         lines.append(f"*Last start: {apt.last_game_date}*")
         lines.append("")
@@ -562,7 +567,7 @@ class PitcherContext(BaseModel):
         # Velocity table
         lines.append("| Pitch | Last Velo | Win Avg | Prior | Velo vs Win | Velo vs Prior | Pattern |")
         lines.append("|-------|-----------|---------|-------|-------------|---------------|---------|")
-        for r in apt.records:
+        for r in active_records:
             prior_v = f"{r.prior_season_velo:.1f}" if r.prior_season_velo is not None else "--"
             lines.append(
                 f"| {r.pitch_name} ({r.pitch_type}) "
@@ -581,7 +586,7 @@ class PitcherContext(BaseModel):
         lines.append("")
         lines.append("| Pitch | Last H-mov | Win H-mov | Prior H-mov | H delta vs Win | H delta vs Prior |")
         lines.append("|-------|------------|-----------|-------------|----------------|------------------|")
-        for r in apt.records:
+        for r in active_records:
             prior_hx = f"{r.prior_season_pfx_x:.1f}" if r.prior_season_pfx_x is not None else "--"
             lines.append(
                 f"| {r.pitch_name} "
@@ -596,7 +601,7 @@ class PitcherContext(BaseModel):
         lines.append("")
         lines.append("| Pitch | Last V-mov | Win V-mov | Prior V-mov | V delta vs Win | V delta vs Prior |")
         lines.append("|-------|------------|-----------|-------------|----------------|------------------|")
-        for r in apt.records:
+        for r in active_records:
             prior_vz = f"{r.prior_season_pfx_z:.1f}" if r.prior_season_pfx_z is not None else "--"
             lines.append(
                 f"| {r.pitch_name} "
