@@ -17,6 +17,7 @@ import polars as pl
 
 __all__ = [
     "AGGS_DIR",
+    "PARQUET_PATH",
     "RV_DF_PATH",
     "PitcherData",
     "classify_appearances",
