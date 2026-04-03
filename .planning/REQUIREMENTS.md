@@ -9,21 +9,21 @@ Requirements for Cross-Season Trend Analysis milestone. Each maps to roadmap pha
 
 ### Cross-Season Baselines
 
-- [x] **XSBL-01**: PitcherData exposes prior-season baselines alongside current-season baselines (both season-level and pitch-type-level)
-- [x] **XSBL-02**: load_pitcher_data() retains all per-season baseline rows instead of filtering to max season only
-- [x] **XSBL-03**: Prior-season baselines are empty DataFrames (not crashes) when pitcher has only one season of data
+- [ ] **XSBL-01**: PitcherData exposes prior-season baselines alongside current-season baselines (both season-level and pitch-type-level)
+- [ ] **XSBL-02**: load_pitcher_data() retains all per-season baseline rows instead of filtering to max season only
+- [ ] **XSBL-03**: Prior-season baselines are empty DataFrames (not crashes) when pitcher has only one season of data
 
 ### Season Deltas
 
-- [x] **SDLT-01**: Engine computes year-over-year deltas for pitcher-level metrics (velocity, P+, S+, L+) comparing current season baseline to prior season baseline
-- [x] **SDLT-02**: YoY delta strings use the same qualitative thresholds and language as within-season deltas (Steady / Up modestly / Down sharply / etc.)
-- [x] **SDLT-03**: Cross-season summary is None when prior-season data is missing (no fabricated comparisons)
+- [ ] **SDLT-01**: Engine computes year-over-year deltas for pitcher-level metrics (velocity, P+, S+, L+) comparing current season baseline to prior season baseline
+- [ ] **SDLT-02**: YoY delta strings use the same qualitative thresholds and language as within-season deltas (Steady / Up modestly / Down sharply / etc.)
+- [ ] **SDLT-03**: Cross-season summary is None when prior-season data is missing (no fabricated comparisons)
 
 ### Arsenal Trends
 
-- [ ] **ATRN-01**: Engine identifies pitches added (present in current season, absent in prior) and dropped (present in prior, absent in current) using a minimum-pitch threshold
-- [ ] **ATRN-02**: Engine computes per-pitch-type YoY deltas for usage rate, P+, S+, and velocity for pitches present in both seasons
-- [ ] **ATRN-03**: Arsenal trend output is None when pitcher has only one season of data
+- [x] **ATRN-01**: Engine identifies pitches added (present in current season, absent in prior) and dropped (present in prior, absent in current) using a minimum-pitch threshold
+- [x] **ATRN-02**: Engine computes per-pitch-type YoY deltas for usage rate, P+, S+, and velocity for pitches present in both seasons
+- [x] **ATRN-03**: Arsenal trend output is None when pitcher has only one season of data
 
 ### Context & Prompt
 
@@ -71,15 +71,15 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| XSBL-01 | Phase 19 | Complete |
-| XSBL-02 | Phase 19 | Complete |
-| XSBL-03 | Phase 19 | Complete |
-| SDLT-01 | Phase 20 | Complete |
-| SDLT-02 | Phase 20 | Complete |
-| SDLT-03 | Phase 20 | Complete |
-| ATRN-01 | Phase 21 | Pending |
-| ATRN-02 | Phase 21 | Pending |
-| ATRN-03 | Phase 21 | Pending |
+| XSBL-01 | Phase 19 | Pending |
+| XSBL-02 | Phase 19 | Pending |
+| XSBL-03 | Phase 19 | Pending |
+| SDLT-01 | Phase 20 | Pending |
+| SDLT-02 | Phase 20 | Pending |
+| SDLT-03 | Phase 20 | Pending |
+| ATRN-01 | Phase 21 | Complete |
+| ATRN-02 | Phase 21 | Complete |
+| ATRN-03 | Phase 21 | Complete |
 | CPMT-01 | Phase 22 | Pending |
 | CPMT-02 | Phase 22 | Pending |
 | CPMT-03 | Phase 22 | Pending |
@@ -91,4 +91,4 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 ---
 *Requirements defined: 2026-04-02*
-*Last updated: 2026-04-03 after Phase 20 completion*
+*Last updated: 2026-04-02 after roadmap creation*

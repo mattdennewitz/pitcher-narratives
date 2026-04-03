@@ -1,21 +1,24 @@
-"""Tests for the fastball quality, arsenal, execution metrics, workload, and cross-season engine.
+"""Tests for the fastball quality, arsenal, execution metrics, and workload engine.
 
 Covers delta string helpers, FastballSummary computation, VelocityArc
 computation, cold start fallback, small sample flagging, arsenal summary,
 platoon mix shifts, first-pitch weaponry analysis, execution metrics
 (CSW%, zone rate, chase rate, xWhiff, xSwing, xRV100 percentile),
 workload context (rest days, IP, pitch counts, consecutive days), and
-cross-season year-over-year delta computation.
+year-over-year arsenal trend computation.
 """
+
+from datetime import date
 
 import polars as pl
 
-from pitcher_narratives.data import load_pitcher_data
+from pitcher_narratives.data import PitcherData, load_pitcher_data
 from pitcher_narratives.engine import (
     _CSW_DESCRIPTIONS,
+    AddedDroppedPitch,
     AppearanceWorkload,
+    ArsenalTrend,
     ComponentAttribution,
-    CrossSeasonSummary,
     ExecutionMetrics,
     FastballSummary,
     FirstPitchEntry,
@@ -23,6 +26,7 @@ from pitcher_narratives.engine import (
     HardHitRate,
     IntermediateProbabilities,
     OutcomeContribution,
+    PitchTrend,
     PitchTypeSummary,
     PlatoonMix,
     PlatoonSplit,
@@ -40,8 +44,8 @@ from pitcher_narratives.engine import (
     _usage_delta_string,
     _velo_delta_string,
     compute_arsenal_summary,
+    compute_arsenal_trends,
     compute_component_attribution,
-    compute_cross_season_summary,
     compute_execution_metrics,
     compute_fastball_summary,
     compute_first_pitch_weaponry,
@@ -1084,189 +1088,440 @@ def test_component_attribution_pitch_names():
         )
 
 
-# -- Cross-season summary --
+# ── Arsenal Trend Engine Tests ───────────────────────────────────────
 
 
-def _create_cross_season_pitcher_data(tmp_path, monkeypatch, years=(2025, 2026)):
-    """Create synthetic multi-year PitcherData with columns needed by the engine.
+def _make_pitcher_type_agg(
+    pitcher_id: int,
+    rows: list[dict],
+) -> pl.DataFrame:
+    """Build a synthetic pitcher_type aggregation DataFrame.
 
-    Extends the pattern from test_data._create_synthetic_multi_year_data but
-    adds: release_speed, pitch_type, events, and pitch_name columns to statcast,
-    and uses P+/S+/L+ column names matching real pitchingplus CSV output.
-
-    Synthetic metric values:
-        2025: P+=98, S+=100, L+=95, velo~93.5
-        2026: P+=105, S+=110, L+=100, velo~95.0
+    Each row dict must have: season, pitch_type, n_pitches.
+    Optional: P+, S+, L+, game_type, player_name, p_throws, team_code.
     """
-    from datetime import date as date_cls
+    full_rows = []
+    for r in rows:
+        full_rows.append({
+            "season": r["season"],
+            "pitcher": pitcher_id,
+            "pitch_type": r["pitch_type"],
+            "n_pitches": r["n_pitches"],
+            "P+": r.get("P+", 100.0),
+            "S+": r.get("S+", 100.0),
+            "L+": r.get("L+", 100.0),
+            "game_type": r.get("game_type", "R"),
+            "player_name": r.get("player_name", "Test Pitcher"),
+            "p_throws": r.get("p_throws", "R"),
+            "team_code": r.get("team_code", "TST"),
+        })
+    return pl.DataFrame(full_rows)
 
-    import pitcher_narratives.data as data_mod
 
-    aggs_dir = tmp_path / "aggs"
-    aggs_dir.mkdir(exist_ok=True)
+def _make_statcast(
+    pitcher_id: int,
+    rows: list[dict],
+) -> pl.DataFrame:
+    """Build a minimal synthetic Statcast DataFrame for arsenal trend tests.
 
-    # Grain definitions (must match data.py)
-    season_grains = ("pitcher", "pitcher_type", "pitcher_type_platoon", "team")
-    appearance_grains = (
-        "pitcher_appearance",
-        "pitcher_type_appearance",
-        "pitcher_type_platoon_appearance",
-        "all_pitches",
-    )
-
-    for year in years:
-        # Velocities: 2025=93.5, 2026=95.0
-        velo = 93.5 if year == 2025 else 95.0
-        game_dt = date_cls(year, 6, 15)
-        game_pk_val = 100000 + year
-
-        # Create statcast with enough rows: 6 pitches across 2 innings,
-        # including events for IP computation (outs in inning 2).
-        statcast_df = pl.DataFrame(
-            {
-                "pitcher": [12345] * 6,
-                "player_name": ["Test Pitcher"] * 6,
-                "p_throws": ["R"] * 6,
-                "game_type": ["R"] * 6,
-                "game_year": [year] * 6,
-                "game_pk": [game_pk_val] * 6,
-                "game_date": [game_dt] * 6,
-                "inning": [1, 1, 1, 2, 2, 2],
-                "release_speed": [velo, velo + 0.5, velo - 0.5, velo, velo + 0.2, velo - 0.2],
-                "pitch_type": ["FF", "FF", "FF", "FF", "FF", "FF"],
-                "pitch_name": ["4-Seam Fastball"] * 6,
-                "events": [None, None, "strikeout", None, "field_out", "field_out"],
+    Each row dict must have: game_date (date), pitch_type, pitch_name, release_speed.
+    Optional: game_pk, inning, p_throws, player_name, stand.
+    """
+    if not rows:
+        return pl.DataFrame(
+            schema={
+                "game_date": pl.Date,
+                "game_pk": pl.Int64,
+                "pitcher": pl.Int64,
+                "pitch_type": pl.String,
+                "pitch_name": pl.String,
+                "release_speed": pl.Float64,
+                "inning": pl.Int64,
+                "p_throws": pl.String,
+                "player_name": pl.String,
+                "stand": pl.String,
             }
         )
-        statcast_df.write_parquet(tmp_path / f"statcast_{year}.parquet")
-
-        # Create CSV agg files with P+/S+/L+ columns (matching real pitchingplus output)
-        p_plus = 98.0 + (year - 2025) * 7  # 2025=98, 2026=105
-        s_plus = 100.0 + (year - 2025) * 10  # 2025=100, 2026=110
-        l_plus = 95.0 + (year - 2025) * 5  # 2025=95, 2026=100
-
-        for grain in [*season_grains, *appearance_grains]:
-            base_cols: dict[str, list] = {
-                "season": [year],
-                "game_type": ["R"],
-                "player_name": ["Test Pitcher"],
-                "p_throws": ["R"],
-                "team_code": ["NYY"],
-                "n_pitches": [100],
-                "P+": [p_plus],
-                "S+": [s_plus],
-                "L+": [l_plus],
-            }
-            if grain != "team":
-                base_cols["pitcher"] = [12345]
-            if "type" in grain:
-                base_cols["pitch_type"] = ["FF"]
-            if "platoon" in grain:
-                base_cols["platoon"] = ["vs_R"]
-            if "appearance" in grain:
-                base_cols["game_date"] = [f"{year}-06-15"]
-                base_cols["game_pk"] = [game_pk_val]
-            if grain == "all_pitches":
-                base_cols["game_date"] = [f"{year}-06-15"]
-                base_cols["game_pk"] = [game_pk_val]
-
-            df = pl.DataFrame(base_cols)
-            df.write_csv(aggs_dir / f"{year}-{grain}.csv")
-
-    monkeypatch.setattr(data_mod, "DATA_DIR", tmp_path)
-    monkeypatch.setattr(data_mod, "AGGS_DIR", aggs_dir)
-    monkeypatch.setattr(data_mod, "_YEARS", list(years))
-
-    return load_pitcher_data(12345, window_days=365)
+    full_rows = []
+    for i, r in enumerate(rows):
+        full_rows.append({
+            "game_date": r["game_date"],
+            "game_pk": r.get("game_pk", 700000 + i),
+            "pitcher": pitcher_id,
+            "pitch_type": r["pitch_type"],
+            "pitch_name": r["pitch_name"],
+            "release_speed": r["release_speed"],
+            "inning": r.get("inning", 1),
+            "p_throws": r.get("p_throws", "R"),
+            "player_name": r.get("player_name", "Test Pitcher"),
+            "stand": r.get("stand", "R"),
+        })
+    return pl.DataFrame(full_rows).with_columns(
+        pl.col("game_date").cast(pl.Date),
+    )
 
 
-def _create_single_season_pitcher_data(tmp_path, monkeypatch):
-    """Create synthetic single-season PitcherData (2026 only)."""
-    return _create_cross_season_pitcher_data(tmp_path, monkeypatch, years=(2026,))
+def _make_pitcher_data_for_trends(
+    pitcher_id: int = 999999,
+    pitcher_type_rows: list[dict] | None = None,
+    statcast_rows: list[dict] | None = None,
+) -> PitcherData:
+    """Build a PitcherData with synthetic data for arsenal trend tests.
+
+    Only populates fields needed by compute_arsenal_trends:
+    agg_csvs["pitcher_type"] and statcast.
+    """
+    if pitcher_type_rows is None:
+        pitcher_type_rows = []
+    if statcast_rows is None:
+        statcast_rows = []
+
+    pitcher_type_df = _make_pitcher_type_agg(pitcher_id, pitcher_type_rows)
+    statcast = _make_statcast(pitcher_id, statcast_rows)
+
+    return PitcherData(
+        statcast=statcast,
+        appearances=pl.DataFrame(),
+        window_appearances=pl.DataFrame(),
+        season_baseline=pl.DataFrame(),
+        pitch_type_baseline=pl.DataFrame(),
+        agg_csvs={"pitcher_type": pitcher_type_df},
+        pitcher_id=pitcher_id,
+        pitcher_name="Test Pitcher",
+        throws="R",
+    )
 
 
-def test_cross_season_summary_returns_dataclass(tmp_path, monkeypatch):
-    """Multi-year PitcherData -> compute_cross_season_summary returns CrossSeasonSummary."""
-    data = _create_cross_season_pitcher_data(tmp_path, monkeypatch)
-    result = compute_cross_season_summary(data)
-    assert result is not None
-    assert isinstance(result, CrossSeasonSummary)
-
-
-def test_cross_season_summary_metrics(tmp_path, monkeypatch):
-    """CrossSeasonSummary has correct current/prior P+, S+, L+ values."""
-    data = _create_cross_season_pitcher_data(tmp_path, monkeypatch)
-    result = compute_cross_season_summary(data)
-    assert result is not None
-    # 2026 values: P+=105, S+=110, L+=100
-    assert abs(result.current_p_plus - 105.0) < 0.1
-    assert abs(result.current_s_plus - 110.0) < 0.1
-    assert abs(result.current_l_plus - 100.0) < 0.1
-    # 2025 values: P+=98, S+=100, L+=95
-    assert abs(result.prior_p_plus - 98.0) < 0.1
-    assert abs(result.prior_s_plus - 100.0) < 0.1
-    assert abs(result.prior_l_plus - 95.0) < 0.1
-
-
-def test_cross_season_velo_from_statcast(tmp_path, monkeypatch):
-    """Velocity computed from statcast release_speed, not from CSV baselines."""
-    data = _create_cross_season_pitcher_data(tmp_path, monkeypatch)
-    result = compute_cross_season_summary(data)
-    assert result is not None
-    # 2026 velo should be ~95.0 (mean of 95.0, 95.5, 94.5, 95.0, 95.2, 94.8)
-    assert abs(result.current_velo - 95.0) < 0.5
-    # 2025 velo should be ~93.5
-    assert abs(result.prior_velo - 93.5) < 0.5
-
-
-def test_cross_season_delta_strings_match(tmp_path, monkeypatch):
-    """YoY delta strings use the same format as within-season deltas."""
-    data = _create_cross_season_pitcher_data(tmp_path, monkeypatch)
-    result = compute_cross_season_summary(data)
-    assert result is not None
-    # Velo delta: 95.0 - 93.5 = 1.5, above 0.5 threshold -> "Up"
-    assert "Up" in result.velo_delta
-    assert "mph" in result.velo_delta
-    # P+ delta: 105 - 98 = 7, above 5 threshold -> "Up"
-    assert "Up" in result.p_plus_delta
-    assert "points" in result.p_plus_delta
-    # S+ delta: 110 - 100 = 10, hits sharp threshold -> "sharply"
-    assert "Up" in result.s_plus_delta
-    assert "sharply" in result.s_plus_delta
-    # L+ delta: 100 - 95 = 5, right at threshold -> could be "Steady" or "Up"
-    # _pplus_delta_string uses abs(delta) < threshold, so 5 is NOT < 5 -> "Up"
-    assert "Up" in result.l_plus_delta
-
-
-def test_cross_season_none_single_season(tmp_path, monkeypatch):
-    """Single-season PitcherData -> compute_cross_season_summary returns None."""
-    data = _create_single_season_pitcher_data(tmp_path, monkeypatch)
-    result = compute_cross_season_summary(data)
+def test_arsenal_trends_single_season_returns_none():
+    """ATRN-03: Single-season pitcher produces None, not empty trends."""
+    data = _make_pitcher_data_for_trends(
+        pitcher_type_rows=[
+            {"season": 2026, "pitch_type": "FF", "n_pitches": 100},
+            {"season": 2026, "pitch_type": "SL", "n_pitches": 50},
+        ],
+        statcast_rows=[
+            {"game_date": date(2026, 4, 1), "pitch_type": "FF", "pitch_name": "4-Seam Fastball", "release_speed": 94.0},
+            {"game_date": date(2026, 4, 1), "pitch_type": "SL", "pitch_name": "Slider", "release_speed": 85.0},
+        ],
+    )
+    result = compute_arsenal_trends(data)
     assert result is None
 
 
-def test_cross_season_workload(tmp_path, monkeypatch):
-    """CrossSeasonSummary includes workload comparison metrics."""
-    data = _create_cross_season_pitcher_data(tmp_path, monkeypatch)
-    result = compute_cross_season_summary(data)
-    assert result is not None
-    # Each year has 1 appearance with 6 pitches
-    assert result.current_appearances >= 1
-    assert result.prior_appearances >= 1
-    # IP: each year has 2 innings of data; 1 full inning + partial
-    # Inning 1: complete (3 outs assumed for non-final). Inning 2: 2 field_outs.
-    # => 1 full inning + 2 outs in final = 1.2 baseball = 5/3 = ~1.67 decimal
-    assert result.current_ip > 0
-    assert result.prior_ip > 0
-    # Avg pitches: 6 pitches per appearance
-    assert result.current_avg_pitches > 0
-    assert result.prior_avg_pitches > 0
+def test_arsenal_trends_empty_agg_returns_none():
+    """Empty pitcher_type agg produces None."""
+    data = _make_pitcher_data_for_trends(
+        pitcher_type_rows=[],
+        statcast_rows=[],
+    )
+    result = compute_arsenal_trends(data)
+    assert result is None
 
 
-def test_cross_season_seasons(tmp_path, monkeypatch):
-    """CrossSeasonSummary has correct season year values."""
-    data = _create_cross_season_pitcher_data(tmp_path, monkeypatch)
-    result = compute_cross_season_summary(data)
+def test_arsenal_trends_missing_agg_key_returns_none():
+    """Missing pitcher_type key in agg_csvs produces None."""
+    data = _make_pitcher_data_for_trends()
+    data.agg_csvs = {}  # No pitcher_type key
+    result = compute_arsenal_trends(data)
+    assert result is None
+
+
+def test_arsenal_trends_identifies_added_pitch():
+    """ATRN-01: Pitch in current but not prior season is detected as added."""
+    data = _make_pitcher_data_for_trends(
+        pitcher_type_rows=[
+            # 2025: FF and SL only
+            {"season": 2025, "pitch_type": "FF", "n_pitches": 200, "P+": 105.0, "S+": 110.0},
+            {"season": 2025, "pitch_type": "SL", "n_pitches": 100, "P+": 95.0, "S+": 90.0},
+            # 2026: FF, SL, and new SV (sweeper)
+            {"season": 2026, "pitch_type": "FF", "n_pitches": 180, "P+": 108.0, "S+": 112.0},
+            {"season": 2026, "pitch_type": "SL", "n_pitches": 80, "P+": 98.0, "S+": 95.0},
+            {"season": 2026, "pitch_type": "SV", "n_pitches": 40, "P+": 115.0, "S+": 120.0},
+        ],
+        statcast_rows=[
+            {"game_date": date(2025, 6, 1), "pitch_type": "FF", "pitch_name": "4-Seam Fastball", "release_speed": 94.0},
+            {"game_date": date(2025, 6, 1), "pitch_type": "SL", "pitch_name": "Slider", "release_speed": 85.0},
+            {"game_date": date(2026, 4, 1), "pitch_type": "FF", "pitch_name": "4-Seam Fastball", "release_speed": 95.0},
+            {"game_date": date(2026, 4, 1), "pitch_type": "SL", "pitch_name": "Slider", "release_speed": 86.0},
+            {"game_date": date(2026, 4, 1), "pitch_type": "SV", "pitch_name": "Sweeper", "release_speed": 80.0},
+        ],
+    )
+    result = compute_arsenal_trends(data)
     assert result is not None
-    assert result.current_season == 2026
     assert result.prior_season == 2025
+    assert result.current_season == 2026
+
+    # SV should be detected as added
+    added_types = [p.pitch_type for p in result.added_pitches]
+    assert "SV" in added_types
+    sv = [p for p in result.added_pitches if p.pitch_type == "SV"][0]
+    assert sv.season == 2026
+    assert sv.n_pitches == 40
+
+    # No dropped pitches
+    assert len(result.dropped_pitches) == 0
+
+
+def test_arsenal_trends_identifies_dropped_pitch():
+    """ATRN-01: Pitch in prior but not current season is detected as dropped."""
+    data = _make_pitcher_data_for_trends(
+        pitcher_type_rows=[
+            # 2025: FF, SL, and CU
+            {"season": 2025, "pitch_type": "FF", "n_pitches": 200, "P+": 105.0, "S+": 110.0},
+            {"season": 2025, "pitch_type": "SL", "n_pitches": 100, "P+": 95.0, "S+": 90.0},
+            {"season": 2025, "pitch_type": "CU", "n_pitches": 50, "P+": 80.0, "S+": 75.0},
+            # 2026: FF and SL only (dropped CU)
+            {"season": 2026, "pitch_type": "FF", "n_pitches": 220, "P+": 108.0, "S+": 112.0},
+            {"season": 2026, "pitch_type": "SL", "n_pitches": 120, "P+": 98.0, "S+": 95.0},
+        ],
+        statcast_rows=[
+            {"game_date": date(2025, 6, 1), "pitch_type": "FF", "pitch_name": "4-Seam Fastball", "release_speed": 94.0},
+            {"game_date": date(2025, 6, 1), "pitch_type": "SL", "pitch_name": "Slider", "release_speed": 85.0},
+            {"game_date": date(2025, 6, 1), "pitch_type": "CU", "pitch_name": "Curveball", "release_speed": 78.0},
+            {"game_date": date(2026, 4, 1), "pitch_type": "FF", "pitch_name": "4-Seam Fastball", "release_speed": 95.0},
+            {"game_date": date(2026, 4, 1), "pitch_type": "SL", "pitch_name": "Slider", "release_speed": 86.0},
+        ],
+    )
+    result = compute_arsenal_trends(data)
+    assert result is not None
+
+    # CU should be detected as dropped
+    dropped_types = [p.pitch_type for p in result.dropped_pitches]
+    assert "CU" in dropped_types
+    cu = [p for p in result.dropped_pitches if p.pitch_type == "CU"][0]
+    assert cu.season == 2025
+    assert cu.n_pitches == 50
+
+    # No added pitches
+    assert len(result.added_pitches) == 0
+
+
+def test_arsenal_trends_yoy_deltas_for_shared_pitches():
+    """ATRN-02: Computes per-pitch-type YoY deltas for usage, P+, S+, velocity."""
+    data = _make_pitcher_data_for_trends(
+        pitcher_type_rows=[
+            # 2025: FF at 105 P+, 110 S+, 60% usage
+            {"season": 2025, "pitch_type": "FF", "n_pitches": 300, "P+": 105.0, "S+": 110.0},
+            {"season": 2025, "pitch_type": "SL", "n_pitches": 200, "P+": 95.0, "S+": 90.0},
+            # 2026: FF at 112 P+, 115 S+ (up), usage shifted
+            {"season": 2026, "pitch_type": "FF", "n_pitches": 250, "P+": 112.0, "S+": 115.0},
+            {"season": 2026, "pitch_type": "SL", "n_pitches": 250, "P+": 100.0, "S+": 98.0},
+        ],
+        statcast_rows=[
+            # 2025 FF velo: 93.5
+            {"game_date": date(2025, 6, 1), "pitch_type": "FF", "pitch_name": "4-Seam Fastball", "release_speed": 93.0},
+            {"game_date": date(2025, 6, 2), "pitch_type": "FF", "pitch_name": "4-Seam Fastball", "release_speed": 94.0},
+            {"game_date": date(2025, 6, 1), "pitch_type": "SL", "pitch_name": "Slider", "release_speed": 84.0},
+            {"game_date": date(2025, 6, 2), "pitch_type": "SL", "pitch_name": "Slider", "release_speed": 85.0},
+            # 2026 FF velo: 95.5 (up 2.0 mph)
+            {"game_date": date(2026, 4, 1), "pitch_type": "FF", "pitch_name": "4-Seam Fastball", "release_speed": 95.0},
+            {"game_date": date(2026, 4, 2), "pitch_type": "FF", "pitch_name": "4-Seam Fastball", "release_speed": 96.0},
+            {"game_date": date(2026, 4, 1), "pitch_type": "SL", "pitch_name": "Slider", "release_speed": 85.0},
+            {"game_date": date(2026, 4, 2), "pitch_type": "SL", "pitch_name": "Slider", "release_speed": 86.0},
+        ],
+    )
+    result = compute_arsenal_trends(data)
+    assert result is not None
+    assert isinstance(result, ArsenalTrend)
+
+    # Should have 2 pitch trends (FF and SL)
+    assert len(result.pitch_trends) == 2
+    # Sorted by current usage descending
+    assert result.pitch_trends[0].current_usage_pct >= result.pitch_trends[1].current_usage_pct
+
+    # Find FF trend
+    ff = [t for t in result.pitch_trends if t.pitch_type == "FF"][0]
+    assert isinstance(ff, PitchTrend)
+
+    # P+ went from 105 to 112: Up 7 points
+    assert "Up" in ff.p_plus_delta
+    assert ff.prior_p_plus == 105.0
+    assert ff.current_p_plus == 112.0
+
+    # S+ went from 110 to 115: Steady (+5) -- below 5-point threshold
+    assert ff.prior_s_plus == 110.0
+    assert ff.current_s_plus == 115.0
+
+    # Velocity went from 93.5 to 95.5: Up sharply (+2.0 mph)
+    assert "Up" in ff.velo_delta
+    assert "sharply" in ff.velo_delta
+    assert abs(ff.prior_velo - 93.5) < 0.01
+    assert abs(ff.current_velo - 95.5) < 0.01
+
+
+def test_arsenal_trends_min_pitches_filters_noise():
+    """Pitches below _MIN_PITCHES threshold excluded from added/dropped."""
+    data = _make_pitcher_data_for_trends(
+        pitcher_type_rows=[
+            # 2025: FF + tiny sample of SL (5 pitches, below threshold)
+            {"season": 2025, "pitch_type": "FF", "n_pitches": 300, "P+": 105.0, "S+": 110.0},
+            {"season": 2025, "pitch_type": "SL", "n_pitches": 5, "P+": 90.0, "S+": 85.0},
+            # 2026: FF only
+            {"season": 2026, "pitch_type": "FF", "n_pitches": 280, "P+": 108.0, "S+": 112.0},
+        ],
+        statcast_rows=[
+            {"game_date": date(2025, 6, 1), "pitch_type": "FF", "pitch_name": "4-Seam Fastball", "release_speed": 94.0},
+            {"game_date": date(2025, 6, 1), "pitch_type": "SL", "pitch_name": "Slider", "release_speed": 85.0},
+            {"game_date": date(2026, 4, 1), "pitch_type": "FF", "pitch_name": "4-Seam Fastball", "release_speed": 95.0},
+        ],
+    )
+    result = compute_arsenal_trends(data)
+    assert result is not None
+
+    # SL should NOT be in dropped (below _MIN_PITCHES threshold)
+    dropped_types = [p.pitch_type for p in result.dropped_pitches]
+    assert "SL" not in dropped_types
+
+    # No added pitches either
+    assert len(result.added_pitches) == 0
+
+
+def test_arsenal_trends_usage_delta_strings():
+    """Usage delta strings use same qualitative language as within-season."""
+    data = _make_pitcher_data_for_trends(
+        pitcher_type_rows=[
+            # 2025: 60% FF, 40% SL
+            {"season": 2025, "pitch_type": "FF", "n_pitches": 300, "P+": 100.0, "S+": 100.0},
+            {"season": 2025, "pitch_type": "SL", "n_pitches": 200, "P+": 100.0, "S+": 100.0},
+            # 2026: 50% FF, 50% SL (FF usage down ~10pp)
+            {"season": 2026, "pitch_type": "FF", "n_pitches": 250, "P+": 100.0, "S+": 100.0},
+            {"season": 2026, "pitch_type": "SL", "n_pitches": 250, "P+": 100.0, "S+": 100.0},
+        ],
+        statcast_rows=[
+            {"game_date": date(2025, 6, 1), "pitch_type": "FF", "pitch_name": "4-Seam Fastball", "release_speed": 94.0},
+            {"game_date": date(2025, 6, 1), "pitch_type": "SL", "pitch_name": "Slider", "release_speed": 85.0},
+            {"game_date": date(2026, 4, 1), "pitch_type": "FF", "pitch_name": "4-Seam Fastball", "release_speed": 94.0},
+            {"game_date": date(2026, 4, 1), "pitch_type": "SL", "pitch_name": "Slider", "release_speed": 85.0},
+        ],
+    )
+    result = compute_arsenal_trends(data)
+    assert result is not None
+
+    ff = [t for t in result.pitch_trends if t.pitch_type == "FF"][0]
+    sl = [t for t in result.pitch_trends if t.pitch_type == "SL"][0]
+
+    # FF usage went from 60% to 50%: Down sharply (-10.0 pp)
+    assert "Down" in ff.usage_delta
+    assert "sharply" in ff.usage_delta
+
+    # SL usage went from 40% to 50%: Up sharply (+10.0 pp)
+    assert "Up" in sl.usage_delta
+    assert "sharply" in sl.usage_delta
+
+
+def test_arsenal_trends_season_identification():
+    """ArsenalTrend correctly identifies prior and current seasons."""
+    data = _make_pitcher_data_for_trends(
+        pitcher_type_rows=[
+            {"season": 2025, "pitch_type": "FF", "n_pitches": 200},
+            {"season": 2026, "pitch_type": "FF", "n_pitches": 200},
+        ],
+        statcast_rows=[
+            {"game_date": date(2025, 6, 1), "pitch_type": "FF", "pitch_name": "4-Seam Fastball", "release_speed": 94.0},
+            {"game_date": date(2026, 4, 1), "pitch_type": "FF", "pitch_name": "4-Seam Fastball", "release_speed": 94.0},
+        ],
+    )
+    result = compute_arsenal_trends(data)
+    assert result is not None
+    assert result.prior_season == 2025
+    assert result.current_season == 2026
+
+
+def test_arsenal_trends_three_seasons_uses_most_recent_two():
+    """With 3+ seasons, only the two most recent are compared."""
+    data = _make_pitcher_data_for_trends(
+        pitcher_type_rows=[
+            {"season": 2024, "pitch_type": "FF", "n_pitches": 200, "P+": 90.0, "S+": 85.0},
+            {"season": 2025, "pitch_type": "FF", "n_pitches": 200, "P+": 100.0, "S+": 100.0},
+            {"season": 2026, "pitch_type": "FF", "n_pitches": 200, "P+": 110.0, "S+": 115.0},
+        ],
+        statcast_rows=[
+            {"game_date": date(2024, 6, 1), "pitch_type": "FF", "pitch_name": "4-Seam Fastball", "release_speed": 92.0},
+            {"game_date": date(2025, 6, 1), "pitch_type": "FF", "pitch_name": "4-Seam Fastball", "release_speed": 94.0},
+            {"game_date": date(2026, 4, 1), "pitch_type": "FF", "pitch_name": "4-Seam Fastball", "release_speed": 96.0},
+        ],
+    )
+    result = compute_arsenal_trends(data)
+    assert result is not None
+    # Should compare 2025 vs 2026, not 2024 vs 2026
+    assert result.prior_season == 2025
+    assert result.current_season == 2026
+    ff = result.pitch_trends[0]
+    assert ff.prior_p_plus == 100.0  # 2025 value, not 2024's 90
+    assert ff.current_p_plus == 110.0
+
+
+def test_arsenal_trends_added_pitch_has_correct_fields():
+    """AddedDroppedPitch has all expected fields populated."""
+    data = _make_pitcher_data_for_trends(
+        pitcher_type_rows=[
+            {"season": 2025, "pitch_type": "FF", "n_pitches": 300},
+            {"season": 2026, "pitch_type": "FF", "n_pitches": 250},
+            {"season": 2026, "pitch_type": "CH", "n_pitches": 50},
+        ],
+        statcast_rows=[
+            {"game_date": date(2025, 6, 1), "pitch_type": "FF", "pitch_name": "4-Seam Fastball", "release_speed": 94.0},
+            {"game_date": date(2026, 4, 1), "pitch_type": "FF", "pitch_name": "4-Seam Fastball", "release_speed": 94.0},
+            {"game_date": date(2026, 4, 1), "pitch_type": "CH", "pitch_name": "Changeup", "release_speed": 84.0},
+        ],
+    )
+    result = compute_arsenal_trends(data)
+    assert result is not None
+    assert len(result.added_pitches) == 1
+    ch = result.added_pitches[0]
+    assert isinstance(ch, AddedDroppedPitch)
+    assert ch.pitch_type == "CH"
+    assert ch.pitch_name == "Changeup"
+    assert ch.season == 2026
+    assert ch.n_pitches == 50
+    assert ch.usage_pct > 0
+
+
+def test_arsenal_trends_pitch_trends_sorted_by_usage():
+    """PitchTrend list is sorted by current usage percentage descending."""
+    data = _make_pitcher_data_for_trends(
+        pitcher_type_rows=[
+            {"season": 2025, "pitch_type": "FF", "n_pitches": 300},
+            {"season": 2025, "pitch_type": "SL", "n_pitches": 100},
+            {"season": 2025, "pitch_type": "CH", "n_pitches": 100},
+            {"season": 2026, "pitch_type": "FF", "n_pitches": 200},
+            {"season": 2026, "pitch_type": "SL", "n_pitches": 200},
+            {"season": 2026, "pitch_type": "CH", "n_pitches": 100},
+        ],
+        statcast_rows=[
+            {"game_date": date(2025, 6, 1), "pitch_type": "FF", "pitch_name": "4-Seam Fastball", "release_speed": 94.0},
+            {"game_date": date(2025, 6, 1), "pitch_type": "SL", "pitch_name": "Slider", "release_speed": 85.0},
+            {"game_date": date(2025, 6, 1), "pitch_type": "CH", "pitch_name": "Changeup", "release_speed": 84.0},
+            {"game_date": date(2026, 4, 1), "pitch_type": "FF", "pitch_name": "4-Seam Fastball", "release_speed": 94.0},
+            {"game_date": date(2026, 4, 1), "pitch_type": "SL", "pitch_name": "Slider", "release_speed": 85.0},
+            {"game_date": date(2026, 4, 1), "pitch_type": "CH", "pitch_name": "Changeup", "release_speed": 84.0},
+        ],
+    )
+    result = compute_arsenal_trends(data)
+    assert result is not None
+    assert len(result.pitch_trends) == 3
+    usages = [t.current_usage_pct for t in result.pitch_trends]
+    assert usages == sorted(usages, reverse=True)
+
+
+def test_arsenal_trends_steady_deltas():
+    """Minimal changes produce 'Steady' delta strings."""
+    data = _make_pitcher_data_for_trends(
+        pitcher_type_rows=[
+            {"season": 2025, "pitch_type": "FF", "n_pitches": 300, "P+": 100.0, "S+": 100.0},
+            {"season": 2026, "pitch_type": "FF", "n_pitches": 300, "P+": 102.0, "S+": 101.0},
+        ],
+        statcast_rows=[
+            {"game_date": date(2025, 6, 1), "pitch_type": "FF", "pitch_name": "4-Seam Fastball", "release_speed": 94.0},
+            {"game_date": date(2026, 4, 1), "pitch_type": "FF", "pitch_name": "4-Seam Fastball", "release_speed": 94.2},
+        ],
+    )
+    result = compute_arsenal_trends(data)
+    assert result is not None
+    ff = result.pitch_trends[0]
+    # Small P+ change (2 pts) => Steady
+    assert "Steady" in ff.p_plus_delta
+    # Small S+ change (1 pt) => Steady
+    assert "Steady" in ff.s_plus_delta
+    # Small velo change (0.2 mph) => Steady
+    assert "Steady" in ff.velo_delta
