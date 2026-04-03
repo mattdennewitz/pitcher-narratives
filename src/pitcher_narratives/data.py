@@ -228,24 +228,25 @@ def classify_appearances(statcast: pl.DataFrame) -> pl.DataFrame:
 
 
 def compute_season_baseline(pitcher_df: pl.DataFrame) -> pl.DataFrame:
-    """Compute n_pitches-weighted season baseline for a pitcher.
+    """Compute n_pitches-weighted per-season baseline for a pitcher.
 
     Data is already filtered to regular-season and postseason game types
     by load_csv(). Combines any remaining game_type rows into a single
-    row per pitcher using pitch-count weighting.
+    row per pitcher per season using pitch-count weighting.
 
     Args:
         pitcher_df: DataFrame from pitcher.csv filtered to one pitcher.
 
     Returns:
-        Single-row DataFrame with weighted average metric values.
+        DataFrame with one row per pitcher per season with weighted average
+        metric values.
     """
     metric_cols = [c for c in pitcher_df.columns if c not in _ID_COLS]
     weighted_exprs = [
         (pl.col(c) * pl.col("n_pitches")).sum().truediv(pl.col("n_pitches").sum()).alias(c)
         for c in metric_cols
     ]
-    return pitcher_df.group_by("pitcher").agg(
+    return pitcher_df.group_by(["pitcher", "season"]).agg(
         pl.col("n_pitches").sum(),
         pl.col("player_name").first(),
         pl.col("p_throws").first(),
@@ -255,17 +256,18 @@ def compute_season_baseline(pitcher_df: pl.DataFrame) -> pl.DataFrame:
 
 
 def compute_pitch_type_baseline(pitcher_type_df: pl.DataFrame) -> pl.DataFrame:
-    """Compute n_pitches-weighted baseline per pitch type across game types.
+    """Compute n_pitches-weighted baseline per pitch type per season.
 
     Filters out empty pitch_type strings and combines game_type rows
-    using pitch-count weighting. Includes ``usage_pct`` — the percentage
-    of total pitches thrown with each pitch type.
+    using pitch-count weighting. Includes ``usage_pct`` -- the percentage
+    of total pitches thrown with each pitch type within a season.
 
     Args:
         pitcher_type_df: DataFrame from pitcher_type.csv (one or many pitchers).
 
     Returns:
-        DataFrame with one row per pitcher/pitch_type and weighted average metrics.
+        DataFrame with one row per pitcher/season/pitch_type and weighted
+        average metrics.
     """
     df = pitcher_type_df.filter(pl.col("pitch_type") != "")
     id_cols = _ID_COLS | {"pitch_type"}
@@ -274,17 +276,17 @@ def compute_pitch_type_baseline(pitcher_type_df: pl.DataFrame) -> pl.DataFrame:
         (pl.col(c) * pl.col("n_pitches")).sum().truediv(pl.col("n_pitches").sum()).alias(c)
         for c in metric_cols
     ]
-    result = df.group_by(["pitcher", "pitch_type"]).agg(
+    result = df.group_by(["pitcher", "season", "pitch_type"]).agg(
         pl.col("n_pitches").sum(),
         pl.col("player_name").first(),
         pl.col("p_throws").first(),
         pl.col("team_code").first(),
         *weighted_exprs,
     )
-    pitcher_totals = df.group_by("pitcher").agg(
+    pitcher_totals = df.group_by(["pitcher", "season"]).agg(
         pl.col("n_pitches").sum().alias("total_pitches"),
     )
-    return result.join(pitcher_totals, on="pitcher").with_columns(
+    return result.join(pitcher_totals, on=["pitcher", "season"]).with_columns(
         (pl.col("n_pitches") / pl.col("total_pitches") * 100).alias("usage_pct"),
     ).drop("total_pitches")
 
