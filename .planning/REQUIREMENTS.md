@@ -1,6 +1,6 @@
 # Requirements: Pitcher Narratives v1.8
 
-**Defined:** 2026-04-03
+**Defined:** 2026-04-02
 **Core Value:** The report must read like a scout wrote it -- surfacing changes, adaptations, and execution trends rather than reciting numbers.
 
 ## v1.8 Requirements
@@ -9,25 +9,27 @@ Requirements for Cross-Season Trend Analysis milestone. Each maps to roadmap pha
 
 ### Cross-Season Baselines
 
-- [ ] **XSBL-01**: `PitcherData` includes both current-season and prior-season baselines so engine consumers can compute year-over-year deltas
-- [ ] **XSBL-02**: When a pitcher has only one season of data, cross-season fields are empty/None (no crash, no misleading comparison)
+- [ ] **XSBL-01**: PitcherData exposes prior-season baselines alongside current-season baselines (both season-level and pitch-type-level)
+- [ ] **XSBL-02**: load_pitcher_data() retains all per-season baseline rows instead of filtering to max season only
+- [ ] **XSBL-03**: Prior-season baselines are empty DataFrames (not crashes) when pitcher has only one season of data
 
-### Season-over-Season Deltas
+### Season Deltas
 
-- [ ] **SDLT-01**: Engine computes per-pitch-type usage shift between seasons (e.g., "sweeper usage to LHH dropped from 14% to 0%")
-- [ ] **SDLT-02**: Engine computes per-pitch-type velocity and movement profile changes between seasons (e.g., "curveball 3 mph slower with 7 more inches of depth")
-- [ ] **SDLT-03**: Engine computes platoon split changes between seasons -- per-handedness pitch mix, not just aggregate
+- [ ] **SDLT-01**: Engine computes year-over-year deltas for pitcher-level metrics (velocity, P+, S+, L+) comparing current season baseline to prior season baseline
+- [ ] **SDLT-02**: YoY delta strings use the same qualitative thresholds and language as within-season deltas (Steady / Up modestly / Down sharply / etc.)
+- [ ] **SDLT-03**: Cross-season summary is None when prior-season data is missing (no fabricated comparisons)
 
-### Appearance-over-Appearance Trends
+### Arsenal Trends
 
-- [ ] **ATRN-01**: Engine computes pitch-level trends across recent appearances within the current season -- velocity arc, shape drift, mix evolution per outing
-- [ ] **ATRN-02**: Appearance trends distinguish between platoon splits (LHH vs RHH) per outing when data supports it
+- [ ] **ATRN-01**: Engine identifies pitches added (present in current season, absent in prior) and dropped (present in prior, absent in current) using a minimum-pitch threshold
+- [ ] **ATRN-02**: Engine computes per-pitch-type YoY deltas for usage rate, P+, S+, and velocity for pitches present in both seasons
+- [ ] **ATRN-03**: Arsenal trend output is None when pitcher has only one season of data
 
-### Context & Prompt Integration
+### Context & Prompt
 
-- [ ] **CPMT-01**: `PitcherContext.to_prompt()` includes a "Year-over-Year Changes" section when prior-season data exists
-- [ ] **CPMT-02**: `PitcherContext.to_prompt()` includes a "Recent Appearance Trends" section showing outing-to-outing evolution
-- [ ] **CPMT-03**: LLM system prompts updated to reason about what changed between seasons and across recent appearances, not just current-state description
+- [ ] **CPMT-01**: PitcherContext model includes optional cross-season summary and arsenal trend fields
+- [ ] **CPMT-02**: to_prompt() renders a Year-over-Year section with top-level deltas and arsenal changes when multi-season data exists, omits it entirely for single-season pitchers
+- [ ] **CPMT-03**: Specialist pipeline agents (stuff, trends, game shape) receive cross-season data in their context blocks
 
 ## Future Requirements
 
@@ -57,11 +59,11 @@ Explicitly excluded. Documented to prevent scope creep.
 
 | Feature | Reason |
 |---------|--------|
-| Cross-season trend analysis across 3+ years | Two-year comparison is sufficient for current data |
-| Automated scouting alerts | This milestone adds analysis, not notification |
-| Batter-side analysis | Pitcher-focused reports only |
-| Web UI or API | CLI tool only |
-| Real-time data ingestion | Static parquet/CSV files |
+| Cross-season trend for analyst Q&A tools | Analyst tools work on single-pitcher single-season; extend after v1.8 if needed |
+| Automatic narrative style change for YoY data | LLM already adapts prose from context; no prompt engineering needed beyond data injection |
+| Three-or-more season trend lines | Only 2 years of data exist; generalize when 3+ years available |
+| Cross-season workload comparison | Workload is inherently recent-window; YoY workload comparison adds noise |
+| Visual charts or sparklines | CLI text output; no terminal graphics |
 
 ## Traceability
 
@@ -69,21 +71,24 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| XSBL-01 | TBD | Pending |
-| XSBL-02 | TBD | Pending |
-| SDLT-01 | TBD | Pending |
-| SDLT-02 | TBD | Pending |
-| SDLT-03 | TBD | Pending |
-| ATRN-01 | TBD | Pending |
-| ATRN-02 | TBD | Pending |
-| CPMT-01 | TBD | Pending |
-| CPMT-02 | TBD | Pending |
-| CPMT-03 | TBD | Pending |
+| XSBL-01 | Phase 19 | Pending |
+| XSBL-02 | Phase 19 | Pending |
+| XSBL-03 | Phase 19 | Pending |
+| SDLT-01 | Phase 20 | Pending |
+| SDLT-02 | Phase 20 | Pending |
+| SDLT-03 | Phase 20 | Pending |
+| ATRN-01 | Phase 21 | Pending |
+| ATRN-02 | Phase 21 | Pending |
+| ATRN-03 | Phase 21 | Pending |
+| CPMT-01 | Phase 22 | Pending |
+| CPMT-02 | Phase 22 | Pending |
+| CPMT-03 | Phase 22 | Pending |
 
 **Coverage:**
-- v1.8 requirements: 10 total
-- Mapped to phases: 0
-- Unmapped: 10
+- v1.8 requirements: 12 total
+- Mapped to phases: 12
+- Unmapped: 0
 
 ---
-*Requirements defined: 2026-04-03*
+*Requirements defined: 2026-04-02*
+*Last updated: 2026-04-02 after roadmap creation*
