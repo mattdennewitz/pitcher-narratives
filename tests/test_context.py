@@ -1071,8 +1071,7 @@ def test_to_prompt_release_point_includes_arm_angle():
     rp = _make_release_point_with_arm_angle()
     ctx = _make_synthetic_ctx_with_count_splits(release_point=rp)
     prompt = ctx.to_prompt()
-    assert "Arm angle" in prompt or "arm angle" in prompt
-    assert "71.5" in prompt  # window_arm_angle for FF
+    assert "71.5 deg" in prompt  # window_arm_angle for FF
     assert "High 3/4" in prompt  # arm_slot
 
 

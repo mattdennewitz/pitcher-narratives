@@ -505,10 +505,10 @@ class PitcherContext(BaseModel):
                     f"| {pt.extension_delta} |"
                 )
 
-        # Arm angle per pitch type (added by Plan 23-02)
+        # Arm angle summary (one line per pitch type, after table)
         for pt in entries:
             lines.append(
-                f"  Arm angle: {pt.window_arm_angle:.1f} deg ({pt.arm_slot}), "
+                f"- {pt.pitch_name}: {pt.window_arm_angle:.1f} deg ({pt.arm_slot}), "
                 f"season {pt.season_arm_angle:.1f} deg, {pt.arm_angle_delta}"
             )
 
