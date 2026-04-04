@@ -109,13 +109,15 @@ The report must read like a scout wrote it — surfacing *changes, adaptations, 
 
 ## Context
 
-### Current State (v1.8 shipped)
+### Current State (v1.9 Phase 23 complete)
 
 **Modules:** config.py (shared constants), anchor.py (anchor quality gate), data.py (loading with multi-year support, game type filtering, cross-season baselines), engine.py (computation via data.py, including cross-season delta and arsenal trend engines), context.py (assembly with YoY prompt section), report.py (single-agent LLM pipeline + reflection loop), pipeline.py (multi-agent specialist pipeline + audit loop, 3 specialists receive YoY context), scout.py (appearance scoring via data.py), curator.py (LLM curation), cli.py (narrative CLI), scout_cli.py (scout CLI), resolver.py (fuzzy name resolution via data.py), analyst.py (tool-calling Q&A agent), ask_cli.py (Q&A CLI).
 
 **Tech stack:** Python 3.14, polars 1.39, pydantic-ai 1.72, rapidfuzz 3.14, nameparser 1.1, multi-provider (OpenAI gpt-5.4-mini, Claude Sonnet 4.6, Gemini 3.1 Pro).
 
 **Key v1.8 additions:** Cross-season baseline exposure (prior_season_baseline, prior_pitch_type_baseline on PitcherData). Season-delta engine (CrossSeasonSummary with YoY velocity/P+/S+/L+/workload deltas). Arsenal trend engine (ArsenalTrend with added/dropped pitch detection and per-pitch-type deltas). Context assembly wires YoY into to_prompt() and 3 specialist pipeline agents (stuff, trends, game_shape). 367 tests passing across all modules.
+
+**Phase 23 additions (v1.9):** Count-state usage splits engine (CountSplits with 5 buckets: ahead/behind/even/two_strike/first_pitch, small-sample flagging, notable shift detection). Per-pitch-type arm angle computation on ReleasePointPitchType with slot labels (Overhand/High 3-4/Low 3-4/Sidearm/Submarine). Percentile-ranked outlier tags (backward-compatible, handedness-filtered baselines). LeagueBaseline extended with p_throws and release point fields. PitcherContext wires count splits adjacent to platoon data and arm angle into release point section. pipeline.py and report.py callers pass percentiles. 435 tests passing.
 
 ### Data Sources
 
@@ -190,4 +192,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-04-04 after v1.9 milestone started — Multi-Agent Narrative Upgrade*
+*Last updated: 2026-04-04 after Phase 23 complete — Engine Foundation & Data Enrichment*
