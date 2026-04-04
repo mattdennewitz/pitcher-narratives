@@ -144,7 +144,12 @@ Example: "81.3 mph (-1.6 vs league avg, NORMAL for knuckle curves)."
 produce that whiff rate or swing rate?
 - No location analysis — this is stuff only.
 - One paragraph per pitch. Plain prose, no bullet lists.
-- No clichés, no hype. Just the mechanism."""
+- No clichés, no hype. Just the mechanism.
+- A Per-Pitch Delta Table is provided as raw data. Refer specifically \
+to the data in the Per-Pitch Delta Table when discussing movement or \
+velocity changes. Do not attempt to recalculate these numbers.
+- When referencing metrics, use the exact values from the Raw Data \
+section. These are ground truth."""
 
 _LOCATION_SPECIALIST_PROMPT = """\
 You are a pitch location analyst. Your job is to diagnose what \
@@ -522,6 +527,37 @@ def _build_stuff_input(ctx: PitcherContext) -> str:
                 if mov_parts:
                     lines.append(f"- {pt.pitch_name} movement: {', '.join(mov_parts)}")
 
+    # Raw data appendix: per-pitch delta table for grounding (PIPE-05)
+    lines.append("\n## Raw Data (cite these exact numbers)")
+    lines.append("### Per-Pitch Delta Table")
+    lines.append(
+        "| Pitch | Win Velo | Ssn Velo | Velo \u0394 "
+        "| Win pfx_x | Ssn pfx_x | pfx_x \u0394 "
+        "| Win pfx_z | Ssn pfx_z | pfx_z \u0394 "
+        "| Win S+ | Ssn S+ | S+ \u0394 "
+        "| Win P+ | Ssn P+ | P+ \u0394 |"
+    )
+    lines.append(
+        "|-------|---------|---------|--------"
+        "|-----------|-----------|--------"
+        "|-----------|-----------|--------"
+        "|--------|--------|------"
+        "|--------|--------|------|"
+    )
+    for p in ctx.arsenal:
+        ws = f"{p.window_s_plus:.0f}" if p.window_s_plus is not None else "--"
+        ss = f"{p.season_s_plus:.0f}" if p.season_s_plus is not None else "--"
+        wp = f"{p.window_p_plus:.0f}" if p.window_p_plus is not None else "--"
+        sp_val = f"{p.season_p_plus:.0f}" if p.season_p_plus is not None else "--"
+        lines.append(
+            f"| {p.pitch_name} ({p.pitch_type}) "
+            f"| {p.window_velo:.1f} | {p.season_velo:.1f} | {p.velo_delta} "
+            f"| {p.window_pfx_x:.1f} | {p.season_pfx_x:.1f} | {p.pfx_x_delta} "
+            f"| {p.window_pfx_z:.1f} | {p.season_pfx_z:.1f} | {p.pfx_z_delta} "
+            f"| {ws} | {ss} | {p.s_plus_delta} "
+            f"| {wp} | {sp_val} | {p.p_plus_delta} |"
+        )
+
     return "\n".join(lines)
 
 
@@ -598,6 +634,35 @@ def _build_trend_input(ctx: PitcherContext) -> str:
     # Cross-season context (when available) — trends specialist gets full YoY section
     if ctx.cross_season_summary is not None or ctx.arsenal_trend is not None:
         sections.append(ctx._render_yoy_section())
+
+    # Raw data appendix: primary pitch deltas for grounding (PIPE-05)
+    primary = [p for p in ctx.arsenal if p.window_usage_pct >= 10.0]
+    if primary:
+        raw_lines = ["## Raw Data (cite these exact numbers)"]
+        raw_lines.append("### Primary Pitch Deltas (\u226510% usage)")
+        raw_lines.append(
+            "| Pitch | Usage (win/ssn) | Velo (win/ssn) | Velo \u0394 "
+            "| pfx_x \u0394 | pfx_z \u0394 "
+            "| S+ (win/ssn) | P+ (win/ssn) |"
+        )
+        raw_lines.append(
+            "|-------|----------------|----------------|--------"
+            "|---------|---------|-------------|-------------|"
+        )
+        for p in primary:
+            ws = f"{p.window_s_plus:.0f}" if p.window_s_plus is not None else "--"
+            ss = f"{p.season_s_plus:.0f}" if p.season_s_plus is not None else "--"
+            wp = f"{p.window_p_plus:.0f}" if p.window_p_plus is not None else "--"
+            sp_val = f"{p.season_p_plus:.0f}" if p.season_p_plus is not None else "--"
+            raw_lines.append(
+                f"| {p.pitch_name} ({p.pitch_type}) "
+                f"| {p.window_usage_pct:.1f}%/{p.season_usage_pct:.1f}% "
+                f"| {p.window_velo:.1f}/{p.season_velo:.1f} | {p.velo_delta} "
+                f"| {p.pfx_x_delta} | {p.pfx_z_delta} "
+                f"| {ws}/{ss} | {wp}/{sp_val} |"
+            )
+        sections.append("\n".join(raw_lines))
+
     return "\n\n".join(s for s in sections if s)
 
 
