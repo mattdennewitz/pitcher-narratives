@@ -33,7 +33,11 @@
   3. Outlier tags display percentile rank (e.g., "OUTLIER - 98th percentile") instead of raw z-score notation
   4. PitcherContext model includes CountSplits and arm angle fields, and to_prompt() renders them into the context document
   5. Count buckets with fewer than 10 pitches are flagged as small sample with no usage delta computed
-**Plans**: TBD
+**Plans**: 3 plans
+Plans:
+- [ ] 23-01-PLAN.md -- CountSplits dataclasses and compute_count_splits engine function
+- [ ] 23-02-PLAN.md -- Arm angle fields on ReleasePointPitchType + LeagueBaseline extension + outlier_tag percentile upgrade
+- [ ] 23-03-PLAN.md -- PitcherContext wiring + to_prompt rendering (count splits adjacent to platoon, arm angle in release point)
 
 ### Phase 24: Pipeline Re-Architecture
 **Goal**: The specialist pipeline expands to 6 agents with an Approach Specialist handling platoon/count analysis, dynamic RP routing that skips Game Shape, and raw data appendices for grounding
@@ -88,7 +92,7 @@ Phases execute in numeric order: 23 -> 24 -> 25
 | 20. Season-Delta Engine | v1.8 | 1/1 | Complete | 2026-04-03 |
 | 21. Arsenal Trend Engine | v1.8 | 1/1 | Complete | 2026-04-03 |
 | 22. Context Assembly & Prompt Rendering | v1.8 | 1/1 | Complete | 2026-04-03 |
-| 23. Engine Foundation & Data Enrichment | v1.9 | 0/0 | Not started | - |
+| 23. Engine Foundation & Data Enrichment | v1.9 | 0/3 | In progress | - |
 | 24. Pipeline Re-Architecture | v1.9 | 0/0 | Not started | - |
 | 25. Prompt Engineering & Heuristic Injection | v1.9 | 0/0 | Not started | - |
 
