@@ -150,7 +150,21 @@ produce that whiff rate or swing rate?
 to the data in the Per-Pitch Delta Table when discussing movement or \
 velocity changes. Do not attempt to recalculate these numbers.
 - When referencing metrics, use the exact values from the Raw Data \
-section. These are ground truth."""
+section. These are ground truth.
+
+TRADE-OFF DETECTION:
+Stuff+ evaluates the holistic pitch. Whenever you see an INVERSE \
+relationship between raw physical metrics (velocity/movement) and \
+the S+ grade, your primary goal is to narrate the contradiction by \
+finding the compensating factor in the data.
+
+COMMON PATTERNS:
+- Velo down + S+ up: movement or spin compensation is driving the \
+improvement. Cite the pfx deltas that explain it.
+- Velo up + S+ down: lost movement or dead zone shape is undermining \
+the velocity gain. Cite movement deltas.
+- Movement change + stable S+: shape adaptation maintaining \
+effectiveness through a different movement profile."""
 
 _LOCATION_SPECIALIST_PROMPT = """\
 You are a pitch location analyst. Your job is to diagnose what \
@@ -185,7 +199,17 @@ Rules:
 more explanation than a pitch where they're similar.
 - Explain the physical location pattern, not just the delta.
 - One paragraph per pitch or group. Plain prose, no bullet lists.
-- No stuff analysis — this is location only."""
+- No stuff analysis — this is location only.
+
+CONTRADICTION DETECTION:
+Location metrics can appear contradictory when a pitcher is expanding \
+the zone. Narrate these — they reveal command strategy.
+
+COMMON PATTERNS:
+- Low zone% + high xWhiff: pitcher is expanding the zone, getting \
+chases outside. Cite chase% to confirm.
+- High zone% + low xWhiff: pitcher is in the zone but predictable. \
+Cite xSwing to check if hitters are swinging freely."""
 
 _RUNVALUE_SPECIALIST_PROMPT = """\
 You are a run value decomposition analyst. Your job is to explain \
@@ -220,7 +244,9 @@ or location pattern.
 - One paragraph per pitch. Plain prose, no bullet lists.
 - No redundant S+/P+ discussion — focus on the outcome-level story."""
 
-_TREND_SPECIALIST_PROMPT = """\
+def _build_trend_prompt(ctx: PitcherContext | None = None) -> str:
+    """Build trend specialist system prompt with conditional release-point vocabulary (D-05)."""
+    base = """\
 You are a trend analyst. Your job is to identify what has changed in \
 the pitcher's recent window compared to season baseline and flag the \
 direction and magnitude of those changes.
@@ -244,6 +270,23 @@ more hard contact = likely related).
 - Do NOT analyze TTO patterns, velocity arcs, or within-game \
 progression — a separate specialist handles that.
 - Plain prose, no bullet lists."""
+
+    if ctx is not None and ctx.release_point.pitch_types:
+        base += """
+
+RELEASE POINT FRAMING:
+When arm angle data is present, use this vocabulary to describe \
+release point changes:
+- Arm slot: "delivery angle" or "arm slot" (not "release point angle")
+- Slot shift: describe as mechanical adjustment ("dropped down," \
+"came over the top")
+- Different arm angles across pitch types: tunneling advantage \
+(pitches look similar out of the hand despite different trajectories)
+- Overhand: steeper approach angle. Sidearm: more horizontal plane.
+- Do NOT speculate on mechanical causes (injury, fatigue) — only \
+describe what the data shows."""
+
+    return base
 
 _GAME_SHAPE_SPECIALIST_PROMPT = """\
 You are a game shape analyst. Your job is to describe how the pitcher's \
@@ -1043,7 +1086,7 @@ def write_pipeline_data_file(
         ("SPECIALIST 1: STUFF", _STUFF_SPECIALIST_PROMPT, _build_stuff_input(ctx)),
         ("SPECIALIST 2: LOCATION", _LOCATION_SPECIALIST_PROMPT, _build_location_input(ctx)),
         ("SPECIALIST 3: RUN VALUE", _RUNVALUE_SPECIALIST_PROMPT, _build_runvalue_input(ctx)),
-        ("SPECIALIST 4: TRENDS", _TREND_SPECIALIST_PROMPT, _build_trend_input(ctx)),
+        ("SPECIALIST 4: TRENDS", _build_trend_prompt(ctx), _build_trend_input(ctx)),
         ("SPECIALIST 5: GAME SHAPE", _GAME_SHAPE_SPECIALIST_PROMPT, _build_game_shape_input(ctx)),
         ("SPECIALIST 6: APPROACH", _APPROACH_SPECIALIST_PROMPT, _build_approach_input(ctx)),
     ]
@@ -1149,6 +1192,7 @@ def make_pipeline_agents(
     provider: str = "gemini",
     thinking: ThinkingEffort = "high",
     role: str = "SP",
+    ctx: PitcherContext | None = None,
 ) -> PipelineAgents:
     if provider not in PROVIDERS:
         raise ValueError(f"Unknown provider {provider!r}")
@@ -1172,7 +1216,7 @@ def make_pipeline_agents(
         stuff=_specialist(_STUFF_SPECIALIST_PROMPT),
         location=_specialist(_LOCATION_SPECIALIST_PROMPT),
         runvalue=_specialist(_RUNVALUE_SPECIALIST_PROMPT),
-        trends=_specialist(_TREND_SPECIALIST_PROMPT),
+        trends=_specialist(_build_trend_prompt(ctx)),
         game_shape=_specialist(_GAME_SHAPE_SPECIALIST_PROMPT),
         approach=_specialist(_APPROACH_SPECIALIST_PROMPT),
         writer=_writer(_build_writer_prompt(role)),
@@ -1244,7 +1288,7 @@ async def _run_pipeline(
     Phase 2: Writer composes capsule (with audit flags if any).
     Phase 2.5: Anchor check + revision loop.
     """
-    agents = make_pipeline_agents(provider, thinking, role=ctx.role)
+    agents = make_pipeline_agents(provider, thinking, role=ctx.role, ctx=ctx)
 
     # Phase 1: Run specialists concurrently
     log.info("Running specialists...")
