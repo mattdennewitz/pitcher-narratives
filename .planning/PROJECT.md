@@ -70,11 +70,31 @@ The report must read like a scout wrote it — surfacing *changes, adaptations, 
 
 ### Active
 
-(See Current Milestone below)
+- [ ] CountSplits engine: per-pitch-type usage across count states (ahead/behind/even/two-strike)
+- [ ] Arm angle calculation from release_x/release_z coordinates
+- [ ] Percentile-based outlier tags (replacing raw z-score tags)
+- [ ] Approach Specialist: 6th specialist agent covering platoon mix, count splits, first-pitch strategy
+- [ ] Dynamic RP routing: skip game shape specialist for single-inning relievers
+- [ ] Raw data appendix in stuff/trend specialist inputs for causal tracing
+- [ ] Trade-off detection directive in Stuff Specialist prompt
+- [ ] Contradiction detection directive in Location Specialist prompt
+- [ ] Release point framing vocabulary in Trend Specialist prompt
+- [ ] Causal hook requirement in Writer prompt
+- [ ] Auditor whitelist for sabermetric heuristic interpretations
 
-## Current Milestone: None (v1.8 shipped)
+## Current Milestone: v1.9 Multi-Agent Narrative Upgrade
 
-v1.8 Cross-Season Trend Analysis shipped 2026-04-03. Run `/gsd:new-milestone` to start the next milestone.
+**Goal:** Upgrade the specialist pipeline with count-aware strategy analysis, arm angle computation, and prompt heuristics that produce writing-sample-quality output.
+
+**Target features:**
+- CountSplits engine (ahead/behind/even/two-strike usage per pitch type)
+- Arm angle calculation from release coordinates
+- Percentile-based outlier tags replacing z-score tags
+- New Approach Specialist (platoon + count + first-pitch strategy)
+- Dynamic RP routing (skip game shape for relievers)
+- Raw data appendix for causal tracing
+- Trade-off, contradiction, release-point, and causal-hook prompt directives
+- Auditor whitelist for sabermetric heuristics
 
 ### Out of Scope
 
@@ -170,4 +190,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-04-03 after v1.8 milestone shipped — Cross-Season Trend Analysis*
+*Last updated: 2026-04-04 after v1.9 milestone started — Multi-Agent Narrative Upgrade*
