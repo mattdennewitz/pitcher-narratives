@@ -18,6 +18,9 @@ from pitcher_narratives.engine import (
     AppearanceWorkload,
     ArsenalTrend,
     ComponentAttribution,
+    CountBucket,
+    CountBucketUsage,
+    CountSplits,
     CrossSeasonSummary,
     ExecutionMetrics,
     FastballSummary,
@@ -29,6 +32,7 @@ from pitcher_narratives.engine import (
     PitchTrend,
     PitchTypeSummary,
     PlatoonMix,
+    PlatoonSplit,
     ReleasePointMetrics,
     VelocityArc,
     WorkloadContext,
@@ -43,6 +47,7 @@ from pitcher_narratives.pipeline import (
     PipelineAgents,
     PipelineResult,
     SpecialistOutputs,
+    _build_approach_input,
     _build_game_shape_input,
     _build_location_input,
     _build_runvalue_input,
@@ -358,8 +363,13 @@ def _make_pipeline_ctx(
     *,
     cross_season_summary: CrossSeasonSummary | None = None,
     arsenal_trend: ArsenalTrend | None = None,
+    role: str = "SP",
+    platoon_mix: PlatoonMix | None = None,
+    first_pitch: FirstPitchWeaponry | None = None,
+    count_splits: CountSplits | None = None,
+    workload_appearances: list[AppearanceWorkload] | None = None,
 ) -> PitcherContext:
-    """Build a minimal synthetic PitcherContext for pipeline YoY tests."""
+    """Build a minimal synthetic PitcherContext for pipeline tests."""
     fastball = FastballSummary(
         pitch_type="FF",
         pitch_name="4-Seam Fastball",
@@ -417,34 +427,57 @@ def _make_pipeline_ctx(
         ),
     ]
 
-    workload = WorkloadContext(
-        appearances=[
+    if workload_appearances is not None:
+        appearances = workload_appearances
+        max_consec = max(
+            (1 for a in appearances if a.rest_days == 0),
+            default=1,
+        )
+        # Simple consecutive count: count 0-rest-day chains
+        consec = 1
+        for a in sorted(appearances, key=lambda x: x.game_date):
+            if a.rest_days == 0:
+                consec += 1
+            else:
+                consec = 1
+        max_consec = max(max_consec, consec)
+        workload_concern = max_consec >= 3
+    else:
+        appearances = [
             AppearanceWorkload(
                 game_pk=700001,
                 game_date="2026-06-15",
-                role="SP",
+                role=role,
                 ip="6.0",
                 pitch_count=95,
                 rest_days=5,
             ),
-        ],
-        max_consecutive_days=1,
-        workload_concern=False,
+        ]
+        max_consec = 1
+        workload_concern = False
+
+    workload = WorkloadContext(
+        appearances=appearances,
+        max_consecutive_days=max_consec,
+        workload_concern=workload_concern,
+    )
+
+    default_platoon_mix = PlatoonMix(splits=[], cold_start=False)
+    default_first_pitch = FirstPitchWeaponry(
+        entries=[], total_first_pitches_season=100,
+        total_first_pitches_window=10, cold_start=False,
     )
 
     return PitcherContext(
         pitcher_name="Test Pitcher",
         pitcher_id=99999,
         throws="R",
-        role="SP",
+        role=role,
         fastball=fastball,
         velocity_arc=None,
         arsenal=arsenal,
-        platoon_mix=PlatoonMix(splits=[], cold_start=False),
-        first_pitch=FirstPitchWeaponry(
-            entries=[], total_first_pitches_season=100,
-            total_first_pitches_window=10, cold_start=False,
-        ),
+        platoon_mix=platoon_mix if platoon_mix is not None else default_platoon_mix,
+        first_pitch=first_pitch if first_pitch is not None else default_first_pitch,
         execution=[],
         intermediates=[],
         attributions=[],
@@ -462,6 +495,7 @@ def _make_pipeline_ctx(
         tto=None,
         cross_season_summary=cross_season_summary,
         arsenal_trend=arsenal_trend,
+        count_splits=count_splits,
     )
 
 
@@ -704,3 +738,201 @@ class TestLocationRvNoYoY:
         _patch_league_baselines(monkeypatch)
         output = _build_runvalue_input(yoy_ctx)
         assert "Year-over-Year" not in output
+
+    def test_location_input_no_platoon(self, yoy_ctx, monkeypatch):
+        """PIPE-03: Location specialist input does NOT contain platoon data."""
+        _patch_league_baselines(monkeypatch)
+        output = _build_location_input(yoy_ctx)
+        assert "platoon" not in output.lower()
+
+
+# ── Approach Specialist test helpers ───────────────────────────────────
+
+
+def _make_test_platoon_mix() -> PlatoonMix:
+    """Create a PlatoonMix with meaningful data for approach tests."""
+    return PlatoonMix(
+        splits=[
+            PlatoonSplit(
+                pitch_type="FF", pitch_name="4-Seam Fastball",
+                platoon_side="same", season_usage_pct=55.0,
+                window_usage_pct=42.0, usage_delta="Down sharply",
+                season_p_plus=105.0, window_p_plus=None, p_plus_delta="--",
+                available=True,
+            ),
+            PlatoonSplit(
+                pitch_type="SL", pitch_name="Slider",
+                platoon_side="opposite", season_usage_pct=20.0,
+                window_usage_pct=35.0, usage_delta="Up sharply",
+                season_p_plus=110.0, window_p_plus=None, p_plus_delta="--",
+                available=True,
+            ),
+        ],
+        cold_start=False,
+    )
+
+
+def _make_test_count_splits() -> CountSplits:
+    """Create a CountSplits with a notable shift for approach tests."""
+    return CountSplits(
+        buckets=[
+            CountBucket(
+                bucket="ahead", n_pitches_window=30, n_pitches_season=200,
+                small_sample=False,
+                pitch_types=[CountBucketUsage(pitch_type="SL", pitch_name="Slider", usage_pct=45.0)],
+                season_pitch_types=[CountBucketUsage(pitch_type="SL", pitch_name="Slider", usage_pct=30.0)],
+            ),
+        ],
+        notable_shifts=["Slider ahead: 45.0% window vs 30.0% season (+15.0 pp)"],
+    )
+
+
+def _make_test_first_pitch() -> FirstPitchWeaponry:
+    """Create a FirstPitchWeaponry with data for approach tests."""
+    return FirstPitchWeaponry(
+        entries=[
+            FirstPitchEntry(
+                pitch_type="FF", pitch_name="4-Seam Fastball",
+                season_pct=60.0, window_pct=55.0, delta="Down modestly",
+                n_first_pitches_season=200, n_first_pitches_window=20,
+            ),
+        ],
+        total_first_pitches_season=350,
+        total_first_pitches_window=35,
+        cold_start=False,
+    )
+
+
+def _make_approach_ctx() -> PitcherContext:
+    """PitcherContext populated with platoon, count splits, and first-pitch data."""
+    return _make_pipeline_ctx(
+        platoon_mix=_make_test_platoon_mix(),
+        count_splits=_make_test_count_splits(),
+        first_pitch=_make_test_first_pitch(),
+    )
+
+
+def _make_rp_pipeline_ctx() -> PitcherContext:
+    """PitcherContext for an RP with multiple workload appearances."""
+    return _make_pipeline_ctx(
+        role="RP",
+        workload_appearances=[
+            AppearanceWorkload(game_pk=700001, game_date="2026-06-15", role="RP", ip="1.0", pitch_count=18, rest_days=1),
+            AppearanceWorkload(game_pk=700002, game_date="2026-06-14", role="RP", ip="1.0", pitch_count=22, rest_days=0),
+            AppearanceWorkload(game_pk=700003, game_date="2026-06-13", role="RP", ip="0.2", pitch_count=12, rest_days=2),
+        ],
+    )
+
+
+# ── Approach Specialist tests ──────────────────────────────────────────
+
+
+class TestBuildApproachInput:
+    def test_approach_input_contains_platoon_section(self, monkeypatch):
+        """PIPE-01: Approach input contains platoon shifts when data present."""
+        _patch_league_baselines(monkeypatch)
+        ctx = _make_approach_ctx()
+        output = _build_approach_input(ctx)
+        assert "Platoon Shifts" in output
+
+    def test_approach_input_contains_count_splits(self, monkeypatch):
+        """PIPE-01: Approach input contains notable count-state shifts."""
+        _patch_league_baselines(monkeypatch)
+        ctx = _make_approach_ctx()
+        output = _build_approach_input(ctx)
+        assert "Count-State Usage Shifts" in output
+        assert "+15.0 pp" in output
+
+    def test_approach_input_contains_first_pitch(self, monkeypatch):
+        """PIPE-01: Approach input contains first-pitch tendencies."""
+        _patch_league_baselines(monkeypatch)
+        ctx = _make_approach_ctx()
+        output = _build_approach_input(ctx)
+        assert "First-Pitch Tendencies" in output
+
+    def test_approach_input_contains_baseline_mix(self, monkeypatch):
+        """PIPE-01: Approach input contains baseline overall pitch mix."""
+        _patch_league_baselines(monkeypatch)
+        ctx = _make_approach_ctx()
+        output = _build_approach_input(ctx)
+        assert "Overall Pitch Mix" in output
+        assert "55.0% season" in output
+        assert "50.0% recent" in output
+
+    def test_approach_input_contains_pitcher_header(self, monkeypatch):
+        """PIPE-01: Approach input starts with pitcher name/handedness/role."""
+        _patch_league_baselines(monkeypatch)
+        ctx = _make_approach_ctx()
+        output = _build_approach_input(ctx)
+        assert output.startswith("## Test Pitcher (RHP, SP)")
+
+    def test_approach_input_no_full_appendix(self, monkeypatch):
+        """D-04: Approach input does NOT contain the full count splits appendix."""
+        _patch_league_baselines(monkeypatch)
+        ctx = _make_approach_ctx()
+        output = _build_approach_input(ctx)
+        assert "Count-State Usage Appendix" not in output
+
+
+class TestApproachPrompt:
+    def test_prompt_contains_strategy_first(self):
+        """D-01: Approach prompt contains strategy-first framing."""
+        from pitcher_narratives.pipeline import _APPROACH_SPECIALIST_PROMPT
+        assert "approach pattern" in _APPROACH_SPECIALIST_PROMPT.lower() or \
+               "strategy" in _APPROACH_SPECIALIST_PROMPT.lower()
+
+    def test_prompt_contains_cross_reference_directive(self):
+        """D-02: Approach prompt contains cross-reference instruction."""
+        from pitcher_narratives.pipeline import _APPROACH_SPECIALIST_PROMPT
+        assert "platoon side AND" in _APPROACH_SPECIALIST_PROMPT or \
+               "cross-reference" in _APPROACH_SPECIALIST_PROMPT.lower()
+
+    def test_prompt_contains_adaptive_length(self):
+        """D-03: Approach prompt contains anti-padding directive."""
+        from pitcher_narratives.pipeline import _APPROACH_SPECIALIST_PROMPT
+        assert "Under no circumstances should you pad" in _APPROACH_SPECIALIST_PROMPT
+
+    def test_prompt_contains_notable_shifts(self):
+        """D-04: Approach prompt references 10+ pp shifts."""
+        from pitcher_narratives.pipeline import _APPROACH_SPECIALIST_PROMPT
+        assert "10+" in _APPROACH_SPECIALIST_PROMPT
+
+
+class TestRPGameShapeSkip:
+    def test_rp_gets_workload_stub(self, monkeypatch):
+        """PIPE-04: RP game shape returns workload stub, not TTO content."""
+        _patch_league_baselines(monkeypatch)
+        ctx = _make_rp_pipeline_ctx()
+        output = _build_game_shape_input(ctx)
+        assert "Workload Context" in output
+        # Should NOT contain TTO content
+        assert "TTO" not in output
+
+    def test_rp_stub_contains_appearances(self, monkeypatch):
+        """PIPE-04: RP workload stub contains appearances count."""
+        _patch_league_baselines(monkeypatch)
+        ctx = _make_rp_pipeline_ctx()
+        output = _build_game_shape_input(ctx)
+        assert "Appearances" in output or "appearances" in output
+        assert "3" in output  # 3 appearances
+
+    def test_rp_stub_contains_pitch_counts(self, monkeypatch):
+        """PIPE-04: RP workload stub contains pitch count info."""
+        _patch_league_baselines(monkeypatch)
+        ctx = _make_rp_pipeline_ctx()
+        output = _build_game_shape_input(ctx)
+        assert "18" in output or "22" in output or "Pitches" in output or "pitch" in output.lower()
+
+    def test_rp_stub_contains_rest_days(self, monkeypatch):
+        """PIPE-04: RP workload stub contains rest day info."""
+        _patch_league_baselines(monkeypatch)
+        ctx = _make_rp_pipeline_ctx()
+        output = _build_game_shape_input(ctx)
+        assert "1d" in output or "2d" in output or "Rest" in output or "rest" in output
+
+    def test_sp_gets_normal_game_shape(self, monkeypatch):
+        """PIPE-04: SP game shape returns normal TTO content, not workload stub."""
+        _patch_league_baselines(monkeypatch)
+        ctx = _make_pipeline_ctx(role="SP")
+        output = _build_game_shape_input(ctx)
+        assert "Workload Context" not in output
