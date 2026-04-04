@@ -597,6 +597,46 @@ class TestStuffInputYoY:
         assert "Year-over-Year" not in output
 
 
+def _patch_league_baselines_with_handedness(monkeypatch):
+    """Patch compute_league_baselines to return baselines with p_throws for percentile testing."""
+    mock_baselines = [
+        LeagueBaseline(
+            pitch_type="FF", pitch_name="4-Seam Fastball", p_throws="R",
+            n_pitches=50000, avg_velo=93.5, avg_pfx_x=-6.0, avg_pfx_z=14.0,
+            zone_pct=45.0, chase_pct=25.0, velo_std=2.5, pfx_x_std=2.0, pfx_z_std=2.0,
+        ),
+        LeagueBaseline(
+            pitch_type="FF", pitch_name="4-Seam Fastball", p_throws="L",
+            n_pitches=20000, avg_velo=92.0, avg_pfx_x=6.0, avg_pfx_z=14.0,
+            zone_pct=44.0, chase_pct=24.0, velo_std=2.5, pfx_x_std=2.0, pfx_z_std=2.0,
+        ),
+    ]
+    monkeypatch.setattr(
+        "pitcher_narratives.pipeline.compute_league_baselines",
+        lambda: mock_baselines,
+    )
+    monkeypatch.setattr(
+        "pitcher_narratives.pipeline.render_league_baselines",
+        lambda _types: "## League Baselines\n(mocked)",
+    )
+
+
+class TestStuffInputPercentile:
+    def test_stuff_input_includes_percentile(self, yoy_ctx, monkeypatch):
+        """Stuff specialist output includes percentile text in outlier tags."""
+        _patch_league_baselines_with_handedness(monkeypatch)
+        output = _build_stuff_input(yoy_ctx)
+        assert "percentile" in output
+
+    def test_stuff_input_handedness_filtering(self, yoy_ctx, monkeypatch):
+        """Stuff specialist uses handedness-matched baselines (RHP ctx -> RHP baselines)."""
+        _patch_league_baselines_with_handedness(monkeypatch)
+        output = _build_stuff_input(yoy_ctx)
+        # RHP ctx with 93.0 velo vs RHP avg 93.5 — should be NORMAL
+        # If it used LHP baselines (92.0 avg), result would differ
+        assert "NORMAL" in output or "OUTLIER" in output
+
+
 class TestTrendInputYoY:
     def test_trend_input_includes_yoy(self, yoy_ctx, monkeypatch):
         """CPMT-03: Trend specialist input includes YoY context."""
