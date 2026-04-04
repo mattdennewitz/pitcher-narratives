@@ -18,7 +18,7 @@
 **Milestone Goal:** Deepen the 6-agent specialist pipeline with count-state awareness, arm angle context, approach analysis, and prompt heuristics that push narratives toward causal reasoning and trade-off detection.
 
 - [x] **Phase 23: Engine Foundation & Data Enrichment** - CountSplits engine, arm angle calculation, percentile outlier tags, context wiring (completed 2026-04-04)
-- [ ] **Phase 24: Pipeline Re-Architecture** - Approach Specialist agent, RP dynamic routing, raw data appendix, Location Specialist platoon removal
+- [x] **Phase 24: Pipeline Re-Architecture** - Approach Specialist agent, RP dynamic routing, raw data appendix, Location Specialist platoon removal (completed 2026-04-04)
 - [ ] **Phase 25: Prompt Engineering & Heuristic Injection** - Trade-off, contradiction, release-point, causal-hook directives, auditor whitelist
 
 ## Phase Details
@@ -53,7 +53,7 @@ Plans:
 Plans:
 - [x] 24-01-PLAN.md -- Approach Specialist prompt + input builder, RP workload stub, game shape conditional
 - [x] 24-02-PLAN.md -- Stuff per-pitch delta table and Trend timeline appendix (raw data grounding)
-- [ ] 24-03-PLAN.md -- Full pipeline wiring: 6-agent orchestration, writer prompt, auditor categories
+- [x] 24-03-PLAN.md -- Full pipeline wiring: 6-agent orchestration, writer prompt, auditor categories
 
 ### Phase 25: Prompt Engineering & Heuristic Injection
 **Goal**: Specialist and writer prompts encode sabermetric heuristics so narratives surface trade-offs, contradictions, and causal chains instead of just restating metric directions
@@ -97,7 +97,7 @@ Phases execute in numeric order: 23 -> 24 -> 25
 | 21. Arsenal Trend Engine | v1.8 | 1/1 | Complete | 2026-04-03 |
 | 22. Context Assembly & Prompt Rendering | v1.8 | 1/1 | Complete | 2026-04-03 |
 | 23. Engine Foundation & Data Enrichment | v1.9 | 3/3 | Complete    | 2026-04-04 |
-| 24. Pipeline Re-Architecture | v1.9 | 2/3 | In Progress |  |
+| 24. Pipeline Re-Architecture | v1.9 | 3/3 | Complete   | 2026-04-04 |
 | 25. Prompt Engineering & Heuristic Injection | v1.9 | 0/0 | Not started | - |
 
 ---

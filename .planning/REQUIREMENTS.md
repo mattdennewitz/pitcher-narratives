@@ -22,8 +22,8 @@ Requirements for Multi-Agent Narrative Upgrade. Each maps to roadmap phases.
 - [x] **PIPE-03**: Location Specialist no longer receives platoon data (moved to Approach Specialist)
 - [x] **PIPE-04**: Game Shape specialist skipped for relievers (ctx.role == "RP"), replaced with static placeholder
 - [ ] **PIPE-05**: Stuff and Trend specialist inputs include raw data appendix with PitchTypeSummary deltas
-- [ ] **PIPE-06**: Writer input includes Approach Specialist output as 6th specialist analysis
-- [ ] **PIPE-07**: Auditor runs against Approach Specialist output (6 audits total, up from 5)
+- [x] **PIPE-06**: Writer input includes Approach Specialist output as 6th specialist analysis
+- [x] **PIPE-07**: Auditor runs against Approach Specialist output (6 audits total, up from 5)
 
 ### Prompt Heuristics
 
@@ -64,8 +64,8 @@ Requirements for Multi-Agent Narrative Upgrade. Each maps to roadmap phases.
 | PIPE-03 | Phase 24 | Complete |
 | PIPE-04 | Phase 24 | Complete |
 | PIPE-05 | Phase 24 | Pending |
-| PIPE-06 | Phase 24 | Pending |
-| PIPE-07 | Phase 24 | Pending |
+| PIPE-06 | Phase 24 | Complete |
+| PIPE-07 | Phase 24 | Complete |
 | PROMPT-01 | Phase 25 | Pending |
 | PROMPT-02 | Phase 25 | Pending |
 | PROMPT-03 | Phase 25 | Pending |

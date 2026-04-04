@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.9
 milestone_name: Multi-Agent Narrative Upgrade
 status: executing
-stopped_at: Completed 24-01-PLAN.md and 24-02-PLAN.md (Wave 1)
-last_updated: "2026-04-04T20:27:00Z"
+stopped_at: Completed 24-03-PLAN.md
+last_updated: "2026-04-04T20:50:54.224Z"
 last_activity: 2026-04-04
 progress:
   total_phases: 3
-  completed_phases: 1
+  completed_phases: 2
   total_plans: 6
-  completed_plans: 4
+  completed_plans: 6
   percent: 40
 ---
 
@@ -26,8 +26,8 @@ See: .planning/PROJECT.md (updated 2026-04-04)
 ## Current Position
 
 Phase: 24 of 25 (pipeline re architecture)
-Plan: 2 of 3 complete (Wave 1 done)
-Status: Executing Phase 24
+Plan: 3 of 3 complete (Wave 1 done)
+Status: Ready to execute
 Last activity: 2026-04-04
 
 Progress: [####░░░░░░] 40%
@@ -49,6 +49,7 @@ Progress: [####░░░░░░] 40%
 | Phase 23 P03 | 7min | 1 tasks | 2 files |
 | Phase 24 P01 | 6min | 1 tasks | 2 files |
 | Phase 24 P02 | 3min | 1 tasks | 2 files |
+| Phase 24 P03 | 12min | 2 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -67,6 +68,8 @@ Decisions are logged in PROJECT.md Key Decisions table.
 - [Phase 24]: RP game shape returns static workload stub instead of TTO analysis -- TTO degradation not meaningful for short outings
 - [Phase 24]: Stuff appendix uses full arsenal; Trend appendix filters to primary pitches (>=10% usage) per PIPE-05
 - [Phase 24]: Anti-recalculation directive in Stuff prompt prevents LLM from recomputing provided deltas
+- [Phase 24]: Writer prompt converted from constant to _build_writer_prompt(role) for RP-conditional text
+- [Phase 24]: Auditor categories 8-9 use conditional framing (apply ONLY when) to prevent false positives on non-Approach specialists
 
 ### Pending Todos
 
@@ -86,7 +89,7 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-04-04T20:27:00Z
+Last session: 2026-04-04T20:50:54.218Z
 Last activity: 2026-04-04 - Completed Wave 1 (24-01 Approach Specialist + 24-02 raw data appendices)
-Stopped at: Completed 24-01-PLAN.md and 24-02-PLAN.md (Wave 1)
+Stopped at: Completed 24-03-PLAN.md
 Resume file: None
