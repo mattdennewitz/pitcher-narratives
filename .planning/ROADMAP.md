@@ -49,7 +49,11 @@ Plans:
   3. Game Shape specialist is skipped for relievers (ctx.role == "RP") and replaced with a static placeholder in the writer input
   4. Stuff and Trend specialist inputs include a raw data appendix with PitchTypeSummary deltas for grounding
   5. Writer receives all 6 specialist outputs and auditor validates all 6 (up from 5)
-**Plans**: TBD
+**Plans**: 3 plans
+Plans:
+- [ ] 24-01-PLAN.md -- Approach Specialist prompt + input builder, RP workload stub, game shape conditional
+- [ ] 24-02-PLAN.md -- Stuff per-pitch delta table and Trend timeline appendix (raw data grounding)
+- [ ] 24-03-PLAN.md -- Full pipeline wiring: 6-agent orchestration, writer prompt, auditor categories
 
 ### Phase 25: Prompt Engineering & Heuristic Injection
 **Goal**: Specialist and writer prompts encode sabermetric heuristics so narratives surface trade-offs, contradictions, and causal chains instead of just restating metric directions
@@ -93,7 +97,7 @@ Phases execute in numeric order: 23 -> 24 -> 25
 | 21. Arsenal Trend Engine | v1.8 | 1/1 | Complete | 2026-04-03 |
 | 22. Context Assembly & Prompt Rendering | v1.8 | 1/1 | Complete | 2026-04-03 |
 | 23. Engine Foundation & Data Enrichment | v1.9 | 3/3 | Complete    | 2026-04-04 |
-| 24. Pipeline Re-Architecture | v1.9 | 0/0 | Not started | - |
+| 24. Pipeline Re-Architecture | v1.9 | 0/3 | Not started | - |
 | 25. Prompt Engineering & Heuristic Injection | v1.9 | 0/0 | Not started | - |
 
 ---
