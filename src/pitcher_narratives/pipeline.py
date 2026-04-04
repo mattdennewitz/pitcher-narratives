@@ -263,6 +263,54 @@ passes.
 handles that.
 - Plain prose, no bullet lists."""
 
+_APPROACH_SPECIALIST_PROMPT = """\
+You are a pitch approach analyst. Your job is to describe the pitcher's \
+situational strategy — how pitch selection changes based on batter \
+handedness and count state.
+
+FRAMING (per D-01):
+Lead with the pitcher's approach pattern. Describe how the pitcher \
+thinks: which pitches he attacks with against same-side vs opposite-side \
+hitters, what he hides when ahead, what he leans on when behind. \
+Then cite the data that supports the pattern.
+
+CROSS-REFERENCE DIRECTIVE (per D-02):
+When a pitcher throws more of pitch X vs one platoon side AND more \
+of pitch X in a particular count state, connect these observations — \
+it reveals situational strategy, not coincidence. Example: "Leans on \
+the slider both against lefties and when ahead — it's his putaway \
+pitch in favorable counts regardless of handedness."
+
+INPUT DATA:
+You receive:
+- Overall pitch mix (baseline for weighting significance)
+- Platoon shifts (vs same-hand and opposite-hand hitters)
+- Notable count-state usage shifts (only shifts of 10+ percentage \
+points — these are the headlines)
+- First-pitch tendencies
+
+INTERPRETATION RULES:
+- LEAD WITH THE BIGGEST SHIFTS. A 10+ pp usage change is the story. \
+Weight its significance against the baseline overall mix: a 12pp \
+shift on a 40% pitch is the headline; on a 5% pitch it's a footnote.
+- Do not repeat raw numbers mechanically. Synthesize what the pattern \
+means for the pitcher's approach.
+- If platoon and count data tell the same story, say it once with \
+both pieces of evidence.
+
+OUTPUT LENGTH (per D-03):
+Match your output length to the density of the data. If the pitcher \
+shows complex, highly variable strategies, use up to 3 paragraphs. \
+If the pitcher's approach is uniform and straightforward, summarize \
+it in 1 paragraph. Under no circumstances should you pad the response \
+with filler or repeat data points to increase length.
+
+Rules:
+- Plain prose, no bullet lists.
+- No stuff analysis (velocity, movement, S+) — that's another specialist.
+- No location analysis (zone%, chase%) — that's another specialist.
+- Synthesize the approach story from platoon, count, and first-pitch data."""
+
 
 # ═══════════════════════════════════════════════════════════════════════
 # DATA AUDITOR PROMPT
@@ -602,7 +650,13 @@ def _build_trend_input(ctx: PitcherContext) -> str:
 
 
 def _build_game_shape_input(ctx: PitcherContext) -> str:
-    """Build input for the game shape specialist — TTO, velocity arc, workload."""
+    """Build input for the game shape specialist — TTO, velocity arc, workload.
+
+    For relievers (RP), returns a workload stub instead of TTO analysis
+    since TTO degradation is not meaningful for short outings (PIPE-04).
+    """
+    if ctx.role == "RP":
+        return _build_rp_workload_stub(ctx)
     baselines = render_league_baselines(_pitch_types(ctx))
     sections = [
         f"## {ctx.pitcher_name} ({ctx.throws}HP, {ctx.role})\n",
@@ -648,6 +702,52 @@ def _build_game_shape_input(ctx: PitcherContext) -> str:
                 )
         sections.append("\n".join(yoy_lines))
     return "\n\n".join(s for s in sections if s)
+
+
+def _build_approach_input(ctx: PitcherContext) -> str:
+    """Build input for the approach specialist -- platoon, count splits, first pitch."""
+    sections = [
+        f"## {ctx.pitcher_name} ({ctx.throws}HP, {ctx.role})\n",
+    ]
+    # Baseline overall pitch mix for weighting significance (D-04)
+    arsenal_lines = ["## Overall Pitch Mix (baseline for weighting shifts)"]
+    for p in ctx.arsenal:
+        arsenal_lines.append(
+            f"- {p.pitch_name} ({p.pitch_type}): "
+            f"{p.season_usage_pct:.1f}% season / {p.window_usage_pct:.1f}% recent"
+        )
+    sections.append("\n".join(arsenal_lines))
+    # Platoon shifts
+    sections.append(ctx._render_platoon_section())
+    # Count-state notable shifts only (D-04: NOT the full appendix)
+    sections.append(ctx._render_count_splits_section())
+    # First-pitch tendencies
+    sections.append(ctx._render_first_pitch_section())
+    return "\n\n".join(s for s in sections if s)
+
+
+def _build_rp_workload_stub(ctx: PitcherContext) -> str:
+    """Build static workload summary for relievers (no LLM call). Per D-05."""
+    wl = ctx.workload
+    sorted_apps = sorted(wl.appearances, key=lambda a: a.game_date, reverse=True)
+    lines = [f"## Workload Context ({ctx.pitcher_name}, RP)"]
+    lines.append(f"- Appearances: {len(wl.appearances)}")
+    if wl.max_consecutive_days >= 2:
+        lines.append(f"- Max consecutive days: {wl.max_consecutive_days}")
+    if wl.workload_concern:
+        lines.append("- **Workload concern: 3+ consecutive days pitched**")
+    # Recent appearances table
+    lines.append("\n| Date | IP | Pitches | Rest |")
+    lines.append("|------|----|---------|------|")
+    for a in sorted_apps[:7]:
+        rest = f"{a.rest_days}d" if a.rest_days is not None else "--"
+        lines.append(f"| {a.game_date} | {a.ip} | {a.pitch_count} | {rest} |")
+    # Pitch count trend
+    if len(sorted_apps) >= 3:
+        recent_pcs = [a.pitch_count for a in sorted_apps[:3]]
+        avg_pc = sum(recent_pcs) / len(recent_pcs)
+        lines.append(f"\n- Avg pitch count (last 3): {avg_pc:.0f}")
+    return "\n".join(lines)
 
 
 def build_writer_input(
@@ -710,6 +810,7 @@ def _get_specialist_input(name: str, ctx: PitcherContext) -> str:
         "runvalue": _build_runvalue_input,
         "trends": _build_trend_input,
         "game_shape": _build_game_shape_input,
+        "approach": _build_approach_input,
     }
     return builders[name](ctx)
 
