@@ -1165,3 +1165,86 @@ class TestAnchorSynthesisApproach:
         assert hasattr(result.specialists, "approach")
         assert isinstance(result.specialists.approach, str)
         assert len(result.specialists.approach) > 0
+
+
+# ── PIPE-06: Writer input + prompt tests (Task 2) ─────────────────────
+
+
+class TestBuildWriterInput:
+    """PIPE-06: Writer input includes 6th specialist output."""
+
+    def test_writer_input_has_six_sections(self):
+        ctx = _make_pipeline_ctx()
+        output = build_writer_input(
+            ctx, "stuff text", "location text", "runvalue text",
+            "trends text", "game shape text", "approach text",
+        )
+        assert "Specialist Analysis 6: Approach" in output
+        assert "approach text" in output
+
+    def test_writer_input_contains_all_specialists(self):
+        ctx = _make_pipeline_ctx()
+        output = build_writer_input(
+            ctx, "s1", "s2", "s3", "s4", "s5", "s6",
+        )
+        for i in range(1, 7):
+            assert f"Specialist Analysis {i}" in output
+
+    def test_writer_input_contains_pitcher_header(self):
+        ctx = _make_pipeline_ctx()
+        output = build_writer_input(ctx, "s", "s", "s", "s", "s", "s")
+        assert "Test Pitcher" in output
+
+
+class TestWriterPrompt:
+    """Writer prompt says Six, includes approach, has RP conditional."""
+
+    def test_writer_prompt_says_six(self):
+        from pitcher_narratives.pipeline import _build_writer_prompt
+        prompt = _build_writer_prompt("SP")
+        assert "Six specialist analyses" in prompt
+
+    def test_writer_prompt_includes_approach_description(self):
+        from pitcher_narratives.pipeline import _build_writer_prompt
+        prompt = _build_writer_prompt("SP")
+        assert "Approach analysis" in prompt
+
+    def test_writer_prompt_rp_conditional(self):
+        from pitcher_narratives.pipeline import _build_writer_prompt
+        prompt = _build_writer_prompt("RP")
+        assert "reliever" in prompt
+        assert "Do not fabricate TTO" in prompt
+
+    def test_writer_prompt_sp_no_rp_directive(self):
+        from pitcher_narratives.pipeline import _build_writer_prompt
+        prompt = _build_writer_prompt("SP")
+        assert "Do not fabricate TTO" not in prompt
+
+    def test_writer_prompt_rp_workload_section(self):
+        from pitcher_narratives.pipeline import _build_writer_prompt
+        prompt = _build_writer_prompt("RP")
+        assert "Workload context" in prompt
+
+    def test_writer_prompt_sp_game_shape_section(self):
+        from pitcher_narratives.pipeline import _build_writer_prompt
+        prompt = _build_writer_prompt("SP")
+        assert "Game shape" in prompt
+
+
+class TestAuditorPrompt:
+    """PIPE-07: Auditor has 9 categories with domain-specific checks."""
+
+    def test_auditor_has_nine_categories(self):
+        from pitcher_narratives.pipeline import _DATA_AUDITOR_PROMPT
+        assert "8. PLATOON_CLAIM_MISMATCH" in _DATA_AUDITOR_PROMPT
+        assert "9. COUNT_STATE_CLAIM_MISMATCH" in _DATA_AUDITOR_PROMPT
+
+    def test_auditor_platoon_category_conditional(self):
+        from pitcher_narratives.pipeline import _DATA_AUDITOR_PROMPT
+        assert "apply ONLY when" in _DATA_AUDITOR_PROMPT
+
+    def test_auditor_count_state_chain_of_thought(self):
+        """D-13: Domain-specific checks use show-your-work format."""
+        from pitcher_narratives.pipeline import _DATA_AUDITOR_PROMPT
+        assert "state the claim" in _DATA_AUDITOR_PROMPT
+        assert "Pass/Fail" in _DATA_AUDITOR_PROMPT
