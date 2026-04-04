@@ -600,7 +600,7 @@ def ask_question_pipeline(
         run_specialists,
     )
 
-    agents = make_pipeline_agents(provider, thinking)
+    agents = make_pipeline_agents(provider, thinking, ctx=context)
 
     async def _run() -> PipelineAnswer:
         # Phase 1: Run specialists concurrently

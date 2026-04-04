@@ -47,7 +47,9 @@ from pitcher_narratives.config import (
 )
 from pitcher_narratives.context import PitcherContext
 from pitcher_narratives.engine import (
+    ExecutionMetrics,
     LeagueBaseline,
+    PitchTypeSummary,
     _percentile_from_z,
     compute_league_baselines,
     format_s_variant_comparisons,
@@ -730,8 +732,8 @@ def _build_location_input(ctx: PitcherContext) -> str:
     lines.append("")
 
     # Build lookups for merging (handle missing pitch types gracefully)
-    exec_lookup: dict[str, object] = {e.pitch_type: e for e in ctx.execution}
-    plus_lookup: dict[str, object] = {p.pitch_type: p for p in ctx.arsenal}
+    exec_lookup: dict[str, ExecutionMetrics] = {e.pitch_type: e for e in ctx.execution}
+    plus_lookup: dict[str, PitchTypeSummary] = {p.pitch_type: p for p in ctx.arsenal}
 
     def _d(p: float | None, s: float | None) -> str:
         if p is not None and s is not None:
@@ -762,11 +764,13 @@ def _build_location_input(ctx: PitcherContext) -> str:
             lines.append(f"- CSW% {e.csw_pct:.1f}")
         else:
             # Execution data missing for this pitch type -- show what we have
+            log.debug("Pitch type %s in intermediates but missing from execution", im.pitch_type)
             lines.append(
                 f"- Zone% --, "
                 f"xWhiff_P {im.xwhiff_p * 100:.1f}%, "
                 f"Chase% --"
             )
+            lines.append("- CSW% --")
 
         # P vs S location impact deltas
         lines.append(
@@ -782,6 +786,9 @@ def _build_location_input(ctx: PitcherContext) -> str:
             ws = f"{p.window_s_plus:.0f}" if p.window_s_plus is not None else "--"
             wl = f"{p.window_l_plus:.0f}" if p.window_l_plus is not None else "--"
             lines.append(f"- P+ {wp}, S+ {ws}, L+ {wl}")
+        else:
+            log.debug("Pitch type %s in intermediates but missing from arsenal", im.pitch_type)
+            lines.append("- P+ --, S+ --, L+ --")
 
     return "\n".join(lines)
 

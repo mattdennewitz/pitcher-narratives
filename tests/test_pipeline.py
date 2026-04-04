@@ -1658,3 +1658,56 @@ class TestLocationInputAdjacency:
         output = _build_location_input(ctx)
         assert "Test Pitcher" in output
         assert "RHP" in output
+
+    def test_location_input_numeric_values(self, monkeypatch):
+        """Formatting math produces correct numeric output."""
+        _patch_league_baselines(monkeypatch)
+        ctx = _make_location_ctx()
+        output = _build_location_input(ctx)
+        # Zone% from execution fixture (FF: 48.2)
+        assert "Zone% 48.2" in output
+        # xWhiff_P from intermediates (FF: 0.28 → 28.0%)
+        assert "xWhiff_P 28.0%" in output
+        # Chase% from execution fixture (FF: 28.1)
+        assert "Chase% 28.1" in output
+        # P vs S delta: xSwing (0.72 - 0.68) * 100 = +4.0pp
+        assert "+4.0pp" in output
+
+    def test_location_input_csw_placeholder_when_execution_missing(self, monkeypatch):
+        """CSW% placeholder rendered when execution data is absent."""
+        _patch_league_baselines(monkeypatch)
+        ctx = _make_location_ctx(include_execution=False)
+        output = _build_location_input(ctx)
+        # SL has no execution -- should show CSW% placeholder
+        assert "CSW% --" in output
+
+    def test_location_input_plus_placeholder_when_arsenal_missing(self, monkeypatch):
+        """P+/S+/L+ placeholder rendered when arsenal data is absent for a pitch type."""
+        _patch_league_baselines(monkeypatch)
+        ctx = _make_location_ctx()
+        # Remove SL from arsenal to trigger the else branch
+        ctx.arsenal = [p for p in ctx.arsenal if p.pitch_type != "SL"]
+        output = _build_location_input(ctx)
+        # SL section should still exist (from intermediates) with plus placeholder
+        assert "P+ --, S+ --, L+ --" in output
+
+    def test_location_input_xswing_p_none_no_data(self, monkeypatch):
+        """Pitch type with xswing_p=None renders 'no data' and skips detail lines."""
+        _patch_league_baselines(monkeypatch)
+        ctx = _make_location_ctx()
+        # Set FF xswing_p to None to trigger the early-continue branch
+        ctx.intermediates[0].xswing_p = None
+        output = _build_location_input(ctx)
+        assert "4-Seam Fastball (FF): no data" in output
+
+
+# ── Trend prompt None path test ──────────────────────────────────────
+
+
+class TestTrendPromptNone:
+    """_build_trend_prompt(None) backward compatibility."""
+
+    def test_trend_prompt_none_returns_base(self):
+        prompt = _build_trend_prompt(None)
+        assert "trend analyst" in prompt
+        assert "RELEASE POINT FRAMING" not in prompt
