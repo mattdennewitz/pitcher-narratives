@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.9
 milestone_name: Multi-Agent Narrative Upgrade
-status: executing
-stopped_at: Completed 25-01-PLAN.md
-last_updated: "2026-04-04T21:52:52.846Z"
+status: verifying
+stopped_at: Completed 25-03-PLAN.md
+last_updated: "2026-04-04T22:11:09.469Z"
 last_activity: 2026-04-04
 progress:
   total_phases: 3
-  completed_phases: 2
+  completed_phases: 3
   total_plans: 9
-  completed_plans: 7
+  completed_plans: 9
   percent: 40
 ---
 
@@ -26,8 +26,8 @@ See: .planning/PROJECT.md (updated 2026-04-04)
 ## Current Position
 
 Phase: 25 (prompt-engineering-heuristic-injection) — EXECUTING
-Plan: 2 of 3
-Status: Ready to execute
+Plan: 3 of 3
+Status: Phase complete — ready for verification
 Last activity: 2026-04-04
 
 Progress: [####░░░░░░] 40%
@@ -51,6 +51,8 @@ Progress: [####░░░░░░] 40%
 | Phase 24 P02 | 3min | 1 tasks | 2 files |
 | Phase 24 P03 | 12min | 2 tasks | 2 files |
 | Phase 25 P01 | 7min | 2 tasks | 2 files |
+| Phase 25 P02 | 3min | 2 tasks | 2 files |
+| Phase 25 P03 | 10min | 1 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -73,6 +75,9 @@ Decisions are logged in PROJECT.md Key Decisions table.
 - [Phase 24]: Auditor categories 8-9 use conditional framing (apply ONLY when) to prevent false positives on non-Approach specialists
 - [Phase 25]: Hybrid principle+examples format for heuristic directives (D-02)
 - [Phase 25]: Python-level conditional prompt injection for release-point vocabulary (D-05)
+- [Phase 25]: Writer causal hook requires citing Stuff Specialist physical drivers for S+ changes >= 10 points, with honest fallback
+- [Phase 25]: Auditor whitelist evidence-gates three heuristic patterns (inverse correlation, zone expansion, approach angle) -- uncited claims still flagged
+- [Phase 25]: Per-pitch-type unified view with lookup-dict merging for location input restructuring (D-04)
 
 ### Pending Todos
 
@@ -92,7 +97,7 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-04-04T21:52:52.840Z
-Last activity: 2026-04-04 - Completed Wave 1 (24-01 Approach Specialist + 24-02 raw data appendices)
-Stopped at: Completed 25-01-PLAN.md
+Last session: 2026-04-04T22:11:09.466Z
+Last activity: 2026-04-04 - Executing 25-03 location input restructuring
+Stopped at: Completed 25-03-PLAN.md
 Resume file: None
