@@ -1307,6 +1307,12 @@ class TestStuffPromptHeuristics:
         from pitcher_narratives.pipeline import _STUFF_SPECIALIST_PROMPT
         assert "TRADE-OFF DETECTION" in _STUFF_SPECIALIST_PROMPT
 
+    def test_stuff_prompt_units_directive(self):
+        from pitcher_narratives.pipeline import _STUFF_SPECIALIST_PROMPT
+        assert "UNITS" in _STUFF_SPECIALIST_PROMPT
+        assert "inches" in _STUFF_SPECIALIST_PROMPT
+        assert "feet" in _STUFF_SPECIALIST_PROMPT
+
     def test_stuff_prompt_common_patterns(self):
         from pitcher_narratives.pipeline import _STUFF_SPECIALIST_PROMPT
         assert "COMMON PATTERNS" in _STUFF_SPECIALIST_PROMPT
@@ -1367,6 +1373,32 @@ class TestTrendPromptFunction:
         prompt = _build_trend_prompt(ctx)
         assert "arm slot" in prompt
         assert "tunneling" in prompt
+
+    def test_trend_prompt_units_directive(self):
+        ctx = _ctx_no_arm_angle()
+        prompt = _build_trend_prompt(ctx)
+        assert "UNITS" in prompt
+        assert "inches" in prompt
+        assert "feet" in prompt
+
+
+class TestWriterPromptUnits:
+    """Writer prompt must include units directive to prevent inch/feet confusion."""
+
+    def test_writer_prompt_units_section(self):
+        from pitcher_narratives.pipeline import _build_writer_prompt
+        prompt = _build_writer_prompt("SP")
+        assert "UNITS" in prompt
+
+    def test_writer_prompt_movement_inches(self):
+        from pitcher_narratives.pipeline import _build_writer_prompt
+        prompt = _build_writer_prompt("SP")
+        assert "inches" in prompt
+
+    def test_writer_prompt_release_point_feet(self):
+        from pitcher_narratives.pipeline import _build_writer_prompt
+        prompt = _build_writer_prompt("SP")
+        assert "feet" in prompt
 
 
 class TestMakePipelineAgentsCtx:

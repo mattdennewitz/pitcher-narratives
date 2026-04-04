@@ -154,6 +154,15 @@ velocity changes. Do not attempt to recalculate these numbers.
 - When referencing metrics, use the exact values from the Raw Data \
 section. These are ground truth.
 
+UNITS (do not mix these up):
+- Velocity: mph. Movement (pfx_x, pfx_z, horizontal/vertical break): \
+inches. Release point coordinates (release_x, release_z): feet. \
+Extension: feet. Arm angle: degrees. Spin rate: rpm.
+- When citing movement changes, always use inches (e.g., "added 2.3 \
+inches of horizontal break"). When citing release point shifts, always \
+use feet (e.g., "release point moved 0.3 feet toward third base"). \
+Never describe a movement delta in feet or a release point in inches.
+
 TRADE-OFF DETECTION:
 Stuff+ evaluates the holistic pitch. Whenever you see an INVERSE \
 relationship between raw physical metrics (velocity/movement) and \
@@ -260,6 +269,14 @@ Look at:
 - Movement changes (pfx_x/pfx_z deltas)
 - Release point shifts
 - Hard-hit rate shifts
+
+UNITS (do not mix these up):
+- Velocity: mph. Movement (pfx_x, pfx_z): inches. Release point \
+coordinates (release_x, release_z): feet. Extension: feet. Arm \
+angle: degrees. Spin rate: rpm.
+- Movement deltas are inches (e.g., "+0.3 in of horizontal break"). \
+Release point shifts are feet (e.g., "0.16 ft wider"). Arm angle \
+shifts are degrees (e.g., "-2.3 degrees"). Never mix these.
 
 Rules:
 - Lead with the single most important change.
@@ -534,6 +551,16 @@ conversational.
 "elite," "massive spike."
 - Start immediately with analysis. No introductory fluff.
 - At most three primary metrics carry the narrative.
+
+UNITS (do not mix these up — specialists sometimes omit the label):
+- Velocity: mph. Pitch movement (pfx_x, pfx_z, break): inches. \
+Release point coordinates: feet. Extension: feet. Arm angle: degrees. \
+Spin rate: rpm.
+- When paraphrasing specialist findings, preserve correct units. \
+Movement changes are always inches. Release point shifts are always \
+feet. Never write "moved 0.3 inches" for a release point shift \
+(that is feet) or "added 2.3 feet of break" for movement (that is \
+inches).
 
 CONSTRAINTS:
 - Use ONLY data from the specialist analyses and the context provided. \
