@@ -607,7 +607,7 @@ def ask_question_pipeline(
         log.info("Running specialists...")
         raw_specialists = await run_specialists(
             agents.stuff, agents.location, agents.runvalue, agents.trends,
-            agents.game_shape, context, _model_override,
+            agents.game_shape, agents.approach, context, _model_override,
         )
 
         # Phase 1.5: Per-specialist audit + revision loop
@@ -615,7 +615,7 @@ def ask_question_pipeline(
         specialist_agents = {
             "stuff": agents.stuff, "location": agents.location,
             "runvalue": agents.runvalue, "trends": agents.trends,
-            "game_shape": agents.game_shape,
+            "game_shape": agents.game_shape, "approach": agents.approach,
         }
         specialists, audit_flags = await audit_and_revise_specialists(
             raw_specialists, specialist_agents, agents.auditor, context, _model_override,
@@ -629,6 +629,7 @@ def ask_question_pipeline(
             ("Run Value", specialists.runvalue),
             ("Trends", specialists.trends),
             ("Game Shape", specialists.game_shape),
+            ("Approach", specialists.approach),
         ]:
             print(f"\n{'═' * 60}")
             print(f"SPECIALIST: {label}")
@@ -655,7 +656,8 @@ def ask_question_pipeline(
             f"## Specialist Analysis: Location\n{specialists.location}\n",
             f"## Specialist Analysis: Run Value\n{specialists.runvalue}\n",
             f"## Specialist Analysis: Trends\n{specialists.trends}\n",
-            f"## Specialist Analysis: Game Shape\n{specialists.game_shape}",
+            f"## Specialist Analysis: Game Shape\n{specialists.game_shape}\n",
+            f"## Specialist Analysis: Approach\n{specialists.approach}",
         ])
 
         chunks: list[str] = []
