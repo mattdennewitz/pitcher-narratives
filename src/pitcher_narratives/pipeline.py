@@ -47,6 +47,7 @@ from pitcher_narratives.config import (
 from pitcher_narratives.context import PitcherContext
 from pitcher_narratives.engine import (
     LeagueBaseline,
+    _percentile_from_z,
     compute_league_baselines,
     format_s_variant_comparisons,
     outlier_tag,
@@ -449,7 +450,10 @@ def _build_stuff_input(ctx: PitcherContext) -> str:
     z-scores itself.
     """
     baselines = compute_league_baselines()
-    baseline_lookup = {b.pitch_type: b for b in baselines}
+    # Use handedness-matched baselines for percentile computation (D-09)
+    pitcher_throws = ctx.throws  # "L" or "R"
+    hand_baselines = [b for b in baselines if b.p_throws == pitcher_throws]
+    baseline_lookup = {b.pitch_type: b for b in hand_baselines}
 
     lines = [f"## {ctx.pitcher_name} ({ctx.throws}HP, {ctx.role})\n"]
     lines.append(render_league_baselines(_pitch_types(ctx)))
@@ -462,11 +466,14 @@ def _build_stuff_input(ctx: PitcherContext) -> str:
         b = baseline_lookup.get(p.pitch_type)
         if b is not None:
             velo_delta = p.window_velo - b.avg_velo
-            velo_tag = outlier_tag(p.window_velo, b.avg_velo, b.velo_std)
+            velo_z = (p.window_velo - b.avg_velo) / b.velo_std if b.velo_std > 0 else 0.0
+            velo_tag = outlier_tag(p.window_velo, b.avg_velo, b.velo_std, percentile=_percentile_from_z(velo_z))
             pfx_x_delta = p.window_pfx_x - b.avg_pfx_x
-            pfx_x_tag = outlier_tag(p.window_pfx_x, b.avg_pfx_x, b.pfx_x_std)
+            pfx_x_z = (p.window_pfx_x - b.avg_pfx_x) / b.pfx_x_std if b.pfx_x_std > 0 else 0.0
+            pfx_x_tag = outlier_tag(p.window_pfx_x, b.avg_pfx_x, b.pfx_x_std, percentile=_percentile_from_z(pfx_x_z))
             pfx_z_delta = p.window_pfx_z - b.avg_pfx_z
-            pfx_z_tag = outlier_tag(p.window_pfx_z, b.avg_pfx_z, b.pfx_z_std)
+            pfx_z_z = (p.window_pfx_z - b.avg_pfx_z) / b.pfx_z_std if b.pfx_z_std > 0 else 0.0
+            pfx_z_tag = outlier_tag(p.window_pfx_z, b.avg_pfx_z, b.pfx_z_std, percentile=_percentile_from_z(pfx_z_z))
             lines.append(
                 f"- {p.pitch_name} ({p.pitch_type}):\n"
                 f"    Velocity: {p.window_velo:.1f} mph ({velo_delta:+.1f} vs league avg) [{velo_tag}]\n"
