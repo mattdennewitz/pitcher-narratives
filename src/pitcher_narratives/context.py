@@ -14,6 +14,7 @@ from pitcher_narratives.engine import (
     AppearancePitchTrends,
     ArsenalTrend,
     ComponentAttribution,
+    CountSplits,
     CrossSeasonSummary,
     ExecutionMetrics,
     FastballSummary,
@@ -32,6 +33,7 @@ from pitcher_narratives.engine import (
     compute_arsenal_summary,
     compute_arsenal_trends,
     compute_component_attribution,
+    compute_count_splits,
     compute_cross_season_summary,
     compute_execution_metrics,
     compute_fastball_summary,
@@ -88,6 +90,9 @@ class PitcherContext(BaseModel):
     appearance_pitch_trends: AppearancePitchTrends | None = None
     """Per-appearance pitch trend analysis. None when insufficient data."""
 
+    count_splits: CountSplits | None = None
+    """Per-pitch-type usage across count states. None when insufficient data."""
+
     def to_prompt(self) -> str:
         """Render as prompt-ready markdown under 2,000 tokens."""
         sections: list[str] = []
@@ -128,11 +133,17 @@ class PitcherContext(BaseModel):
         # Platoon shifts
         sections.append(self._render_platoon_section())
 
+        # Count-state usage shifts (D-13: adjacent to platoon)
+        sections.append(self._render_count_splits_section())
+
         # First-pitch tendencies
         sections.append(self._render_first_pitch_section())
 
         # Year-over-year changes (when multi-season data exists)
         sections.append(self._render_yoy_section())
+
+        # Count-state usage appendix (full table, D-10)
+        sections.append(self._render_count_splits_appendix())
 
         # Recent appearances
         sections.append(self._render_appearances_section())
@@ -452,7 +463,7 @@ class PitcherContext(BaseModel):
         return "\n".join(lines)
 
     def _render_release_point_section(self) -> str:
-        """Render release point table with per-pitch-type x/z/extension."""
+        """Render release point table with per-pitch-type x/z/extension and arm angle."""
         rp = self.release_point
         if not rp.pitch_types:
             return ""
@@ -494,6 +505,13 @@ class PitcherContext(BaseModel):
                     f"| {pt.extension_delta} |"
                 )
 
+        # Arm angle per pitch type (added by Plan 23-02)
+        for pt in entries:
+            lines.append(
+                f"  Arm angle: {pt.window_arm_angle:.1f} deg ({pt.arm_slot}), "
+                f"season {pt.season_arm_angle:.1f} deg, {pt.arm_angle_delta}"
+            )
+
         return "\n".join(lines)
 
     def _render_hard_hit_section(self) -> str:
@@ -524,6 +542,57 @@ class PitcherContext(BaseModel):
                 + (f" / {s.window_usage_pct:.1f}% recent" if s.window_usage_pct is not None else "")
                 + f" -- {s.usage_delta}"
             )
+        return "\n".join(lines)
+
+    def _render_count_splits_section(self) -> str:
+        """Render notable count-state usage shifts inline, adjacent to platoon data (D-13)."""
+        if self.count_splits is None or not self.count_splits.notable_shifts:
+            return ""
+        lines = ["## Count-State Usage Shifts"]
+        lines.append("Notable pitch mix changes by count state (10+ pp from season avg):")
+        for shift in self.count_splits.notable_shifts:
+            lines.append(f"- {shift}")
+        return "\n".join(lines)
+
+    def _render_count_splits_appendix(self) -> str:
+        """Render full count-state usage table as appendix data (D-10)."""
+        if self.count_splits is None:
+            return ""
+        lines = ["## Count-State Usage Appendix"]
+        bucket_labels = {
+            "ahead": "Ahead in Count",
+            "behind": "Behind in Count",
+            "even": "Even Count",
+            "two_strike": "Two-Strike Counts",
+            "first_pitch": "First Pitch (0-0)",
+        }
+        for bucket in self.count_splits.buckets:
+            label = bucket_labels.get(bucket.bucket, bucket.bucket)
+            sample_note = " (small sample)" if bucket.small_sample else ""
+            lines.append(
+                f"### {label} (n={bucket.n_pitches_window} window, "
+                f"{bucket.n_pitches_season} season){sample_note}"
+            )
+            if not bucket.pitch_types:
+                lines.append("No pitches in this bucket.")
+                continue
+            # Table header
+            lines.append("| Pitch | Window % | Season % | Delta |")
+            lines.append("|-------|----------|----------|-------|")
+            # Build season lookup for deltas
+            season_lookup = {u.pitch_type: u.usage_pct for u in bucket.season_pitch_types}
+            for usage in bucket.pitch_types:
+                season_pct = season_lookup.get(usage.pitch_type, 0.0)
+                delta = usage.usage_pct - season_pct
+                if bucket.small_sample:
+                    delta_str = "--"
+                else:
+                    delta_str = f"{delta:+.0f}pp"
+                lines.append(
+                    f"| {usage.pitch_name} | {usage.usage_pct:.0f}% "
+                    f"| {season_pct:.0f}% | {delta_str} |"
+                )
+            lines.append("")
         return "\n".join(lines)
 
     def _render_first_pitch_section(self) -> str:
@@ -713,6 +782,7 @@ def assemble_pitcher_context(data: PitcherData) -> PitcherContext:
     cross_season_summary = compute_cross_season_summary(data)
     arsenal_trend = compute_arsenal_trends(data)
     appearance_pitch_trends = compute_appearance_pitch_trends(data)
+    count_splits = compute_count_splits(data)
 
     # Determine role from most recent appearance
     most_recent = data.appearances.sort("game_date", descending=True).row(0, named=True)
@@ -738,4 +808,5 @@ def assemble_pitcher_context(data: PitcherData) -> PitcherContext:
         cross_season_summary=cross_season_summary,
         arsenal_trend=arsenal_trend,
         appearance_pitch_trends=appearance_pitch_trends,
+        count_splits=count_splits,
     )
