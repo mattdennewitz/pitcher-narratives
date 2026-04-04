@@ -358,6 +358,22 @@ appear in the input data.
 "hitters take it," "automatic take") without citing the specific \
 metric (xSwing_S, xWhiff_S, CSW%) that supports it.
 
+8. PLATOON_CLAIM_MISMATCH: The prose states a platoon-specific claim \
+(e.g., "throws more sliders to lefties") that contradicts the \
+vs-LHB/vs-RHB data in the input. \
+These categories apply ONLY when the specialist output contains \
+platoon or count-state analysis. \
+Show your work: (1) state the claim from the text, (2) cite the exact \
+platoon numbers from the data, (3) Pass/Fail.
+
+9. COUNT_STATE_CLAIM_MISMATCH: The prose states a count-state claim \
+(e.g., "relies on the curveball when behind") that contradicts the \
+count bucket data in the input. \
+These categories apply ONLY when the specialist output contains \
+platoon or count-state analysis. \
+Show your work: (1) state the claim from the text, (2) cite the exact \
+bucket numbers from the data, (3) Pass/Fail.
+
 For each problem found, report:
 - The specific claim that is wrong
 - What the data actually shows
@@ -390,27 +406,48 @@ class AuditResult(BaseModel):
 # WRITER PROMPT
 # ═══════════════════════════════════════════════════════════════════════
 
-_WRITER_PROMPT = """\
+def _build_writer_prompt(role: str) -> str:
+    """Build writer system prompt with role-conditional sections (D-06)."""
+    role_label = "starter" if role == "SP" else "reliever"
+    section_5 = (
+        "5. Game shape — how effectiveness changes within a game (TTO, velocity arc)"
+        if role == "SP"
+        else "5. Workload context — appearance frequency, pitch count trends, rest patterns"
+    )
+    rp_directive = (
+        ""
+        if role == "SP"
+        else (
+            "\n\nIMPORTANT: You are synthesizing a scouting report for a reliever. "
+            "Do not fabricate TTO analysis; the workload section replaces Game Shape. "
+            "Focus on pitch quality, approach, and deployment patterns instead."
+        )
+    )
+
+    return f"""\
 You are an elite, sabermetrically inclined baseball writer. You write \
 for front offices and data-driven fans.
 
-INPUT: Five specialist analyses of a pitcher's recent window:
+INPUT: Six specialist analyses of a {role_label}'s recent window:
 1. Stuff analysis — physical pitch characteristics and S+ grades
 2. Location analysis — P vs S location impact per pitch
 3. Run value decomposition — which outcomes drive each pitch's value
 4. Trend analysis — what has changed vs season baseline
-5. Game shape — how effectiveness changes within a game (TTO, velocity arc)
+{section_5}
+6. Approach analysis — platoon, count-state, and first-pitch strategy patterns
 
 Your job is to compose a single, unified 2-3 paragraph scouting capsule \
 from these building blocks. The specialists did the analysis; you do \
 the writing.
+{rp_directive}
 
 CRITICAL: These are INGREDIENTS, not sections to preserve. You must:
 - Find the thread. What is the single most important story across \
-all four analyses? Maybe the stuff is fine but location is killing a \
+all six analyses? Maybe the stuff is fine but location is killing a \
 pitch. Maybe a velocity trend is changing the entire arsenal picture. \
-Maybe one pitch is carrying the whole profile.
-- Write as one voice. The reader should not be able to tell that four \
+Maybe one pitch is carrying the whole profile. Maybe the approach \
+reveals strategic adaptation.
+- Write as one voice. The reader should not be able to tell that six \
 separate analysts contributed. No section breaks, no "meanwhile," no \
 "turning to the location data."
 - Drop what's redundant. If stuff and run value both say the slider \
@@ -423,7 +460,7 @@ STRUCTURE:
 Paragraph 1 (The Setup): What is different about this pitcher right now. \
 Lead with what happened — the concrete change — not a theory.
 Paragraph 2+ (The Verdict): How the stuff plays in practice. Weave in \
-platoon splits where they matter. Clear-eyed conclusion.
+platoon splits and approach patterns where they matter. Clear-eyed conclusion.
 
 VOICE:
 - Write like an analyst talking to another analyst. Plain, specific, \
@@ -823,6 +860,7 @@ def build_writer_input(
     runvalue: str,
     trends: str,
     game_shape: str,
+    approach: str,
 ) -> str:
     """Compose all specialist outputs into writer input.
 
@@ -835,7 +873,8 @@ def build_writer_input(
         f"## Specialist Analysis 2: Location\n{location}\n",
         f"## Specialist Analysis 3: Run Value\n{runvalue}\n",
         f"## Specialist Analysis 4: Trends\n{trends}\n",
-        f"## Specialist Analysis 5: Game Shape\n{game_shape}",
+        f"## Specialist Analysis 5: Game Shape\n{game_shape}\n",
+        f"## Specialist Analysis 6: Approach\n{approach}",
     ])
 
 
@@ -1037,7 +1076,7 @@ def write_pipeline_data_file(
     else:
         # Narrative pipeline: writer + anchor + executive summary
         sections.append(f"\n{sep}\nWRITER\n{sep}\n")
-        sections.append(f"## System Prompt\n\n{_WRITER_PROMPT}\n")
+        sections.append(f"## System Prompt\n\n{_build_writer_prompt(ctx.role)}\n")
         sections.append(
             "## User Message\n\n"
             "[Receives: all 6 specialist outputs + any audit flags]\n"
@@ -1109,6 +1148,7 @@ class PipelineAgents(NamedTuple):
 def make_pipeline_agents(
     provider: str = "gemini",
     thinking: ThinkingEffort = "high",
+    role: str = "SP",
 ) -> PipelineAgents:
     if provider not in PROVIDERS:
         raise ValueError(f"Unknown provider {provider!r}")
@@ -1135,7 +1175,7 @@ def make_pipeline_agents(
         trends=_specialist(_TREND_SPECIALIST_PROMPT),
         game_shape=_specialist(_GAME_SHAPE_SPECIALIST_PROMPT),
         approach=_specialist(_APPROACH_SPECIALIST_PROMPT),
-        writer=_writer(_WRITER_PROMPT),
+        writer=_writer(_build_writer_prompt(role)),
         auditor=Agent(model, output_type=AuditResult, system_prompt=_DATA_AUDITOR_PROMPT,
                       model_settings=checker_settings, defer_model_check=True),
         anchor=Agent(model, output_type=AnchorResult, system_prompt=ANCHOR_PROMPT,
@@ -1204,7 +1244,7 @@ async def _run_pipeline(
     Phase 2: Writer composes capsule (with audit flags if any).
     Phase 2.5: Anchor check + revision loop.
     """
-    agents = make_pipeline_agents(provider, thinking)
+    agents = make_pipeline_agents(provider, thinking, role=ctx.role)
 
     # Phase 1: Run specialists concurrently
     log.info("Running specialists...")
@@ -1230,6 +1270,7 @@ async def _run_pipeline(
     writer_input = build_writer_input(
         ctx, specialists.stuff, specialists.location,
         specialists.runvalue, specialists.trends, specialists.game_shape,
+        specialists.approach,
     )
     writer_kwargs = agent_kwargs(writer_input, _model_override)
 
