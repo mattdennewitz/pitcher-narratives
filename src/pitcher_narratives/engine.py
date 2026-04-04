@@ -29,6 +29,9 @@ __all__ = [
     "AppearanceWorkload",
     "ArsenalTrend",
     "ComponentAttribution",
+    "CountBucket",
+    "CountBucketUsage",
+    "CountSplits",
     "CrossSeasonSummary",
     "ExecutionMetrics",
     "FastballSummary",
@@ -52,6 +55,7 @@ __all__ = [
     "compute_arsenal_summary",
     "compute_arsenal_trends",
     "compute_component_attribution",
+    "compute_count_splits",
     "compute_cross_season_summary",
     "compute_execution_metrics",
     "compute_fastball_summary",
@@ -98,6 +102,28 @@ _MOVEMENT_THRESHOLD = 0.5
 
 _MIN_PITCHES = 10
 """Minimum pitches for per-type analysis; below this flag small_sample=True."""
+
+_COUNT_BUCKETS: dict[str, pl.Expr] = {
+    "ahead": pl.col("strikes") > pl.col("balls"),
+    "behind": pl.col("balls") > pl.col("strikes"),
+    "even": pl.col("balls") == pl.col("strikes"),
+    "two_strike": pl.col("strikes") == 2,
+    "first_pitch": (pl.col("balls") == 0) & (pl.col("strikes") == 0),
+}
+"""Count-state bucket filter expressions.
+
+Two-strike overlaps with ahead/behind/even (D-01).
+First-pitch (0-0) also appears in even bucket (D-02).
+"""
+
+_COUNT_BUCKET_LABELS: dict[str, str] = {
+    "ahead": "Ahead in count",
+    "behind": "Behind in count",
+    "even": "Even count",
+    "two_strike": "Two-strike counts",
+    "first_pitch": "First pitch",
+}
+"""Human-readable labels for count-state buckets in notable_shifts strings."""
 
 _COLD_START_STRING = "Full season in window -- no trend comparison"
 """Delta string used when window covers entire season."""
@@ -939,6 +965,47 @@ class FirstPitchWeaponry:
     total_first_pitches_season: int
     total_first_pitches_window: int
     cold_start: bool
+
+
+@dataclass
+class CountBucketUsage:
+    """Per-pitch-type usage rate within a single count-state bucket."""
+
+    pitch_type: str
+    pitch_name: str
+    usage_pct: float
+    """Usage as percentage of all pitches in this bucket (0-100)."""
+
+
+@dataclass
+class CountBucket:
+    """Usage breakdown for a single count state."""
+
+    bucket: str
+    """One of: 'ahead', 'behind', 'even', 'two_strike', 'first_pitch'."""
+
+    n_pitches_window: int
+    n_pitches_season: int
+
+    small_sample: bool
+    """True when n_pitches_window < _MIN_PITCHES (10)."""
+
+    pitch_types: list[CountBucketUsage]
+    """Window-period per-pitch-type usage rates, sorted by usage descending."""
+
+    season_pitch_types: list[CountBucketUsage]
+    """Season-level usage rates for delta computation."""
+
+
+@dataclass
+class CountSplits:
+    """Per-pitch-type usage across count states with window vs season deltas."""
+
+    buckets: list[CountBucket]
+    """Five buckets: ahead, behind, even, two_strike, first_pitch."""
+
+    notable_shifts: list[str]
+    """Pre-rendered strings for shifts >= 10pp, for inline rendering. Empty for small-sample buckets."""
 
 
 @dataclass
@@ -1908,6 +1975,118 @@ def _compute_xrv100_percentile(
     total = len(weighted)
 
     return int(n_worse / total * 100) if total > 0 else 50
+
+
+def compute_count_splits(data: PitcherData) -> CountSplits:
+    """Compute per-pitch-type usage rates across count-state buckets.
+
+    Splits pitches into five overlapping buckets (ahead, behind, even,
+    two_strike, first_pitch) and computes per-pitch-type usage percentage
+    within each bucket for both the recent window and full season.
+
+    Two-strike and first-pitch buckets overlap with primary buckets:
+    a pitch at 0-2 appears in both 'ahead' and 'two_strike';
+    a pitch at 0-0 appears in both 'even' and 'first_pitch'.
+
+    Args:
+        data: PitcherData bundle from data.load_pitcher_data.
+
+    Returns:
+        CountSplits with 5 buckets and pre-rendered notable shift strings.
+    """
+    window_dates = _get_window_game_dates(data)
+    cold_start = _is_cold_start(data)
+    name_map = _build_name_map(data.statcast)
+
+    statcast = data.statcast
+    window_statcast = statcast.filter(pl.col("game_date").is_in(window_dates))
+
+    buckets: list[CountBucket] = []
+    notable_shifts: list[str] = []
+
+    for bucket_name, bucket_expr in _COUNT_BUCKETS.items():
+        # Season-level: all pitches matching this bucket
+        season_bucket = statcast.filter(bucket_expr)
+        n_season = len(season_bucket)
+
+        # Window-level: pitches in bucket within window dates
+        window_bucket = window_statcast.filter(bucket_expr)
+        n_window = len(window_bucket)
+
+        small_sample = n_window < _MIN_PITCHES
+
+        # Compute per-pitch-type usage for window
+        window_usage = _bucket_usage(window_bucket, n_window, name_map)
+
+        # Compute per-pitch-type usage for season
+        season_usage = _bucket_usage(season_bucket, n_season, name_map)
+
+        buckets.append(CountBucket(
+            bucket=bucket_name,
+            n_pitches_window=n_window,
+            n_pitches_season=n_season,
+            small_sample=small_sample,
+            pitch_types=window_usage,
+            season_pitch_types=season_usage,
+        ))
+
+        # Notable shifts: only for non-small-sample, non-cold-start buckets
+        if not small_sample and not cold_start:
+            season_lookup = {u.pitch_type: u.usage_pct for u in season_usage}
+            bucket_label = _COUNT_BUCKET_LABELS[bucket_name]
+            for w_pt in window_usage:
+                s_pct = season_lookup.get(w_pt.pitch_type, 0.0)
+                delta = w_pt.usage_pct - s_pct
+                if abs(delta) >= 10.0:
+                    direction = "up" if delta > 0 else "down"
+                    notable_shifts.append(
+                        f"{w_pt.pitch_name} usage {direction} {abs(delta):.0f}pp "
+                        f"when {bucket_label} ({w_pt.usage_pct:.0f}% vs {s_pct:.0f}% season)"
+                    )
+            # Also check for season pitch types that disappeared from window
+            window_lookup = {u.pitch_type: u.usage_pct for u in window_usage}
+            for s_pt in season_usage:
+                if s_pt.pitch_type not in window_lookup and s_pt.usage_pct >= 10.0:
+                    notable_shifts.append(
+                        f"{s_pt.pitch_name} usage down {s_pt.usage_pct:.0f}pp "
+                        f"when {bucket_label} (0% vs {s_pt.usage_pct:.0f}% season)"
+                    )
+
+    return CountSplits(buckets=buckets, notable_shifts=notable_shifts)
+
+
+def _bucket_usage(
+    bucket_df: pl.DataFrame,
+    n_total: int,
+    name_map: dict[str, str],
+) -> list[CountBucketUsage]:
+    """Compute per-pitch-type usage rates within a count-state bucket.
+
+    Args:
+        bucket_df: DataFrame filtered to a single bucket.
+        n_total: Total pitches in the bucket.
+        name_map: pitch_type code -> human name mapping.
+
+    Returns:
+        List of CountBucketUsage sorted by usage_pct descending.
+    """
+    if n_total == 0:
+        return []
+
+    counts = (
+        bucket_df.group_by("pitch_type")
+        .agg(pl.len().alias("n"))
+        .sort("n", descending=True)
+    )
+
+    return [
+        CountBucketUsage(
+            pitch_type=row["pitch_type"],
+            pitch_name=name_map.get(row["pitch_type"], row["pitch_type"]),
+            usage_pct=float(row["n"]) / n_total * 100.0,
+        )
+        for row in counts.iter_rows(named=True)
+    ]
 
 
 def compute_execution_metrics(data: PitcherData) -> list[ExecutionMetrics]:

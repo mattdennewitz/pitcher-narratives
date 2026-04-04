@@ -2302,14 +2302,14 @@ def test_count_splits_small_sample_flag():
     """Bucket with <10 window pitches has small_sample=True; >=10 has False."""
     rows = []
     d = date(2026, 4, 1)
-    # Ahead: only 5 pitches at 0-1 (small sample)
+    # 0-1 => ahead only (strikes=1 > balls=0), 5 pitches
     rows.extend(_count_rows(d, "FF", "4-Seam Fastball", 0, 1, n=5))
-    # Behind: 15 pitches at 1-0 (not small sample)
-    rows.extend(_count_rows(d, "FF", "4-Seam Fastball", 1, 0, n=15))
-    # Even: 3 at 0-0 (small sample)
+    # 2-0 => behind only (balls=2 > strikes=0), 15 pitches
+    rows.extend(_count_rows(d, "FF", "4-Seam Fastball", 2, 0, n=15))
+    # 0-0 => even + first_pitch, 3 pitches
     rows.extend(_count_rows(d, "FF", "4-Seam Fastball", 0, 0, n=3))
-    # Two-strike: 12 at 1-2 (not small)
-    rows.extend(_count_rows(d, "FF", "4-Seam Fastball", 1, 2, n=12))
+    # 0-2 => ahead (strikes=2 > balls=0) + two_strike, 12 pitches
+    rows.extend(_count_rows(d, "FF", "4-Seam Fastball", 0, 2, n=12))
 
     data = _make_pitcher_data_for_count_splits(statcast_rows=rows, window_days=30)
     result = compute_count_splits(data)
@@ -2320,15 +2320,16 @@ def test_count_splits_small_sample_flag():
     two_strike = [b for b in result.buckets if b.bucket == "two_strike"][0]
     first_pitch = [b for b in result.buckets if b.bucket == "first_pitch"][0]
 
-    # Ahead: 5 window pitches at 0-1 (small sample)
-    assert ahead.small_sample is True
-    # Behind: 15 window pitches (not small)
+    # Ahead: 5 (from 0-1) + 12 (from 0-2) = 17 (not small sample)
+    assert ahead.small_sample is False
+    assert ahead.n_pitches_window == 17
+    # Behind: 15 (from 2-0) — not small sample
     assert behind.small_sample is False
-    # Even: 3 at 0-0 (small sample)
+    # Even: 3 (from 0-0) — small sample
     assert even.small_sample is True
-    # Two-strike: 12 at 1-2 (not small)
+    # Two-strike: 12 (from 0-2) — not small sample
     assert two_strike.small_sample is False
-    # First pitch: 3 at 0-0 (small sample)
+    # First pitch: 3 (from 0-0) — small sample
     assert first_pitch.small_sample is True
 
 
