@@ -719,39 +719,70 @@ def _build_stuff_input(ctx: PitcherContext) -> str:
 
 
 def _build_location_input(ctx: PitcherContext) -> str:
-    """Build input for the location specialist from intermediates + execution."""
+    """Build input for the location specialist with adjacent contradiction metrics (D-04).
+
+    Restructured from separate P-vs-S / Execution / Plus sections into a
+    per-pitch-type unified view so zone_rate, xWhiff_P, and chase_rate appear
+    adjacent, enabling the LLM to cross-reference contradiction patterns.
+    """
     lines = [f"## {ctx.pitcher_name} ({ctx.throws}HP, {ctx.role})\n"]
     lines.append(render_league_baselines(_pitch_types(ctx)))
     lines.append("")
-    lines.append("## P vs S Location Impact")
+
+    # Build lookups for merging (handle missing pitch types gracefully)
+    exec_lookup: dict[str, object] = {e.pitch_type: e for e in ctx.execution}
+    plus_lookup: dict[str, object] = {p.pitch_type: p for p in ctx.arsenal}
+
+    def _d(p: float | None, s: float | None) -> str:
+        if p is not None and s is not None:
+            return f"{(p - s) * 100:+.1f}pp"
+        return "--"
+
+    def _drv(p: float | None, s: float | None) -> str:
+        if p is not None and s is not None:
+            return f"{(p - s):+.2f}"
+        return "--"
+
+    lines.append("## Location Analysis by Pitch Type")
     for im in ctx.intermediates:
-        def _d(p: float | None, s: float | None) -> str:
-            if p is not None and s is not None:
-                return f"{(p - s) * 100:+.1f}pp"
-            return "--"
-        def _drv(p: float | None, s: float | None) -> str:
-            if p is not None and s is not None:
-                return f"{(p - s):+.2f}"
-            return "--"
+        if im.xswing_p is None:
+            lines.append(f"\n### {im.pitch_name} ({im.pitch_type}): no data")
+            continue
+
+        lines.append(f"\n### {im.pitch_name} ({im.pitch_type})")
+
+        # Contradiction metrics adjacent per D-04: zone_rate, xWhiff_P, chase_rate
+        e = exec_lookup.get(im.pitch_type)
+        if e:
+            lines.append(
+                f"- Zone% {e.zone_rate:.1f}, "
+                f"xWhiff_P {im.xwhiff_p * 100:.1f}%, "
+                f"Chase% {e.chase_rate:.1f}"
+            )
+            lines.append(f"- CSW% {e.csw_pct:.1f}")
+        else:
+            # Execution data missing for this pitch type -- show what we have
+            lines.append(
+                f"- Zone% --, "
+                f"xWhiff_P {im.xwhiff_p * 100:.1f}%, "
+                f"Chase% --"
+            )
+
+        # P vs S location impact deltas
         lines.append(
-            f"- {im.pitch_name} ({im.pitch_type}): "
-            f"xSwing P {im.xswing_p * 100:.1f}% S {im.xswing_s * 100:.1f}% (delta {_d(im.xswing_p, im.xswing_s)}), "
-            f"xWhiff P {im.xwhiff_p * 100:.1f}% S {im.xwhiff_s * 100:.1f}% (delta {_d(im.xwhiff_p, im.xwhiff_s)}), "
-            f"xRV100 P {im.xrv100_p:.2f} S {im.xrv100_s:.2f} (delta {_drv(im.xrv100_p, im.xrv100_s)})"
-            if im.xswing_p is not None else f"- {im.pitch_name} ({im.pitch_type}): no data"
+            f"- P vs S: xSwing {_d(im.xswing_p, im.xswing_s)}, "
+            f"xWhiff {_d(im.xwhiff_p, im.xwhiff_s)}, "
+            f"xRV100 {_drv(im.xrv100_p, im.xrv100_s)}"
         )
-    lines.append("\n## Execution Metrics")
-    for e in ctx.execution:
-        lines.append(
-            f"- {e.pitch_name} ({e.pitch_type}): "
-            f"Zone% {e.zone_rate:.1f}, Chase% {e.chase_rate:.1f}, CSW% {e.csw_pct:.1f}"
-        )
-    lines.append("\n## Plus Scores (P+ vs S+ vs L+)")
-    for p in ctx.arsenal:
-        wp = f"{p.window_p_plus:.0f}" if p.window_p_plus is not None else "--"
-        ws = f"{p.window_s_plus:.0f}" if p.window_s_plus is not None else "--"
-        wl = f"{p.window_l_plus:.0f}" if p.window_l_plus is not None else "--"
-        lines.append(f"- {p.pitch_name} ({p.pitch_type}): P+ {wp}, S+ {ws}, L+ {wl}")
+
+        # Plus scores inline with the pitch type block
+        p = plus_lookup.get(im.pitch_type)
+        if p:
+            wp = f"{p.window_p_plus:.0f}" if p.window_p_plus is not None else "--"
+            ws = f"{p.window_s_plus:.0f}" if p.window_s_plus is not None else "--"
+            wl = f"{p.window_l_plus:.0f}" if p.window_l_plus is not None else "--"
+            lines.append(f"- P+ {wp}, S+ {ws}, L+ {wl}")
+
     return "\n".join(lines)
 
 
