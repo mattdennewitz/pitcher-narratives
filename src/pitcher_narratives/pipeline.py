@@ -417,6 +417,23 @@ platoon or count-state analysis. \
 Show your work: (1) state the claim from the text, (2) cite the exact \
 bucket numbers from the data, (3) Pass/Fail.
 
+ALLOWED HEURISTIC PATTERNS:
+The following analytical patterns are VALID when the specialist cites \
+the specific metrics that support them. An uncited heuristic claim is \
+still HALLUCINATED_CAUSATION (category 5).
+
+1. INVERSE CORRELATION: Velocity down + S+ up (or vice versa) is \
+valid IF the specialist cites pfx deltas (movement changes) as the \
+compensating factor.
+2. ZONE EXPANSION: Low zone% + high xWhiff is valid IF the specialist \
+cites chase% as confirming evidence of zone expansion strategy.
+3. APPROACH ANGLE: Arm angle -> deception/tunneling claims are valid \
+IF arm angle data is present in the input and the specialist cites it.
+
+Key rule: the pattern is valid ONLY when evidence is cited. Pattern \
+recognition alone, without citing the specific metrics, is still a \
+category 5 violation.
+
 For each problem found, report:
 - The specific claim that is wrong
 - What the data actually shows
@@ -527,7 +544,18 @@ assessment.
 - If specialists contradict each other on a pitch, acknowledge the \
 tension rather than silently picking one side.
 - No bullet points, no headers, no tables. Prose only.
-- Scale confidence to sample size. Small windows get tentative language."""
+- Scale confidence to sample size. Small windows get tentative language.
+
+CAUSAL HOOK REQUIREMENT:
+When ANY pitch shows a Stuff+ change of 10 or more points (window vs \
+season S+ delta), you MUST cite the physical driver from the Stuff \
+Specialist's analysis. Connect the S+ change to the velocity, \
+movement, or spin change that explains it.
+
+If the Stuff Specialist could not explain the S+ change, say so \
+honestly: "S+ moved [N] points without an obvious physical \
+explanation in the movement data." NEVER invent a physical cause \
+that the Stuff Specialist did not identify."""
 
 
 # ═══════════════════════════════════════════════════════════════════════

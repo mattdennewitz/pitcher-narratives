@@ -68,7 +68,7 @@ Plans:
 **Plans**: 3 plans
 Plans:
 - [x] 25-01-PLAN.md -- Specialist prompt heuristics: Stuff trade-off detection, Location contradiction detection, Trend release-point vocabulary function
-- [ ] 25-02-PLAN.md -- Writer causal hook requirement + auditor sabermetric whitelist
+- [x] 25-02-PLAN.md -- Writer causal hook requirement + auditor sabermetric whitelist
 - [ ] 25-03-PLAN.md -- Location input restructuring: per-pitch-type unified view with adjacent contradiction metrics
 
 ## Progress

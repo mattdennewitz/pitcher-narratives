@@ -1253,6 +1253,7 @@ class TestAuditorPrompt:
         assert "Pass/Fail" in _DATA_AUDITOR_PROMPT
 
 
+<<<<<<< HEAD
 # ── Heuristic directive tests (Phase 25, Plan 01) ─────────────────────
 
 
@@ -1380,3 +1381,74 @@ class TestMakePipelineAgentsCtx:
         ctx = _make_pipeline_ctx()
         agents = make_pipeline_agents("gemini", "high", ctx=ctx)
         assert isinstance(agents, PipelineAgents)
+
+
+class TestWriterPromptCausalHook:
+    """PROMPT-04 (D-07/D-08/D-09): Writer must cite physical drivers for large S+ changes."""
+
+    def test_writer_prompt_causal_hook_section(self):
+        from pitcher_narratives.pipeline import _build_writer_prompt
+        prompt = _build_writer_prompt("SP")
+        assert "CAUSAL HOOK REQUIREMENT" in prompt
+
+    def test_writer_prompt_causal_hook_threshold(self):
+        from pitcher_narratives.pipeline import _build_writer_prompt
+        prompt = _build_writer_prompt("SP")
+        assert "10" in prompt
+
+    def test_writer_prompt_causal_hook_stuff_citation(self):
+        from pitcher_narratives.pipeline import _build_writer_prompt
+        prompt = _build_writer_prompt("SP")
+        assert "Stuff Specialist" in prompt
+
+    def test_writer_prompt_causal_hook_anti_fabrication(self):
+        from pitcher_narratives.pipeline import _build_writer_prompt
+        prompt = _build_writer_prompt("SP")
+        assert "NEVER invent a physical cause" in prompt
+
+    def test_writer_prompt_causal_hook_honest_fallback(self):
+        from pitcher_narratives.pipeline import _build_writer_prompt
+        prompt = _build_writer_prompt("SP")
+        assert "without an obvious physical explanation" in prompt
+
+    def test_writer_prompt_rp_also_has_causal_hook(self):
+        from pitcher_narratives.pipeline import _build_writer_prompt
+        prompt = _build_writer_prompt("RP")
+        assert "CAUSAL HOOK REQUIREMENT" in prompt
+
+
+class TestAuditorWhitelist:
+    """PROMPT-05 (D-10/D-11/D-12): Auditor whitelists evidence-backed heuristic patterns."""
+
+    def test_auditor_whitelist_section(self):
+        from pitcher_narratives.pipeline import _DATA_AUDITOR_PROMPT
+        assert "ALLOWED HEURISTIC PATTERNS" in _DATA_AUDITOR_PROMPT
+
+    def test_auditor_whitelist_inverse_correlation(self):
+        from pitcher_narratives.pipeline import _DATA_AUDITOR_PROMPT
+        assert "INVERSE CORRELATION" in _DATA_AUDITOR_PROMPT
+
+    def test_auditor_whitelist_zone_expansion(self):
+        from pitcher_narratives.pipeline import _DATA_AUDITOR_PROMPT
+        assert "ZONE EXPANSION" in _DATA_AUDITOR_PROMPT
+
+    def test_auditor_whitelist_approach_angle(self):
+        from pitcher_narratives.pipeline import _DATA_AUDITOR_PROMPT
+        assert "APPROACH ANGLE" in _DATA_AUDITOR_PROMPT
+
+    def test_auditor_whitelist_evidence_gate(self):
+        from pitcher_narratives.pipeline import _DATA_AUDITOR_PROMPT
+        assert "ONLY when" in _DATA_AUDITOR_PROMPT
+
+    def test_auditor_whitelist_placement_before_output(self):
+        """D-12: Whitelist must appear before output format for recency effect."""
+        from pitcher_narratives.pipeline import _DATA_AUDITOR_PROMPT
+        wl_idx = _DATA_AUDITOR_PROMPT.index("ALLOWED HEURISTIC PATTERNS")
+        of_idx = _DATA_AUDITOR_PROMPT.index("For each problem found")
+        assert wl_idx < of_idx, (
+            f"Whitelist at {wl_idx} must come before output format at {of_idx}"
+        )
+
+    def test_auditor_whitelist_uncited_still_violation(self):
+        from pitcher_narratives.pipeline import _DATA_AUDITOR_PROMPT
+        assert "category 5" in _DATA_AUDITOR_PROMPT
