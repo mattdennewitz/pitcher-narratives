@@ -54,8 +54,10 @@ from pitcher_narratives.pipeline import (
     _build_stuff_input,
     _build_trend_input,
     audit_and_revise_specialists,
+    build_writer_input,
     generate_pipeline_streaming,
     make_pipeline_agents,
+    run_specialists,
 )
 
 
@@ -1042,3 +1044,123 @@ class TestRPGameShapeSkip:
         ctx = _make_pipeline_ctx(role="SP")
         output = _build_game_shape_input(ctx)
         assert "Workload Context" not in output
+
+
+# ── PIPE-06/07: 6-agent pipeline wiring (Task 1) ──────────────────────
+
+
+class TestSpecialistOutputsApproach:
+    """PIPE-06: SpecialistOutputs has approach field."""
+
+    def test_specialist_outputs_has_approach_field(self):
+        so = SpecialistOutputs(
+            stuff="s", location="l", runvalue="r",
+            trends="t", game_shape="g", approach="a",
+        )
+        assert so.approach == "a"
+
+    def test_specialist_outputs_field_order(self):
+        """approach is the last specialist field."""
+        fields = list(SpecialistOutputs.model_fields.keys())
+        assert fields[-1] == "approach"
+        assert fields[-2] == "game_shape"
+
+
+class TestPipelineAgentsApproach:
+    """PIPE-06: PipelineAgents has approach field between game_shape and writer."""
+
+    def test_approach_in_pipeline_agents_fields(self):
+        assert "approach" in PipelineAgents._fields
+
+    def test_approach_position(self):
+        """approach comes between game_shape and writer."""
+        fields = list(PipelineAgents._fields)
+        gs_idx = fields.index("game_shape")
+        ap_idx = fields.index("approach")
+        wr_idx = fields.index("writer")
+        assert gs_idx < ap_idx < wr_idx
+
+    def test_make_pipeline_agents_approach_populated(self):
+        agents = make_pipeline_agents("gemini", "high")
+        assert agents.approach is not None
+
+    def test_named_access_approach(self):
+        agents = make_pipeline_agents("gemini", "high")
+        assert agents.approach is not None
+        assert agents.stuff is not None
+        assert agents.writer is not None
+
+
+class TestRunSpecialistsApproach:
+    """PIPE-06: run_specialists dispatches 6 agents in parallel."""
+
+    def test_run_specialists_returns_approach(self, monkeypatch):
+        _patch_league_baselines(monkeypatch)
+        from pydantic_ai.models.test import TestModel
+        test_model = TestModel()
+        agents = make_pipeline_agents("gemini", "high")
+        ctx = _make_approach_ctx()
+
+        result = asyncio.run(run_specialists(
+            agents.stuff, agents.location, agents.runvalue,
+            agents.trends, agents.game_shape, agents.approach,
+            ctx, test_model,
+        ))
+        assert isinstance(result, SpecialistOutputs)
+        assert isinstance(result.approach, str)
+        assert len(result.approach) > 0
+
+
+class TestAuditSixSpecialists:
+    """PIPE-07: Audit loop handles 6 specialists including approach."""
+
+    @pytest.fixture
+    def six_specialists(self):
+        return SpecialistOutputs(
+            stuff="The four-seam is elite.",
+            location="Location is average.",
+            runvalue="Run value is neutral.",
+            trends="No changes.",
+            game_shape="Steady across passes.",
+            approach="Approach analysis.",
+        )
+
+    def test_audit_six_returns_specialist_outputs(self, six_specialists):
+        from pydantic_ai import Agent
+        from pydantic_ai.models.test import TestModel
+        test_model = TestModel()
+        agents = make_pipeline_agents("gemini", "high")
+
+        async def _run():
+            clean_auditor = Agent("test", output_type=AuditResult)
+            specialist_agents = {
+                "stuff": agents.stuff, "location": agents.location,
+                "runvalue": agents.runvalue, "trends": agents.trends,
+                "game_shape": agents.game_shape, "approach": agents.approach,
+            }
+            data = load_pitcher_data(TEST_PITCHER, window_days=30)
+            ctx = assemble_pitcher_context(data)
+            result, flags = await audit_and_revise_specialists(
+                six_specialists, specialist_agents, clean_auditor, ctx,
+                _model_override=test_model,
+            )
+            return result, flags
+
+        result, flags = asyncio.run(_run())
+        assert isinstance(result, SpecialistOutputs)
+        assert hasattr(result, "approach")
+        assert isinstance(flags, list)
+
+
+class TestAnchorSynthesisApproach:
+    """Anchor synthesis includes approach and RP-conditional game shape label."""
+
+    def test_e2e_pipeline_has_approach_in_specialists(self, ctx):
+        """End-to-end: pipeline returns approach in specialists."""
+        test_model = TestModel()
+        result = generate_pipeline_streaming(
+            ctx, provider="gemini", thinking="high", _model_override=test_model,
+        )
+        assert hasattr(result.specialists, "approach")
+        assert isinstance(result.specialists.approach, str)
+        assert len(result.specialists.approach) > 0
