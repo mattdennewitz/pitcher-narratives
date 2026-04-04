@@ -15,6 +15,9 @@ import polars as pl
 from pitcher_narratives.data import PitcherData, load_pitcher_data
 from pitcher_narratives.engine import (
     _CSW_DESCRIPTIONS,
+    _arm_angle_delta_string,
+    _arm_slot_label,
+    _compute_arm_angle,
     AddedDroppedPitch,
     AppearancePitchTrendRecord,
     AppearancePitchTrends,
@@ -904,6 +907,103 @@ def test_release_point_ordering():
     # Verify descending order -- first entry should be one of the top-usage pitches
     if len(rp.pitch_types) >= 2:
         assert rp.pitch_types[0].pitch_type in ("FF", "FC", "ST")
+
+
+# ── Arm Angle ────────────────────────────────────────────────────────
+
+
+def test_arm_angle_atan2_positive_release_x():
+    """_compute_arm_angle with positive release_x returns correct degrees."""
+    import math
+    result = _compute_arm_angle(2.0, 5.5)
+    expected = math.degrees(math.atan2(5.5, 2.0))
+    assert abs(result - expected) < 0.01
+    assert abs(result - 70.0) < 1.0  # approximately 70 degrees
+
+
+def test_arm_angle_atan2_negative_release_x():
+    """_compute_arm_angle with negative release_x (LHP) uses abs and returns same angle."""
+    result_positive = _compute_arm_angle(2.0, 5.5)
+    result_negative = _compute_arm_angle(-2.0, 5.5)
+    assert abs(result_positive - result_negative) < 0.001
+
+
+def test_arm_slot_label_overhand():
+    """Angle >= 78 returns 'Overhand'."""
+    assert _arm_slot_label(80.0) == "Overhand"
+    assert _arm_slot_label(78.0) == "Overhand"
+
+
+def test_arm_slot_label_high_three_quarter():
+    """Angle 65-78 returns 'High 3/4'."""
+    assert _arm_slot_label(70.0) == "High 3/4"
+    assert _arm_slot_label(65.0) == "High 3/4"
+
+
+def test_arm_slot_label_low_three_quarter():
+    """Angle 55-65 returns 'Low 3/4'."""
+    assert _arm_slot_label(60.0) == "Low 3/4"
+    assert _arm_slot_label(55.0) == "Low 3/4"
+
+
+def test_arm_slot_label_sidearm():
+    """Angle 40-55 returns 'Sidearm'."""
+    assert _arm_slot_label(45.0) == "Sidearm"
+    assert _arm_slot_label(40.0) == "Sidearm"
+
+
+def test_arm_slot_label_submarine():
+    """Angle < 40 returns 'Submarine'."""
+    assert _arm_slot_label(35.0) == "Submarine"
+    assert _arm_slot_label(20.0) == "Submarine"
+
+
+def test_arm_angle_delta_string_steady():
+    """Abs delta < 2.0 returns 'Steady' with signed value."""
+    result = _arm_angle_delta_string(1.5)
+    assert "Steady" in result
+    assert "+1.5" in result
+    assert "deg" in result
+
+
+def test_arm_angle_delta_string_up():
+    """Positive delta >= 2.0 returns 'Up X.X deg'."""
+    result = _arm_angle_delta_string(3.5)
+    assert result == "Up 3.5 deg"
+
+
+def test_arm_angle_delta_string_down():
+    """Negative delta <= -2.0 returns 'Down X.X deg'."""
+    result = _arm_angle_delta_string(-4.0)
+    assert result == "Down 4.0 deg"
+
+
+def test_arm_angle_fields_on_release_point_pitch_type():
+    """compute_release_point_metrics result includes arm angle fields."""
+    data = load_pitcher_data(TEST_PITCHER, window_days=30)
+    rp = compute_release_point_metrics(data)
+    for pt in rp.pitch_types:
+        assert hasattr(pt, "window_arm_angle")
+        assert hasattr(pt, "season_arm_angle")
+        assert hasattr(pt, "arm_angle_delta")
+        assert hasattr(pt, "arm_slot")
+        assert isinstance(pt.window_arm_angle, float)
+        assert isinstance(pt.season_arm_angle, float)
+        assert isinstance(pt.arm_angle_delta, str)
+        assert isinstance(pt.arm_slot, str)
+        # Arm angles should be in reasonable range (20-90 degrees)
+        assert 20.0 <= pt.window_arm_angle <= 90.0, f"{pt.pitch_type} arm_angle={pt.window_arm_angle}"
+        assert 20.0 <= pt.season_arm_angle <= 90.0
+        # Slot label should be one of the known labels
+        assert pt.arm_slot in ("Overhand", "High 3/4", "Low 3/4", "Sidearm", "Submarine")
+
+
+def test_arm_angle_cold_start_delta():
+    """Cold start arm angle delta contains 'Full season in window'."""
+    data = load_pitcher_data(TEST_PITCHER, window_days=9999)
+    rp = compute_release_point_metrics(data)
+    for pt in rp.pitch_types:
+        assert "Full season in window" in pt.arm_angle_delta
 
 
 # ── Intermediate Probabilities ───────────────────────────────────────

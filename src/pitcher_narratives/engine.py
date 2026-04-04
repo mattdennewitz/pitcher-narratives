@@ -9,6 +9,7 @@ delta helpers used across all analysis facets.
 from __future__ import annotations
 
 import logging
+import math
 from dataclasses import dataclass
 from typing import Any, cast
 
@@ -127,6 +128,54 @@ _COUNT_BUCKET_LABELS: dict[str, str] = {
 
 _COLD_START_STRING = "Full season in window -- no trend comparison"
 """Delta string used when window covers entire season."""
+
+_ARM_ANGLE_THRESHOLD = 2.0
+"""Degrees below which arm angle delta is 'Steady'."""
+
+
+def _compute_arm_angle(release_x: float, release_z: float) -> float:
+    """Compute arm angle in degrees from release point coordinates.
+
+    Uses atan2(release_z, abs(release_x)) to measure angle from horizontal.
+    Higher values = more overhand delivery.
+    abs(release_x) ensures same scale for LHP and RHP.
+    Per D-07a: raw atan2, no height normalization.
+    """
+    return math.degrees(math.atan2(release_z, abs(release_x)))
+
+
+def _arm_slot_label(angle: float) -> str:
+    """Map arm angle degrees to human-readable slot label.
+
+    Thresholds from empirical analysis of 987 MLB pitchers (2026 Statcast):
+    - Overhand (>= 78 deg): ~19% of pitchers
+    - High 3/4 (65-78): ~64% of pitchers (bulk of league)
+    - Low 3/4 (55-65): ~15% of pitchers
+    - Sidearm (40-55): ~3% of pitchers
+    - Submarine (< 40): <1% of pitchers
+    Per D-06 with corrected thresholds.
+    """
+    if angle >= 78:
+        return "Overhand"
+    elif angle >= 65:
+        return "High 3/4"
+    elif angle >= 55:
+        return "Low 3/4"
+    elif angle >= 40:
+        return "Sidearm"
+    else:
+        return "Submarine"
+
+
+def _arm_angle_delta_string(delta: float, threshold: float = _ARM_ANGLE_THRESHOLD) -> str:
+    """Convert arm angle delta (degrees) to qualitative string.
+
+    Follows same pattern as _release_delta_string per D-07.
+    """
+    if abs(delta) < threshold:
+        return f"Steady ({delta:+.1f} deg)"
+    direction = "Up" if delta > 0 else "Down"
+    return f"{direction} {abs(delta):.1f} deg"
 
 _CSW_DESCRIPTIONS = frozenset(
     {
@@ -1327,6 +1376,18 @@ class ReleasePointPitchType:
     cold_start: bool
     """True when window covers full season."""
 
+    window_arm_angle: float
+    """Arm angle in degrees from horizontal, computed as atan2(release_z, |release_x|). Per D-05."""
+
+    season_arm_angle: float
+    """Season average arm angle in degrees."""
+
+    arm_angle_delta: str
+    """Qualitative delta string for arm angle change. Per D-07."""
+
+    arm_slot: str
+    """Human-readable slot label: 'Overhand', 'High 3/4', 'Low 3/4', 'Sidearm', 'Submarine'. Per D-06."""
+
 
 @dataclass
 class ReleasePointMetrics:
@@ -2505,14 +2566,19 @@ def compute_release_point_metrics(data: PitcherData) -> ReleasePointMetrics:
         n_window = int(row["n_window"])
         small_sample = n_window < _MIN_PITCHES
 
+        window_arm = _compute_arm_angle(float(row["window_x"]), float(row["window_z"]))
+        season_arm = _compute_arm_angle(float(row["season_x"]), float(row["season_z"]))
+
         if cold_start:
             x_delta = _COLD_START_STRING
             z_delta = _COLD_START_STRING
             ext_delta = _COLD_START_STRING
+            arm_delta = _COLD_START_STRING
         else:
             x_delta = _release_delta_string(row["window_x"] - row["season_x"])
             z_delta = _release_delta_string(row["window_z"] - row["season_z"])
             ext_delta = _extension_delta_string(row["window_ext"] - row["season_ext"])
+            arm_delta = _arm_angle_delta_string(window_arm - season_arm)
 
         pitch_types.append(
             ReleasePointPitchType(
@@ -2530,6 +2596,10 @@ def compute_release_point_metrics(data: PitcherData) -> ReleasePointMetrics:
                 n_pitches_window=n_window,
                 small_sample=small_sample,
                 cold_start=cold_start,
+                window_arm_angle=window_arm,
+                season_arm_angle=season_arm,
+                arm_angle_delta=arm_delta,
+                arm_slot=_arm_slot_label(window_arm),
             )
         )
 
