@@ -68,7 +68,7 @@ Plans:
 **Plans**: 3 plans
 Plans:
 - [ ] 25-01-PLAN.md -- Specialist prompt heuristics: Stuff trade-off detection, Location contradiction detection, Trend release-point vocabulary function
-- [ ] 25-02-PLAN.md -- Writer causal hook requirement + auditor sabermetric whitelist
+- [x] 25-02-PLAN.md -- Writer causal hook requirement + auditor sabermetric whitelist
 - [ ] 25-03-PLAN.md -- Location input restructuring: per-pitch-type unified view with adjacent contradiction metrics
 
 ## Progress
@@ -102,7 +102,7 @@ Phases execute in numeric order: 23 -> 24 -> 25
 | 22. Context Assembly & Prompt Rendering | v1.8 | 1/1 | Complete | 2026-04-03 |
 | 23. Engine Foundation & Data Enrichment | v1.9 | 3/3 | Complete    | 2026-04-04 |
 | 24. Pipeline Re-Architecture | v1.9 | 3/3 | Complete    | 2026-04-04 |
-| 25. Prompt Engineering & Heuristic Injection | v1.9 | 0/3 | Planned | - |
+| 25. Prompt Engineering & Heuristic Injection | v1.9 | 1/3 | In Progress|  |
 
 ---
 *Full phase details archived in `.planning/milestones/`*

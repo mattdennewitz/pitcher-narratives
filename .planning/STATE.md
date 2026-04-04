@@ -21,13 +21,13 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-04)
 
 **Core value:** Reports must read like a scout wrote them -- surfacing changes, adaptations, and execution trends rather than reciting numbers.
-**Current focus:** Phase 24 — pipeline-re-architecture
+**Current focus:** Phase 25 — prompt engineering & heuristic injection
 
 ## Current Position
 
 Phase: 25 of 25 (prompt engineering & heuristic injection)
-Plan: Not started
-Status: Ready to execute
+Plan: 2 of 3 complete
+Status: Executing Phase 25
 Last activity: 2026-04-04
 
 Progress: [####░░░░░░] 40%
@@ -50,6 +50,7 @@ Progress: [####░░░░░░] 40%
 | Phase 24 P01 | 6min | 1 tasks | 2 files |
 | Phase 24 P02 | 3min | 1 tasks | 2 files |
 | Phase 24 P03 | 12min | 2 tasks | 2 files |
+| Phase 25 P02 | 3min | 2 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -70,6 +71,8 @@ Decisions are logged in PROJECT.md Key Decisions table.
 - [Phase 24]: Anti-recalculation directive in Stuff prompt prevents LLM from recomputing provided deltas
 - [Phase 24]: Writer prompt converted from constant to _build_writer_prompt(role) for RP-conditional text
 - [Phase 24]: Auditor categories 8-9 use conditional framing (apply ONLY when) to prevent false positives on non-Approach specialists
+- [Phase 25]: Writer causal hook requires citing Stuff Specialist physical drivers for S+ changes >= 10 points, with honest fallback
+- [Phase 25]: Auditor whitelist evidence-gates three heuristic patterns (inverse correlation, zone expansion, approach angle) — uncited claims still flagged
 
 ### Pending Todos
 
@@ -89,7 +92,7 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-04-04T21:22:13.491Z
-Last activity: 2026-04-04 - Completed Wave 1 (24-01 Approach Specialist + 24-02 raw data appendices)
-Stopped at: Phase 25 context gathered
-Resume file: .planning/phases/25-prompt-engineering-heuristic-injection/25-CONTEXT.md
+Last session: 2026-04-04T21:48:16Z
+Last activity: 2026-04-04 - Completed 25-02 writer causal hook and auditor whitelist
+Stopped at: Completed 25-02-PLAN.md
+Resume file: None
