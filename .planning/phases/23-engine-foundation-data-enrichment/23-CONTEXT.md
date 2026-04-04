@@ -23,20 +23,26 @@ Engine produces count-state usage splits, arm angle metrics, and percentile-rank
 - **D-05:** Arm angle computed per pitch type (not a single aggregate per appearance). Uses atan2 on existing per-type release_x/release_z averages already in PitchTypeSummary.
 - **D-06:** Arm angle includes both numeric degrees and a human-readable slot label. Slot ranges: Overhand (>50°), 3/4 (35-50°), Sidearm (15-35°), Submarine (<15°).
 - **D-07:** Window-vs-season delta string computed per pitch type for arm angle, following the existing delta string pattern.
+- **D-07a:** Phase 23 uses raw atan2(release_z, abs(release_x)) — no height normalization. Slot labels may shift for extreme-height pitchers (6'10" vs 5'10" same slot = different raw angle). Height-normalized arm angle deferred to Phase 25 if pitcher height data becomes available.
 
 ### Percentile Tag Format
 - **D-08:** Outlier tags include percentile rank, direction, AND z-score (all three). Format: `OUTLIER - 98th percentile (above avg, z=+2.3)` / `NORMAL - 65th percentile (z=+0.4)`.
 - **D-09:** Percentile computed split by pitcher handedness (LHP vs RHP), not full-league. Uses existing `p_throws` column from Statcast data to partition the league baseline population.
 
+### Release Point Baseline Extension
+- **D-12:** LeagueBaseline must be extended with release point physical averages and standard deviations: `avg_release_x`, `release_x_std`, `avg_release_z`, `release_z_std`, `avg_extension`, `extension_std`. Without these, `outlier_tag()` cannot compute percentiles for release point metrics — only velo and movement would get percentile tags. This is required to support claims like "99th percentile release point" in narratives.
+
 ### Count Splits Prompt Rendering
 - **D-10:** Hybrid rendering: notable shifts (10+ pp from season average) in the main context section, full usage table in a raw data appendix. This aligns with Phase 24's PIPE-05 raw data appendix plan.
 - **D-11:** Notable shift threshold is 10 percentage points, matching Phase 24's PIPE-02 Approach Specialist lead-story threshold.
+- **D-13:** CountSplits summary (10pp shifts) MUST render directly adjacent to PlatoonMix in the prompt — not separated by release point or other data. Causal analysis (e.g., "usage against righties" + "usage when ahead") requires both data points within the same visual eye-span of the context window. If separated by 1000+ tokens, the LLM is less likely to connect platoon and count-state patterns.
 
 ### Claude's Discretion
-- atan2 formula specifics and slot label boundary fine-tuning
+- Slot label boundary fine-tuning (exact degree thresholds)
 - CountSplits Pydantic model field naming and structure
 - How arm angle fields attach to PitchTypeSummary vs a separate model
 - League baseline handedness grouping implementation details
+- Extension column availability check (avg_extension/extension_std may need graceful fallback if column missing from some datasets)
 
 </decisions>
 
@@ -97,13 +103,16 @@ Engine produces count-state usage splits, arm angle metrics, and percentile-rank
 - 10pp threshold for "notable" count-state shifts aligns intentionally with Phase 24's PIPE-02 Approach Specialist lead story threshold — keep these in sync
 - Hybrid prompt rendering (notable shifts + full appendix) is designed to feed Phase 24's raw data appendix pattern (PIPE-05) — the appendix structure should be reusable
 - Handedness-split percentiles are more accurate for metrics like velocity where LHP/RHP distributions differ meaningfully
+- CountSplits summary adjacent to PlatoonMix enables "Valdez-style" causal analysis — the LLM needs both in the same eye-span to connect platoon strategy with count-state behavior
+- Release point baseline extension (D-12) enables "99th percentile release point" claims in the McLean/Skenes style — without it, only velo/movement get percentile tags
+- Raw atan2 arm angle is a known approximation (tall vs short pitchers) but good enough for Phase 23; height normalization is a Phase 25 refinement if data exists
 
 </specifics>
 
 <deferred>
 ## Deferred Ideas
 
-None — discussion stayed within phase scope
+- **Height-normalized arm angle** — Normalize release_z against pitcher height to isolate arm slot from stature. Deferred to Phase 25 (requires pitcher height data, which may not be in Statcast). Raw atan2 is sufficient for Phase 23.
 
 </deferred>
 
