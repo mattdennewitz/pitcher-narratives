@@ -68,19 +68,22 @@ The report must read like a scout wrote it — surfacing *changes, adaptations, 
 - All data access centralized through data.py: zero bypass reads in engine.py, resolver.py, scout.py — v1.7
 - Resolver builds pitcher name table from all available years — v1.7
 
+- CountSplits engine: per-pitch-type usage across count states (ahead/behind/even/two-strike) with small-sample flagging — v1.9
+- Arm angle calculation from release_x/release_z via atan2 with slot labels and window-vs-season deltas — v1.9
+- Percentile-based outlier tags replacing raw z-score notation, split by pitcher handedness — v1.9
+- Approach Specialist: 6th specialist agent covering platoon mix, count splits, first-pitch strategy — v1.9
+- Dynamic RP routing: Game Shape specialist skipped for relievers, replaced with workload stub — v1.9
+- Raw data appendix in Stuff and Trend specialist inputs for causal tracing — v1.9
+- Trade-off detection directive in Stuff Specialist prompt (inverse velo/movement → S+ patterns) — v1.9
+- Contradiction detection directive in Location Specialist prompt (zone expansion patterns) — v1.9
+- Conditional release-point framing vocabulary in Trend Specialist prompt — v1.9
+- Causal hook requirement in Writer prompt (S+ ≥10pt change must cite physical driver) — v1.9
+- Auditor whitelist for evidence-backed sabermetric heuristic interpretations — v1.9
+- Location input restructured for per-pitch-type metric adjacency — v1.9
+
 ### Active
 
-- [ ] CountSplits engine: per-pitch-type usage across count states (ahead/behind/even/two-strike)
-- [ ] Arm angle calculation from release_x/release_z coordinates
-- [ ] Percentile-based outlier tags (replacing raw z-score tags)
-- [ ] Approach Specialist: 6th specialist agent covering platoon mix, count splits, first-pitch strategy
-- [ ] Dynamic RP routing: skip game shape specialist for single-inning relievers
-- [ ] Raw data appendix in stuff/trend specialist inputs for causal tracing
-- [ ] Trade-off detection directive in Stuff Specialist prompt
-- [ ] Contradiction detection directive in Location Specialist prompt
-- [ ] Release point framing vocabulary in Trend Specialist prompt
-- [ ] Causal hook requirement in Writer prompt
-- [ ] Auditor whitelist for sabermetric heuristic interpretations
+None — v1.9 milestone complete.
 
 ## Current Milestone: v1.9 Multi-Agent Narrative Upgrade
 
@@ -109,15 +112,13 @@ The report must read like a scout wrote it — surfacing *changes, adaptations, 
 
 ## Context
 
-### Current State (v1.9 Phase 23 complete)
+### Current State (v1.9 complete)
 
-**Modules:** config.py (shared constants), anchor.py (anchor quality gate), data.py (loading with multi-year support, game type filtering, cross-season baselines), engine.py (computation via data.py, including cross-season delta and arsenal trend engines), context.py (assembly with YoY prompt section), report.py (single-agent LLM pipeline + reflection loop), pipeline.py (multi-agent specialist pipeline + audit loop, 3 specialists receive YoY context), scout.py (appearance scoring via data.py), curator.py (LLM curation), cli.py (narrative CLI), scout_cli.py (scout CLI), resolver.py (fuzzy name resolution via data.py), analyst.py (tool-calling Q&A agent), ask_cli.py (Q&A CLI).
+**Modules:** config.py (shared constants), anchor.py (anchor quality gate), data.py (loading with multi-year support, game type filtering, cross-season baselines), engine.py (computation via data.py, including cross-season delta, arsenal trend, count splits, arm angle, and percentile outlier engines), context.py (assembly with YoY, count splits, and arm angle sections), report.py (single-agent LLM pipeline + reflection loop), pipeline.py (6-agent specialist pipeline with Approach Specialist, dynamic RP routing, raw data appendices, sabermetric heuristic directives, causal hook writer, and evidence-gated auditor whitelist), scout.py (appearance scoring via data.py), curator.py (LLM curation), cli.py (narrative CLI), scout_cli.py (scout CLI), resolver.py (fuzzy name resolution via data.py), analyst.py (tool-calling Q&A agent), ask_cli.py (Q&A CLI).
 
 **Tech stack:** Python 3.14, polars 1.39, pydantic-ai 1.72, rapidfuzz 3.14, nameparser 1.1, multi-provider (OpenAI gpt-5.4-mini, Claude Sonnet 4.6, Gemini 3.1 Pro).
 
-**Key v1.8 additions:** Cross-season baseline exposure (prior_season_baseline, prior_pitch_type_baseline on PitcherData). Season-delta engine (CrossSeasonSummary with YoY velocity/P+/S+/L+/workload deltas). Arsenal trend engine (ArsenalTrend with added/dropped pitch detection and per-pitch-type deltas). Context assembly wires YoY into to_prompt() and 3 specialist pipeline agents (stuff, trends, game_shape). 367 tests passing across all modules.
-
-**Phase 23 additions (v1.9):** Count-state usage splits engine (CountSplits with 5 buckets: ahead/behind/even/two_strike/first_pitch, small-sample flagging, notable shift detection). Per-pitch-type arm angle computation on ReleasePointPitchType with slot labels (Overhand/High 3-4/Low 3-4/Sidearm/Submarine). Percentile-ranked outlier tags (backward-compatible, handedness-filtered baselines). LeagueBaseline extended with p_throws and release point fields. PitcherContext wires count splits adjacent to platoon data and arm angle into release point section. pipeline.py and report.py callers pass percentiles. 435 tests passing.
+**v1.9 additions:** CountSplits engine (5 buckets, small-sample flagging). Arm angle from atan2 with slot labels. Percentile outlier tags (handedness-filtered). Approach Specialist (6th agent: platoon+count+first-pitch). RP dynamic routing (game shape → workload stub). Raw data appendices for Stuff/Trend. Sabermetric heuristic directives (trade-off, contradiction, release-point vocabulary). Writer causal hook (S+ ≥10pt → cite physical driver). Auditor whitelist for evidence-backed heuristics. Location input restructured for per-pitch metric adjacency. 463 tests passing across all modules.
 
 ### Data Sources
 
@@ -192,4 +193,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-04-04 after Phase 23 complete — Engine Foundation & Data Enrichment*
+*Last updated: 2026-04-04 after Phase 25 complete — v1.9 milestone complete*
