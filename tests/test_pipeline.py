@@ -746,6 +746,112 @@ class TestLocationRvNoYoY:
         assert "platoon" not in output.lower()
 
 
+# ── PIPE-05: Raw data appendix tests ──────────────────────────────────
+
+
+class TestStuffAppendix:
+    """PIPE-05: Stuff specialist input includes per-pitch delta table."""
+
+    def test_stuff_input_contains_delta_table(self, monkeypatch):
+        _patch_league_baselines(monkeypatch)
+        ctx = _make_pipeline_ctx()
+        output = _build_stuff_input(ctx)
+        assert "Per-Pitch Delta Table" in output
+
+    def test_stuff_delta_table_has_velo_columns(self, monkeypatch):
+        _patch_league_baselines(monkeypatch)
+        ctx = _make_pipeline_ctx()
+        output = _build_stuff_input(ctx)
+        # Table should contain the actual window and season velo values
+        assert "94.5" in output  # window_velo
+        assert "94.0" in output  # season_velo
+
+    def test_stuff_delta_table_has_movement_columns(self, monkeypatch):
+        _patch_league_baselines(monkeypatch)
+        ctx = _make_pipeline_ctx()
+        output = _build_stuff_input(ctx)
+        assert "6.5" in output  # pfx_x (window: -6.5)
+        assert "14.2" in output  # pfx_z window
+
+    def test_stuff_delta_table_has_plus_scores(self, monkeypatch):
+        _patch_league_baselines(monkeypatch)
+        ctx = _make_pipeline_ctx()
+        output = _build_stuff_input(ctx)
+        # Should contain S+ and P+ in the delta table
+        assert "106" in output  # window_s_plus
+        assert "108" in output  # window_p_plus
+
+    def test_stuff_delta_table_raw_data_label(self, monkeypatch):
+        _patch_league_baselines(monkeypatch)
+        ctx = _make_pipeline_ctx()
+        output = _build_stuff_input(ctx)
+        assert "Raw Data (cite these exact numbers)" in output
+
+    def test_stuff_prompt_anti_recalculation(self):
+        from pitcher_narratives.pipeline import _STUFF_SPECIALIST_PROMPT
+        assert "Do not attempt to recalculate" in _STUFF_SPECIALIST_PROMPT
+
+
+class TestTrendAppendix:
+    """PIPE-05: Trend specialist input includes raw data appendix."""
+
+    def test_trend_input_contains_raw_data(self, monkeypatch):
+        _patch_league_baselines(monkeypatch)
+        ctx = _make_pipeline_ctx()
+        output = _build_trend_input(ctx)
+        assert "Raw Data" in output
+
+    def test_trend_appendix_primary_pitches_only(self, monkeypatch):
+        """Only pitches with >= 10% window usage appear in appendix."""
+        _patch_league_baselines(monkeypatch)
+        # Create ctx with one primary pitch (50%) and one minor pitch (5%)
+        ctx = _make_pipeline_ctx()
+        minor_pitch = PitchTypeSummary(
+            pitch_type="CH",
+            pitch_name="Changeup",
+            season_velo=85.0,
+            window_velo=84.5,
+            velo_delta="Steady",
+            season_usage_pct=8.0,
+            window_usage_pct=5.0,
+            usage_delta="Down modestly",
+            season_p_plus=95.0,
+            window_p_plus=93.0,
+            p_plus_delta="Down slightly",
+            season_s_plus=90.0,
+            window_s_plus=88.0,
+            s_plus_delta="Down slightly",
+            season_l_plus=98.0,
+            window_l_plus=96.0,
+            l_plus_delta="Steady",
+            window_pfx_x=8.0,
+            season_pfx_x=7.8,
+            pfx_x_delta="Steady",
+            window_pfx_z=2.5,
+            season_pfx_z=2.6,
+            pfx_z_delta="Steady",
+            n_pitches_season=40,
+            n_pitches_window=5,
+            small_sample=True,
+            cold_start=False,
+        )
+        ctx.arsenal.append(minor_pitch)
+        output = _build_trend_input(ctx)
+        # Split at "Raw Data" to check only the appendix portion
+        raw_idx = output.find("Raw Data")
+        assert raw_idx != -1, "Raw Data section must exist"
+        appendix = output[raw_idx:]
+        assert "4-Seam Fastball" in appendix  # 50% usage — included
+        assert "Changeup" not in appendix  # 5% usage — excluded
+
+    def test_trend_appendix_contains_delta_columns(self, monkeypatch):
+        _patch_league_baselines(monkeypatch)
+        ctx = _make_pipeline_ctx()
+        output = _build_trend_input(ctx)
+        # Raw data section should contain velo values
+        assert "94.5" in output  # window_velo from arsenal
+
+
 # ── Approach Specialist test helpers ───────────────────────────────────
 
 

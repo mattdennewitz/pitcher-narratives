@@ -52,7 +52,7 @@ Plans:
 **Plans**: 3 plans
 Plans:
 - [x] 24-01-PLAN.md -- Approach Specialist prompt + input builder, RP workload stub, game shape conditional
-- [ ] 24-02-PLAN.md -- Stuff per-pitch delta table and Trend timeline appendix (raw data grounding)
+- [x] 24-02-PLAN.md -- Stuff per-pitch delta table and Trend timeline appendix (raw data grounding)
 - [ ] 24-03-PLAN.md -- Full pipeline wiring: 6-agent orchestration, writer prompt, auditor categories
 
 ### Phase 25: Prompt Engineering & Heuristic Injection
@@ -97,7 +97,7 @@ Phases execute in numeric order: 23 -> 24 -> 25
 | 21. Arsenal Trend Engine | v1.8 | 1/1 | Complete | 2026-04-03 |
 | 22. Context Assembly & Prompt Rendering | v1.8 | 1/1 | Complete | 2026-04-03 |
 | 23. Engine Foundation & Data Enrichment | v1.9 | 3/3 | Complete    | 2026-04-04 |
-| 24. Pipeline Re-Architecture | v1.9 | 1/3 | In Progress|  |
+| 24. Pipeline Re-Architecture | v1.9 | 2/3 | In Progress |  |
 | 25. Prompt Engineering & Heuristic Injection | v1.9 | 0/0 | Not started | - |
 
 ---

@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.9
 milestone_name: Multi-Agent Narrative Upgrade
 status: executing
-stopped_at: Completed 24-01-PLAN.md
-last_updated: "2026-04-04T20:26:59.343Z"
+stopped_at: Completed 24-01-PLAN.md and 24-02-PLAN.md (Wave 1)
+last_updated: "2026-04-04T20:27:00Z"
 last_activity: 2026-04-04
 progress:
   total_phases: 3
@@ -21,12 +21,12 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-04)
 
 **Core value:** Reports must read like a scout wrote them -- surfacing changes, adaptations, and execution trends rather than reciting numbers.
-**Current focus:** Phase 23 - Engine Foundation & Data Enrichment
+**Current focus:** Phase 24 — pipeline-re-architecture
 
 ## Current Position
 
 Phase: 24 of 25 (pipeline re architecture)
-Plan: 1 of 3
+Plan: 2 of 3 complete (Wave 1 done)
 Status: Executing Phase 24
 Last activity: 2026-04-04
 
@@ -36,18 +36,19 @@ Progress: [####░░░░░░] 40%
 
 **Velocity:**
 
-- Total plans completed: 1
-- Average duration: 6min
-- Total execution time: 6min
+- Total plans completed: 2
+- Average duration: 5min
+- Total execution time: 9min
 
 **By Phase:**
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
-| 23 | 1 | 6min | 6min |
+| Phase 23 P01 | 6min | 1 tasks | 2 files |
 | Phase 23 P02 | 19min | 3 tasks | 5 files |
 | Phase 23 P03 | 7min | 1 tasks | 2 files |
 | Phase 24 P01 | 6min | 1 tasks | 2 files |
+| Phase 24 P02 | 3min | 1 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -64,6 +65,8 @@ Decisions are logged in PROJECT.md Key Decisions table.
 - [Phase 23]: Count splits rendered as inline-plus-appendix: notable shifts adjacent to platoon (D-13), full table as appendix (D-10)
 - [Phase 24]: Approach prompt uses strategy-first framing (D-01) with cross-reference directive (D-02) for platoon+count-state connections
 - [Phase 24]: RP game shape returns static workload stub instead of TTO analysis -- TTO degradation not meaningful for short outings
+- [Phase 24]: Stuff appendix uses full arsenal; Trend appendix filters to primary pitches (>=10% usage) per PIPE-05
+- [Phase 24]: Anti-recalculation directive in Stuff prompt prevents LLM from recomputing provided deltas
 
 ### Pending Todos
 
@@ -83,7 +86,7 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-04-04T20:26:59.334Z
-Last activity: 2026-04-04 - Completed 23-01-PLAN.md (CountSplits engine)
-Stopped at: Completed 24-01-PLAN.md
+Last session: 2026-04-04T20:27:00Z
+Last activity: 2026-04-04 - Completed Wave 1 (24-01 Approach Specialist + 24-02 raw data appendices)
+Stopped at: Completed 24-01-PLAN.md and 24-02-PLAN.md (Wave 1)
 Resume file: None
