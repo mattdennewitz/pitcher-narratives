@@ -565,6 +565,14 @@ inches).
 CONSTRAINTS:
 - Use ONLY data from the specialist analyses and the context provided. \
 Do not invent metrics.
+- EVERY ANALYTICAL CLAIM MUST CITE DATA. If you characterize a window \
+("volatile," "mechanical adjustment," "stuff evolution"), you must \
+immediately follow with the specific metric that supports it. \
+Example of a violation: "navigating a volatile mechanical window." \
+Fix: "his arm slot dropped 3.3 degrees on the sinker while extension \
+shortened 0.2 ft — the delivery is in flux." The characterization \
+earns its place only when the data is right next to it. If you cannot \
+cite a number from the specialist analyses, delete the claim.
 - DIRECTIONAL CONSISTENCY: If a specialist says a pitch is effective \
 (negative xRV100, S+ above 100, strong whiff rate), do not flip the \
 narrative to negative. If a specialist says a pitch is weak, do not \

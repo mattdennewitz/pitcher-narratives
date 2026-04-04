@@ -1417,6 +1417,20 @@ class TestMakePipelineAgentsCtx:
 # ── Writer & Auditor heuristic tests (Phase 25, Plan 02) ──────────────
 
 
+class TestWriterPromptCitationRequirement:
+    """Every analytical claim must cite data — no ungrounded characterizations."""
+
+    def test_writer_prompt_citation_rule(self):
+        from pitcher_narratives.pipeline import _build_writer_prompt
+        prompt = _build_writer_prompt("SP")
+        assert "EVERY ANALYTICAL CLAIM MUST CITE DATA" in prompt
+
+    def test_writer_prompt_citation_violation_example(self):
+        from pitcher_narratives.pipeline import _build_writer_prompt
+        prompt = _build_writer_prompt("SP")
+        assert "volatile" in prompt  # violation example is present
+
+
 class TestWriterPromptCausalHook:
     """PROMPT-04 (D-07/D-08/D-09): Writer must cite physical drivers for large S+ changes."""
 
