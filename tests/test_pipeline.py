@@ -34,6 +34,7 @@ from pitcher_narratives.engine import (
     PlatoonMix,
     PlatoonSplit,
     ReleasePointMetrics,
+    ReleasePointPitchType,
     VelocityArc,
     WorkloadContext,
     compute_league_baselines,
@@ -53,6 +54,7 @@ from pitcher_narratives.pipeline import (
     _build_runvalue_input,
     _build_stuff_input,
     _build_trend_input,
+    _build_trend_prompt,
     audit_and_revise_specialists,
     build_writer_input,
     generate_pipeline_streaming,
@@ -370,6 +372,7 @@ def _make_pipeline_ctx(
     platoon_mix: PlatoonMix | None = None,
     first_pitch: FirstPitchWeaponry | None = None,
     count_splits: CountSplits | None = None,
+    release_point: ReleasePointMetrics | None = None,
     workload_appearances: list[AppearanceWorkload] | None = None,
 ) -> PitcherContext:
     """Build a minimal synthetic PitcherContext for pipeline tests."""
@@ -493,7 +496,7 @@ def _make_pipeline_ctx(
             cold_start=False,
             small_sample=True,
         ),
-        release_point=ReleasePointMetrics(pitch_types=[], cold_start=False),
+        release_point=release_point if release_point is not None else ReleasePointMetrics(pitch_types=[], cold_start=False),
         workload=workload,
         tto=None,
         cross_season_summary=cross_season_summary,
@@ -1248,3 +1251,132 @@ class TestAuditorPrompt:
         from pitcher_narratives.pipeline import _DATA_AUDITOR_PROMPT
         assert "state the claim" in _DATA_AUDITOR_PROMPT
         assert "Pass/Fail" in _DATA_AUDITOR_PROMPT
+
+
+# ── Heuristic directive tests (Phase 25, Plan 01) ─────────────────────
+
+
+def _make_rp_pitch_type() -> ReleasePointPitchType:
+    """Create a minimal ReleasePointPitchType for testing."""
+    return ReleasePointPitchType(
+        pitch_type="FF",
+        pitch_name="4-Seam Fastball",
+        window_release_x=-2.0,
+        season_release_x=-2.1,
+        release_x_delta="Steady",
+        window_release_z=6.0,
+        season_release_z=5.9,
+        release_z_delta="Steady",
+        window_extension=6.5,
+        season_extension=6.4,
+        extension_delta="Steady",
+        n_pitches_window=50,
+        small_sample=False,
+        cold_start=False,
+        window_arm_angle=65.0,
+        season_arm_angle=64.5,
+        arm_angle_delta="Steady",
+        arm_slot="High 3/4",
+    )
+
+
+def _ctx_with_arm_angle() -> PitcherContext:
+    """PitcherContext with arm angle data present."""
+    return _make_pipeline_ctx(
+        release_point=ReleasePointMetrics(
+            pitch_types=[_make_rp_pitch_type()],
+            cold_start=False,
+        ),
+    )
+
+
+def _ctx_no_arm_angle() -> PitcherContext:
+    """PitcherContext without arm angle data."""
+    return _make_pipeline_ctx(
+        release_point=ReleasePointMetrics(
+            pitch_types=[],
+            cold_start=False,
+        ),
+    )
+
+
+class TestStuffPromptHeuristics:
+    """PROMPT-01: Stuff specialist trade-off detection directive (D-01/D-02)."""
+
+    def test_stuff_prompt_tradeoff_section(self):
+        from pitcher_narratives.pipeline import _STUFF_SPECIALIST_PROMPT
+        assert "TRADE-OFF DETECTION" in _STUFF_SPECIALIST_PROMPT
+
+    def test_stuff_prompt_common_patterns(self):
+        from pitcher_narratives.pipeline import _STUFF_SPECIALIST_PROMPT
+        assert "COMMON PATTERNS" in _STUFF_SPECIALIST_PROMPT
+
+    def test_stuff_prompt_inverse_relationship(self):
+        from pitcher_narratives.pipeline import _STUFF_SPECIALIST_PROMPT
+        assert "INVERSE" in _STUFF_SPECIALIST_PROMPT
+
+    def test_stuff_prompt_cites_pfx_deltas(self):
+        from pitcher_narratives.pipeline import _STUFF_SPECIALIST_PROMPT
+        assert "pfx deltas" in _STUFF_SPECIALIST_PROMPT
+
+
+class TestLocationPromptHeuristics:
+    """PROMPT-02: Location specialist contradiction detection directive (D-03)."""
+
+    def test_location_prompt_contradiction_section(self):
+        from pitcher_narratives.pipeline import _LOCATION_SPECIALIST_PROMPT
+        assert "CONTRADICTION DETECTION" in _LOCATION_SPECIALIST_PROMPT
+
+    def test_location_prompt_zone_expansion(self):
+        from pitcher_narratives.pipeline import _LOCATION_SPECIALIST_PROMPT
+        assert "expanding the zone" in _LOCATION_SPECIALIST_PROMPT
+
+    def test_location_prompt_chase_rate(self):
+        from pitcher_narratives.pipeline import _LOCATION_SPECIALIST_PROMPT
+        assert "chase%" in _LOCATION_SPECIALIST_PROMPT
+
+
+class TestTrendPromptFunction:
+    """PROMPT-03: Trend specialist release-point vocabulary (D-05/D-06)."""
+
+    def test_trend_prompt_is_callable(self):
+        assert callable(_build_trend_prompt)
+
+    def test_trend_prompt_base_content(self):
+        ctx = _ctx_no_arm_angle()
+        prompt = _build_trend_prompt(ctx)
+        assert "trend analyst" in prompt
+
+    def test_trend_prompt_with_arm_angle(self):
+        ctx = _ctx_with_arm_angle()
+        prompt = _build_trend_prompt(ctx)
+        assert "RELEASE POINT FRAMING" in prompt
+
+    def test_trend_prompt_without_arm_angle(self):
+        ctx = _ctx_no_arm_angle()
+        prompt = _build_trend_prompt(ctx)
+        assert "RELEASE POINT FRAMING" not in prompt
+
+    def test_trend_prompt_anti_speculation(self):
+        ctx = _ctx_with_arm_angle()
+        prompt = _build_trend_prompt(ctx)
+        assert "Do NOT speculate on mechanical causes" in prompt
+
+    def test_trend_prompt_vocabulary(self):
+        ctx = _ctx_with_arm_angle()
+        prompt = _build_trend_prompt(ctx)
+        assert "arm slot" in prompt
+        assert "tunneling" in prompt
+
+
+class TestMakePipelineAgentsCtx:
+    """Backward and forward compat for ctx parameter on make_pipeline_agents."""
+
+    def test_make_pipeline_agents_no_ctx(self):
+        agents = make_pipeline_agents("gemini", "high")
+        assert isinstance(agents, PipelineAgents)
+
+    def test_make_pipeline_agents_with_ctx(self):
+        ctx = _make_pipeline_ctx()
+        agents = make_pipeline_agents("gemini", "high", ctx=ctx)
+        assert isinstance(agents, PipelineAgents)
