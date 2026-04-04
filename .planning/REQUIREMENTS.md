@@ -17,10 +17,10 @@ Requirements for Multi-Agent Narrative Upgrade. Each maps to roadmap phases.
 
 ### Pipeline Architecture
 
-- [ ] **PIPE-01**: Approach Specialist agent receives platoon mix, count splits, and first-pitch data as input
-- [ ] **PIPE-02**: Approach Specialist prompt prioritizes 10+ pp platoon/count usage shifts as lead stories
-- [ ] **PIPE-03**: Location Specialist no longer receives platoon data (moved to Approach Specialist)
-- [ ] **PIPE-04**: Game Shape specialist skipped for relievers (ctx.role == "RP"), replaced with static placeholder
+- [x] **PIPE-01**: Approach Specialist agent receives platoon mix, count splits, and first-pitch data as input
+- [x] **PIPE-02**: Approach Specialist prompt prioritizes 10+ pp platoon/count usage shifts as lead stories
+- [x] **PIPE-03**: Location Specialist no longer receives platoon data (moved to Approach Specialist)
+- [x] **PIPE-04**: Game Shape specialist skipped for relievers (ctx.role == "RP"), replaced with static placeholder
 - [ ] **PIPE-05**: Stuff and Trend specialist inputs include raw data appendix with PitchTypeSummary deltas
 - [ ] **PIPE-06**: Writer input includes Approach Specialist output as 6th specialist analysis
 - [ ] **PIPE-07**: Auditor runs against Approach Specialist output (6 audits total, up from 5)
@@ -59,10 +59,10 @@ Requirements for Multi-Agent Narrative Upgrade. Each maps to roadmap phases.
 | ENG-03 | Phase 23 | Complete |
 | ENG-04 | Phase 23 | Complete |
 | ENG-05 | Phase 23 | Complete |
-| PIPE-01 | Phase 24 | Pending |
-| PIPE-02 | Phase 24 | Pending |
-| PIPE-03 | Phase 24 | Pending |
-| PIPE-04 | Phase 24 | Pending |
+| PIPE-01 | Phase 24 | Complete |
+| PIPE-02 | Phase 24 | Complete |
+| PIPE-03 | Phase 24 | Complete |
+| PIPE-04 | Phase 24 | Complete |
 | PIPE-05 | Phase 24 | Pending |
 | PIPE-06 | Phase 24 | Pending |
 | PIPE-07 | Phase 24 | Pending |
