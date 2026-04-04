@@ -21,6 +21,9 @@ from pitcher_narratives.engine import (
     AppearanceWorkload,
     ArsenalTrend,
     ComponentAttribution,
+    CountBucket,
+    CountBucketUsage,
+    CountSplits,
     CrossSeasonSummary,
     ExecutionMetrics,
     FastballSummary,
@@ -50,6 +53,7 @@ from pitcher_narratives.engine import (
     compute_arsenal_summary,
     compute_arsenal_trends,
     compute_component_attribution,
+    compute_count_splits,
     compute_cross_season_summary,
     compute_execution_metrics,
     compute_fastball_summary,
@@ -2076,3 +2080,354 @@ def test_appearance_pitch_trends_no_prior_pattern():
     result_o = compute_appearance_pitch_trends(data_o)
     assert result_o is not None
     assert result_o.records[0].pattern_label == "one-off"
+
+
+# ── Count splits helpers ────────────────────────────────────────────
+
+
+def _make_pitcher_data_for_count_splits(
+    statcast_rows: list[dict] | None = None,
+    window_days: int = 30,
+) -> PitcherData:
+    """Build a PitcherData with synthetic data for count splits tests.
+
+    Populates statcast with balls/strikes columns and builds
+    window_appearances from unique game_date/game_pk combos.
+    """
+    pitcher_id = 999999
+
+    if statcast_rows is None:
+        statcast_rows = []
+
+    if not statcast_rows:
+        statcast = pl.DataFrame(
+            schema={
+                "game_date": pl.Date,
+                "game_pk": pl.Int64,
+                "pitcher": pl.Int64,
+                "pitch_type": pl.String,
+                "pitch_name": pl.String,
+                "release_speed": pl.Float64,
+                "pfx_x": pl.Float64,
+                "pfx_z": pl.Float64,
+                "inning": pl.Int64,
+                "p_throws": pl.String,
+                "player_name": pl.String,
+                "stand": pl.String,
+                "balls": pl.Int64,
+                "strikes": pl.Int64,
+            }
+        )
+    else:
+        full_rows = []
+        for i, r in enumerate(statcast_rows):
+            full_rows.append({
+                "game_date": r["game_date"],
+                "game_pk": r.get("game_pk", 700000),
+                "pitcher": pitcher_id,
+                "pitch_type": r["pitch_type"],
+                "pitch_name": r["pitch_name"],
+                "release_speed": r.get("release_speed", 90.0),
+                "pfx_x": r.get("pfx_x", 0.0),
+                "pfx_z": r.get("pfx_z", 0.0),
+                "inning": r.get("inning", 1),
+                "p_throws": r.get("p_throws", "R"),
+                "player_name": r.get("player_name", "Test Pitcher"),
+                "stand": r.get("stand", "R"),
+                "balls": r["balls"],
+                "strikes": r["strikes"],
+            })
+        statcast = pl.DataFrame(full_rows).with_columns(
+            pl.col("game_date").cast(pl.Date),
+        )
+
+    # Build appearances from unique game_date/game_pk in statcast
+    if not statcast.is_empty():
+        apps = (
+            statcast.select(["game_date", "game_pk"])
+            .unique()
+            .with_columns(
+                pl.lit("SP").alias("role"),
+                pl.lit(90).alias("n_pitches"),
+            )
+        )
+        from datetime import timedelta
+
+        max_date = statcast["game_date"].max()
+        cutoff = max_date - timedelta(days=window_days)
+        window_apps = apps.filter(pl.col("game_date") >= cutoff)
+    else:
+        apps = pl.DataFrame(
+            schema={
+                "game_date": pl.Date,
+                "game_pk": pl.Int64,
+                "role": pl.String,
+                "n_pitches": pl.Int64,
+            }
+        )
+        window_apps = apps.clone()
+
+    return PitcherData(
+        statcast=statcast,
+        appearances=apps,
+        window_appearances=window_apps,
+        season_baseline=pl.DataFrame(),
+        pitch_type_baseline=pl.DataFrame(),
+        prior_season_baseline=pl.DataFrame(),
+        prior_pitch_type_baseline=pl.DataFrame(),
+        agg_csvs={},
+        pitcher_id=pitcher_id,
+        pitcher_name="Test Pitcher",
+        throws="R",
+    )
+
+
+def _count_rows(
+    game_date: date,
+    pitch_type: str,
+    pitch_name: str,
+    balls: int,
+    strikes: int,
+    n: int = 1,
+    game_pk: int = 700000,
+) -> list[dict]:
+    """Generate n rows of statcast data with specific ball/strike counts."""
+    return [
+        {
+            "game_date": game_date,
+            "game_pk": game_pk,
+            "pitch_type": pitch_type,
+            "pitch_name": pitch_name,
+            "balls": balls,
+            "strikes": strikes,
+        }
+        for _ in range(n)
+    ]
+
+
+# ── Count splits tests ──────────────────────────────────────────────
+
+
+def test_count_splits_returns_five_buckets():
+    """compute_count_splits returns CountSplits with exactly 5 buckets."""
+    rows = []
+    d = date(2026, 4, 1)
+    # Add pitches in various counts to populate all buckets
+    rows.extend(_count_rows(d, "FF", "4-Seam Fastball", 0, 0, n=5))   # even + first_pitch
+    rows.extend(_count_rows(d, "FF", "4-Seam Fastball", 0, 1, n=5))   # ahead
+    rows.extend(_count_rows(d, "FF", "4-Seam Fastball", 1, 0, n=5))   # behind
+    rows.extend(_count_rows(d, "FF", "4-Seam Fastball", 1, 2, n=5))   # ahead + two_strike
+    rows.extend(_count_rows(d, "SL", "Slider", 0, 2, n=5))            # ahead + two_strike
+
+    data = _make_pitcher_data_for_count_splits(statcast_rows=rows, window_days=30)
+    result = compute_count_splits(data)
+
+    assert isinstance(result, CountSplits)
+    assert len(result.buckets) == 5
+    bucket_names = {b.bucket for b in result.buckets}
+    assert bucket_names == {"ahead", "behind", "even", "two_strike", "first_pitch"}
+
+
+def test_count_splits_two_strike_overlap():
+    """A pitch at 0-2 appears in BOTH 'ahead' and 'two_strike' buckets."""
+    rows = []
+    d = date(2026, 4, 1)
+    # 15 pitches at 0-2 (ahead AND two_strike)
+    rows.extend(_count_rows(d, "FF", "4-Seam Fastball", 0, 2, n=15))
+    # 5 pitches at 0-0 (even + first_pitch) so other buckets exist
+    rows.extend(_count_rows(d, "SL", "Slider", 0, 0, n=15))
+
+    data = _make_pitcher_data_for_count_splits(statcast_rows=rows, window_days=30)
+    result = compute_count_splits(data)
+
+    ahead_bucket = [b for b in result.buckets if b.bucket == "ahead"][0]
+    two_strike_bucket = [b for b in result.buckets if b.bucket == "two_strike"][0]
+
+    # The 15 pitches at 0-2 should be in both ahead and two_strike
+    assert ahead_bucket.n_pitches_window >= 15
+    assert two_strike_bucket.n_pitches_window >= 15
+
+
+def test_count_splits_first_pitch_in_even():
+    """A pitch at 0-0 appears in BOTH 'even' and 'first_pitch' buckets."""
+    rows = []
+    d = date(2026, 4, 1)
+    # 15 pitches at 0-0 (even + first_pitch)
+    rows.extend(_count_rows(d, "FF", "4-Seam Fastball", 0, 0, n=15))
+    # Other pitches so we have something in other buckets
+    rows.extend(_count_rows(d, "SL", "Slider", 1, 0, n=15))
+
+    data = _make_pitcher_data_for_count_splits(statcast_rows=rows, window_days=30)
+    result = compute_count_splits(data)
+
+    even_bucket = [b for b in result.buckets if b.bucket == "even"][0]
+    first_pitch_bucket = [b for b in result.buckets if b.bucket == "first_pitch"][0]
+
+    assert even_bucket.n_pitches_window >= 15
+    assert first_pitch_bucket.n_pitches_window >= 15
+
+
+def test_count_splits_usage_pct_sums_to_100():
+    """Each bucket's pitch_types usage_pct values sum to approximately 100.0."""
+    rows = []
+    d = date(2026, 4, 1)
+    # Ahead: 10 FF, 5 SL at 0-1
+    rows.extend(_count_rows(d, "FF", "4-Seam Fastball", 0, 1, n=10))
+    rows.extend(_count_rows(d, "SL", "Slider", 0, 1, n=5))
+    # Behind: 8 FF, 7 SL at 1-0
+    rows.extend(_count_rows(d, "FF", "4-Seam Fastball", 1, 0, n=8))
+    rows.extend(_count_rows(d, "SL", "Slider", 1, 0, n=7))
+    # Even: 6 FF, 6 SL at 1-1
+    rows.extend(_count_rows(d, "FF", "4-Seam Fastball", 1, 1, n=6))
+    rows.extend(_count_rows(d, "SL", "Slider", 1, 1, n=6))
+    # Two-strike: 5 FF, 5 SL at 0-2
+    rows.extend(_count_rows(d, "FF", "4-Seam Fastball", 0, 2, n=5))
+    rows.extend(_count_rows(d, "SL", "Slider", 0, 2, n=5))
+    # First pitch: 4 FF, 4 SL at 0-0
+    rows.extend(_count_rows(d, "FF", "4-Seam Fastball", 0, 0, n=4))
+    rows.extend(_count_rows(d, "SL", "Slider", 0, 0, n=4))
+
+    data = _make_pitcher_data_for_count_splits(statcast_rows=rows, window_days=30)
+    result = compute_count_splits(data)
+
+    for bucket in result.buckets:
+        if bucket.n_pitches_window > 0:
+            total_pct = sum(pt.usage_pct for pt in bucket.pitch_types)
+            assert abs(total_pct - 100.0) < 0.1, (
+                f"Bucket {bucket.bucket}: usage_pct sum = {total_pct}, expected ~100"
+            )
+
+
+def test_count_splits_small_sample_flag():
+    """Bucket with <10 window pitches has small_sample=True; >=10 has False."""
+    rows = []
+    d = date(2026, 4, 1)
+    # Ahead: only 5 pitches at 0-1 (small sample)
+    rows.extend(_count_rows(d, "FF", "4-Seam Fastball", 0, 1, n=5))
+    # Behind: 15 pitches at 1-0 (not small sample)
+    rows.extend(_count_rows(d, "FF", "4-Seam Fastball", 1, 0, n=15))
+    # Even: 3 at 0-0 (small sample)
+    rows.extend(_count_rows(d, "FF", "4-Seam Fastball", 0, 0, n=3))
+    # Two-strike: 12 at 1-2 (not small)
+    rows.extend(_count_rows(d, "FF", "4-Seam Fastball", 1, 2, n=12))
+
+    data = _make_pitcher_data_for_count_splits(statcast_rows=rows, window_days=30)
+    result = compute_count_splits(data)
+
+    ahead = [b for b in result.buckets if b.bucket == "ahead"][0]
+    behind = [b for b in result.buckets if b.bucket == "behind"][0]
+    even = [b for b in result.buckets if b.bucket == "even"][0]
+    two_strike = [b for b in result.buckets if b.bucket == "two_strike"][0]
+    first_pitch = [b for b in result.buckets if b.bucket == "first_pitch"][0]
+
+    # Ahead: 5 window pitches at 0-1 (small sample)
+    assert ahead.small_sample is True
+    # Behind: 15 window pitches (not small)
+    assert behind.small_sample is False
+    # Even: 3 at 0-0 (small sample)
+    assert even.small_sample is True
+    # Two-strike: 12 at 1-2 (not small)
+    assert two_strike.small_sample is False
+    # First pitch: 3 at 0-0 (small sample)
+    assert first_pitch.small_sample is True
+
+
+def test_count_splits_small_sample_still_has_season_usage():
+    """Small sample buckets suppress delta but still populate season_pitch_types."""
+    rows = []
+    d = date(2026, 4, 1)
+    # 5 window pitches in ahead bucket (small sample)
+    rows.extend(_count_rows(d, "FF", "4-Seam Fastball", 0, 1, n=5))
+    # Also add season-level pitches in a different game date that's outside window
+    d_old = date(2026, 1, 15)
+    rows.extend(_count_rows(d_old, "FF", "4-Seam Fastball", 0, 1, n=20, game_pk=600000))
+    rows.extend(_count_rows(d_old, "SL", "Slider", 0, 1, n=10, game_pk=600000))
+    # Need something in another bucket for the test to be meaningful
+    rows.extend(_count_rows(d, "FF", "4-Seam Fastball", 1, 0, n=15))
+
+    data = _make_pitcher_data_for_count_splits(statcast_rows=rows, window_days=30)
+    result = compute_count_splits(data)
+
+    ahead = [b for b in result.buckets if b.bucket == "ahead"][0]
+    assert ahead.small_sample is True
+    # Season pitch types should still be populated
+    assert len(ahead.season_pitch_types) > 0
+
+
+def test_count_splits_notable_shifts_10pp():
+    """notable_shifts contains strings for shifts >= 10pp window vs season."""
+    rows = []
+    d_old = date(2026, 1, 15)
+    d_window = date(2026, 4, 1)
+
+    # Season ahead: 70% FF, 30% SL (70 FF, 30 SL)
+    rows.extend(_count_rows(d_old, "FF", "4-Seam Fastball", 0, 1, n=70, game_pk=600000))
+    rows.extend(_count_rows(d_old, "SL", "Slider", 0, 1, n=30, game_pk=600000))
+
+    # Window ahead: 50% FF, 50% SL (10 FF, 10 SL) — delta is 20pp for both
+    rows.extend(_count_rows(d_window, "FF", "4-Seam Fastball", 0, 1, n=10))
+    rows.extend(_count_rows(d_window, "SL", "Slider", 0, 1, n=10))
+
+    # Need some pitches in other buckets to avoid empty everything
+    rows.extend(_count_rows(d_window, "FF", "4-Seam Fastball", 1, 0, n=15))
+
+    data = _make_pitcher_data_for_count_splits(statcast_rows=rows, window_days=30)
+    result = compute_count_splits(data)
+
+    # There should be notable shifts for the ahead bucket
+    assert len(result.notable_shifts) > 0
+    # Should mention "Ahead" and contain percentage-point info
+    shift_text = " ".join(result.notable_shifts)
+    assert "Ahead" in shift_text or "ahead" in shift_text.lower()
+
+
+def test_count_splits_no_notable_shifts_from_small_sample():
+    """notable_shifts does NOT contain entries from small-sample buckets."""
+    rows = []
+    d_old = date(2026, 1, 15)
+    d_window = date(2026, 4, 1)
+
+    # Season ahead: 90% FF, 10% SL (huge difference)
+    rows.extend(_count_rows(d_old, "FF", "4-Seam Fastball", 0, 1, n=90, game_pk=600000))
+    rows.extend(_count_rows(d_old, "SL", "Slider", 0, 1, n=10, game_pk=600000))
+
+    # Window ahead: only 5 pitches total (small sample), all SL => 0% FF (big delta)
+    rows.extend(_count_rows(d_window, "SL", "Slider", 0, 1, n=5))
+
+    # Must have something in another non-small bucket
+    rows.extend(_count_rows(d_window, "FF", "4-Seam Fastball", 1, 0, n=15))
+
+    data = _make_pitcher_data_for_count_splits(statcast_rows=rows, window_days=30)
+    result = compute_count_splits(data)
+
+    ahead = [b for b in result.buckets if b.bucket == "ahead"][0]
+    assert ahead.small_sample is True
+
+    # No notable shifts should reference the ahead bucket
+    for shift in result.notable_shifts:
+        assert "Ahead" not in shift, f"Small-sample bucket appeared in notable_shifts: {shift}"
+
+
+def test_count_splits_cold_start():
+    """Cold start (window == season) produces identical window and season usage rates."""
+    rows = []
+    d = date(2026, 4, 1)
+
+    # All pitches in a single game (window covers entire season)
+    rows.extend(_count_rows(d, "FF", "4-Seam Fastball", 0, 1, n=10))
+    rows.extend(_count_rows(d, "SL", "Slider", 0, 1, n=10))
+    rows.extend(_count_rows(d, "FF", "4-Seam Fastball", 1, 0, n=10))
+
+    # window_days=365 so all data is in window => cold start
+    data = _make_pitcher_data_for_count_splits(statcast_rows=rows, window_days=365)
+    result = compute_count_splits(data)
+
+    # For the ahead bucket, window and season usage should be identical
+    ahead = [b for b in result.buckets if b.bucket == "ahead"][0]
+    for w_pt in ahead.pitch_types:
+        # Find matching season pitch type
+        s_pt = [s for s in ahead.season_pitch_types if s.pitch_type == w_pt.pitch_type]
+        assert len(s_pt) == 1, f"Missing season entry for {w_pt.pitch_type}"
+        assert abs(w_pt.usage_pct - s_pt[0].usage_pct) < 0.1, (
+            f"Cold start mismatch: window={w_pt.usage_pct}, season={s_pt[0].usage_pct}"
+        )
