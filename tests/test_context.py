@@ -15,6 +15,9 @@ from pitcher_narratives.engine import (
     AppearanceWorkload,
     ArsenalTrend,
     ComponentAttribution,
+    CountBucket,
+    CountBucketUsage,
+    CountSplits,
     CrossSeasonSummary,
     ExecutionMetrics,
     FastballSummary,
@@ -25,6 +28,7 @@ from pitcher_narratives.engine import (
     PitchTrend,
     PitchTypeSummary,
     PlatoonMix,
+    PlatoonSplit,
     ReleasePointMetrics,
     ReleasePointPitchType,
     VelocityArc,
@@ -696,3 +700,388 @@ def test_to_prompt_appearance_pitch_trends_ordering():
     assert arsenal_pos < apt_pos < exec_pos, (
         f"Ordering wrong: Arsenal@{arsenal_pos}, APT@{apt_pos}, Exec@{exec_pos}"
     )
+
+
+# ── Count Splits context tests ─────────────────────────────────────
+
+
+def _make_count_splits(*, notable_shifts: list[str] | None = None) -> CountSplits:
+    """Create a synthetic CountSplits for tests."""
+    return CountSplits(
+        buckets=[
+            CountBucket(
+                bucket="ahead",
+                n_pitches_window=25,
+                n_pitches_season=200,
+                small_sample=False,
+                pitch_types=[
+                    CountBucketUsage(pitch_type="FF", pitch_name="4-Seam Fastball", usage_pct=60.0),
+                    CountBucketUsage(pitch_type="SL", pitch_name="Slider", usage_pct=40.0),
+                ],
+                season_pitch_types=[
+                    CountBucketUsage(pitch_type="FF", pitch_name="4-Seam Fastball", usage_pct=55.0),
+                    CountBucketUsage(pitch_type="SL", pitch_name="Slider", usage_pct=45.0),
+                ],
+            ),
+            CountBucket(
+                bucket="behind",
+                n_pitches_window=15,
+                n_pitches_season=180,
+                small_sample=False,
+                pitch_types=[
+                    CountBucketUsage(pitch_type="FF", pitch_name="4-Seam Fastball", usage_pct=70.0),
+                    CountBucketUsage(pitch_type="SL", pitch_name="Slider", usage_pct=30.0),
+                ],
+                season_pitch_types=[
+                    CountBucketUsage(pitch_type="FF", pitch_name="4-Seam Fastball", usage_pct=65.0),
+                    CountBucketUsage(pitch_type="SL", pitch_name="Slider", usage_pct=35.0),
+                ],
+            ),
+            CountBucket(
+                bucket="even",
+                n_pitches_window=20,
+                n_pitches_season=150,
+                small_sample=False,
+                pitch_types=[
+                    CountBucketUsage(pitch_type="FF", pitch_name="4-Seam Fastball", usage_pct=50.0),
+                ],
+                season_pitch_types=[
+                    CountBucketUsage(pitch_type="FF", pitch_name="4-Seam Fastball", usage_pct=52.0),
+                ],
+            ),
+            CountBucket(
+                bucket="two_strike",
+                n_pitches_window=10,
+                n_pitches_season=120,
+                small_sample=False,
+                pitch_types=[
+                    CountBucketUsage(pitch_type="SL", pitch_name="Slider", usage_pct=65.0),
+                ],
+                season_pitch_types=[
+                    CountBucketUsage(pitch_type="SL", pitch_name="Slider", usage_pct=60.0),
+                ],
+            ),
+            CountBucket(
+                bucket="first_pitch",
+                n_pitches_window=5,
+                n_pitches_season=50,
+                small_sample=True,
+                pitch_types=[
+                    CountBucketUsage(pitch_type="FF", pitch_name="4-Seam Fastball", usage_pct=80.0),
+                ],
+                season_pitch_types=[
+                    CountBucketUsage(pitch_type="FF", pitch_name="4-Seam Fastball", usage_pct=70.0),
+                ],
+            ),
+        ],
+        notable_shifts=notable_shifts if notable_shifts is not None else [
+            "4-Seam Fastball: +15pp in Ahead in count (60% vs 45% season)"
+        ],
+    )
+
+
+def _make_synthetic_ctx_with_count_splits(
+    *,
+    count_splits: CountSplits | None = None,
+    release_point: ReleasePointMetrics | None = None,
+    platoon_mix: PlatoonMix | None = None,
+) -> PitcherContext:
+    """Build a minimal synthetic PitcherContext with count splits and optional release point."""
+    fastball = FastballSummary(
+        pitch_type="FF",
+        pitch_name="4-Seam Fastball",
+        season_velo=94.0,
+        window_velo=94.5,
+        velo_delta="Up modestly",
+        season_p_plus=105.0,
+        window_p_plus=108.0,
+        p_plus_delta="Up modestly",
+        season_s_plus=102.0,
+        window_s_plus=106.0,
+        s_plus_delta="Up modestly",
+        season_l_plus=100.0,
+        window_l_plus=101.0,
+        l_plus_delta="Steady",
+        window_pfx_x=-6.5,
+        season_pfx_x=-6.3,
+        pfx_x_delta="Steady",
+        window_pfx_z=14.2,
+        season_pfx_z=14.0,
+        pfx_z_delta="Steady",
+        small_sample=False,
+        cold_start=False,
+    )
+
+    arsenal = [
+        PitchTypeSummary(
+            pitch_type="FF",
+            pitch_name="4-Seam Fastball",
+            season_velo=94.0,
+            window_velo=94.5,
+            velo_delta="Up modestly",
+            season_usage_pct=55.0,
+            window_usage_pct=50.0,
+            usage_delta="Down modestly",
+            season_p_plus=105.0,
+            window_p_plus=108.0,
+            p_plus_delta="Up modestly",
+            season_s_plus=102.0,
+            window_s_plus=106.0,
+            s_plus_delta="Up modestly",
+            season_l_plus=100.0,
+            window_l_plus=101.0,
+            l_plus_delta="Steady",
+            window_pfx_x=-6.5,
+            season_pfx_x=-6.3,
+            pfx_x_delta="Steady",
+            window_pfx_z=14.2,
+            season_pfx_z=14.0,
+            pfx_z_delta="Steady",
+            n_pitches_season=500,
+            n_pitches_window=50,
+            small_sample=False,
+            cold_start=False,
+        ),
+    ]
+
+    workload = WorkloadContext(
+        appearances=[
+            AppearanceWorkload(
+                game_pk=700001,
+                game_date="2026-06-15",
+                role="SP",
+                ip="6.0",
+                pitch_count=95,
+                rest_days=5,
+            ),
+        ],
+        max_consecutive_days=1,
+        workload_concern=False,
+    )
+
+    if platoon_mix is None:
+        platoon_mix = PlatoonMix(
+            splits=[
+                PlatoonSplit(
+                    pitch_type="FF",
+                    pitch_name="4-Seam Fastball",
+                    platoon_side="same",
+                    season_usage_pct=55.0,
+                    window_usage_pct=50.0,
+                    usage_delta="Down modestly",
+                    season_p_plus=105.0,
+                    window_p_plus=108.0,
+                    p_plus_delta="Up modestly",
+                    available=True,
+                ),
+            ],
+            cold_start=False,
+        )
+
+    if release_point is None:
+        release_point = ReleasePointMetrics(pitch_types=[], cold_start=False)
+
+    return PitcherContext(
+        pitcher_name="Test Pitcher",
+        pitcher_id=99999,
+        throws="R",
+        role="SP",
+        fastball=fastball,
+        velocity_arc=None,
+        arsenal=arsenal,
+        platoon_mix=platoon_mix,
+        first_pitch=FirstPitchWeaponry(entries=[], total_first_pitches_season=100, total_first_pitches_window=10, cold_start=False),
+        execution=[],
+        intermediates=[],
+        attributions=[],
+        hard_hit_rate=HardHitRate(
+            hard_hit_pct=30.0,
+            season_hard_hit_pct=32.0,
+            n_hard_hit=6,
+            n_batted_balls=20,
+            delta="Steady",
+            cold_start=False,
+            small_sample=True,
+        ),
+        release_point=release_point,
+        workload=workload,
+        tto=None,
+        count_splits=count_splits,
+    )
+
+
+def test_pitcher_context_accepts_count_splits_field():
+    """PitcherContext accepts count_splits field of type CountSplits."""
+    cs = _make_count_splits()
+    ctx = _make_synthetic_ctx_with_count_splits(count_splits=cs)
+    assert ctx.count_splits is cs
+
+
+def test_pitcher_context_count_splits_defaults_none():
+    """PitcherContext count_splits defaults to None."""
+    ctx = _make_synthetic_ctx_with_count_splits()
+    assert ctx.count_splits is None
+
+
+def test_assemble_pitcher_context_has_count_splits(ctx):
+    """assemble_pitcher_context result has count_splits populated (not None)."""
+    assert ctx.count_splits is not None
+    assert isinstance(ctx.count_splits, CountSplits)
+
+
+def test_to_prompt_count_splits_section_header():
+    """to_prompt() output contains 'Count-State Usage Shifts' section header when notable shifts exist."""
+    cs = _make_count_splits()
+    ctx = _make_synthetic_ctx_with_count_splits(count_splits=cs)
+    prompt = ctx.to_prompt()
+    assert "## Count-State Usage Shifts" in prompt
+
+
+def test_to_prompt_count_splits_adjacent_to_platoon():
+    """D-13: Count-State section appears AFTER Platoon and BEFORE First-Pitch."""
+    cs = _make_count_splits()
+    ctx = _make_synthetic_ctx_with_count_splits(count_splits=cs)
+    prompt = ctx.to_prompt()
+    platoon_pos = prompt.find("## Platoon Shifts")
+    count_state_pos = prompt.find("## Count-State Usage Shifts")
+    first_pitch_pos = prompt.find("## First-Pitch Tendencies")
+    assert platoon_pos > 0, "Platoon section not found"
+    assert count_state_pos > 0, "Count-State section not found"
+    assert first_pitch_pos > 0, "First-Pitch section not found"
+    assert platoon_pos < count_state_pos < first_pitch_pos, (
+        f"Ordering wrong: Platoon@{platoon_pos}, CountState@{count_state_pos}, FirstPitch@{first_pitch_pos}"
+    )
+
+
+def test_to_prompt_count_splits_appendix_header():
+    """to_prompt() output contains 'Count-State Usage Appendix' section."""
+    cs = _make_count_splits()
+    ctx = _make_synthetic_ctx_with_count_splits(count_splits=cs)
+    prompt = ctx.to_prompt()
+    assert "## Count-State Usage Appendix" in prompt
+
+
+def test_to_prompt_count_splits_appendix_ordering():
+    """Appendix appears AFTER YoY section and BEFORE Recent Appearances."""
+    cs = _make_count_splits()
+    ctx = _make_synthetic_ctx_with_count_splits(
+        count_splits=cs,
+    )
+    prompt = ctx.to_prompt()
+    appendix_pos = prompt.find("## Count-State Usage Appendix")
+    appearances_pos = prompt.find("## Recent Appearances")
+    assert appendix_pos > 0, "Count-State Usage Appendix not found"
+    assert appearances_pos > 0, "Recent Appearances not found"
+    assert appendix_pos < appearances_pos, (
+        f"Appendix@{appendix_pos} should be before Appearances@{appearances_pos}"
+    )
+
+
+def test_to_prompt_count_splits_notable_shifts_rendered():
+    """When count_splits has notable_shifts, they appear in the inline section."""
+    cs = _make_count_splits(notable_shifts=["4-Seam Fastball: +15pp in Ahead in count (60% vs 45% season)"])
+    ctx = _make_synthetic_ctx_with_count_splits(count_splits=cs)
+    prompt = ctx.to_prompt()
+    assert "+15pp" in prompt
+    assert "Ahead in count" in prompt
+
+
+def test_to_prompt_count_splits_small_sample_tag():
+    """When a bucket has small_sample=True, the appendix shows '(small sample)'."""
+    cs = _make_count_splits()
+    ctx = _make_synthetic_ctx_with_count_splits(count_splits=cs)
+    prompt = ctx.to_prompt()
+    assert "(small sample)" in prompt
+
+
+def test_to_prompt_count_splits_appendix_has_table():
+    """Appendix contains markdown table with Window %, Season %, Delta columns."""
+    cs = _make_count_splits()
+    ctx = _make_synthetic_ctx_with_count_splits(count_splits=cs)
+    prompt = ctx.to_prompt()
+    assert "Window %" in prompt
+    assert "Season %" in prompt
+    assert "Delta" in prompt
+
+
+def test_to_prompt_count_splits_no_notable_shifts_omits_inline():
+    """When count_splits has no notable_shifts, inline section is omitted."""
+    cs = _make_count_splits(notable_shifts=[])
+    ctx = _make_synthetic_ctx_with_count_splits(count_splits=cs)
+    prompt = ctx.to_prompt()
+    assert "## Count-State Usage Shifts" not in prompt
+    # But appendix should still render
+    assert "## Count-State Usage Appendix" in prompt
+
+
+# ── Arm Angle in Release Point tests ───────────────────────────────
+
+
+def _make_release_point_with_arm_angle() -> ReleasePointMetrics:
+    """Create a ReleasePointMetrics with arm angle data."""
+    return ReleasePointMetrics(
+        pitch_types=[
+            ReleasePointPitchType(
+                pitch_type="FF",
+                pitch_name="4-Seam Fastball",
+                window_release_x=-2.0,
+                season_release_x=-2.1,
+                release_x_delta="Steady",
+                window_release_z=6.0,
+                season_release_z=5.9,
+                release_z_delta="Steady",
+                window_extension=6.5,
+                season_extension=6.4,
+                extension_delta="Steady",
+                n_pitches_window=25,
+                small_sample=False,
+                cold_start=False,
+                window_arm_angle=71.5,
+                season_arm_angle=71.0,
+                arm_angle_delta="Steady (+0.5 deg)",
+                arm_slot="High 3/4",
+            ),
+            ReleasePointPitchType(
+                pitch_type="SL",
+                pitch_name="Slider",
+                window_release_x=-1.8,
+                season_release_x=-1.9,
+                release_x_delta="Steady",
+                window_release_z=5.8,
+                season_release_z=5.7,
+                release_z_delta="Steady",
+                window_extension=6.3,
+                season_extension=6.2,
+                extension_delta="Steady",
+                n_pitches_window=15,
+                small_sample=False,
+                cold_start=False,
+                window_arm_angle=70.2,
+                season_arm_angle=70.0,
+                arm_angle_delta="Steady (+0.2 deg)",
+                arm_slot="High 3/4",
+            ),
+        ],
+        cold_start=False,
+    )
+
+
+def test_to_prompt_release_point_includes_arm_angle():
+    """Release point section includes arm angle degrees for each pitch type."""
+    rp = _make_release_point_with_arm_angle()
+    ctx = _make_synthetic_ctx_with_count_splits(release_point=rp)
+    prompt = ctx.to_prompt()
+    assert "Arm angle" in prompt or "arm angle" in prompt
+    assert "71.5" in prompt  # window_arm_angle for FF
+    assert "High 3/4" in prompt  # arm_slot
+
+
+def test_to_prompt_release_point_arm_angle_per_pitch():
+    """Each pitch type in release point section has arm angle and slot label."""
+    rp = _make_release_point_with_arm_angle()
+    ctx = _make_synthetic_ctx_with_count_splits(release_point=rp)
+    prompt = ctx.to_prompt()
+    # Both pitch types should have arm angle rendered
+    assert "71.5" in prompt  # FF arm angle
+    assert "70.2" in prompt  # SL arm angle
+    assert "deg" in prompt  # units
