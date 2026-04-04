@@ -2,12 +2,12 @@
 gsd_state_version: 1.0
 milestone: v1.9
 milestone_name: Multi-Agent Narrative Upgrade
-status: defining_requirements
-stopped_at: Milestone v1.9 started
+status: ready_to_plan
+stopped_at: Roadmap created with 3 phases (23-25)
 last_updated: "2026-04-04T00:00:00.000Z"
 last_activity: 2026-04-04
 progress:
-  total_phases: 0
+  total_phases: 3
   completed_phases: 0
   total_plans: 0
   completed_plans: 0
@@ -20,14 +20,29 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-04)
 
 **Core value:** Reports must read like a scout wrote them -- surfacing changes, adaptations, and execution trends rather than reciting numbers.
-**Current focus:** Defining requirements for v1.9 Multi-Agent Narrative Upgrade
+**Current focus:** Phase 23 - Engine Foundation & Data Enrichment
 
 ## Current Position
 
-Phase: Not started (defining requirements)
-Plan: —
-Status: Defining requirements
-Last activity: 2026-04-04 — Milestone v1.9 started
+Phase: 23 of 25 (Engine Foundation & Data Enrichment)
+Plan: — (not yet planned)
+Status: Ready to plan
+Last activity: 2026-04-04 — Roadmap created for v1.9
+
+Progress: [░░░░░░░░░░] 0%
+
+## Performance Metrics
+
+**Velocity:**
+- Total plans completed: 0
+- Average duration: —
+- Total execution time: —
+
+**By Phase:**
+
+| Phase | Plans | Total | Avg/Plan |
+|-------|-------|-------|----------|
+| - | - | - | - |
 
 ## Accumulated Context
 
@@ -36,7 +51,7 @@ Last activity: 2026-04-04 — Milestone v1.9 started
 Decisions are logged in PROJECT.md Key Decisions table.
 
 - v1.7: Per-season baseline grouping (not cross-season averaged) -- foundation for v1.8
-- v1.7: load_pitcher_data() filters baselines to max season -- v1.8 Phase 19 removes this filter
+- v1.8: Cross-season deltas use same qualitative language as within-season deltas
 
 ### Pending Todos
 
@@ -56,7 +71,7 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-04-03
-Last activity: 2026-04-03 - Completed quick task 260403-f5t: Per-appearance pitch trends
-Stopped at: Completed quick task 260403-f5t
+Last session: 2026-04-04
+Last activity: 2026-04-04 - Roadmap created for v1.9 Multi-Agent Narrative Upgrade
+Stopped at: Roadmap created, ready to plan Phase 23
 Resume file: None
