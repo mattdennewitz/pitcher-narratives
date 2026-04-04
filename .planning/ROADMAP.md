@@ -65,7 +65,11 @@ Plans:
   3. Trend Specialist prompt uses release-point framing vocabulary (arm angle, deception, approach angle) when arm angle data is present
   4. Writer prompt requires a physical-driver citation whenever S+ changes by 10+ points (causal hook)
   5. Data Auditor prompt whitelists sabermetric heuristics (inverse correlations, zone expansion) so valid analysis is not flagged as hallucination
-**Plans**: TBD
+**Plans**: 3 plans
+Plans:
+- [ ] 25-01-PLAN.md -- Specialist prompt heuristics: Stuff trade-off detection, Location contradiction detection, Trend release-point vocabulary function
+- [ ] 25-02-PLAN.md -- Writer causal hook requirement + auditor sabermetric whitelist
+- [ ] 25-03-PLAN.md -- Location input restructuring: per-pitch-type unified view with adjacent contradiction metrics
 
 ## Progress
 
@@ -98,7 +102,7 @@ Phases execute in numeric order: 23 -> 24 -> 25
 | 22. Context Assembly & Prompt Rendering | v1.8 | 1/1 | Complete | 2026-04-03 |
 | 23. Engine Foundation & Data Enrichment | v1.9 | 3/3 | Complete    | 2026-04-04 |
 | 24. Pipeline Re-Architecture | v1.9 | 3/3 | Complete    | 2026-04-04 |
-| 25. Prompt Engineering & Heuristic Injection | v1.9 | 0/0 | Not started | - |
+| 25. Prompt Engineering & Heuristic Injection | v1.9 | 0/3 | Planned | - |
 
 ---
 *Full phase details archived in `.planning/milestones/`*
