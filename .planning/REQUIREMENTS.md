@@ -32,7 +32,7 @@ Requirements for Multi-Agent Narrative Upgrade. Each maps to roadmap phases.
 - [x] **PROMPT-03**: Trend Specialist prompt includes release point framing vocabulary (arm angle, deception, approach angle)
 - [x] **PROMPT-04**: Writer prompt includes causal hook requirement (S+ change ≥ 10 pts must cite physical driver)
 - [x] **PROMPT-05**: Data Auditor prompt whitelists sabermetric heuristics (inverse correlations, zone expansion) as valid analysis
-- [ ] **PROMPT-06**: Location Specialist input places xWhiff and zone_rate adjacent for contradiction visibility
+- [x] **PROMPT-06**: Location Specialist input places xWhiff and zone_rate adjacent for contradiction visibility
 
 ## Future Requirements
 
@@ -71,7 +71,7 @@ Requirements for Multi-Agent Narrative Upgrade. Each maps to roadmap phases.
 | PROMPT-03 | Phase 25 | Complete |
 | PROMPT-04 | Phase 25 | Complete |
 | PROMPT-05 | Phase 25 | Complete |
-| PROMPT-06 | Phase 25 | Pending |
+| PROMPT-06 | Phase 25 | Complete |
 
 **Coverage:**
 - v1.9 requirements: 18 total
