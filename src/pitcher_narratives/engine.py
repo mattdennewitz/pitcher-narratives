@@ -76,6 +76,8 @@ __all__ = [
     "format_s_variant_comparisons",
     "outlier_tag",
     "render_league_baselines",
+    "_compute_metric_percentile",
+    "_percentile_from_z",
 ]
 
 # ── Constants ─────────────────────────────────────────────────────────
@@ -246,6 +248,8 @@ class LeagueBaseline:
 
     pitch_type: str
     pitch_name: str
+    p_throws: str
+    """Pitcher handedness: 'L' or 'R'. Per D-09."""
     n_pitches: int
     # Physical averages
     avg_velo: float
@@ -257,6 +261,13 @@ class LeagueBaseline:
     velo_std: float
     pfx_x_std: float
     pfx_z_std: float
+    # Release point physical averages and std devs (per D-12)
+    avg_release_x: float | None = None
+    release_x_std: float | None = None
+    avg_release_z: float | None = None
+    release_z_std: float | None = None
+    avg_extension: float | None = None
+    extension_std: float | None = None
     # S-variant benchmarks (league averages weighted by n_pitches)
     avg_s_plus: float | None = None
     avg_xswing_s: float | None = None
@@ -285,7 +296,11 @@ def compute_league_baselines() -> list[LeagueBaseline]:
         return _league_baselines_cache
 
     df = load_all_statcast(
-        columns=["pitch_type", "pitch_name", "release_speed", "pfx_x", "pfx_z", "zone", "description"],
+        columns=[
+            "pitch_type", "pitch_name", "release_speed", "pfx_x", "pfx_z",
+            "zone", "description", "p_throws",
+            "release_pos_x", "release_pos_z", "release_extension",
+        ],
     )
     df = df.filter(pl.col("release_speed").is_not_null())
 
@@ -293,7 +308,7 @@ def compute_league_baselines() -> list[LeagueBaseline]:
     is_swing = pl.col("description").is_in(list(_SWING_DESCRIPTIONS))
 
     agg = (
-        df.group_by("pitch_type", "pitch_name")
+        df.group_by("pitch_type", "pitch_name", "p_throws")
         .agg(
             pl.len().alias("n"),
             pl.col("release_speed").mean().alias("avg_velo"),
@@ -306,6 +321,13 @@ def compute_league_baselines() -> list[LeagueBaseline]:
             # Chase: swings on pitches outside zones 1-9
             ((is_in_zone.not_() & is_swing).sum()
              / (is_in_zone.not_()).sum() * 100).alias("chase_pct"),
+            # Release point aggregates (per D-12)
+            pl.col("release_pos_x").mean().alias("avg_release_x"),
+            pl.col("release_pos_x").std().alias("release_x_std"),
+            pl.col("release_pos_z").mean().alias("avg_release_z"),
+            pl.col("release_pos_z").std().alias("release_z_std"),
+            pl.col("release_extension").mean().alias("avg_extension"),
+            pl.col("release_extension").std().alias("extension_std"),
         )
         .filter(pl.col("n") >= 100)
         .sort("n", descending=True)
@@ -346,6 +368,7 @@ def compute_league_baselines() -> list[LeagueBaseline]:
             LeagueBaseline(
                 pitch_type=pt,
                 pitch_name=row["pitch_name"],
+                p_throws=row["p_throws"],
                 n_pitches=row["n"],
                 avg_velo=float(row["avg_velo"]),
                 avg_pfx_x=float(row["avg_pfx_x"]),
@@ -355,6 +378,12 @@ def compute_league_baselines() -> list[LeagueBaseline]:
                 velo_std=float(row["velo_std"]) if row["velo_std"] is not None else 0.0,
                 pfx_x_std=float(row["pfx_x_std"]) if row["pfx_x_std"] is not None else 0.0,
                 pfx_z_std=float(row["pfx_z_std"]) if row["pfx_z_std"] is not None else 0.0,
+                avg_release_x=float(row["avg_release_x"]) if row["avg_release_x"] is not None else None,
+                release_x_std=float(row["release_x_std"]) if row["release_x_std"] is not None else None,
+                avg_release_z=float(row["avg_release_z"]) if row["avg_release_z"] is not None else None,
+                release_z_std=float(row["release_z_std"]) if row["release_z_std"] is not None else None,
+                avg_extension=float(row["avg_extension"]) if row["avg_extension"] is not None else None,
+                extension_std=float(row["extension_std"]) if row["extension_std"] is not None else None,
                 avg_s_plus=s_data.get("avg_s_plus"),
                 avg_xswing_s=s_data.get("avg_xswing_s"),
                 avg_xwhiff_s=s_data.get("avg_xwhiff_s"),
@@ -366,15 +395,71 @@ def compute_league_baselines() -> list[LeagueBaseline]:
     return results
 
 
-def outlier_tag(value: float, avg: float, std: float) -> str:
-    """Return OUTLIER or NORMAL tag based on z-score from league average."""
+def outlier_tag(value: float, avg: float, std: float, percentile: int | None = None) -> str:
+    """Return OUTLIER or NORMAL tag with optional percentile rank.
+
+    Format per D-08:
+      With percentile: 'OUTLIER - 98th percentile (above avg, z=+2.3)'
+                       'NORMAL - 55th percentile (z=+0.2)'
+      Without percentile: 'OUTLIER (above avg, z=+2.3)' (exact pre-Phase-23 format)
+                          'NORMAL (z=+0.2)' (exact pre-Phase-23 format)
+    """
     if std == 0:
         return "NORMAL"
     z = (value - avg) / std
+    # Build percentile suffix: " - Nth percentile" or ""
+    if percentile is not None:
+        pctl_part = f" - {percentile}th percentile"
+    else:
+        pctl_part = ""
     if abs(z) > 1.5:
         direction = "above" if z > 0 else "below"
-        return f"OUTLIER ({direction} avg, z={z:+.1f})"
-    return f"NORMAL (z={z:+.1f})"
+        return f"OUTLIER{pctl_part} ({direction} avg, z={z:+.1f})"
+    return f"NORMAL{pctl_part} (z={z:+.1f})"
+
+
+def _percentile_from_z(z: float) -> int:
+    """Approximate percentile from z-score using normal CDF.
+
+    Uses math.erfc for the standard normal CDF approximation.
+    Clamps to 0-100 range for extreme z-scores.
+
+    Args:
+        z: Z-score value.
+
+    Returns:
+        Percentile (0-100).
+    """
+    if z < -6:
+        return 0
+    if z > 6:
+        return 100
+    cdf = 0.5 * math.erfc(-z / math.sqrt(2))
+    return int(cdf * 100)
+
+
+def _compute_metric_percentile(
+    value: float,
+    population: list[float],
+    higher_is_better: bool = True,
+) -> int:
+    """Compute percentile rank of value within population.
+
+    Args:
+        value: The metric value to rank.
+        population: List of all league values for this metric.
+        higher_is_better: If True, higher value = higher percentile.
+
+    Returns:
+        Percentile (0-100). Returns 50 for empty population.
+    """
+    if not population:
+        return 50
+    if higher_is_better:
+        n_worse = sum(1 for v in population if v < value)
+    else:
+        n_worse = sum(1 for v in population if v > value)
+    return int(n_worse / len(population) * 100)
 
 
 def render_league_baselines(pitch_types: list[str]) -> str:
@@ -382,9 +467,12 @@ def render_league_baselines(pitch_types: list[str]) -> str:
 
     Includes standard deviations so agents can determine whether a pitcher's
     metrics are outliers or within the normal range for that pitch type.
+
+    Uses RHP baselines for display (larger population, closer to "league average").
+    Handedness-specific baselines are used only for percentile computation.
     """
     baselines = compute_league_baselines()
-    lookup = {b.pitch_type: b for b in baselines}
+    lookup = {b.pitch_type: b for b in baselines if b.p_throws == "R"}
 
     lines = [
         "## League Baselines (2026, all pitchers)",
