@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.9
 milestone_name: Multi-Agent Narrative Upgrade
 status: executing
-stopped_at: Phase 25 context gathered
-last_updated: "2026-04-04T21:22:13.498Z"
+stopped_at: Completed 25-01-PLAN.md
+last_updated: "2026-04-04T21:52:52.846Z"
 last_activity: 2026-04-04
 progress:
   total_phases: 3
   completed_phases: 2
-  total_plans: 6
-  completed_plans: 6
+  total_plans: 9
+  completed_plans: 7
   percent: 40
 ---
 
@@ -21,12 +21,12 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-04)
 
 **Core value:** Reports must read like a scout wrote them -- surfacing changes, adaptations, and execution trends rather than reciting numbers.
-**Current focus:** Phase 24 — pipeline-re-architecture
+**Current focus:** Phase 25 — prompt-engineering-heuristic-injection
 
 ## Current Position
 
-Phase: 25 of 25 (prompt engineering & heuristic injection)
-Plan: Not started
+Phase: 25 (prompt-engineering-heuristic-injection) — EXECUTING
+Plan: 2 of 3
 Status: Ready to execute
 Last activity: 2026-04-04
 
@@ -50,6 +50,7 @@ Progress: [####░░░░░░] 40%
 | Phase 24 P01 | 6min | 1 tasks | 2 files |
 | Phase 24 P02 | 3min | 1 tasks | 2 files |
 | Phase 24 P03 | 12min | 2 tasks | 2 files |
+| Phase 25 P01 | 7min | 2 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -70,6 +71,8 @@ Decisions are logged in PROJECT.md Key Decisions table.
 - [Phase 24]: Anti-recalculation directive in Stuff prompt prevents LLM from recomputing provided deltas
 - [Phase 24]: Writer prompt converted from constant to _build_writer_prompt(role) for RP-conditional text
 - [Phase 24]: Auditor categories 8-9 use conditional framing (apply ONLY when) to prevent false positives on non-Approach specialists
+- [Phase 25]: Hybrid principle+examples format for heuristic directives (D-02)
+- [Phase 25]: Python-level conditional prompt injection for release-point vocabulary (D-05)
 
 ### Pending Todos
 
@@ -89,7 +92,7 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-04-04T21:22:13.491Z
+Last session: 2026-04-04T21:52:52.840Z
 Last activity: 2026-04-04 - Completed Wave 1 (24-01 Approach Specialist + 24-02 raw data appendices)
-Stopped at: Phase 25 context gathered
-Resume file: .planning/phases/25-prompt-engineering-heuristic-injection/25-CONTEXT.md
+Stopped at: Completed 25-01-PLAN.md
+Resume file: None

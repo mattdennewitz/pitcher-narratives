@@ -27,9 +27,9 @@ Requirements for Multi-Agent Narrative Upgrade. Each maps to roadmap phases.
 
 ### Prompt Heuristics
 
-- [ ] **PROMPT-01**: Stuff Specialist prompt includes trade-off detection directive (inverse velo/movement → S+ improvement)
-- [ ] **PROMPT-02**: Location Specialist prompt includes contradiction detection directive (low zone + high whiff = expanding zone)
-- [ ] **PROMPT-03**: Trend Specialist prompt includes release point framing vocabulary (arm angle, deception, approach angle)
+- [x] **PROMPT-01**: Stuff Specialist prompt includes trade-off detection directive (inverse velo/movement → S+ improvement)
+- [x] **PROMPT-02**: Location Specialist prompt includes contradiction detection directive (low zone + high whiff = expanding zone)
+- [x] **PROMPT-03**: Trend Specialist prompt includes release point framing vocabulary (arm angle, deception, approach angle)
 - [ ] **PROMPT-04**: Writer prompt includes causal hook requirement (S+ change ≥ 10 pts must cite physical driver)
 - [ ] **PROMPT-05**: Data Auditor prompt whitelists sabermetric heuristics (inverse correlations, zone expansion) as valid analysis
 - [ ] **PROMPT-06**: Location Specialist input places xWhiff and zone_rate adjacent for contradiction visibility
@@ -66,9 +66,9 @@ Requirements for Multi-Agent Narrative Upgrade. Each maps to roadmap phases.
 | PIPE-05 | Phase 24 | Pending |
 | PIPE-06 | Phase 24 | Complete |
 | PIPE-07 | Phase 24 | Complete |
-| PROMPT-01 | Phase 25 | Pending |
-| PROMPT-02 | Phase 25 | Pending |
-| PROMPT-03 | Phase 25 | Pending |
+| PROMPT-01 | Phase 25 | Complete |
+| PROMPT-02 | Phase 25 | Complete |
+| PROMPT-03 | Phase 25 | Complete |
 | PROMPT-04 | Phase 25 | Pending |
 | PROMPT-05 | Phase 25 | Pending |
 | PROMPT-06 | Phase 25 | Pending |
