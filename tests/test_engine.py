@@ -18,7 +18,10 @@ from pitcher_narratives.engine import (
     _arm_angle_delta_string,
     _arm_slot_label,
     _compute_arm_angle,
+    _compute_metric_percentile,
+    _percentile_from_z,
     AddedDroppedPitch,
+    LeagueBaseline,
     AppearancePitchTrendRecord,
     AppearancePitchTrends,
     AppearanceWorkload,
@@ -54,6 +57,7 @@ from pitcher_narratives.engine import (
     _velo_delta_string,
     compute_appearance_pitch_trends,
     compute_arsenal_summary,
+    compute_league_baselines,
     compute_arsenal_trends,
     compute_component_attribution,
     compute_count_splits,
@@ -68,6 +72,7 @@ from pitcher_narratives.engine import (
     compute_tto_analysis,
     compute_velocity_arc,
     compute_workload_context,
+    outlier_tag,
 )
 
 TEST_PITCHER = 592155  # Booser, Cam -- LHP, 12 appearances, FC primary fastball
@@ -1004,6 +1009,116 @@ def test_arm_angle_cold_start_delta():
     rp = compute_release_point_metrics(data)
     for pt in rp.pitch_types:
         assert "Full season in window" in pt.arm_angle_delta
+
+
+# ── Outlier Tag Percentile ───────────────────────────────────────────
+
+
+def test_outlier_tag_with_percentile_outlier_above():
+    """outlier_tag with percentile and z>1.5 returns 'OUTLIER - Nth percentile (above avg, z=...)'."""
+    result = outlier_tag(100.0, 95.0, 2.0, percentile=98)
+    assert result == "OUTLIER - 98th percentile (above avg, z=+2.5)"
+
+
+def test_outlier_tag_with_percentile_outlier_below():
+    """outlier_tag with percentile and z<-1.5 returns 'OUTLIER - Nth percentile (below avg, z=...)'."""
+    result = outlier_tag(90.0, 95.0, 2.0, percentile=12)
+    assert result == "OUTLIER - 12th percentile (below avg, z=-2.5)"
+
+
+def test_outlier_tag_with_percentile_normal():
+    """outlier_tag with percentile and |z|<=1.5 returns 'NORMAL - Nth percentile (z=...)'."""
+    result = outlier_tag(95.5, 95.0, 2.0, percentile=55)
+    assert result == "NORMAL - 55th percentile (z=+0.2)"
+
+
+def test_outlier_tag_without_percentile_normal():
+    """outlier_tag without percentile returns exact pre-Phase-23 format: no dash, no percentile."""
+    result = outlier_tag(95.0, 95.0, 2.0)
+    assert result == "NORMAL (z=+0.0)"
+    assert " - " not in result
+    assert "percentile" not in result
+
+
+def test_outlier_tag_without_percentile_outlier():
+    """outlier_tag without percentile returns exact pre-Phase-23 format: no dash, no percentile."""
+    result = outlier_tag(100.0, 95.0, 2.0)
+    assert result == "OUTLIER (above avg, z=+2.5)"
+    assert " - " not in result
+    assert "percentile" not in result
+
+
+def test_outlier_tag_std_zero():
+    """outlier_tag with std=0 returns 'NORMAL'."""
+    result = outlier_tag(95.0, 95.0, 0.0)
+    assert result == "NORMAL"
+
+
+# ── League Baseline Extension ────────────────────────────────────────
+
+
+def test_league_baseline_has_p_throws():
+    """LeagueBaseline has a p_throws field."""
+    baselines = compute_league_baselines()
+    assert len(baselines) > 0
+    for b in baselines:
+        assert hasattr(b, "p_throws")
+        assert b.p_throws in ("L", "R")
+
+
+def test_league_baseline_has_release_point_fields():
+    """LeagueBaseline includes release point physical fields."""
+    baselines = compute_league_baselines()
+    for b in baselines[:3]:  # check first few
+        assert hasattr(b, "avg_release_x")
+        assert hasattr(b, "release_x_std")
+        assert hasattr(b, "avg_release_z")
+        assert hasattr(b, "release_z_std")
+        assert hasattr(b, "avg_extension")
+        assert hasattr(b, "extension_std")
+
+
+# ── Percentile Helpers ───────────────────────────────────────────────
+
+
+def test_compute_metric_percentile_known_population():
+    """_compute_metric_percentile ranks value within known population."""
+    # 100.0 is strictly greater than 4 of 6 values (80, 85, 90, 95) => 4/6*100 = 66
+    result = _compute_metric_percentile(100.0, [80, 85, 90, 95, 100, 105], higher_is_better=True)
+    assert result == 66
+
+
+def test_compute_metric_percentile_empty_population():
+    """_compute_metric_percentile returns 50 for empty population."""
+    result = _compute_metric_percentile(100.0, [], higher_is_better=True)
+    assert result == 50
+
+
+def test_percentile_from_z_center():
+    """_percentile_from_z(0) returns 50."""
+    assert _percentile_from_z(0.0) == 50
+
+
+def test_percentile_from_z_positive():
+    """_percentile_from_z(2.0) returns ~97-98."""
+    result = _percentile_from_z(2.0)
+    assert 96 <= result <= 99
+
+
+def test_percentile_from_z_negative():
+    """_percentile_from_z(-2.0) returns ~2-3."""
+    result = _percentile_from_z(-2.0)
+    assert 1 <= result <= 4
+
+
+def test_percentile_from_z_clamp_high():
+    """_percentile_from_z(6.5) returns 100."""
+    assert _percentile_from_z(6.5) == 100
+
+
+def test_percentile_from_z_clamp_low():
+    """_percentile_from_z(-6.5) returns 0."""
+    assert _percentile_from_z(-6.5) == 0
 
 
 # ── Intermediate Probabilities ───────────────────────────────────────
