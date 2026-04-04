@@ -1,7 +1,7 @@
 """Multi-agent specialist→auditor→writer report pipeline (v1.6 prototype).
 
 Architecture:
-  Phase 1: 5 specialist agents run in parallel, each producing a focused
+  Phase 1: 6 specialist agents run in parallel, each producing a focused
   micro-analysis with league baselines (including stddev and S-variant
   benchmarks) injected for grounding:
     - Stuff Explainer: velocity/movement → S+ grades via S-variant predictions
@@ -9,9 +9,10 @@ Architecture:
     - Run Value Decomposer: 13-outcome attribution, dominant value drivers
     - Trend Spotter: window vs season deltas in velocity, movement, usage, grades
     - Game Shape Analyst: TTO degradation, velocity arc, within-game mix shifts
+    - Approach Analyst: platoon, count-state, and first-pitch strategy patterns
 
   Phase 1.5: Per-specialist audit + revision loop. Each specialist's output
-  is audited independently (5 audits run in parallel) against the raw data
+  is audited independently (6 audits run in parallel) against the raw data
   and league baselines. Flagged specialists are re-run with their original
   input + audit corrections to produce clean output. The writer never sees
   flawed prose — only corrected versions.
@@ -889,13 +890,13 @@ async def audit_and_revise_specialists(
 ) -> tuple["SpecialistOutputs", list[AuditFlag]]:
     """Audit each specialist's output independently, revise any with flags.
 
-    Phase 1.5a: Run 5 per-specialist audits concurrently.
+    Phase 1.5a: Run 6 per-specialist audits concurrently.
     Phase 1.5b: For any flagged specialist, re-run with audit feedback.
 
     Returns:
         Tuple of (clean SpecialistOutputs, all collected AuditFlags).
     """
-    specialist_names = ["stuff", "location", "runvalue", "trends", "game_shape"]
+    specialist_names = ["stuff", "location", "runvalue", "trends", "game_shape", "approach"]
     outputs: dict[str, str] = {
         name: getattr(specialists, name) for name in specialist_names
     }
@@ -905,7 +906,7 @@ async def audit_and_revise_specialists(
         name: _get_specialist_input(name, ctx) for name in specialist_names
     }
 
-    # Phase 1.5a: Audit all 5 in parallel
+    # Phase 1.5a: Audit all 6 in parallel
     async def _audit_one(name: str) -> tuple[str, AuditResult]:
         try:
             audit_input = _build_specialist_audit_input(
@@ -1005,6 +1006,7 @@ def write_pipeline_data_file(
         ("SPECIALIST 3: RUN VALUE", _RUNVALUE_SPECIALIST_PROMPT, _build_runvalue_input(ctx)),
         ("SPECIALIST 4: TRENDS", _TREND_SPECIALIST_PROMPT, _build_trend_input(ctx)),
         ("SPECIALIST 5: GAME SHAPE", _GAME_SHAPE_SPECIALIST_PROMPT, _build_game_shape_input(ctx)),
+        ("SPECIALIST 6: APPROACH", _APPROACH_SPECIALIST_PROMPT, _build_approach_input(ctx)),
     ]
     for label, system, user in specialist_phases:
         sections.append(f"\n{sep}\n{label}\n{sep}\n")
@@ -1017,7 +1019,7 @@ def write_pipeline_data_file(
     sections.append(
         "## User Message\n\n"
         "[Receives: ground truth data (same as stuff specialist input) + "
-        "all 5 specialist outputs for validation]\n"
+        "all 6 specialist outputs for validation]\n"
     )
 
     if question is not None:
@@ -1030,7 +1032,7 @@ def write_pipeline_data_file(
             f"## User Message\n\n"
             f"## Question\n{question}\n\n"
             f"## Pitcher: {ctx.pitcher_name} ({ctx.throws}HP, {ctx.role})\n\n"
-            f"[Receives: all 5 specialist outputs + any audit flags]\n"
+            f"[Receives: all 6 specialist outputs + any audit flags]\n"
         )
     else:
         # Narrative pipeline: writer + anchor + executive summary
@@ -1038,7 +1040,7 @@ def write_pipeline_data_file(
         sections.append(f"## System Prompt\n\n{_WRITER_PROMPT}\n")
         sections.append(
             "## User Message\n\n"
-            "[Receives: all 5 specialist outputs + any audit flags]\n"
+            "[Receives: all 6 specialist outputs + any audit flags]\n"
         )
 
         sections.append(f"\n{sep}\nEXECUTIVE SUMMARY\n{sep}\n")
@@ -1072,6 +1074,7 @@ class SpecialistOutputs(BaseModel):
     runvalue: str
     trends: str
     game_shape: str
+    approach: str
 
 
 class PipelineResult(BaseModel):
@@ -1096,6 +1099,7 @@ class PipelineAgents(NamedTuple):
     runvalue: Agent[None, str]
     trends: Agent[None, str]
     game_shape: Agent[None, str]
+    approach: Agent[None, str]
     writer: Agent[None, str]
     auditor: Agent[None, AuditResult]
     anchor: Agent[None, AnchorResult]
@@ -1130,6 +1134,7 @@ def make_pipeline_agents(
         runvalue=_specialist(_RUNVALUE_SPECIALIST_PROMPT),
         trends=_specialist(_TREND_SPECIALIST_PROMPT),
         game_shape=_specialist(_GAME_SHAPE_SPECIALIST_PROMPT),
+        approach=_specialist(_APPROACH_SPECIALIST_PROMPT),
         writer=_writer(_WRITER_PROMPT),
         auditor=Agent(model, output_type=AuditResult, system_prompt=_DATA_AUDITOR_PROMPT,
                       model_settings=checker_settings, defer_model_check=True),
@@ -1149,16 +1154,18 @@ async def run_specialists(
     runvalue_agent: Agent[None, str],
     trends_agent: Agent[None, str],
     game_shape_agent: Agent[None, str],
+    approach_agent: Agent[None, str],
     ctx: PitcherContext,
     _model_override: Any = None,
 ) -> SpecialistOutputs:
-    """Run all 5 specialists concurrently."""
+    """Run all 6 specialists concurrently."""
     inputs = {
         "stuff": (stuff_agent, _build_stuff_input(ctx)),
         "location": (location_agent, _build_location_input(ctx)),
         "runvalue": (runvalue_agent, _build_runvalue_input(ctx)),
         "trends": (trends_agent, _build_trend_input(ctx)),
         "game_shape": (game_shape_agent, _build_game_shape_input(ctx)),
+        "approach": (approach_agent, _build_approach_input(ctx)),
     }
 
     async def _run(agent: Agent[None, str], prompt: str) -> str:
@@ -1173,13 +1180,13 @@ async def run_specialists(
     results = await asyncio.gather(
         tasks["stuff"], tasks["location"],
         tasks["runvalue"], tasks["trends"],
-        tasks["game_shape"],
+        tasks["game_shape"], tasks["approach"],
     )
 
     return SpecialistOutputs(
         stuff=results[0], location=results[1],
         runvalue=results[2], trends=results[3],
-        game_shape=results[4],
+        game_shape=results[4], approach=results[5],
     )
 
 
@@ -1192,7 +1199,7 @@ async def _run_pipeline(
 ) -> PipelineResult:
     """Async core of the multi-agent pipeline.
 
-    Phase 1: 5 specialists run concurrently.
+    Phase 1: 6 specialists run concurrently.
     Phase 1.5: Data auditor validates specialist outputs against ground truth.
     Phase 2: Writer composes capsule (with audit flags if any).
     Phase 2.5: Anchor check + revision loop.
@@ -1203,7 +1210,7 @@ async def _run_pipeline(
     log.info("Running specialists...")
     raw_specialists = await run_specialists(
         agents.stuff, agents.location, agents.runvalue, agents.trends,
-        agents.game_shape, ctx, _model_override,
+        agents.game_shape, agents.approach, ctx, _model_override,
     )
     log.info("Specialists complete.")
 
@@ -1212,7 +1219,7 @@ async def _run_pipeline(
     specialist_agents = {
         "stuff": agents.stuff, "location": agents.location,
         "runvalue": agents.runvalue, "trends": agents.trends,
-        "game_shape": agents.game_shape,
+        "game_shape": agents.game_shape, "approach": agents.approach,
     }
     specialists, audit_flags = await audit_and_revise_specialists(
         raw_specialists, specialist_agents, agents.auditor, ctx, _model_override,
@@ -1255,12 +1262,14 @@ async def _run_pipeline(
 
     # Phase 2.5: Anchor check + revision loop
     revision_count = 0
+    game_shape_label = "WORKLOAD" if ctx.role == "RP" else "GAME SHAPE"
     synthesis = (
         f"STUFF:\n{specialists.stuff}\n\n"
         f"LOCATION:\n{specialists.location}\n\n"
         f"RUN VALUE:\n{specialists.runvalue}\n\n"
         f"TRENDS:\n{specialists.trends}\n\n"
-        f"GAME SHAPE:\n{specialists.game_shape}"
+        f"{game_shape_label}:\n{specialists.game_shape}\n\n"
+        f"APPROACH:\n{specialists.approach}"
     )
 
     for _ in range(MAX_REVISIONS):
@@ -1303,7 +1312,7 @@ def generate_pipeline_streaming(
 ) -> PipelineResult:
     """Generate a report using the specialist→auditor→writer multi-agent pipeline.
 
-    Phase 1: 5 specialists run concurrently (silent).
+    Phase 1: 6 specialists run concurrently (silent).
     Phase 1.5: Data auditor validates specialist outputs against ground truth.
     Phase 2: Writer composes capsule from specialist outputs + audit flags (streamed).
     Phase 2.5: Anchor check + revision loop.

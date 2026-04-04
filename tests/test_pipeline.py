@@ -259,6 +259,7 @@ class TestAuditAndReviseSpecialists:
             runvalue="Run value is neutral.",
             trends="No changes.",
             game_shape="Steady across passes.",
+            approach="Approach analysis.",
         )
 
     @pytest.fixture
@@ -278,7 +279,7 @@ class TestAuditAndReviseSpecialists:
             specialist_agents = {
                 "stuff": agents.stuff, "location": agents.location,
                 "runvalue": agents.runvalue, "trends": agents.trends,
-                "game_shape": agents.game_shape,
+                "game_shape": agents.game_shape, "approach": agents.approach,
             }
             # Use a context with minimal data
             data = load_pitcher_data(TEST_PITCHER, window_days=30)
@@ -309,7 +310,7 @@ class TestAuditAndReviseSpecialists:
             specialist_agents = {
                 "stuff": agents.stuff, "location": agents.location,
                 "runvalue": agents.runvalue, "trends": agents.trends,
-                "game_shape": agents.game_shape,
+                "game_shape": agents.game_shape, "approach": agents.approach,
             }
             data = load_pitcher_data(TEST_PITCHER, window_days=30)
             ctx = assemble_pitcher_context(data)
@@ -346,7 +347,7 @@ class TestGeneratePipelineStreaming:
         assert isinstance(result.revision_count, int)
 
     def test_specialist_outputs_populated(self, ctx):
-        """All 5 specialist slots are non-empty strings."""
+        """All 6 specialist slots are non-empty strings."""
         test_model = TestModel()
         result = generate_pipeline_streaming(
             ctx, provider="gemini", thinking="high", _model_override=test_model,
