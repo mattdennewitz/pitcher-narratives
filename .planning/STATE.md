@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.9
 milestone_name: Multi-Agent Narrative Upgrade
 status: executing
-stopped_at: Completed 23-01-PLAN.md
-last_updated: "2026-04-04T17:51:40Z"
-last_activity: 2026-04-04 — Completed 23-01-PLAN.md
+stopped_at: Completed 23-02-PLAN.md
+last_updated: "2026-04-04T18:18:13.955Z"
+last_activity: 2026-04-04
 progress:
   total_phases: 3
   completed_phases: 0
   total_plans: 3
-  completed_plans: 1
+  completed_plans: 2
   percent: 33
 ---
 
@@ -26,8 +26,8 @@ See: .planning/PROJECT.md (updated 2026-04-04)
 ## Current Position
 
 Phase: 23 of 25 (Engine Foundation & Data Enrichment)
-Plan: 1 of 3
-Status: Executing Phase 23
+Plan: 2 of 3
+Status: Ready to execute
 Last activity: 2026-04-04
 
 Progress: [###░░░░░░░] 33%
@@ -45,6 +45,7 @@ Progress: [###░░░░░░░] 33%
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
 | 23 | 1 | 6min | 6min |
+| Phase 23 P02 | 19min | 3 tasks | 5 files |
 
 ## Accumulated Context
 
@@ -55,6 +56,9 @@ Decisions are logged in PROJECT.md Key Decisions table.
 - v1.7: Per-season baseline grouping (not cross-season averaged) -- foundation for v1.8
 - v1.8: Cross-season deltas use same qualitative language as within-season deltas
 - v1.9: Count-state buckets overlap (two-strike + first-pitch) rather than mutual exclusion -- enables richer analysis
+- [Phase 23]: Corrected arm angle slot thresholds (78/65/55/40) from empirical MLB distribution -- CONTEXT.md values classified 99% as Overhand
+- [Phase 23]: render_league_baselines uses RHP baselines for display; handedness-specific baselines only for percentile computation
+- [Phase 23]: math.erfc CDF for z-to-percentile conversion instead of per-pitcher population data -- physical metrics are approximately normal
 
 ### Pending Todos
 
@@ -74,7 +78,7 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-04-04T17:51:40Z
+Last session: 2026-04-04T18:18:13.953Z
 Last activity: 2026-04-04 - Completed 23-01-PLAN.md (CountSplits engine)
-Stopped at: Completed 23-01-PLAN.md
+Stopped at: Completed 23-02-PLAN.md
 Resume file: None

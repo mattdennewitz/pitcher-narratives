@@ -36,7 +36,7 @@
 **Plans**: 3 plans
 Plans:
 - [x] 23-01-PLAN.md -- CountSplits dataclasses and compute_count_splits engine function
-- [ ] 23-02-PLAN.md -- Arm angle fields on ReleasePointPitchType + LeagueBaseline extension + outlier_tag percentile upgrade
+- [x] 23-02-PLAN.md -- Arm angle fields on ReleasePointPitchType + LeagueBaseline extension + outlier_tag percentile upgrade
 - [ ] 23-03-PLAN.md -- PitcherContext wiring + to_prompt rendering (count splits adjacent to platoon, arm angle in release point)
 
 ### Phase 24: Pipeline Re-Architecture
@@ -92,7 +92,7 @@ Phases execute in numeric order: 23 -> 24 -> 25
 | 20. Season-Delta Engine | v1.8 | 1/1 | Complete | 2026-04-03 |
 | 21. Arsenal Trend Engine | v1.8 | 1/1 | Complete | 2026-04-03 |
 | 22. Context Assembly & Prompt Rendering | v1.8 | 1/1 | Complete | 2026-04-03 |
-| 23. Engine Foundation & Data Enrichment | v1.9 | 1/3 | In progress | - |
+| 23. Engine Foundation & Data Enrichment | v1.9 | 2/3 | In Progress|  |
 | 24. Pipeline Re-Architecture | v1.9 | 0/0 | Not started | - |
 | 25. Prompt Engineering & Heuristic Injection | v1.9 | 0/0 | Not started | - |
 

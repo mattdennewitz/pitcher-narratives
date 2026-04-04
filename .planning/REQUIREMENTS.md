@@ -10,8 +10,8 @@ Requirements for Multi-Agent Narrative Upgrade. Each maps to roadmap phases.
 ### Engine & Data Enrichment
 
 - [x] **ENG-01**: Engine computes per-pitch-type usage across count states (ahead/behind/even/two-strike) with window vs season deltas
-- [ ] **ENG-02**: Engine computes arm angle from release_x/release_z via atan2, with window vs season delta strings
-- [ ] **ENG-03**: Outlier tags include percentile rank (e.g., "98th percentile") instead of raw z-score notation
+- [x] **ENG-02**: Engine computes arm angle from release_x/release_z via atan2, with window vs season delta strings
+- [x] **ENG-03**: Outlier tags include percentile rank (e.g., "98th percentile") instead of raw z-score notation
 - [ ] **ENG-04**: CountSplits and arm angle fields wired into PitcherContext and rendered in prompt output
 - [x] **ENG-05**: Count bucket with fewer than 10 pitches flagged as small sample (no usage delta computed)
 
@@ -55,8 +55,8 @@ Requirements for Multi-Agent Narrative Upgrade. Each maps to roadmap phases.
 | Requirement | Phase | Status |
 |-------------|-------|--------|
 | ENG-01 | Phase 23 | Complete |
-| ENG-02 | Phase 23 | Pending |
-| ENG-03 | Phase 23 | Pending |
+| ENG-02 | Phase 23 | Complete |
+| ENG-03 | Phase 23 | Complete |
 | ENG-04 | Phase 23 | Pending |
 | ENG-05 | Phase 23 | Complete |
 | PIPE-01 | Phase 24 | Pending |
