@@ -17,7 +17,7 @@
 
 **Milestone Goal:** Deepen the 6-agent specialist pipeline with count-state awareness, arm angle context, approach analysis, and prompt heuristics that push narratives toward causal reasoning and trade-off detection.
 
-- [ ] **Phase 23: Engine Foundation & Data Enrichment** - CountSplits engine, arm angle calculation, percentile outlier tags, context wiring
+- [x] **Phase 23: Engine Foundation & Data Enrichment** - CountSplits engine, arm angle calculation, percentile outlier tags, context wiring (completed 2026-04-04)
 - [ ] **Phase 24: Pipeline Re-Architecture** - Approach Specialist agent, RP dynamic routing, raw data appendix, Location Specialist platoon removal
 - [ ] **Phase 25: Prompt Engineering & Heuristic Injection** - Trade-off, contradiction, release-point, causal-hook directives, auditor whitelist
 
@@ -37,7 +37,7 @@
 Plans:
 - [x] 23-01-PLAN.md -- CountSplits dataclasses and compute_count_splits engine function
 - [x] 23-02-PLAN.md -- Arm angle fields on ReleasePointPitchType + LeagueBaseline extension + outlier_tag percentile upgrade
-- [ ] 23-03-PLAN.md -- PitcherContext wiring + to_prompt rendering (count splits adjacent to platoon, arm angle in release point)
+- [x] 23-03-PLAN.md -- PitcherContext wiring + to_prompt rendering (count splits adjacent to platoon, arm angle in release point)
 
 ### Phase 24: Pipeline Re-Architecture
 **Goal**: The specialist pipeline expands to 6 agents with an Approach Specialist handling platoon/count analysis, dynamic RP routing that skips Game Shape, and raw data appendices for grounding
@@ -92,7 +92,7 @@ Phases execute in numeric order: 23 -> 24 -> 25
 | 20. Season-Delta Engine | v1.8 | 1/1 | Complete | 2026-04-03 |
 | 21. Arsenal Trend Engine | v1.8 | 1/1 | Complete | 2026-04-03 |
 | 22. Context Assembly & Prompt Rendering | v1.8 | 1/1 | Complete | 2026-04-03 |
-| 23. Engine Foundation & Data Enrichment | v1.9 | 2/3 | In Progress|  |
+| 23. Engine Foundation & Data Enrichment | v1.9 | 3/3 | Complete   | 2026-04-04 |
 | 24. Pipeline Re-Architecture | v1.9 | 0/0 | Not started | - |
 | 25. Prompt Engineering & Heuristic Injection | v1.9 | 0/0 | Not started | - |
 
