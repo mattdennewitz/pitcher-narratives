@@ -1253,7 +1253,6 @@ class TestAuditorPrompt:
         assert "Pass/Fail" in _DATA_AUDITOR_PROMPT
 
 
-<<<<<<< HEAD
 # ── Heuristic directive tests (Phase 25, Plan 01) ─────────────────────
 
 
@@ -1452,3 +1451,207 @@ class TestAuditorWhitelist:
     def test_auditor_whitelist_uncited_still_violation(self):
         from pitcher_narratives.pipeline import _DATA_AUDITOR_PROMPT
         assert "category 5" in _DATA_AUDITOR_PROMPT
+
+
+# ── Location input adjacency tests (Phase 25, Plan 03) ─────────────────
+
+
+def _make_location_ctx(*, include_execution: bool = True) -> PitcherContext:
+    """Build a PitcherContext with execution + intermediates data for location tests."""
+    _none_fields = dict(
+        xgor_p=None, xgor_s=None, xpur_p=None, xpur_s=None,
+        xhr100_p=None, xhr100_s=None, bbe_prob_p=None, bbe_prob_s=None,
+        xswst_p=None, xswst_s=None,
+        season_xswing_p=None, season_xswing_s=None, season_xwhiff_p=None,
+        season_xwhiff_s=None, season_xgor_p=None, season_xgor_s=None,
+        season_xpur_p=None, season_xpur_s=None, season_xhr100_p=None,
+        season_xhr100_s=None, season_bbe_prob_p=None, season_bbe_prob_s=None,
+        season_xswst_p=None, season_xswst_s=None, season_xrv100_p=None,
+        season_xrv100_s=None,
+    )
+    intermediates = [
+        IntermediateProbabilities(
+            pitch_type="FF",
+            pitch_name="4-Seam Fastball",
+            xswing_p=0.72,
+            xswing_s=0.68,
+            xwhiff_p=0.28,
+            xwhiff_s=0.25,
+            xrv100_p=-1.50,
+            xrv100_s=-1.20,
+            n_pitches=50,
+            small_sample=False,
+            cold_start=False,
+            **_none_fields,
+        ),
+        IntermediateProbabilities(
+            pitch_type="SL",
+            pitch_name="Slider",
+            xswing_p=0.65,
+            xswing_s=0.60,
+            xwhiff_p=0.35,
+            xwhiff_s=0.30,
+            xrv100_p=-2.10,
+            xrv100_s=-1.80,
+            n_pitches=25,
+            small_sample=False,
+            cold_start=False,
+            **_none_fields,
+        ),
+    ]
+
+    execution = [
+        ExecutionMetrics(
+            pitch_type="FF",
+            pitch_name="4-Seam Fastball",
+            csw_pct=30.5,
+            zone_rate=48.2,
+            chase_rate=28.1,
+            xwhiff_p=0.28,
+            xswing_p=0.72,
+            xrv100_p=-1.50,
+            xrv100_percentile=75,
+            n_pitches=50,
+            small_sample=False,
+            cold_start=False,
+        ),
+        ExecutionMetrics(
+            pitch_type="SL",
+            pitch_name="Slider",
+            csw_pct=33.0,
+            zone_rate=38.5,
+            chase_rate=35.2,
+            xwhiff_p=0.35,
+            xswing_p=0.65,
+            xrv100_p=-2.10,
+            xrv100_percentile=85,
+            n_pitches=25,
+            small_sample=False,
+            cold_start=False,
+        ),
+    ] if include_execution else [
+        # Only FF execution -- SL missing (for graceful handling test)
+        ExecutionMetrics(
+            pitch_type="FF",
+            pitch_name="4-Seam Fastball",
+            csw_pct=30.5,
+            zone_rate=48.2,
+            chase_rate=28.1,
+            xwhiff_p=0.28,
+            xswing_p=0.72,
+            xrv100_p=-1.50,
+            xrv100_percentile=75,
+            n_pitches=50,
+            small_sample=False,
+            cold_start=False,
+        ),
+    ]
+
+    ctx = _make_pipeline_ctx()
+    # Override the empty defaults with actual data
+    ctx.intermediates = intermediates
+    ctx.execution = execution
+    ctx.arsenal[0].window_p_plus = 108.0
+    ctx.arsenal[0].window_s_plus = 106.0
+    ctx.arsenal[0].window_l_plus = 101.0
+    # Add slider to arsenal
+    ctx.arsenal.append(
+        PitchTypeSummary(
+            pitch_type="SL",
+            pitch_name="Slider",
+            season_velo=85.0,
+            window_velo=85.5,
+            velo_delta="Steady",
+            season_usage_pct=25.0,
+            window_usage_pct=28.0,
+            usage_delta="Up modestly",
+            season_p_plus=112.0,
+            window_p_plus=115.0,
+            p_plus_delta="Up modestly",
+            season_s_plus=110.0,
+            window_s_plus=113.0,
+            s_plus_delta="Up modestly",
+            season_l_plus=108.0,
+            window_l_plus=110.0,
+            l_plus_delta="Steady",
+            window_pfx_x=2.5,
+            season_pfx_x=2.3,
+            pfx_x_delta="Steady",
+            window_pfx_z=-1.2,
+            season_pfx_z=-1.0,
+            pfx_z_delta="Steady",
+            n_pitches_season=200,
+            n_pitches_window=25,
+            small_sample=False,
+            cold_start=False,
+        ),
+    )
+    return ctx
+
+
+class TestLocationInputAdjacency:
+    """PROMPT-06: Location input per-pitch-type unified view with adjacent contradiction metrics."""
+
+    def test_location_input_per_pitch_heading(self, monkeypatch):
+        """Output contains unified section header."""
+        _patch_league_baselines(monkeypatch)
+        ctx = _make_location_ctx()
+        output = _build_location_input(ctx)
+        assert "## Location Analysis by Pitch Type" in output
+
+    def test_location_input_no_separate_execution_section(self, monkeypatch):
+        """Old '## Execution Metrics' section header is removed."""
+        _patch_league_baselines(monkeypatch)
+        ctx = _make_location_ctx()
+        output = _build_location_input(ctx)
+        assert "## Execution Metrics" not in output
+
+    def test_location_input_no_separate_pvs_section(self, monkeypatch):
+        """Old '## P vs S Location Impact' section header is removed."""
+        _patch_league_baselines(monkeypatch)
+        ctx = _make_location_ctx()
+        output = _build_location_input(ctx)
+        assert "## P vs S Location Impact" not in output
+
+    def test_location_input_zone_xwhiff_chase_adjacent(self, monkeypatch):
+        """D-04: zone_rate, xWhiff_P, and chase_rate appear on the same line per pitch type."""
+        import re
+        _patch_league_baselines(monkeypatch)
+        ctx = _make_location_ctx()
+        output = _build_location_input(ctx)
+        # Zone%, xWhiff, and Chase% must appear on a single line
+        assert re.search(r"Zone%.*xWhiff.*Chase%", output), (
+            f"Expected Zone%/xWhiff/Chase% on same line, got:\n{output}"
+        )
+
+    def test_location_input_plus_scores_per_pitch(self, monkeypatch):
+        """Plus scores (P+, S+, L+) appear within each pitch type block, not in a separate section."""
+        _patch_league_baselines(monkeypatch)
+        ctx = _make_location_ctx()
+        output = _build_location_input(ctx)
+        # The old section header must be gone
+        assert "## Plus Scores" not in output
+        # P+, S+, L+ must appear in the output
+        assert "P+" in output
+        assert "S+" in output
+        assert "L+" in output
+
+    def test_location_input_missing_execution_graceful(self, monkeypatch):
+        """Missing execution data for a pitch type renders gracefully (no crash)."""
+        _patch_league_baselines(monkeypatch)
+        ctx = _make_location_ctx(include_execution=False)
+        # SL is in intermediates but not in execution -- should not crash
+        output = _build_location_input(ctx)
+        assert isinstance(output, str)
+        # Slider should still appear (from intermediates)
+        assert "Slider" in output
+        # Missing data should show placeholder
+        assert "--" in output
+
+    def test_location_input_header_includes_pitcher_name(self, monkeypatch):
+        """Output starts with pitcher name and handedness."""
+        _patch_league_baselines(monkeypatch)
+        ctx = _make_location_ctx()
+        output = _build_location_input(ctx)
+        assert "Test Pitcher" in output
+        assert "RHP" in output
