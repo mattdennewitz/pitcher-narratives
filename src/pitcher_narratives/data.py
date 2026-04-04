@@ -140,8 +140,7 @@ def load_statcast(pitcher_id: int) -> pl.DataFrame:
 
     Reads parquet files for all configured years in ``_YEARS``, filters
     each to allowed game types (excluding spring training and exhibition),
-    filters to the given pitcher, and concatenates results. Missing year
-    files are skipped gracefully.
+    filters to the given pitcher, and concatenates results.
 
     Args:
         pitcher_id: MLB pitcher ID to filter on.
@@ -151,13 +150,14 @@ def load_statcast(pitcher_id: int) -> pl.DataFrame:
         across all available years.
 
     Raises:
+        FileNotFoundError: If any year's parquet file is missing.
         ValueError: If no rows found for the given pitcher ID after filtering.
     """
     frames: list[pl.DataFrame] = []
     for year in _YEARS:
         path = DATA_DIR / f"statcast_{year}.parquet"
         if not path.exists():
-            continue
+            raise FileNotFoundError(f"Required Statcast file missing: {path}")
         df = pl.read_parquet(path)
         df = filter_game_type(df)
         filtered = df.filter(pl.col("pitcher") == pitcher_id)
@@ -185,7 +185,7 @@ def load_agg_csvs(pitcher_id: int) -> dict[str, pl.DataFrame]:
     """Load all 8 Pitching+ CSV aggregation files filtered to a pitcher.
 
     Reads year-prefixed CSV files for all configured years in ``_YEARS``
-    and concatenates per grain. Missing year files are skipped gracefully.
+    and concatenates per grain.
 
     Args:
         pitcher_id: MLB pitcher ID to filter on.
@@ -194,6 +194,9 @@ def load_agg_csvs(pitcher_id: int) -> dict[str, pl.DataFrame]:
         Dict keyed by logical name (e.g., 'pitcher', 'pitcher_type',
         'pitcher_appearance') with filtered polars DataFrames as values.
         The 'team' key contains unfiltered team-level data.
+
+    Raises:
+        FileNotFoundError: If any required year/grain CSV file is missing.
     """
     all_grains = [*_SEASON_GRAINS, *_APPEARANCE_GRAINS]
     result: dict[str, pl.DataFrame] = {}
@@ -203,7 +206,7 @@ def load_agg_csvs(pitcher_id: int) -> dict[str, pl.DataFrame]:
             filename = f"{year}-{grain}.csv"
             path = AGGS_DIR / filename
             if not path.exists():
-                continue
+                raise FileNotFoundError(f"Required agg file missing: {path}")
             pid = None if grain == "team" else pitcher_id
             frames.append(load_csv(filename, pid))
         if frames:
@@ -218,7 +221,7 @@ def load_all_statcast(columns: list[str] | None = None) -> pl.DataFrame:
 
     Reads parquet files for all configured years in ``_YEARS``, filters
     each to allowed game types (excluding spring training and exhibition),
-    and concatenates results. Missing year files are skipped gracefully.
+    and concatenates results.
 
     Unlike ``load_statcast()``, this does NOT filter by pitcher ID --
     it returns league-wide data suitable for baselines and percentile
@@ -231,14 +234,16 @@ def load_all_statcast(columns: list[str] | None = None) -> pl.DataFrame:
 
     Returns:
         Polars DataFrame containing regular-season rows for all pitchers
-        across all available years.  Returns an empty DataFrame if no
-        year files exist on disk.
+        across all available years.
+
+    Raises:
+        FileNotFoundError: If any year's parquet file is missing.
     """
     frames: list[pl.DataFrame] = []
     for year in _YEARS:
         path = DATA_DIR / f"statcast_{year}.parquet"
         if not path.exists():
-            continue
+            raise FileNotFoundError(f"Required Statcast file missing: {path}")
         read_cols = columns
         if read_cols is not None and "game_type" not in read_cols:
             read_cols = [*read_cols, "game_type"]
@@ -262,7 +267,7 @@ def load_full_agg(grain: str) -> pl.DataFrame:
     Reads year-prefixed CSV files for all configured years in ``_YEARS``
     and concatenates results. Each file is loaded via ``load_csv()`` with
     ``pitcher_id=None`` so game-type filtering and date parsing are applied
-    but no pitcher filter. Missing year files are skipped gracefully.
+    but no pitcher filter.
 
     Unlike ``load_agg_csvs()``, this loads a single grain rather than
     all 8 grains, and does NOT filter by pitcher ID.
@@ -272,15 +277,17 @@ def load_full_agg(grain: str) -> pl.DataFrame:
 
     Returns:
         Polars DataFrame containing all rows for the given grain across
-        all available years.  Returns an empty DataFrame if no year
-        files exist on disk.
+        all available years.
+
+    Raises:
+        FileNotFoundError: If any year's CSV file is missing.
     """
     frames: list[pl.DataFrame] = []
     for year in _YEARS:
         filename = f"{year}-{grain}.csv"
         path = AGGS_DIR / filename
         if not path.exists():
-            continue
+            raise FileNotFoundError(f"Required agg file missing: {path}")
         df = load_csv(filename, None)
         if not df.is_empty():
             frames.append(df)

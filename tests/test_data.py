@@ -262,18 +262,14 @@ def test_load_statcast_multi_year(tmp_path, monkeypatch):
     assert len(result) == 6
 
 
-def test_load_statcast_missing_year_skipped(monkeypatch):
-    """MYLD-03: load_statcast skips missing year files without crashing."""
+def test_load_statcast_missing_year_raises(monkeypatch):
+    """MYLD-03: load_statcast raises FileNotFoundError for missing year files."""
     import pitcher_narratives.data as data_mod
 
     # Add a year that doesn't have a parquet file on disk
     monkeypatch.setattr(data_mod, "_YEARS", [2024, 2025, 2026])
-    result = load_statcast(TEST_PITCHER)
-    assert not result.is_empty()
-    # 2024 parquet doesn't exist, should be skipped gracefully
-    years = set(result["game_year"].unique().to_list())
-    assert 2024 not in years
-    assert years <= {2025, 2026}
+    with pytest.raises(FileNotFoundError, match="statcast_2024"):
+        load_statcast(TEST_PITCHER)
 
 
 def test_load_agg_csvs_multi_year(tmp_path, monkeypatch):
@@ -319,18 +315,14 @@ def test_load_agg_csvs_multi_year(tmp_path, monkeypatch):
     assert set(result["pitcher"]["season"].unique().to_list()) == {2025, 2026}
 
 
-def test_load_agg_csvs_missing_year_skipped(monkeypatch):
-    """MYLD-03: load_agg_csvs skips missing year CSV files without crashing."""
+def test_load_agg_csvs_missing_year_raises(monkeypatch):
+    """MYLD-03: load_agg_csvs raises FileNotFoundError for missing year files."""
     import pitcher_narratives.data as data_mod
 
     # Add a year that doesn't have CSV files on disk
     monkeypatch.setattr(data_mod, "_YEARS", [2024, 2025, 2026])
-    result = load_agg_csvs(TEST_PITCHER)
-    assert not result["pitcher"].is_empty()
-    # 2024 CSVs don't exist, should be skipped gracefully
-    seasons = set(result["pitcher"]["season"].unique().to_list())
-    assert 2024 not in seasons
-    assert seasons <= {2025, 2026}
+    with pytest.raises(FileNotFoundError, match="2024-pitcher"):
+        load_agg_csvs(TEST_PITCHER)
 
 
 def test_season_baseline_per_season():
@@ -437,8 +429,8 @@ def test_load_all_statcast_multi_year(tmp_path, monkeypatch):
     assert len(result) == 4
 
 
-def test_load_all_statcast_missing_year(tmp_path, monkeypatch):
-    """CSMR-01: load_all_statcast skips missing year files gracefully."""
+def test_load_all_statcast_missing_year_raises(tmp_path, monkeypatch):
+    """CSMR-01: load_all_statcast raises FileNotFoundError for missing year files."""
     cols = {
         "pitcher": [12345],
         "player_name": ["Pitcher A"],
@@ -455,9 +447,8 @@ def test_load_all_statcast_missing_year(tmp_path, monkeypatch):
     monkeypatch.setattr(data_mod, "DATA_DIR", tmp_path)
     monkeypatch.setattr(data_mod, "_YEARS", [2025, 2026])
 
-    result = load_all_statcast()
-    assert not result.is_empty()
-    assert set(result["game_year"].unique().to_list()) == {2026}
+    with pytest.raises(FileNotFoundError, match="statcast_2025"):
+        load_all_statcast()
 
 
 def test_load_full_agg_returns_all_pitchers():
@@ -516,8 +507,8 @@ def test_load_full_agg_multi_year(tmp_path, monkeypatch):
     assert len(result) == 2
 
 
-def test_load_full_agg_missing_year(tmp_path, monkeypatch):
-    """CSMR-01: load_full_agg skips missing year CSV files gracefully."""
+def test_load_full_agg_missing_year_raises(tmp_path, monkeypatch):
+    """CSMR-01: load_full_agg raises FileNotFoundError for missing year files."""
     aggs_dir = tmp_path / "aggs"
     aggs_dir.mkdir()
 
@@ -543,9 +534,8 @@ def test_load_full_agg_missing_year(tmp_path, monkeypatch):
     monkeypatch.setattr(data_mod, "AGGS_DIR", aggs_dir)
     monkeypatch.setattr(data_mod, "_YEARS", [2025, 2026])
 
-    result = load_full_agg("pitcher_type")
-    assert not result.is_empty()
-    assert set(result["season"].unique().to_list()) == {2026}
+    with pytest.raises(FileNotFoundError, match="2025-pitcher_type"):
+        load_full_agg("pitcher_type")
 
 
 def test_new_functions_in_all():
