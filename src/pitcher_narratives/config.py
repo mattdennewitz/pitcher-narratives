@@ -20,7 +20,11 @@ __all__ = [
     "MAX_REVISIONS",
     "PROVIDERS",
     "THINKING_LEVELS",
+    "TOKEN_BUDGET_LARGE",
+    "TOKEN_BUDGET_MEDIUM",
+    "TOKEN_BUDGET_SMALL",
     "agent_kwargs",
+    "cap_thinking",
     "make_model_settings",
     "setup_logging",
 ]
@@ -32,6 +36,15 @@ PROVIDERS = {
 }
 
 THINKING_LEVELS: list[ThinkingEffort] = ["minimal", "low", "medium", "high", "xhigh"]
+
+TOKEN_BUDGET_SMALL = 1024
+"""Anchor, auditor, executive summary -- short structured output."""
+
+TOKEN_BUDGET_MEDIUM = 2048
+"""Specialist builders -- moderate analytical output."""
+
+TOKEN_BUDGET_LARGE = 4096
+"""Writer, editor, answerer, stuff explainer -- long-form prose."""
 
 MAX_REVISIONS = 2
 """Maximum number of editor revision passes before accepting the capsule."""
@@ -66,7 +79,15 @@ def make_model_settings(
     elif provider == "claude":
         return ModelSettings(thinking=thinking, temperature=1, max_tokens=max_tokens)
     else:
-        return ModelSettings(temperature=temperature)
+        return ModelSettings(thinking=thinking, temperature=temperature, max_tokens=max_tokens)
+
+
+def cap_thinking(thinking: ThinkingEffort, ceiling: ThinkingEffort) -> ThinkingEffort:
+    """Clamp thinking effort to the lower of the given level and the ceiling.
+
+    Uses THINKING_LEVELS index ordering: minimal < low < medium < high < xhigh.
+    """
+    return thinking if THINKING_LEVELS.index(thinking) <= THINKING_LEVELS.index(ceiling) else ceiling
 
 
 def agent_kwargs(prompt: Any, model_override: Any = None) -> dict[str, Any]:

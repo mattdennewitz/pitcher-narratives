@@ -41,7 +41,11 @@ from pitcher_narratives.config import (
     MAX_REVISIONS,
     PROVIDERS,
     THINKING_LEVELS,
+    TOKEN_BUDGET_LARGE,
+    TOKEN_BUDGET_MEDIUM,
+    TOKEN_BUDGET_SMALL,
     agent_kwargs,
+    cap_thinking,
     make_model_settings,
 )
 from pitcher_narratives.context import PitcherContext
@@ -445,15 +449,17 @@ def _make_agents(
         raise ValueError(f"Unknown provider {provider!r}, expected one of: {', '.join(PROVIDERS)}")
     model = PROVIDERS[provider]
 
-    analyst_settings = make_model_settings(provider, thinking, 0.3)   # synthesizer + stuff explainer + summary
-    writer_settings = make_model_settings(provider, thinking, 0.7)    # editor
-    checker_settings = make_model_settings(provider, thinking, 0.1)   # anchor
+    analyst_settings = make_model_settings(provider, cap_thinking(thinking, "medium"), 0.3, max_tokens=TOKEN_BUDGET_MEDIUM)
+    writer_settings = make_model_settings(provider, thinking, 0.7, max_tokens=TOKEN_BUDGET_LARGE)
+    checker_settings = make_model_settings(provider, cap_thinking(thinking, "low"), 0.1, max_tokens=TOKEN_BUDGET_SMALL)
+    stuff_settings = make_model_settings(provider, cap_thinking(thinking, "medium"), 0.3, max_tokens=TOKEN_BUDGET_LARGE)
+    summary_settings = make_model_settings(provider, cap_thinking(thinking, "medium"), 0.3, max_tokens=TOKEN_BUDGET_SMALL)
 
     str_prompts_and_settings = [
         (_SYNTHESIZER_PROMPT, analyst_settings),
         (_EDITOR_PROMPT, writer_settings),
-        (_STUFF_EXPLAINER_PROMPT, analyst_settings),
-        (_EXECUTIVE_SUMMARY_PROMPT, analyst_settings),
+        (_STUFF_EXPLAINER_PROMPT, stuff_settings),
+        (_EXECUTIVE_SUMMARY_PROMPT, summary_settings),
     ]
     str_agents: _StrAgents = tuple(  # type: ignore[assignment]
         Agent(model, output_type=str, system_prompt=p, model_settings=s, defer_model_check=True)

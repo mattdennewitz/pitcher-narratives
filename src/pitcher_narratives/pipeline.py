@@ -41,7 +41,11 @@ from pydantic_ai.settings import ThinkingEffort
 from pitcher_narratives.config import (
     MAX_REVISIONS,
     PROVIDERS,
+    TOKEN_BUDGET_LARGE,
+    TOKEN_BUDGET_MEDIUM,
+    TOKEN_BUDGET_SMALL,
     agent_kwargs,
+    cap_thinking,
     make_model_settings,
 )
 from pitcher_narratives.context import PitcherContext
@@ -993,9 +997,11 @@ def make_pipeline_agents(
 
     # Split temperature by role: specialists need precision, writer needs voice,
     # auditor/anchor need maximum determinism.
-    specialist_settings = make_model_settings(provider, thinking, 0.3)
-    writer_settings = make_model_settings(provider, thinking, 0.7)
-    checker_settings = make_model_settings(provider, thinking, 0.1)
+    # Thinking caps: checker=low, specialist=medium, writer=uncapped.
+    specialist_settings = make_model_settings(provider, cap_thinking(thinking, "medium"), 0.3, max_tokens=TOKEN_BUDGET_MEDIUM)
+    writer_settings = make_model_settings(provider, thinking, 0.7, max_tokens=TOKEN_BUDGET_LARGE)
+    checker_settings = make_model_settings(provider, cap_thinking(thinking, "low"), 0.1, max_tokens=TOKEN_BUDGET_SMALL)
+    summary_settings = make_model_settings(provider, cap_thinking(thinking, "medium"), 0.3, max_tokens=TOKEN_BUDGET_SMALL)
 
     def _specialist(prompt: str) -> Agent[None, str]:
         return Agent(model, output_type=str, system_prompt=prompt,
@@ -1016,7 +1022,8 @@ def make_pipeline_agents(
                       model_settings=checker_settings, defer_model_check=True),
         anchor=Agent(model, output_type=AnchorResult, system_prompt=ANCHOR_PROMPT,
                      model_settings=checker_settings, defer_model_check=True),
-        summary=_specialist(_EXECUTIVE_SUMMARY_PROMPT),
+        summary=Agent(model, output_type=str, system_prompt=_EXECUTIVE_SUMMARY_PROMPT,
+                      model_settings=summary_settings, defer_model_check=True),
     )
 
 
