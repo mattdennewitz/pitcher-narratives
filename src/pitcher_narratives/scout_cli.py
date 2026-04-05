@@ -10,7 +10,7 @@ import argparse
 import os
 import sys
 
-from pitcher_narratives.config import API_KEYS
+from pitcher_narratives.config import API_KEYS, setup_logging
 from pitcher_narratives.scout import scout_appearances
 
 
@@ -88,6 +88,7 @@ def main() -> None:
     from dotenv import load_dotenv
 
     load_dotenv()
+    setup_logging()
     args = parse_args()
 
     print("Scanning appearances...", file=sys.stderr)

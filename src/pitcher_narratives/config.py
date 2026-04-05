@@ -10,6 +10,8 @@ import logging
 import sys
 from typing import Any
 
+import logfire
+
 from pydantic_ai.models.google import GoogleModelSettings
 from pydantic_ai.settings import ModelSettings, ThinkingEffort
 
@@ -76,7 +78,8 @@ def agent_kwargs(prompt: Any, model_override: Any = None) -> dict[str, Any]:
 
 
 def setup_logging() -> None:
-    """Configure logging for pitcher_narratives to stderr."""
+    """Configure logging and Logfire instrumentation for pitcher_narratives."""
+    logfire.configure()
     handler = logging.StreamHandler(sys.stderr)
     handler.setFormatter(logging.Formatter("%(name)s: %(message)s"))
     root = logging.getLogger("pitcher_narratives")
