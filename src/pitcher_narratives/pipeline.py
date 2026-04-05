@@ -35,7 +35,7 @@ import logging
 from typing import Any, NamedTuple
 
 from pydantic import BaseModel
-from pydantic_ai import Agent
+from pydantic_ai import Agent, CachePoint
 from pydantic_ai.settings import ThinkingEffort
 
 from pitcher_narratives.config import (
@@ -62,14 +62,28 @@ from pitcher_narratives.anchor import (
 
 __all__ = [
     "AuditFlag", "AuditResult", "ExecutiveSummary", "PipelineAgents", "PipelineResult",
-    "audit_and_revise_specialists", "build_writer_input",
+    "UserPrompt", "audit_and_revise_specialists", "build_writer_input",
     "generate_pipeline_streaming", "make_pipeline_agents", "run_specialists",
     "write_pipeline_data_file",
 ]
 
 log = logging.getLogger("pitcher_narratives.pipeline")
 
+UserPrompt = list[str | CachePoint]
+"""Type alias for user prompts with cache breakpoints."""
 
+
+def _flatten_prompt(parts: UserPrompt) -> str:
+    """Join text parts of a user prompt, stripping CachePoints."""
+    return "\n".join(p for p in parts if isinstance(p, str))
+
+
+def _render_user_prompt(parts: UserPrompt) -> str:
+    """Render a user prompt (with CachePoints) as readable text for tracing."""
+    return "\n".join(
+        "  -- [cache breakpoint] --" if isinstance(p, CachePoint) else p
+        for p in parts
+    )
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -441,22 +455,27 @@ def _pitch_types(ctx: PitcherContext) -> list[str]:
     return [p.pitch_type for p in ctx.arsenal]
 
 
-def _build_stuff_input(ctx: PitcherContext) -> str:
+def _build_stuff_input(ctx: PitcherContext) -> UserPrompt:
     """Build input for the stuff specialist with pre-computed outlier annotations.
 
     Each metric is annotated with its delta from league average and an
     explicit NORMAL/OUTLIER tag so the LLM does not need to compute
     z-scores itself.
+
+    Returns a UserPrompt list with a CachePoint between the header+baselines
+    prefix (cacheable across same-pitcher reruns) and the data section.
     """
     baselines = compute_league_baselines()
     baseline_lookup = {b.pitch_type: b for b in baselines}
 
-    lines = [f"## {ctx.pitcher_name} ({ctx.throws}HP, {ctx.role})\n"]
-    lines.append(render_league_baselines(_pitch_types(ctx)))
-    lines.append("")
-    lines.append("## Arsenal Physical Profile (with league comparison)")
-    lines.append("Each metric shows: value (delta from league avg) [NORMAL/OUTLIER tag]")
-    lines.append("")
+    header_lines = [f"## {ctx.pitcher_name} ({ctx.throws}HP, {ctx.role})\n"]
+    header_lines.append(render_league_baselines(_pitch_types(ctx)))
+    header_lines.append("")
+
+    data_lines: list[str] = []
+    data_lines.append("## Arsenal Physical Profile (with league comparison)")
+    data_lines.append("Each metric shows: value (delta from league avg) [NORMAL/OUTLIER tag]")
+    data_lines.append("")
     for p in ctx.arsenal:
         sp = f"{p.window_s_plus:.0f}" if p.window_s_plus is not None else "--"
         b = baseline_lookup.get(p.pitch_type)
@@ -467,7 +486,7 @@ def _build_stuff_input(ctx: PitcherContext) -> str:
             pfx_x_tag = outlier_tag(p.window_pfx_x, b.avg_pfx_x, b.pfx_x_std)
             pfx_z_delta = p.window_pfx_z - b.avg_pfx_z
             pfx_z_tag = outlier_tag(p.window_pfx_z, b.avg_pfx_z, b.pfx_z_std)
-            lines.append(
+            data_lines.append(
                 f"- {p.pitch_name} ({p.pitch_type}):\n"
                 f"    Velocity: {p.window_velo:.1f} mph ({velo_delta:+.1f} vs league avg) [{velo_tag}]\n"
                 f"    pfx_x: {p.window_pfx_x:.1f} in ({pfx_x_delta:+.1f} vs avg) [{pfx_x_tag}]\n"
@@ -475,7 +494,7 @@ def _build_stuff_input(ctx: PitcherContext) -> str:
                 f"    S+: {sp} (season {p.season_s_plus:.0f}, {p.s_plus_delta})"
             )
         else:
-            lines.append(
+            data_lines.append(
                 f"- {p.pitch_name} ({p.pitch_type}): "
                 f"{p.window_velo:.1f} mph ({p.velo_delta}), "
                 f"pfx_x {p.window_pfx_x:.1f} in ({p.pfx_x_delta}), "
@@ -483,29 +502,29 @@ def _build_stuff_input(ctx: PitcherContext) -> str:
                 f"S+ {sp} (season {p.season_s_plus:.0f}, {p.s_plus_delta})"
             )
 
-    lines.append("\n## Stuff-Only Model Predictions (S-variant, with league comparison)")
+    data_lines.append("\n## Stuff-Only Model Predictions (S-variant, with league comparison)")
     for im in ctx.intermediates:
         b = baseline_lookup.get(im.pitch_type)
         comparisons = format_s_variant_comparisons(b, im.xswing_s, im.xwhiff_s, im.xrv100_s)
-        lines.append(f"- {im.pitch_name} ({im.pitch_type}): {', '.join(comparisons)}")
+        data_lines.append(f"- {im.pitch_name} ({im.pitch_type}): {', '.join(comparisons)}")
 
     # Cross-season context (when available)
     if ctx.cross_season_summary is not None or ctx.arsenal_trend is not None:
-        lines.append("\n## Year-over-Year Context")
+        data_lines.append("\n## Year-over-Year Context")
         css = ctx.cross_season_summary
         if css is not None:
-            lines.append(f"Comparing {css.current_season} vs {css.prior_season}:")
-            lines.append(f"- Velocity YoY: {css.velo_delta}")
-            lines.append(f"- P+ YoY: {css.p_plus_delta}")
-            lines.append(f"- S+ YoY: {css.s_plus_delta}")
+            data_lines.append(f"Comparing {css.current_season} vs {css.prior_season}:")
+            data_lines.append(f"- Velocity YoY: {css.velo_delta}")
+            data_lines.append(f"- P+ YoY: {css.p_plus_delta}")
+            data_lines.append(f"- S+ YoY: {css.s_plus_delta}")
         at = ctx.arsenal_trend
         if at is not None:
             if at.added_pitches:
                 added = ", ".join(p.pitch_name for p in at.added_pitches)
-                lines.append(f"- Added pitches: {added}")
+                data_lines.append(f"- Added pitches: {added}")
             if at.dropped_pitches:
                 dropped = ", ".join(p.pitch_name for p in at.dropped_pitches)
-                lines.append(f"- Dropped pitches: {dropped}")
+                data_lines.append(f"- Dropped pitches: {dropped}")
             for pt in at.pitch_trends[:4]:
                 mov_parts = []
                 if "Steady" not in pt.pfx_x_delta:
@@ -513,17 +532,23 @@ def _build_stuff_input(ctx: PitcherContext) -> str:
                 if "Steady" not in pt.pfx_z_delta:
                     mov_parts.append(f"V-mov {pt.pfx_z_delta}")
                 if mov_parts:
-                    lines.append(f"- {pt.pitch_name} movement: {', '.join(mov_parts)}")
+                    data_lines.append(f"- {pt.pitch_name} movement: {', '.join(mov_parts)}")
 
-    return "\n".join(lines)
+    return ["\n".join(header_lines), CachePoint(), "\n".join(data_lines)]
 
 
-def _build_location_input(ctx: PitcherContext) -> str:
-    """Build input for the location specialist from intermediates + execution."""
-    lines = [f"## {ctx.pitcher_name} ({ctx.throws}HP, {ctx.role})\n"]
-    lines.append(render_league_baselines(_pitch_types(ctx)))
-    lines.append("")
-    lines.append("## P vs S Location Impact")
+def _build_location_input(ctx: PitcherContext) -> UserPrompt:
+    """Build input for the location specialist from intermediates + execution.
+
+    Returns a UserPrompt list with a CachePoint between the header+baselines
+    prefix and the location data section.
+    """
+    header_lines = [f"## {ctx.pitcher_name} ({ctx.throws}HP, {ctx.role})\n"]
+    header_lines.append(render_league_baselines(_pitch_types(ctx)))
+    header_lines.append("")
+
+    data_lines: list[str] = []
+    data_lines.append("## P vs S Location Impact")
     for im in ctx.intermediates:
         def _d(p: float | None, s: float | None) -> str:
             if p is not None and s is not None:
@@ -533,53 +558,64 @@ def _build_location_input(ctx: PitcherContext) -> str:
             if p is not None and s is not None:
                 return f"{(p - s):+.2f}"
             return "--"
-        lines.append(
+        data_lines.append(
             f"- {im.pitch_name} ({im.pitch_type}): "
             f"xSwing P {im.xswing_p * 100:.1f}% S {im.xswing_s * 100:.1f}% (delta {_d(im.xswing_p, im.xswing_s)}), "
             f"xWhiff P {im.xwhiff_p * 100:.1f}% S {im.xwhiff_s * 100:.1f}% (delta {_d(im.xwhiff_p, im.xwhiff_s)}), "
             f"xRV100 P {im.xrv100_p:.2f} S {im.xrv100_s:.2f} (delta {_drv(im.xrv100_p, im.xrv100_s)})"
             if im.xswing_p is not None else f"- {im.pitch_name} ({im.pitch_type}): no data"
         )
-    lines.append("\n## Execution Metrics")
+    data_lines.append("\n## Execution Metrics")
     for e in ctx.execution:
-        lines.append(
+        data_lines.append(
             f"- {e.pitch_name} ({e.pitch_type}): "
             f"Zone% {e.zone_rate:.1f}, Chase% {e.chase_rate:.1f}, CSW% {e.csw_pct:.1f}"
         )
-    lines.append("\n## Plus Scores (P+ vs S+ vs L+)")
+    data_lines.append("\n## Plus Scores (P+ vs S+ vs L+)")
     for p in ctx.arsenal:
         wp = f"{p.window_p_plus:.0f}" if p.window_p_plus is not None else "--"
         ws = f"{p.window_s_plus:.0f}" if p.window_s_plus is not None else "--"
         wl = f"{p.window_l_plus:.0f}" if p.window_l_plus is not None else "--"
-        lines.append(f"- {p.pitch_name} ({p.pitch_type}): P+ {wp}, S+ {ws}, L+ {wl}")
-    return "\n".join(lines)
+        data_lines.append(f"- {p.pitch_name} ({p.pitch_type}): P+ {wp}, S+ {ws}, L+ {wl}")
+    return ["\n".join(header_lines), CachePoint(), "\n".join(data_lines)]
 
 
-def _build_runvalue_input(ctx: PitcherContext) -> str:
-    """Build input for the run value specialist from attributions."""
-    lines = [f"## {ctx.pitcher_name} ({ctx.throws}HP, {ctx.role})\n"]
-    lines.append(render_league_baselines(_pitch_types(ctx)))
-    lines.append("")
-    lines.append("## Component Attribution (xRV100 Decomposition)")
+def _build_runvalue_input(ctx: PitcherContext) -> UserPrompt:
+    """Build input for the run value specialist from attributions.
+
+    Returns a UserPrompt list with a CachePoint between the header+baselines
+    prefix and the attribution data section.
+    """
+    header_lines = [f"## {ctx.pitcher_name} ({ctx.throws}HP, {ctx.role})\n"]
+    header_lines.append(render_league_baselines(_pitch_types(ctx)))
+    header_lines.append("")
+
+    data_lines: list[str] = []
+    data_lines.append("## Component Attribution (xRV100 Decomposition)")
     for attr in ctx.attributions:
-        lines.append(f"\n### {attr.pitch_name} ({attr.pitch_type}) — total xRV100: {attr.total_xrv100:.2f}")
+        data_lines.append(f"\n### {attr.pitch_name} ({attr.pitch_type}) — total xRV100: {attr.total_xrv100:.2f}")
         for oc in attr.contributions:
             share = (
                 f"{(oc.contribution / attr.total_xrv100 * 100):+.1f}%"
                 if attr.total_xrv100 != 0
                 else f"{0:.1f}%"
             )
-            lines.append(f"  {oc.outcome}: {oc.contribution:+.3f} ({share})")
-    return "\n".join(lines)
+            data_lines.append(f"  {oc.outcome}: {oc.contribution:+.3f} ({share})")
+    return ["\n".join(header_lines), CachePoint(), "\n".join(data_lines)]
 
 
-def _build_trend_input(ctx: PitcherContext) -> str:
-    """Build input for the trend specialist — arsenal deltas, release point, hard-hit."""
+def _build_trend_input(ctx: PitcherContext) -> UserPrompt:
+    """Build input for the trend specialist -- arsenal deltas, release point, hard-hit.
+
+    Returns a UserPrompt list with a CachePoint between the header+baselines
+    prefix and the trend data sections.
+    """
     baselines = render_league_baselines(_pitch_types(ctx))
-    sections = [
+    prefix_sections = [
         f"## {ctx.pitcher_name} ({ctx.throws}HP, {ctx.role})\n",
         baselines,
-        "",
+    ]
+    data_sections = [
         ctx._render_fastball_section(),
         ctx._render_arsenal_section(),
         ctx._render_release_point_section(),
@@ -587,20 +623,29 @@ def _build_trend_input(ctx: PitcherContext) -> str:
     ]
     # Per-appearance pitch trends (three-way comparison)
     if ctx.appearance_pitch_trends is not None:
-        sections.append(ctx._render_appearance_pitch_trends_section())
+        data_sections.append(ctx._render_appearance_pitch_trends_section())
     # Cross-season context (when available) — trends specialist gets full YoY section
     if ctx.cross_season_summary is not None or ctx.arsenal_trend is not None:
-        sections.append(ctx._render_yoy_section())
-    return "\n\n".join(s for s in sections if s)
+        data_sections.append(ctx._render_yoy_section())
+    return [
+        "\n\n".join(s for s in prefix_sections if s),
+        CachePoint(),
+        "\n\n".join(s for s in data_sections if s),
+    ]
 
 
-def _build_game_shape_input(ctx: PitcherContext) -> str:
-    """Build input for the game shape specialist — TTO, velocity arc, workload."""
+def _build_game_shape_input(ctx: PitcherContext) -> UserPrompt:
+    """Build input for the game shape specialist -- TTO, velocity arc, workload.
+
+    Returns a UserPrompt list with a CachePoint between the header+baselines
+    prefix and the game shape data sections.
+    """
     baselines = render_league_baselines(_pitch_types(ctx))
-    sections = [
+    prefix_sections = [
         f"## {ctx.pitcher_name} ({ctx.throws}HP, {ctx.role})\n",
         baselines,
-        "",
+    ]
+    data_sections = [
         ctx._render_tto_section(),
         ctx._render_fastball_section(),
         ctx._render_appearances_section(),
@@ -639,8 +684,12 @@ def _build_game_shape_input(ctx: PitcherContext) -> str:
                 yoy_lines.append(
                     f"- Dropped: {', '.join(p.pitch_name for p in at.dropped_pitches)}"
                 )
-        sections.append("\n".join(yoy_lines))
-    return "\n\n".join(s for s in sections if s)
+        data_sections.append("\n".join(yoy_lines))
+    return [
+        "\n\n".join(s for s in prefix_sections if s),
+        CachePoint(),
+        "\n\n".join(s for s in data_sections if s),
+    ]
 
 
 def build_writer_input(
@@ -695,8 +744,8 @@ def _build_specialist_revision_input(
     )
 
 
-def _get_specialist_input(name: str, ctx: PitcherContext) -> str:
-    """Get the data input for a named specialist."""
+def _get_specialist_input(name: str, ctx: PitcherContext) -> UserPrompt:
+    """Get the data input for a named specialist as a UserPrompt (with CachePoints)."""
     builders = {
         "stuff": _build_stuff_input,
         "location": _build_location_input,
@@ -705,6 +754,11 @@ def _get_specialist_input(name: str, ctx: PitcherContext) -> str:
         "game_shape": _build_game_shape_input,
     }
     return builders[name](ctx)
+
+
+def _get_specialist_input_text(name: str, ctx: PitcherContext) -> str:
+    """Get specialist data input as plain text (no CachePoints)."""
+    return _flatten_prompt(_get_specialist_input(name, ctx))
 
 
 async def audit_and_revise_specialists(
@@ -727,9 +781,9 @@ async def audit_and_revise_specialists(
         name: getattr(specialists, name) for name in specialist_names
     }
 
-    # Build ground truth input per specialist
+    # Build ground truth input per specialist (plain text for audit f-strings)
     ground_truths = {
-        name: _get_specialist_input(name, ctx) for name in specialist_names
+        name: _get_specialist_input_text(name, ctx) for name in specialist_names
     }
 
     # Phase 1.5a: Audit all 5 in parallel
@@ -827,11 +881,11 @@ def write_pipeline_data_file(
 
     # Phase 1: Specialist prompts + inputs
     specialist_phases = [
-        ("SPECIALIST 1: STUFF", _STUFF_SPECIALIST_PROMPT, _build_stuff_input(ctx)),
-        ("SPECIALIST 2: LOCATION", _LOCATION_SPECIALIST_PROMPT, _build_location_input(ctx)),
-        ("SPECIALIST 3: RUN VALUE", _RUNVALUE_SPECIALIST_PROMPT, _build_runvalue_input(ctx)),
-        ("SPECIALIST 4: TRENDS", _TREND_SPECIALIST_PROMPT, _build_trend_input(ctx)),
-        ("SPECIALIST 5: GAME SHAPE", _GAME_SHAPE_SPECIALIST_PROMPT, _build_game_shape_input(ctx)),
+        ("SPECIALIST 1: STUFF", _STUFF_SPECIALIST_PROMPT, _render_user_prompt(_build_stuff_input(ctx))),
+        ("SPECIALIST 2: LOCATION", _LOCATION_SPECIALIST_PROMPT, _render_user_prompt(_build_location_input(ctx))),
+        ("SPECIALIST 3: RUN VALUE", _RUNVALUE_SPECIALIST_PROMPT, _render_user_prompt(_build_runvalue_input(ctx))),
+        ("SPECIALIST 4: TRENDS", _TREND_SPECIALIST_PROMPT, _render_user_prompt(_build_trend_input(ctx))),
+        ("SPECIALIST 5: GAME SHAPE", _GAME_SHAPE_SPECIALIST_PROMPT, _render_user_prompt(_build_game_shape_input(ctx))),
     ]
     for label, system, user in specialist_phases:
         sections.append(f"\n{sep}\n{label}\n{sep}\n")
@@ -988,7 +1042,7 @@ async def run_specialists(
         "game_shape": (game_shape_agent, _build_game_shape_input(ctx)),
     }
 
-    async def _run(agent: Agent[None, str], prompt: str) -> str:
+    async def _run(agent: Agent[None, str], prompt: str | UserPrompt) -> str:
         result = await agent.run(**agent_kwargs(prompt, _model_override))
         return result.output
 
