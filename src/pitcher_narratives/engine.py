@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from datetime import date
 from typing import Any, cast
 
 import polars as pl
@@ -43,6 +44,7 @@ __all__ = [
     "TTOPitchType",
     "TTOPlatoonSplit",
     "TTOSplit",
+    "TemporalContext",
     "VelocityArc",
     "WorkloadContext",
     "compute_arsenal_summary",
@@ -54,6 +56,7 @@ __all__ = [
     "compute_intermediate_probabilities",
     "compute_platoon_mix",
     "compute_release_point_metrics",
+    "compute_temporal_context",
     "compute_tto_analysis",
     "compute_velocity_arc",
     "compute_workload_context",
@@ -1001,6 +1004,68 @@ class WorkloadContext:
 
     workload_concern: bool
     """True when max_consecutive_days >= 3."""
+
+
+@dataclass
+class TemporalContext:
+    """Temporal grounding for LLM narratives -- prevents cross-season hallucination."""
+
+    analysis_date: date
+    current_season: int
+    current_season_appearances: int
+    current_season_first_date: str
+    """ISO date of first appearance this season."""
+    current_season_ip: str
+    """Baseball-notation IP total for current season."""
+    prior_season: int
+    prior_season_appearances: int
+    prior_season_ip: str
+    """Baseball-notation IP total for prior season."""
+    prior_year_relevance: str
+    """'HIGH', 'MODERATE', or 'LOW'."""
+    prior_year_relevance_reason: str
+    """Human-readable explanation for the LLM."""
+
+
+@dataclass
+class CrossSeasonSummary:
+    """Year-over-year pitcher-level metric deltas.
+
+    Produced by compute_cross_season_summary(). None when the pitcher
+    has only one season of data.
+    """
+
+    current_season: int
+    prior_season: int
+
+    # Velocity
+    current_velo: float
+    prior_velo: float
+    velo_delta: str
+    """Qualitative YoY velocity delta, e.g., 'Up 1.2 mph'."""
+
+    # P+ / S+ / L+
+    current_p_plus: float
+    prior_p_plus: float
+    p_plus_delta: str
+
+    current_s_plus: float
+    prior_s_plus: float
+    s_plus_delta: str
+
+    current_l_plus: float
+    prior_l_plus: float
+    l_plus_delta: str
+
+    # Workload
+    current_appearances: int
+    prior_appearances: int
+    current_ip: float
+    """Total innings pitched (decimal, not baseball notation)."""
+    prior_ip: float
+    current_avg_pitches: float
+    """Mean pitches per appearance."""
+    prior_avg_pitches: float
 
 
 @dataclass
@@ -2003,6 +2068,187 @@ def compute_workload_context(data: PitcherData) -> WorkloadContext:
         appearances=workload_entries,
         max_consecutive_days=max_consec,
         workload_concern=max_consec >= 3,
+    )
+
+
+def _sum_baseball_ip(ip_strings: list[str]) -> str:
+    """Sum a list of baseball-notation IP strings.
+
+    Each IP string is in the format "W.R" where W is whole innings and
+    R is the remainder (0, 1, or 2 thirds of an inning). Converts each
+    to thirds, sums, and converts back.
+
+    Args:
+        ip_strings: List of IP strings, e.g., ["5.1", "3.2", "6.0"].
+
+    Returns:
+        Summed IP in baseball notation, e.g., "15.0".
+    """
+    total_thirds = 0
+    for ip in ip_strings:
+        parts = ip.split(".")
+        whole = int(parts[0])
+        remainder = int(parts[1]) if len(parts) > 1 else 0
+        total_thirds += whole * 3 + remainder
+    return f"{total_thirds // 3}.{total_thirds % 3}"
+
+
+def compute_temporal_context(data: PitcherData) -> TemporalContext:
+    """Compute temporal grounding for LLM narratives.
+
+    Splits appearances by season year, counts per-season appearances and
+    IP totals, and assigns a prior-year relevance tier that gates how
+    much weight the LLM gives to last season's workload.
+
+    Args:
+        data: PitcherData bundle from data.load_pitcher_data.
+
+    Returns:
+        TemporalContext with per-season stats and relevance tier.
+    """
+    appearances = data.appearances.with_columns(
+        pl.col("game_date").dt.year().alias("season_year")
+    )
+
+    current_season = int(appearances["season_year"].max())
+    prior_season = current_season - 1
+
+    # Current season appearances
+    current_apps = appearances.filter(pl.col("season_year") == current_season)
+    current_season_appearances = current_apps.height
+
+    # Current season first date
+    current_first_date = str(current_apps["game_date"].min())
+
+    # Current season IP: compute IP for each appearance and sum
+    current_game_pks = current_apps["game_pk"].to_list()
+    current_ip_strings = [_compute_ip(data.statcast, int(gpk)) for gpk in current_game_pks]
+    current_season_ip = _sum_baseball_ip(current_ip_strings) if current_ip_strings else "0.0"
+
+    # Prior season appearances
+    prior_apps = appearances.filter(pl.col("season_year") == prior_season)
+    prior_season_appearances = prior_apps.height
+
+    # Prior season IP
+    if prior_season_appearances > 0:
+        prior_game_pks = prior_apps["game_pk"].to_list()
+        prior_ip_strings = [_compute_ip(data.statcast, int(gpk)) for gpk in prior_game_pks]
+        prior_season_ip = _sum_baseball_ip(prior_ip_strings)
+    else:
+        prior_season_ip = "0.0"
+
+    # Prior-year relevance tier
+    if prior_season_appearances == 0:
+        relevance = "HIGH"
+        relevance_reason = (
+            f"No {prior_season} data available. Current season sample "
+            f"({current_season_appearances} appearances) stands alone."
+        )
+    elif current_season_appearances < 10:
+        relevance = "HIGH"
+        relevance_reason = (
+            f"Current season sample is too small to establish its own workload "
+            f"narrative. {prior_season} workload ({prior_season_appearances} G / "
+            f"{prior_season_ip} IP) is plausible residual context, but do not "
+            f"treat the two seasons as a continuous timeline."
+        )
+    elif current_season_appearances <= 30:
+        relevance = "MODERATE"
+        relevance_reason = (
+            "Patterns are emerging but sample is still growing. Prior year "
+            "adds context for year-over-year comparison."
+        )
+    else:
+        relevance = "LOW"
+        relevance_reason = (
+            "Current season has enough volume to carry its own workload "
+            "narrative. Use prior year for trend comparison only, not "
+            "workload narrative."
+        )
+
+    return TemporalContext(
+        analysis_date=date.today(),
+        current_season=current_season,
+        current_season_appearances=current_season_appearances,
+        current_season_first_date=current_first_date,
+        current_season_ip=current_season_ip,
+        prior_season=prior_season,
+        prior_season_appearances=prior_season_appearances,
+        prior_season_ip=prior_season_ip,
+        prior_year_relevance=relevance,
+        prior_year_relevance_reason=relevance_reason,
+    )
+
+
+def compute_cross_season_summary(data: PitcherData) -> CrossSeasonSummary | None:
+    """Compute cross-season YoY deltas for pitcher-level metrics.
+
+    Compares current (max) season baselines with prior-season baselines
+    to produce year-over-year delta strings for velocity, P+, S+, L+,
+    and basic workload metrics (appearances, IP, avg pitches).
+
+    Returns None when prior-season data is missing (SDLT-03).
+
+    Args:
+        data: PitcherData bundle from data.load_pitcher_data.
+
+    Returns:
+        CrossSeasonSummary with YoY deltas, or None for single-season pitchers.
+    """
+    if data.prior_season_baseline.is_empty():
+        return None
+
+    # Extract season years
+    current_season = int(data.season_baseline["season"][0])
+    prior_seasons = data.prior_season_baseline["season"].unique().to_list()
+    prior_season = int(max(prior_seasons))
+
+    # P+ / S+ / L+ from season baselines (SDLT-01)
+    current_p_plus = _safe_metric(data.season_baseline, "P+")
+    current_s_plus = _safe_metric(data.season_baseline, "S+")
+    current_l_plus = _safe_metric(data.season_baseline, "L+")
+
+    prior_p_plus = _safe_metric(data.prior_season_baseline, "P+")
+    prior_s_plus = _safe_metric(data.prior_season_baseline, "S+")
+    prior_l_plus = _safe_metric(data.prior_season_baseline, "L+")
+
+    # Velocity from statcast release_speed per season (SDLT-01)
+    velo_by_season = _per_season_velo(data.statcast)
+    current_velo = velo_by_season.get(current_season, 0.0)
+    prior_velo = velo_by_season.get(prior_season, 0.0)
+
+    # Delta strings reusing existing functions (SDLT-02)
+    velo_delta = _velo_delta_string(current_velo - prior_velo)
+    p_plus_delta = _pplus_delta_string(current_p_plus - prior_p_plus)
+    s_plus_delta = _pplus_delta_string(current_s_plus - prior_s_plus)
+    l_plus_delta = _pplus_delta_string(current_l_plus - prior_l_plus)
+
+    # Workload per season
+    workload = _per_season_workload(data.statcast, data.appearances)
+    current_wl = workload.get(current_season, {})
+    prior_wl = workload.get(prior_season, {})
+
+    return CrossSeasonSummary(
+        current_season=current_season,
+        prior_season=prior_season,
+        current_velo=current_velo,
+        prior_velo=prior_velo,
+        velo_delta=velo_delta,
+        current_p_plus=current_p_plus,
+        prior_p_plus=prior_p_plus,
+        p_plus_delta=p_plus_delta,
+        current_s_plus=current_s_plus,
+        prior_s_plus=prior_s_plus,
+        s_plus_delta=s_plus_delta,
+        current_l_plus=current_l_plus,
+        prior_l_plus=prior_l_plus,
+        l_plus_delta=l_plus_delta,
+        current_appearances=int(current_wl.get("appearance_count", 0)),
+        prior_appearances=int(prior_wl.get("appearance_count", 0)),
+        current_ip=float(current_wl.get("decimal_ip", 0.0)),
+        prior_ip=float(prior_wl.get("decimal_ip", 0.0)),
+        current_avg_pitches=float(current_wl.get("avg_pitches", 0.0)),
+        prior_avg_pitches=float(prior_wl.get("avg_pitches", 0.0)),
     )
 
 

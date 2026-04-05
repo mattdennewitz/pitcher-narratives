@@ -56,10 +56,11 @@ None.
 | 260404-vya | Add CachePoint support to pipeline specialist builders | 2026-04-05 | e79d2c9 | [260404-vya-fully-examine-new-prompts-and-reset-cach](./quick/260404-vya-fully-examine-new-prompts-and-reset-cach/) |
 | 260405-cmp | Optimize LLM spend: right-size max_tokens and thinking per agent role | 2026-04-05 | 3c7bf6b | [260405-cmp-optimize-llm-spend-right-size-max-tokens](./quick/260405-cmp-optimize-llm-spend-right-size-max-tokens/) |
 | 260405-d6c | Add MINI_PROVIDERS model tier and route lightweight agents to mini models | 2026-04-05 | c43da35 | [260405-d6c-add-mini-providers-model-tier-and-route-](./quick/260405-d6c-add-mini-providers-model-tier-and-route-/) |
+| 260405-gtv | Add TemporalContext with sliding prior-year relevance | 2026-04-05 | e68c7bd | [260405-gtv-add-temporalcontext-with-sliding-prior-y](./quick/260405-gtv-add-temporalcontext-with-sliding-prior-y/) |
 
 ## Session Continuity
 
 Last session: 2026-04-05
-Last activity: 2026-04-05 - Completed quick task 260405-d6c: MINI_PROVIDERS model tier
-Stopped at: Completed quick task 260405-d6c
+Last activity: 2026-04-05 - Completed quick task 260405-gtv: TemporalContext with sliding prior-year relevance
+Stopped at: Completed quick task 260405-gtv
 Resume file: None

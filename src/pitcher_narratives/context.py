@@ -24,6 +24,7 @@ from pitcher_narratives.engine import (
     TTOAnalysis,
     TTOPitchType,
     TTOPlatoonSplit,
+    TemporalContext,
     VelocityArc,
     WorkloadContext,
     compute_arsenal_summary,
@@ -35,6 +36,7 @@ from pitcher_narratives.engine import (
     compute_intermediate_probabilities,
     compute_platoon_mix,
     compute_release_point_metrics,
+    compute_temporal_context,
     compute_tto_analysis,
     compute_velocity_arc,
     compute_workload_context,
@@ -74,6 +76,7 @@ class PitcherContext(BaseModel):
     hard_hit_rate: HardHitRate
     release_point: ReleasePointMetrics
     workload: WorkloadContext
+    temporal: TemporalContext
     tto: TTOAnalysis | None
 
     # Cross-season features (not yet implemented — stubs so pipeline guards work)
@@ -87,6 +90,9 @@ class PitcherContext(BaseModel):
 
         # Title
         sections.append(f"# {self.pitcher_name} ({self.throws}HP) -- Scouting Context")
+
+        # Temporal grounding — first real section so LLM reads it before analysis
+        sections.append(self._render_temporal_section())
 
         # Executive summary — key changes from most recent appearance
         sections.append(self._render_executive_summary())
@@ -127,6 +133,34 @@ class PitcherContext(BaseModel):
         return "\n\n".join(s for s in sections if s)
 
     # ── Private render helpers ────────────────────────────────────────
+
+    def _render_temporal_section(self) -> str:
+        """Render temporal grounding section for LLM context."""
+        t = self.temporal
+        # Season phase annotation
+        if t.current_season_appearances < 10:
+            phase = "early season"
+        elif t.current_season_appearances <= 60:
+            phase = "mid season"
+        else:
+            phase = "full season"
+
+        lines = ["## Temporal Context"]
+        lines.append(f"- Analysis date: {t.analysis_date}")
+        lines.append(
+            f"- {t.current_season} season: {t.current_season_appearances} appearances, "
+            f"{t.current_season_ip} IP since {t.current_season_first_date} ({phase})"
+        )
+        if t.prior_season_appearances > 0:
+            lines.append(
+                f"- {t.prior_season} season: {t.prior_season_appearances} appearances, "
+                f"{t.prior_season_ip} IP (completed)"
+            )
+        lines.append(
+            f"- Prior-year workload relevance: {t.prior_year_relevance} -- "
+            f"{t.prior_year_relevance_reason}"
+        )
+        return "\n".join(lines)
 
     def _render_executive_summary(self) -> str:
         """Build a bullet-point executive summary of key observations."""
@@ -563,6 +597,7 @@ def assemble_pitcher_context(data: PitcherData) -> PitcherContext:
     hard_hit_rate = compute_hard_hit_rate(data)
     release_point = compute_release_point_metrics(data)
     workload = compute_workload_context(data)
+    temporal = compute_temporal_context(data)
     tto = compute_tto_analysis(data)
 
     # Determine role from most recent appearance
@@ -585,5 +620,6 @@ def assemble_pitcher_context(data: PitcherData) -> PitcherContext:
         hard_hit_rate=hard_hit_rate,
         release_point=release_point,
         workload=workload,
+        temporal=temporal,
         tto=tto,
     )

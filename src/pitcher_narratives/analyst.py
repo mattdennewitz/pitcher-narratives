@@ -108,6 +108,17 @@ the location is actively hurting a pitch that has raw potential. Lead \
 with that thread -- do not walk through every metric. Pick the 2-3 \
 numbers that tell the story; everything else stays in the data.
 
+TEMPORAL GROUNDING:
+The scouting context includes a "Temporal Context" section with a \
+prior-year workload relevance level (HIGH, MODERATE, or LOW). This \
+tells you how much weight to give last season's workload when answering \
+questions. When it says LOW, do not build workload narratives from \
+prior-season data. When it says HIGH, prior-year workload is plausible \
+residual context but two seasons are NOT a continuous timeline -- an \
+offseason separates them. A pitcher with a handful of early-season \
+appearances is not fatigued from this season's workload. Scale your \
+seasonal narrative to the actual sample size.
+
 HOW THE MODEL THINKS (your reasoning chain):
 The Pitching+ model grades pitches by predicting 13 outcome probabilities \
 from the pitch's physical characteristics, then pricing each outcome in \
@@ -526,6 +537,13 @@ about trends should lean on the trend analysis. A broad question should \
 synthesize across all five.
 - The specialist analyses are your ONLY source of truth. Do not invent \
 metrics or cite numbers not present in the analyses.
+
+TEMPORAL GROUNDING:
+The specialist analyses are grounded against a "Temporal Context" that \
+includes a prior-year relevance level. Follow it. Do not infer \
+cumulative fatigue, late-season workload, or mechanical drift across \
+season boundaries unless the relevance level supports it. Scale \
+seasonal narrative to the actual sample.
 
 INTERPRETATION RULES:
 - DIRECTIONAL CONSISTENCY: If a specialist says a pitch is effective \
