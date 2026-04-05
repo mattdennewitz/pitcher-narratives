@@ -594,8 +594,10 @@ def ask_question_pipeline(
     """
     import asyncio
 
+    from pitcher_narratives.config import agent_kwargs
     from pitcher_narratives.pipeline import (
         audit_and_revise_specialists,
+        build_writer_input,
         make_pipeline_agents,
         run_specialists,
     )
@@ -622,28 +624,13 @@ def ask_question_pipeline(
         )
         log.info("Answering...")
 
-        # Debug: print each specialist's output before synthesis
-        for label, text in [
-            ("Stuff", specialists.stuff),
-            ("Location", specialists.location),
-            ("Run Value", specialists.runvalue),
-            ("Trends", specialists.trends),
-            ("Game Shape", specialists.game_shape),
-        ]:
-            print(f"\n{'═' * 60}")
-            print(f"SPECIALIST: {label}")
-            print(f"{'═' * 60}\n")
-            print(text)
-        print(f"\n{'═' * 60}\n")
-
         # Phase 2: Answerer composes from clean specialist outputs (streamed)
-        model_name = PROVIDERS[provider]
-        answerer_settings = make_model_settings(provider, thinking, 0.3)
+        model_name, model_settings = _make_analyst(provider, thinking)
         answerer = Agent(
             _model_override if _model_override is not None else model_name,
             output_type=str,
             instructions=ANSWERER_INSTRUCTIONS,
-            model_settings=answerer_settings,
+            model_settings=model_settings,
             defer_model_check=True,
         )
 
@@ -658,6 +645,17 @@ def ask_question_pipeline(
             f"## Specialist Analysis: Game Shape\n{specialists.game_shape}",
         ])
 
+        # Build summary input from clean specialist outputs
+        summary_input = build_writer_input(
+            context, specialists.stuff, specialists.location,
+            specialists.runvalue, specialists.trends, specialists.game_shape,
+        )
+
+        # Run summary in background while answerer streams
+        summary_task = asyncio.create_task(
+            agents.summary.run(**agent_kwargs(summary_input, _model_override))
+        )
+
         chunks: list[str] = []
         async with answerer.run_stream(answerer_input) as stream:
             async for delta in stream.stream_text(delta=True):
@@ -665,9 +663,22 @@ def ask_question_pipeline(
                 chunks.append(delta)
         print()
 
+        # Await and parse summary bullets — non-critical, don't crash if it fails
+        try:
+            summary_result = await summary_task
+            summary_bullets = [
+                line.lstrip("- ").strip()
+                for line in summary_result.output.strip().splitlines()
+                if line.strip().startswith("- ")
+            ]
+        except Exception:
+            log.warning("Executive summary agent failed, skipping.", exc_info=True)
+            summary_bullets = []
+
         return PipelineAnswer(
             answer="".join(chunks),
             stuff_summary=specialists.stuff,
+            executive_summary=summary_bullets or None,
             audit_flags=audit_flags or None,
         )
 

@@ -10,11 +10,7 @@ from pydantic import BaseModel, ConfigDict
 
 from pitcher_narratives.data import PitcherData
 from pitcher_narratives.engine import (
-    AppearancePitchTrendRecord,
-    AppearancePitchTrends,
-    ArsenalTrend,
     ComponentAttribution,
-    CrossSeasonSummary,
     ExecutionMetrics,
     FastballSummary,
     FirstPitchWeaponry,
@@ -28,11 +24,8 @@ from pitcher_narratives.engine import (
     TTOPlatoonSplit,
     VelocityArc,
     WorkloadContext,
-    compute_appearance_pitch_trends,
     compute_arsenal_summary,
-    compute_arsenal_trends,
     compute_component_attribution,
-    compute_cross_season_summary,
     compute_execution_metrics,
     compute_fastball_summary,
     compute_first_pitch_weaponry,
@@ -47,6 +40,8 @@ from pitcher_narratives.engine import (
 
 __all__ = ["PitcherContext", "assemble_pitcher_context"]
 
+_MAX_PITCH_TYPES = 4
+"""Token budget: keep top 4 pitch types only in arsenal and execution tables."""
 
 
 class PitcherContext(BaseModel):
@@ -79,15 +74,6 @@ class PitcherContext(BaseModel):
     workload: WorkloadContext
     tto: TTOAnalysis | None
 
-    cross_season_summary: CrossSeasonSummary | None = None
-    """Year-over-year pitcher-level metric deltas. None for single-season pitchers."""
-
-    arsenal_trend: ArsenalTrend | None = None
-    """Year-over-year arsenal evolution (added/dropped/changed pitches). None for single-season pitchers."""
-
-    appearance_pitch_trends: AppearancePitchTrends | None = None
-    """Per-appearance pitch trend analysis. None when insufficient data."""
-
     def to_prompt(self) -> str:
         """Render as prompt-ready markdown under 2,000 tokens."""
         sections: list[str] = []
@@ -110,9 +96,6 @@ class PitcherContext(BaseModel):
         # Arsenal table
         sections.append(self._render_arsenal_section())
 
-        # Per-appearance pitch trends (three-way comparison)
-        sections.append(self._render_appearance_pitch_trends_section())
-
         # Execution table
         sections.append(self._render_execution_section())
 
@@ -130,9 +113,6 @@ class PitcherContext(BaseModel):
 
         # First-pitch tendencies
         sections.append(self._render_first_pitch_section())
-
-        # Year-over-year changes (when multi-season data exists)
-        sections.append(self._render_yoy_section())
 
         # Recent appearances
         sections.append(self._render_appearances_section())
@@ -364,7 +344,7 @@ class PitcherContext(BaseModel):
         lines = ["## Arsenal"]
         lines.append("| Pitch | Velo | H-mov | V-mov | Usage | P+ | S+ | L+ | Deltas |")
         lines.append("|-------|------|-------|-------|-------|----|----|----|---------  |")
-        for p in self.arsenal:
+        for p in self.arsenal[:_MAX_PITCH_TYPES]:
             wp = f"{p.window_p_plus:.0f}" if p.window_p_plus is not None else "--"
             ws = f"{p.window_s_plus:.0f}" if p.window_s_plus is not None else "--"
             wl = f"{p.window_l_plus:.0f}" if p.window_l_plus is not None else "--"
@@ -385,7 +365,7 @@ class PitcherContext(BaseModel):
         lines = ["## Execution"]
         lines.append("| Pitch | CSW% | Zone% | Chase% | xWhiff | xSwing | xRV100 pctl |")
         lines.append("|-------|------|-------|--------|--------|--------|-------------|")
-        for e in self.execution:
+        for e in self.execution[:_MAX_PITCH_TYPES]:
             pctl = f"{e.xrv100_percentile}" if e.xrv100_percentile is not None else "--"
             xwhiff = f"{e.xwhiff_p:.3f}" if e.xwhiff_p is not None else "--"
             xswing = f"{e.xswing_p:.3f}" if e.xswing_p is not None else "--"
@@ -436,7 +416,7 @@ class PitcherContext(BaseModel):
             "|---------|-------|----------|-------|"
         )
 
-        for im in self.intermediates:
+        for im in self.intermediates[:_MAX_PITCH_TYPES]:
             lines.append(
                 f"| {im.pitch_name} ({im.pitch_type}) "
                 f"| {_pct(im.xswing_s)} "
@@ -457,7 +437,7 @@ class PitcherContext(BaseModel):
         if not rp.pitch_types:
             return ""
 
-        entries = rp.pitch_types
+        entries = rp.pitch_types[:_MAX_PITCH_TYPES]
         all_cold = all(pt.cold_start for pt in entries)
 
         lines = ["## Release Point"]
@@ -540,139 +520,6 @@ class PitcherContext(BaseModel):
             )
         return "\n".join(lines)
 
-    def _render_appearance_pitch_trends_section(self) -> str:
-        """Render per-appearance pitch trends table (three-way comparison).
-
-        Shows velocity and movement for each pitch type across the most recent
-        appearance, the lookback window average, and the prior-season baseline.
-
-        Returns:
-            Rendered markdown string, or "" when no data exists.
-        """
-        apt = self.appearance_pitch_trends
-        if apt is None or not apt.records:
-            return ""
-
-        # Filter out steady records — only show pitches with actual changes
-        active_records = [r for r in apt.records if r.pattern_label != "steady"]
-        if not active_records:
-            return ""
-
-        lines = [f"## Appearance Pitch Trends (last start vs window vs prior season)"]
-        lines.append(f"*Last start: {apt.last_game_date}*")
-        lines.append("")
-
-        # Velocity table
-        lines.append("| Pitch | Last Velo | Win Avg | Prior | Velo vs Win | Velo vs Prior | Pattern |")
-        lines.append("|-------|-----------|---------|-------|-------------|---------------|---------|")
-        for r in active_records:
-            prior_v = f"{r.prior_season_velo:.1f}" if r.prior_season_velo is not None else "--"
-            lines.append(
-                f"| {r.pitch_name} ({r.pitch_type}) "
-                f"| {r.last_start_velo:.1f} "
-                f"| {r.window_avg_velo:.1f} "
-                f"| {prior_v} "
-                f"| {r.last_vs_window_velo} "
-                f"| {r.last_vs_prior_velo} "
-                f"| {r.pattern_label} |"
-            )
-
-        lines.append("")
-        lines.append("**Movement detail (inches):**")
-
-        # Horizontal movement table
-        lines.append("")
-        lines.append("| Pitch | Last H-mov | Win H-mov | Prior H-mov | H delta vs Win | H delta vs Prior |")
-        lines.append("|-------|------------|-----------|-------------|----------------|------------------|")
-        for r in active_records:
-            prior_hx = f"{r.prior_season_pfx_x:.1f}" if r.prior_season_pfx_x is not None else "--"
-            lines.append(
-                f"| {r.pitch_name} "
-                f"| {r.last_start_pfx_x:.1f} "
-                f"| {r.window_avg_pfx_x:.1f} "
-                f"| {prior_hx} "
-                f"| {r.last_vs_window_pfx_x} "
-                f"| {r.last_vs_prior_pfx_x} |"
-            )
-
-        # Vertical movement table
-        lines.append("")
-        lines.append("| Pitch | Last V-mov | Win V-mov | Prior V-mov | V delta vs Win | V delta vs Prior |")
-        lines.append("|-------|------------|-----------|-------------|----------------|------------------|")
-        for r in active_records:
-            prior_vz = f"{r.prior_season_pfx_z:.1f}" if r.prior_season_pfx_z is not None else "--"
-            lines.append(
-                f"| {r.pitch_name} "
-                f"| {r.last_start_pfx_z:.1f} "
-                f"| {r.window_avg_pfx_z:.1f} "
-                f"| {prior_vz} "
-                f"| {r.last_vs_window_pfx_z} "
-                f"| {r.last_vs_prior_pfx_z} |"
-            )
-
-        return "\n".join(lines)
-
-    def _render_yoy_section(self) -> str:
-        """Render year-over-year changes section.
-
-        Returns "" when both cross_season_summary and arsenal_trend are None,
-        which causes to_prompt() to omit the section entirely for single-season
-        pitchers (CPMT-02).
-        """
-        if self.cross_season_summary is None and self.arsenal_trend is None:
-            return ""
-
-        lines = ["## Year-over-Year Changes"]
-
-        css = self.cross_season_summary
-        if css is not None:
-            lines.append(f"Comparing {css.current_season} vs {css.prior_season}:")
-            lines.append(f"- Velocity: {css.velo_delta}")
-            lines.append(f"- P+: {css.p_plus_delta}")
-            lines.append(f"- S+: {css.s_plus_delta}")
-            lines.append(f"- L+: {css.l_plus_delta}")
-            lines.append(
-                f"- Workload: {css.current_appearances} app / {css.current_ip:.0f} IP "
-                f"(prior: {css.prior_appearances} app / {css.prior_ip:.0f} IP)"
-            )
-
-        at = self.arsenal_trend
-        if at is not None:
-            if at.added_pitches:
-                added = ", ".join(
-                    f"{p.pitch_name} ({p.usage_pct:.0f}%)" for p in at.added_pitches
-                )
-                lines.append(f"- Added: {added}")
-            if at.dropped_pitches:
-                dropped = ", ".join(
-                    f"{p.pitch_name} ({p.usage_pct:.0f}%)" for p in at.dropped_pitches
-                )
-                lines.append(f"- Dropped: {dropped}")
-            # Show pitch trend deltas — suppress Steady for grades/usage
-            # but always show movement with actual values to prevent fabrication
-            for pt in at.pitch_trends:
-                deltas = []
-                if "Steady" not in pt.usage_delta:
-                    deltas.append(f"usage {pt.usage_delta}")
-                if "Steady" not in pt.p_plus_delta:
-                    deltas.append(f"P+ {pt.p_plus_delta}")
-                if "Steady" not in pt.s_plus_delta:
-                    deltas.append(f"S+ {pt.s_plus_delta}")
-                if "Steady" not in pt.velo_delta:
-                    deltas.append(f"velo {pt.velo_delta}")
-                # Always show movement with prior→current to anchor the LLM
-                deltas.append(
-                    f"H-mov {pt.prior_pfx_x:.1f}→{pt.current_pfx_x:.1f} in ({pt.pfx_x_delta})"
-                )
-                deltas.append(
-                    f"V-mov {pt.prior_pfx_z:.1f}→{pt.current_pfx_z:.1f} in ({pt.pfx_z_delta})"
-                )
-                if deltas:
-                    sample_tag = " *(small sample)*" if pt.small_sample else ""
-                    lines.append(f"- {pt.pitch_name}: {', '.join(deltas)}{sample_tag}")
-
-        return "\n".join(lines)
-
     def _render_appearances_section(self) -> str:
         lines = ["## Recent Appearances"]
         lines.append("| Date | IP | Pitches | Rest |")
@@ -700,19 +547,16 @@ def assemble_pitcher_context(data: PitcherData) -> PitcherContext:
     """
     fastball = compute_fastball_summary(data)
     velocity_arc = compute_velocity_arc(data, fastball.pitch_type) if fastball else None
-    arsenal = compute_arsenal_summary(data)
+    arsenal = compute_arsenal_summary(data)[:_MAX_PITCH_TYPES]
     platoon_mix = compute_platoon_mix(data)
     first_pitch = compute_first_pitch_weaponry(data)
-    execution = compute_execution_metrics(data)
-    intermediates = compute_intermediate_probabilities(data)
-    attributions = compute_component_attribution(data)
+    execution = compute_execution_metrics(data)[:_MAX_PITCH_TYPES]
+    intermediates = compute_intermediate_probabilities(data)[:_MAX_PITCH_TYPES]
+    attributions = compute_component_attribution(data)[:_MAX_PITCH_TYPES]
     hard_hit_rate = compute_hard_hit_rate(data)
     release_point = compute_release_point_metrics(data)
     workload = compute_workload_context(data)
     tto = compute_tto_analysis(data)
-    cross_season_summary = compute_cross_season_summary(data)
-    arsenal_trend = compute_arsenal_trends(data)
-    appearance_pitch_trends = compute_appearance_pitch_trends(data)
 
     # Determine role from most recent appearance
     most_recent = data.appearances.sort("game_date", descending=True).row(0, named=True)
@@ -735,7 +579,4 @@ def assemble_pitcher_context(data: PitcherData) -> PitcherContext:
         release_point=release_point,
         workload=workload,
         tto=tto,
-        cross_season_summary=cross_season_summary,
-        arsenal_trend=arsenal_trend,
-        appearance_pitch_trends=appearance_pitch_trends,
     )

@@ -26,7 +26,7 @@ __all__ = [
 ]
 
 PROVIDERS = {
-    "openai": "openai:gpt-5.4-mini",
+    "openai": "openai:gpt-5.4",
     "claude": "anthropic:claude-sonnet-4-6",
     "gemini": "google-gla:gemini-3.1-pro-preview",
 }
@@ -64,9 +64,9 @@ def make_model_settings(
             max_tokens=max_tokens,
         )
     elif provider == "claude":
-        return ModelSettings(thinking=thinking, temperature=temperature, max_tokens=max_tokens)
+        return ModelSettings(thinking=thinking, temperature=1, max_tokens=max_tokens)
     else:
-        return ModelSettings(thinking=thinking, temperature=temperature)
+        return ModelSettings(temperature=temperature)
 
 
 def agent_kwargs(prompt: Any, model_override: Any = None) -> dict[str, Any]:
@@ -80,6 +80,7 @@ def agent_kwargs(prompt: Any, model_override: Any = None) -> dict[str, Any]:
 def setup_logging() -> None:
     """Configure logging and Logfire instrumentation for pitcher_narratives."""
     logfire.configure()
+    logfire.instrument_pydantic_ai()
     handler = logging.StreamHandler(sys.stderr)
     handler.setFormatter(logging.Formatter("%(name)s: %(message)s"))
     root = logging.getLogger("pitcher_narratives")

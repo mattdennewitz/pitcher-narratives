@@ -69,24 +69,13 @@ _ALLOWED_GAME_TYPES = frozenset({"R", "F", "D", "L", "W"})
 
 @dataclass
 class PitcherData:
-    """Bundle of all loaded and processed data for a pitcher.
-
-    Baseline fields:
-        season_baseline: Current (max) season pitcher-level baselines.
-        pitch_type_baseline: Current (max) season per-pitch-type baselines.
-        prior_season_baseline: Previous season pitcher-level baselines.
-            Empty DataFrame (same schema, zero rows) when only one season exists.
-        prior_pitch_type_baseline: Previous season per-pitch-type baselines.
-            Empty DataFrame (same schema, zero rows) when only one season exists.
-    """
+    """Bundle of all loaded and processed data for a pitcher."""
 
     statcast: pl.DataFrame
     appearances: pl.DataFrame
     window_appearances: pl.DataFrame
     season_baseline: pl.DataFrame
     pitch_type_baseline: pl.DataFrame
-    prior_season_baseline: pl.DataFrame
-    prior_pitch_type_baseline: pl.DataFrame
     agg_csvs: dict[str, pl.DataFrame]
     pitcher_id: int
     pitcher_name: str
@@ -410,12 +399,6 @@ def load_pitcher_data(pitcher_id: int, window_days: int = 30) -> PitcherData:
     classifies appearances, computes baselines, and filters to the lookback
     window.
 
-    Baselines are split by season:
-    - ``season_baseline`` / ``pitch_type_baseline``: current (max) season only.
-    - ``prior_season_baseline`` / ``prior_pitch_type_baseline``: all seasons
-      before max season. Empty DataFrames (same schema, zero rows) when the
-      pitcher has only one season of data.
-
     Args:
         pitcher_id: MLB pitcher ID.
         window_days: Lookback window in days (default 30).
@@ -433,25 +416,18 @@ def load_pitcher_data(pitcher_id: int, window_days: int = 30) -> PitcherData:
     season_baseline_all = compute_season_baseline(agg_csvs["pitcher"])
     pitch_type_baseline_all = compute_pitch_type_baseline(agg_csvs["pitcher_type"])
 
-    # Split baselines into current (max) season and prior season
+    # Filter baselines to most recent season for engine consumption
     if "season" in season_baseline_all.columns and not season_baseline_all.is_empty():
         max_season = season_baseline_all["season"].max()
         season_baseline = season_baseline_all.filter(pl.col("season") == max_season)
-        prior_season_baseline = season_baseline_all.filter(pl.col("season") < max_season)
     else:
         season_baseline = season_baseline_all
-        prior_season_baseline = season_baseline_all.clear()
 
     if "season" in pitch_type_baseline_all.columns and not pitch_type_baseline_all.is_empty():
-        max_season_pt = pitch_type_baseline_all["season"].max()
-        pitch_type_baseline = pitch_type_baseline_all.filter(pl.col("season") == max_season_pt)
-        prior_pitch_type_baseline = pitch_type_baseline_all.filter(
-            pl.col("season") < max_season_pt
-        )
+        max_season = pitch_type_baseline_all["season"].max()
+        pitch_type_baseline = pitch_type_baseline_all.filter(pl.col("season") == max_season)
     else:
         pitch_type_baseline = pitch_type_baseline_all
-        prior_pitch_type_baseline = pitch_type_baseline_all.clear()
-
     pitcher_name = str(statcast["player_name"][0])
     throws = str(statcast["p_throws"][0])
 
@@ -461,8 +437,6 @@ def load_pitcher_data(pitcher_id: int, window_days: int = 30) -> PitcherData:
         window_appearances=window_appearances,
         season_baseline=season_baseline,
         pitch_type_baseline=pitch_type_baseline,
-        prior_season_baseline=prior_season_baseline,
-        prior_pitch_type_baseline=prior_pitch_type_baseline,
         agg_csvs=agg_csvs,
         pitcher_id=pitcher_id,
         pitcher_name=pitcher_name,
