@@ -597,7 +597,7 @@ def assemble_pitcher_context(data: PitcherData) -> PitcherContext:
     hard_hit_rate = compute_hard_hit_rate(data)
     release_point = compute_release_point_metrics(data)
     workload = compute_workload_context(data)
-    temporal = compute_temporal_context(data)
+    temporal = compute_temporal_context(data, workload)
     tto = compute_tto_analysis(data)
 
     # Determine role from most recent appearance

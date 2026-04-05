@@ -676,13 +676,11 @@ def _build_game_shape_input(ctx: PitcherContext) -> UserPrompt:
     if css is not None or at is not None:
         yoy_lines = ["## Year-over-Year Context"]
         if css is not None:
+            # Workload comes from TemporalContext (single source of truth)
+            t = ctx.temporal
             yoy_lines.append(
-                f"- Workload: {css.current_appearances} app / {css.current_ip:.0f} IP "
-                f"(prior {css.prior_season}: {css.prior_appearances} app / {css.prior_ip:.0f} IP)"
-            )
-            yoy_lines.append(
-                f"- Avg pitches/app: {css.current_avg_pitches:.0f} "
-                f"(prior: {css.prior_avg_pitches:.0f})"
+                f"- Workload: {t.current_season_appearances} app / {t.current_season_ip} IP "
+                f"(prior {t.prior_season}: {t.prior_season_appearances} app / {t.prior_season_ip} IP)"
             )
         if at is not None:
             for pt in at.pitch_trends[:4]:
