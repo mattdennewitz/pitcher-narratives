@@ -13,9 +13,9 @@ from dataclasses import dataclass
 from typing import Any
 
 from pydantic_ai import Agent, RunContext
-from pydantic_ai.settings import ModelSettings, ThinkingEffort
+from pydantic_ai.settings import ThinkingEffort
 
-from pitcher_narratives.config import PROVIDERS, THINKING_LEVELS, make_model_settings
+from pitcher_narratives.config import PROVIDERS, TOKEN_BUDGET_LARGE, make_model_settings
 from pitcher_narratives.context import PitcherContext
 from pitcher_narratives.data import PitcherData
 from pitcher_narratives.engine import compute_league_baselines
@@ -222,16 +222,6 @@ OUT OF SCOPE (decline gracefully):
 # AGENT + TOOLS
 # ═══════════════════════════════════════════════════════════════════════
 
-_analyst_agent = Agent(
-    "openai:gpt-5.4-mini",
-    deps_type=QADeps,
-    output_type=str,
-    instructions=ANALYST_INSTRUCTIONS,
-    defer_model_check=True,
-)
-
-
-@_analyst_agent.tool
 def get_pitcher_summary(ctx: RunContext[QADeps]) -> str:
     """Get the full scouting context for the pitcher including all arsenal, execution, and trend data."""
     # Inject league baselines so the agent can ground claims
@@ -264,7 +254,6 @@ def get_pitcher_summary(ctx: RunContext[QADeps]) -> str:
     return "\n".join(baseline_lines) + "\n\n" + ctx.deps.context.to_prompt()
 
 
-@_analyst_agent.tool
 def get_pitch_detail(ctx: RunContext[QADeps], pitch_type: str) -> str:
     """Get detailed arsenal, execution, and platoon data for one specific pitch type.
 
@@ -425,38 +414,46 @@ def _ps_line_rv(label: str, p: float | None, s: float | None) -> str:
 # AGENT FACTORY
 # ═══════════════════════════════════════════════════════════════════════
 
-_settings_cache: dict[tuple[str, ThinkingEffort], tuple[str, ModelSettings]] = {}
+_qa_agent_cache: dict[tuple[str, ThinkingEffort], Agent[QADeps, str]] = {}
 
 
-def _make_analyst(
+def _make_qa_agent(
     provider: str = "gemini",
     thinking: ThinkingEffort = "high",
-) -> tuple[str, ModelSettings]:
-    """Resolve (or return cached) model name and settings for the given provider.
+) -> Agent[QADeps, str]:
+    """Create (or return cached) QA agent for the given provider and thinking level.
 
     Args:
         provider: LLM provider key ('openai', 'claude', or 'gemini').
         thinking: Thinking effort level.
 
     Returns:
-        Tuple of (model_name, model_settings).
+        Configured Agent with get_pitcher_summary and get_pitch_detail tools.
 
     Raises:
         ValueError: If provider is not in PROVIDERS.
     """
     key = (provider, thinking)
-    if key in _settings_cache:
-        return _settings_cache[key]
+    if key in _qa_agent_cache:
+        return _qa_agent_cache[key]
 
     if provider not in PROVIDERS:
         raise ValueError(f"Unknown provider {provider!r}, expected one of: {', '.join(PROVIDERS)}")
+
     model = PROVIDERS[provider]
+    settings = make_model_settings(provider, thinking, 0.3, max_tokens=TOKEN_BUDGET_LARGE)
 
-    settings = make_model_settings(provider, thinking, 1.0)
-
-    result = (model, settings)
-    _settings_cache[key] = result
-    return result
+    agent: Agent[QADeps, str] = Agent(
+        model,
+        deps_type=QADeps,
+        output_type=str,
+        instructions=ANALYST_INSTRUCTIONS,
+        model_settings=settings,
+        tools=[get_pitcher_summary, get_pitch_detail],
+        defer_model_check=True,
+    )
+    _qa_agent_cache[key] = agent
+    return agent
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -486,17 +483,14 @@ def ask_question_streaming(
     Returns:
         The agent's complete response as a string.
     """
-    model_name, model_settings = _make_analyst(provider, thinking)
+    agent = _make_qa_agent(provider, thinking)
     deps = QADeps(context=context, data=data)
 
-    kwargs: dict[str, Any] = {
-        "user_prompt": question,
-        "deps": deps,
-        "model": _model_override if _model_override is not None else model_name,
-        "model_settings": model_settings,
-    }
+    kwargs: dict[str, Any] = {"user_prompt": question, "deps": deps}
+    if _model_override is not None:
+        kwargs["model"] = _model_override
 
-    stream = _analyst_agent.run_stream_sync(**kwargs)
+    stream = agent.run_stream_sync(**kwargs)
     chunks: list[str] = []
     for delta in stream.stream_text(delta=True):
         print(delta, end="", flush=True)
