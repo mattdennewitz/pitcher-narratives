@@ -40,6 +40,7 @@ from pydantic_ai.settings import ThinkingEffort
 
 from pitcher_narratives.config import (
     MAX_REVISIONS,
+    MINI_PROVIDERS,
     PROVIDERS,
     agent_kwargs,
     make_model_settings,
@@ -936,6 +937,7 @@ def make_pipeline_agents(
     if provider not in PROVIDERS:
         raise ValueError(f"Unknown provider {provider!r}")
     model = PROVIDERS[provider]
+    mini_model = MINI_PROVIDERS[provider]
 
     # Split temperature by role: specialists need precision, writer needs voice,
     # auditor/anchor need maximum determinism.
@@ -947,22 +949,26 @@ def make_pipeline_agents(
         return Agent(model, output_type=str, system_prompt=prompt,
                      model_settings=specialist_settings, defer_model_check=True)
 
+    def _mini_specialist(prompt: str) -> Agent[None, str]:
+        return Agent(mini_model, output_type=str, system_prompt=prompt,
+                     model_settings=specialist_settings, defer_model_check=True)
+
     def _writer(prompt: str) -> Agent[None, str]:
         return Agent(model, output_type=str, system_prompt=prompt,
                      model_settings=writer_settings, defer_model_check=True)
 
     return PipelineAgents(
         stuff=_specialist(_STUFF_SPECIALIST_PROMPT),
-        location=_specialist(_LOCATION_SPECIALIST_PROMPT),
-        runvalue=_specialist(_RUNVALUE_SPECIALIST_PROMPT),
-        trends=_specialist(_TREND_SPECIALIST_PROMPT),
-        game_shape=_specialist(_GAME_SHAPE_SPECIALIST_PROMPT),
+        location=_mini_specialist(_LOCATION_SPECIALIST_PROMPT),
+        runvalue=_mini_specialist(_RUNVALUE_SPECIALIST_PROMPT),
+        trends=_mini_specialist(_TREND_SPECIALIST_PROMPT),
+        game_shape=_mini_specialist(_GAME_SHAPE_SPECIALIST_PROMPT),
         writer=_writer(_WRITER_PROMPT),
-        auditor=Agent(model, output_type=AuditResult, system_prompt=_DATA_AUDITOR_PROMPT,
+        auditor=Agent(mini_model, output_type=AuditResult, system_prompt=_DATA_AUDITOR_PROMPT,
                       model_settings=checker_settings, defer_model_check=True),
-        anchor=Agent(model, output_type=AnchorResult, system_prompt=ANCHOR_PROMPT,
+        anchor=Agent(mini_model, output_type=AnchorResult, system_prompt=ANCHOR_PROMPT,
                      model_settings=checker_settings, defer_model_check=True),
-        summary=_specialist(_EXECUTIVE_SUMMARY_PROMPT),
+        summary=_mini_specialist(_EXECUTIVE_SUMMARY_PROMPT),
     )
 
 
