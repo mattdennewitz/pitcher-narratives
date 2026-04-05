@@ -84,6 +84,12 @@ def make_model_settings(
             max_tokens=max_tokens,
         )
     elif provider == "claude":
+        # Claude requires max_tokens > thinking.budget_tokens.  For small
+        # budgets (checkers, specialists, summaries) disable thinking entirely
+        # — these roles already have thinking capped to low/medium and produce
+        # short structured output that doesn't benefit from extended thinking.
+        if max_tokens <= TOKEN_BUDGET_MEDIUM:
+            return ModelSettings(temperature=1, max_tokens=max_tokens)
         return ModelSettings(thinking=thinking, temperature=1, max_tokens=max_tokens)
     else:
         return ModelSettings(thinking=thinking, temperature=temperature, max_tokens=max_tokens)
