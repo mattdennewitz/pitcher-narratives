@@ -2,7 +2,7 @@
 
 ## Overview
 
-Pitcher Narratives is an automated scouting report system that transforms raw pitch-tracking data into analytical capsules written in the voice of an elite sabermetric baseball analyst. The system uses a deterministic Python pipeline for all data computation and a five-phase LLM architecture with a self-correcting reflection loop that separates objective data extraction from editorial prose, fact-checking, social media distillation, and fantasy analysis.
+Pitcher Narratives is an automated scouting report system that transforms raw pitch-tracking data into analytical capsules written in the voice of an elite sabermetric baseball analyst. The system offers two report generation architectures — a simple four-phase pipeline and a multi-specialist parallel pipeline — both sharing the same data pipeline, context assembly, and anchor check infrastructure. Three CLI tools: `pitcher-narratives` (reports), `pitcher-scout` (appearance scanning), `pitcher-ask` (Q&A).
 
 No LLM performs arithmetic, computes deltas, or derives metrics. Every number in the final report originates from a pre-computed Python pipeline. The LLM's role is strictly interpretive: identify which findings are significant, then articulate why they matter.
 
@@ -143,6 +143,18 @@ For each pitch type in the recent window:
 4. **xWhiff and xSwing:** Expected whiff and swing probabilities from the Pitching+ model.
 5. **xRV100 Percentile:** The pitcher's expected run value per 100 pitches for each pitch type, ranked as a percentile against all MLB pitchers with at least 10 pitches of that type in the season.
 
+### League Baselines
+
+The engine computes league-wide mean and standard deviation for key metrics (velocity, pfx_x, pfx_z, S+, xWhiff_S, xRV100_S) per pitch type from all pitchers in the season data. Each pitcher's values are then pre-tagged as NORMAL (within 1.5 stddev) or OUTLIER. Both pipelines and the Q&A analyst use these annotations as an anti-hallucination guardrail — the LLM never needs to compute z-scores because every metric arrives pre-annotated.
+
+### Intermediate Probabilities
+
+Per-pitch-type S-variant (stuff-only) model predictions: xSwing_S, xWhiff_S, xSwSt_S, xRV100_S. These isolate what the pitch's physical characteristics (velocity + movement) produce independent of location. The P-vs-S delta for each metric quantifies location's contribution. Feeds the Model Internals context section and the location/stuff specialist agents.
+
+### Component Attribution
+
+Per-pitch-type xRV100 decomposition into 13 outcome contributions (called_strike, swinging_strike, ball, foul, single, double, triple, home_run, etc.). Each outcome's contribution is signed: negative = pitcher benefits, positive = costs runs. Feeds the run value specialist in the multi-specialist pipeline.
+
 ### Workload Context
 
 1. **Rest days:** Calendar days between consecutive appearances (date arithmetic on sorted game dates).
@@ -183,7 +195,7 @@ TTO passes with fewer than 50 total pitches are flagged in the output so the LLM
 
 ## Context Assembly
 
-All engine outputs are assembled into a single `PitcherContext` Pydantic model. The model's `to_prompt()` method renders the data as a structured markdown document with eleven sections:
+All engine outputs are assembled into a single `PitcherContext` Pydantic model. The model's `to_prompt()` method renders the data as a structured markdown document with twelve sections:
 
 1. **Executive Summary** — Bullet-point overview of key changes from the most recent appearance (velo trend, full P+/S+/L+ triad, biggest usage shift, TTO summary, hard-hit rate shift, workload flags).
 2. **Role** — Most recent role (SP/RP), appearance count, consecutive days pitched, workload concern flag.
@@ -191,11 +203,14 @@ All engine outputs are assembled into a single `PitcherContext` Pydantic model. 
 4. **Times Through Order** — Fastball/secondary P+ split table, per-pitch-type mix and P+ evolution across passes, platoon-within-TTO breakdown.
 5. **Arsenal** — Top 4 pitch types by usage with usage deltas and P+/S+/L+ columns with deltas vs. season.
 6. **Execution** — CSW%, Zone%, Chase%, xWhiff, xSwing, xRV100 percentile per pitch type.
-7. **Release Point Mechanics** — Per-pitch-type release x/z/extension with deltas vs. pitcher's own season baseline.
-8. **Contact Quality** — Hard-hit rate (window vs. season) with delta string.
-9. **Platoon Shifts** — Per-pitch-type usage and P+ by batter handedness with deltas.
-10. **First-Pitch Tendencies** — Top 3 first-pitch types with recent vs. season usage.
-11. **Recent Appearances** — Date, IP, pitch count, and rest days for each appearance in the window.
+7. **Model Internals: Location Impact** — S-variant (stuff-only) probabilities and P-vs-S deltas per pitch type. Isolates what location contributes beyond the pitch's physical profile.
+8. **Release Point Mechanics** — Per-pitch-type release x/z/extension with deltas vs. pitcher's own season baseline.
+9. **Contact Quality** — Hard-hit rate (window vs. season) with delta string.
+10. **Platoon Shifts** — Per-pitch-type usage and P+ by batter handedness with deltas.
+11. **First-Pitch Tendencies** — Top 3 first-pitch types with recent vs. season usage.
+12. **Recent Appearances** — Date, IP, pitch count, and rest days for each appearance in the window.
+
+Component attribution data (13-outcome xRV100 decomposition per pitch type) is available on the `PitcherContext` model as `attributions` but is not rendered by `to_prompt()` — it is consumed directly by the multi-specialist pipeline's data builders.
 
 The Pitching+ triad (P+, S+, L+) is surfaced throughout — in the executive summary, fastball section, and arsenal table — so the LLM can distinguish between stuff changes (S+) and command changes (L+).
 
@@ -205,7 +220,7 @@ This document typically renders at 900-1,200 tokens depending on the pitcher's a
 
 ## Appearance Scout
 
-Before generating full reports, the scout identifies which appearances are worth writing about. It runs entirely in Python — no LLM calls — scoring each appearance against the pitcher's season baselines across 9 signal types.
+Before generating full reports, the scout identifies which appearances are worth writing about. It runs entirely in Python — no LLM calls — scoring each appearance against the pitcher's season baselines across 10 signal types.
 
 ### Signal Detection
 
@@ -219,6 +234,7 @@ Before generating full reports, the scout identifies which appearances are worth
 | `pplus_swing` | 2.5 | >= 15 pts from season | Overall P+ spike or collapse |
 | `walk_rate_pplus_contradiction` | 2.5 | P+ >= 105 with L+ < 85 | Good stuff without command (the Cavalli pattern) |
 | `usage_shift` | 2.0 | >= 8pp from season | Pitch type usage change |
+| `hard_hit_spike` | 1.5 | (defined, not yet implemented) | Hard-hit rate anomaly |
 | `workload_flag` | 1.0 | 3+ consecutive days | Reliever workload concern |
 
 The scout loads appearance-level and season-level aggregation CSVs, computes velocity baselines from the Statcast parquet, and scores each appearance by summing the weights of all signals that fire. A typical game day produces 15-30 appearances above a score of 5.0.
@@ -236,106 +252,116 @@ The curator selects 3-5 pitchers, writes a brief for each (signal, narrative, co
 
 ---
 
-## Five-Phase LLM Architecture
+## Report Pipelines
 
-The report generation pipeline uses five sequential LLM phases with distinct roles. Phase 1 extracts facts; Phase 2 writes the capsule; Phase 2.5 verifies fidelity and triggers revisions if needed; Phases 3 and 4 derive from the final capsule (not the raw synthesis), inheriting the editor's plausibility filters and metric curation.
+The system offers two report generation architectures selected via the `--pipeline` CLI flag. Both share the same data pipeline, context assembly, and anchor check infrastructure.
 
-Three LLM providers are supported: OpenAI (gpt-5.4-mini), Anthropic (claude-sonnet-4-6), and Google (gemini-3.1-pro-preview). Provider-specific thinking configuration is handled automatically.
+Three LLM providers are supported, each with a Pro and Mini model tier:
 
-### Phase 1: The Data Synthesizer
+| Provider | Pro (Writer/Stuff) | Mini (Specialists/Checkers) |
+|----------|--------------------|-----------------------------|
+| OpenAI | gpt-5.4 | gpt-5.4-mini |
+| Anthropic | claude-sonnet-4-6 | claude-haiku-4-5 |
+| Google | gemini-3.1-pro-preview | gemini-flash-latest |
 
-**Role:** Objective data parser preparing a factual briefing for a senior writer.
+Pro-tier models handle roles where reasoning and prose quality matter (writer, editor, stuff specialist, stuff explainer, answerer). Mini-tier models handle high-volume structured tasks (location/runvalue/trends/game-shape specialists, auditor, anchor, synthesizer, executive summary). Provider-specific thinking configuration is handled automatically.
 
-**Input:** The full `to_prompt()` markdown document plus role-conditional analysis guidance (starter-specific or reliever-specific focus areas).
+### Simple Pipeline (report.py)
 
-**Task:** Extract the signal from the noise using three analytical lenses: breakout indicators, regression risks, and development opportunities. The synthesizer audits the arsenal as a portfolio — cross-referencing stuff quality (S+) with command (L+) and platoon splits. It does not write prose, does not editorialize, and does not project future performance.
+The original architecture. Four LLM phases with a fact-checking reflection loop.
 
-**Key analytical instructions:**
+**Phase 1: The Synthesizer** (Mini tier, temp=0.3)
 
-- **Intent-based reasoning:** Before attributing usage shifts to fatigue or mechanical causes, check whether the opposing lineup's handedness mix explains the pattern. Frame opponent-driven patterns as game plans, not mechanical byproducts.
-- **Portfolio audit:** High S+ / low L+ pitches are flagged as development opportunities and cross-referenced with platoon data to identify which pitch would most change the pitcher's projection.
-- **Plausibility filter:** Velocity outliers (>3 mph) are flagged as possible misclassification. Command contradictions (high L+ with high walk rate) are reframed as pitch-level targeting, not overall command.
+Objective data parser preparing a factual briefing for a senior writer. Receives the full `to_prompt()` markdown plus role-conditional analysis guidance (starter/reliever focus areas) and league baselines with S-variant comparisons.
 
-**Output format (enforced by prompt):**
+Extracts signal from noise using three analytical lenses: breakout indicators, regression risks, and development opportunities. Audits the arsenal as a portfolio — cross-referencing stuff quality (S+) with command (L+) and platoon splits. Does not write prose or editorialize.
 
+Key analytical instructions: intent-based reasoning (check lineup handedness before attributing usage shifts to fatigue), portfolio audit (high S+ / low L+ = development opportunity), plausibility filter (>3 mph velo outliers flagged as possible misclassification).
+
+Output: 9 structured sections (Fastball Quality, Pitching+ Profile, Pitch Mix, Execution, Platoon Splits, Release Point, Workload & Stamina, Opponent Context, Key Signal with 3 bullets). Role-conditional appendix: starters get TTO/stamina focus, relievers get rest/workload focus.
+
+**Phase 2: The Editor** (Pro tier, temp=0.7)
+
+Elite sabermetric baseball writer. Finds the narrative thread and weaves the synthesis into a tight, 2-3 paragraph capsule. Reorganizes by narrative importance — leads with what's most interesting, not a category walk-through.
+
+Editorial guidelines enforced by prompt: three-metric maximum, link mechanics to outcomes, diagnose root causes, consider intent lightly, scale confidence to sample, L+ is not command (pair with walk rate), conversational scouting voice, word bans (degradation, binary, elite, dominant, etc.), spot-check before finishing, no fluff, data fidelity.
+
+**Phase 2.5: Anchor Check + Reflection Loop** (shared with multi-specialist pipeline — see below)
+
+**Phase 3: Stuff Explainer** (Pro tier, temp=0.3)
+
+Traces each pitch's S+ grade to its physical profile via stuff-only model predictions. Receives synthesis + league baselines + S-variant data. Output: one paragraph covering 2-3 most notable pitches.
+
+**Executive Summary** (Mini tier, temp=0.3)
+
+Concise metrics-focused bullets for front office readers. Exactly 3 bullet points, each citing a specific metric. Directional consistency enforced.
+
+**Data Flow:**
 ```
-## Fastball Quality & Velocity Trends
-## Pitching+ Profile
-## Pitch Mix & Usage Shifts
-## Execution & Outcomes
-## Platoon Splits
-## Release Point Mechanics
-## Workload & Stamina
-## Opponent Context & Intent
-## Key Signal
-    - Most important improvement
-    - Most important concern
-    - Development pitch (high-S+/low-L+ that would solve a platoon weakness)
+Context → Synthesizer → Editor → Anchor Check ─┬─ Stuff Explainer
+                                                └─ Executive Summary
 ```
 
-**Role-conditional guidance:**
-- **Starters** receive additional focus on TTO breakdown, pitch mix evolution across passes, platoon-specific TTO patterns, stamina trajectory, and new weapons.
-- **Relievers** receive additional focus on rest day impact, put-away pitch identification, pitch count efficiency, platoon vulnerabilities, and workload trajectory.
+### Multi-Specialist Pipeline (pipeline.py)
 
-**Why this phase exists:** LLMs produce higher-quality prose when freed from mathematical reasoning. By extracting all analytical building blocks in Phase 1, Phase 2 never needs to compute a delta, rank a percentile, or compare two numbers. This is the primary defense against hallucinated metrics.
+Parallel architecture selected via `--pipeline` flag. Decomposes the synthesizer's job into five specialist agents, each receiving tailored data inputs with pre-computed NORMAL/OUTLIER annotations.
 
-### Phase 2: The Editor
+**Phase 1: Five Specialist Agents (parallel)**
 
-**Role:** Elite, sabermetrically inclined baseball writer. Writes for front offices, advanced fantasy players, and data-driven fans. Tone is pragmatic, cautious, and highly analytical.
+Each specialist receives a custom data build from the PitcherContext — not the raw `to_prompt()` output. Data builders (`_build_stuff_input`, `_build_location_input`, `_build_runvalue_input`, etc.) pre-annotate every metric with its delta from league average and an explicit NORMAL/OUTLIER z-score tag.
 
-**Input:** The structured briefing from Phase 1 (the synthesizer's bulleted output) plus the pitcher's name, handedness, and role.
+1. **Stuff Specialist** (Pro tier, temp=0.3) — Traces velocity and movement shape to S+ grades via S-variant predictions. Rules: respect NORMAL/OUTLIER tags, directional consistency, xWhiff reconciliation, citation required for all behavioral claims.
 
-**Task:** Find the narrative thread, then weave the extracted facts into a tight, 2-3 paragraph scouting capsule. The editor reorganizes the synthesizer's category-based structure by narrative importance — leading with whatever is most interesting, not walking through fastball→secondary→platoon→conclusion.
+2. **Location Specialist** (Mini tier, temp=0.3) — Isolates location impact by comparing P-variant (stuff + location) vs S-variant (stuff only) predictions. Zone rate and chase rate against league baselines.
 
-**Structure — The Capsule:**
+3. **Run Value Specialist** (Mini tier, temp=0.3) — Reads 13-outcome component attribution per pitch type. Identifies 2-3 dominant outcome contributors. Sign convention: negative = pitcher benefits.
 
-- **Paragraph 1 (The Setup):** Tells the reader what is different about this pitcher right now. Leads with what happened — the concrete change — not with a theory about why it happened or what didn't change. The "why" comes after the "what" is established.
+4. **Trend Specialist** (Mini tier, temp=0.3) — Window-vs-season deltas in velocity, grades, usage, movement, release point, hard-hit rate. Does NOT analyze within-game patterns.
 
-- **Paragraph 2+ (The Verdict):** Explains how the stuff is playing in practice. Weaves in platoon splits where they matter to the story. Delivers a clear-eyed conclusion on the pitcher's current trajectory.
+5. **Game Shape Specialist** (Mini tier, temp=0.3) — Within-game effectiveness: TTO splits, velocity arc, mix shifts by pass, platoon-specific TTO patterns, workload. Does NOT analyze window-vs-season trends.
 
-**Editorial guidelines enforced by prompt:**
+**Phase 1.5: Per-Specialist Audit + Revision (parallel)**
 
-| Guideline | Description |
-|-----------|-------------|
-| **Three primary metrics** | Choose at most three metrics to carry the narrative. Everything else stays in the briefing. |
-| **Link mechanics to outcomes** | Every mechanical observation (extension, release point) must immediately connect to a tactical result. No orphaned mechanical details. |
-| **Diagnose, don't just describe** | Connect outcomes to physical inputs. Link the "what" to the "why." |
-| **Consider intent — lightly** | When data shows usage shifts, consider whether the opposing lineup explains the pattern before defaulting to fatigue. But don't build a theory around every mix change — sometimes a pitcher just threw more changeups. Mention intent as a possibility, never as a confident conclusion from one game. |
-| **Scale confidence to sample** | Three starts get "trending toward." A full season supports firmer assessments. No declaring what a pitcher "profiles as" from a handful of appearances. |
-| **L+ is not command** | L+ measures pitch-level placement, not overall command. High L+ with high walks = precise targeting on one pitch, not a guy in command of the zone. Always pair L+ with walk rate. |
-| **Voice** | Write like an analyst talking to another analyst. Conversational scouting language (stuff, feel, finding a groove, getting tagged). No clinical jargon (degradation, binary, mathematical liability). No formulaic transitions (Meanwhile, However). Vary sentence length. |
-| **Word bans** | Never use: degradation, binary, physical characteristics, extreme variance, profiles as, metrics are grim, navigating a lineup, elite, dominant, massive spike. |
-| **Spot-check** | Before finishing, verify: metric count <= 3, all mechanics link to outcomes, confidence matches sample size, any "command" claim is backed by walk rate. Then read the capsule as a reader: does it lead with what happened or with a theory about why? If more words explain the mechanism than describe the change, rebalance. Never open with what is NOT happening. |
-| **No fluff** | No introductory throat-clearing. Start immediately with the analysis. No bullet points, no headers, no tables in the output. |
-| **Data fidelity** | Rely entirely on the briefing provided. Do not hallucinate metrics or trends. Be direct without being dismissive or alarmist. |
+Each specialist's output is audited independently against the raw data it received. Five audits run in parallel. The auditor (Mini tier, temp=0.1, retries=3) checks 7 categories:
 
-### Phase 3: The Hook Writer
+| Category | What it catches |
+|----------|-----------------|
+| METRIC_CONTRADICTION | Calling a NORMAL-tagged metric unusual |
+| DIRECTION_ERROR | Saying good when data says bad |
+| SIGN_INCONSISTENCY | S+ vs xRV100_S narrative mismatch |
+| UNRECONCILED_STRENGTH | Ignoring xWhiff >= 25% |
+| HALLUCINATED_CAUSATION | Invented mechanism not in data |
+| FABRICATED_DATA | Cited number not in input |
+| UNCITED_BEHAVIORAL_CLAIM | Hitter behavior claim without metric citation |
 
-**Role:** Wire-service headline writer crafting a single social media post.
+Flagged specialists are re-run with their original input + audit corrections. The writer never sees flawed prose.
 
-**Input:** The pitcher's name, handedness, role, and the editor's capsule (Phase 2 output).
+**Phase 2: Writer + Executive Summary (parallel)**
 
-**Task:** Write one sentence — headline-length, under 280 characters — that captures the single most important change, trend, or signal. Name the pitcher, name the pitch or metric, state the direction.
+The writer (Pro tier, temp=0.7) receives all 5 clean specialist outputs and composes a unified 2-3 paragraph capsule. Same editorial voice and constraints as the simple pipeline's editor, but input is specialist analyses rather than a single synthesis. Key instruction: specialists are ingredients, not sections to preserve. Find one thread across all five.
 
-**Constraints:** One sentence only. No run-on sentences joined by dashes or semicolons. No hashtags, emojis, or hype. Must stand alone without context.
+Executive summary (Mini tier, temp=0.3) runs concurrently — same format as simple pipeline (3 bullets citing specific metrics), sourced from specialist outputs.
 
-### Phase 4: The Fantasy Analyst
+**Phase 2.5: Anchor Check + Reflection Loop** (shared infrastructure — see below)
 
-**Role:** Fantasy baseball analyst writing in news-wire voice for competitive league managers.
+**Data Flow:**
+```
+Context → Data Builders → 5 Specialists (parallel)
+                              ↓
+                        5 Audits (parallel)
+                              ↓
+                        Revisions (flagged only)
+                              ↓
+                    Writer + Exec Summary (parallel)
+                              ↓
+                        Anchor Check
+```
 
-**Input:** The pitcher's name, handedness, role, and the editor's capsule (Phase 2 output).
+### Shared Infrastructure
 
-**Task:** Write exactly 3 bullet points — Axios-style: short, declarative, news-first. Lead with the fact or trend, then explain why it matters for fantasy. Each bullet cites one specific metric.
+#### Anchor Check + Reflection Loop
 
-**Voice:** Analyst reporting news, not manager issuing roster moves. Frame implications as things to monitor ("keep an eye on," "worth watching") rather than directives ("pick him up," "move him to the bench"). No bold labels, no verdict prefixes. Plain text bullets.
-
-### Phase 2.5: The Anchor Check + Reflection Loop
-
-**Role:** Fact-checker verifying the capsule is faithful to the synthesis, with a self-correcting revision loop.
-
-**Input:** The synthesis (Phase 1 output) and the capsule (Phase 2 output).
-
-**Task:** Compare the two documents and flag specific problems:
+Both pipelines use the same anchor check implementation (anchor.py). The anchor agent (Mini tier, temp=0.1) receives the synthesis/specialist outputs and the capsule, then flags specific problems:
 
 | Check | What it catches |
 |-------|-----------------|
@@ -346,17 +372,20 @@ Three LLM providers are supported: OpenAI (gpt-5.4-mini), Anthropic (claude-sonn
 
 **Output:** A structured `AnchorResult` Pydantic model containing a list of typed `AnchorWarning` objects (each with a `category` from the four types above and a `description`). The `is_clean` property returns `True` when no warnings exist.
 
-**Reflection loop:** If the anchor returns warnings, the editor receives a targeted revision prompt and silently rewrites the capsule. The anchor then re-checks. This repeats up to `MAX_REVISIONS` (default: 2) times, for a maximum of 3 total passes (first draft + 2 revisions).
+**Reflection loop:** If the anchor returns warnings, the editor receives a targeted revision prompt and silently rewrites the capsule. The anchor then re-checks. This repeats up to `MAX_REVISIONS` (default: 3) times, for a maximum of 4 total passes (first draft + 3 revisions).
 
 ```
 Editor (streamed) → Anchor Check
-                     ├─ CLEAN → proceed to Phases 3/4
+                     ├─ CLEAN → proceed to downstream phases
                      └─ warnings → Editor revises (silent)
                                    → Anchor re-checks
                                    ├─ CLEAN → proceed
                                    └─ warnings → Editor revises (silent)
-                                                 → Anchor re-checks (final)
-                                                 → proceed with surviving warnings
+                                                 → Anchor re-checks
+                                                 ├─ CLEAN → proceed
+                                                 └─ warnings → Editor revises (silent, final)
+                                                               → Anchor re-checks (final)
+                                                               → proceed with surviving warnings
 ```
 
 **Revision prompt design:**
@@ -373,22 +402,31 @@ Editor (streamed) → Anchor Check
 
 **Why this phase exists:** The editor is already doing a lot of self-auditing (spot-check #10), but asking a writer to verify their own factual accuracy is like asking them to proofread their own work. A separate persona reading the synthesis and capsule together catches signal drift that the editor's self-check misses — for example, the synthesizer flagging the sinker as the development pitch while the editor builds the narrative around the changeup and barely mentions it. The reflection loop closes the feedback gap: instead of just reporting the drift, the system corrects it.
 
-### Data Flow
+Downstream phases (Stuff Explainer, Executive Summary) receive the **final** capsule (post-revision if revisions occurred) — not the raw synthesis and not the first draft — so they inherit the editor's three-metric curation, plausibility filters, and confidence scaling.
 
-The anchor check and reflection loop run after the editor and before Phases 3/4. Phases 3 and 4 receive the **final** capsule (post-revision if revisions occurred) — not the raw synthesis and not the first draft — so they inherit the editor's three-metric curation, plausibility filters, L+/walk-rate reframing, and confidence scaling.
+### Model Configuration
 
-```
-Phase 1 (Synthesis) ──→ Phase 2 (Editor/Capsule) ──→ Phase 2.5 (Anchor Check)
-                                                       │
-                                                       ├─ CLEAN ─────────────────┐
-                                                       └─ warnings → revise ─┐   │
-                                                            ↑                │   │
-                                                            └── re-check ←───┘   │
-                                                                                  ▼
-                                                                          Final Capsule
-                                                                            ├──→ Phase 3 (Hook)
-                                                                            └──→ Phase 4 (Fantasy)
-```
+Each agent role is assigned a model tier, thinking effort cap, and token budget tuned to its task:
+
+| Role | Model Tier | Thinking Cap | max_tokens | Temp |
+|------|-----------|-------------|------------|------|
+| Synthesizer | Mini | medium | 2048 | 0.3 |
+| Editor / Writer | Pro | uncapped | 4096 | 0.7 |
+| Stuff Specialist / Explainer | Pro | medium | 2048 / 4096 | 0.3 |
+| Location / RunValue / Trends / Game Shape Specialists | Mini | medium | 2048 | 0.3 |
+| Auditor | Mini | low | 1024 | 0.1 |
+| Anchor | Mini | low | 1024 | 0.1 |
+| Executive Summary | Mini | medium | 1024 | 0.3 |
+| Q&A Answerer | Pro | uncapped | 4096 | 0.3 |
+| Curator | Pro | none | 4096 | default |
+
+**Thinking effort** controls the model's reasoning budget. Levels are: minimal, low, medium, high, xhigh. The `cap_thinking()` utility clamps the user's CLI-selected level to a per-role ceiling — so `--thinking high` on the CLI still results in "low" for the anchor agent. Provider-specific behavior:
+
+- **Claude:** Thinking disabled entirely for mini-tier models (Haiku) and when max_tokens <= 2048 (thinking budget would exceed output budget).
+- **OpenAI:** Thinking disabled for gpt-5.4-mini (reasoning_effort not supported via chat completions API). Small token budgets omit max_tokens to avoid choking the model.
+- **Gemini:** Thinking levels map to "high" (for high/xhigh) or "low" (all others). Flash supports thinking natively.
+
+**Token budgets** prevent expensive thinking tangents on simple tasks. The budgets are role-appropriate: 1024 for short structured output (anchor warnings, audit flags, bullet summaries), 2048 for focused analytical paragraphs, 4096 for full narrative prose.
 
 ### Prompt Caching
 
@@ -397,7 +435,7 @@ CachePoint markers are inserted at strategic boundaries in the user messages to 
 - **Phase 1:** Cache breakpoint after role guidance (stable across all pitchers of the same role).
 - **Phase 2:** Cache breakpoint after the synthesis output.
 - **Phase 2.5:** Cache breakpoint after the synthesis (shared prefix with Phase 2).
-- **Phases 3, 4:** Cache breakpoint after the capsule (shared across both downstream phases for the same pitcher).
+- **Downstream phases:** Cache breakpoint after the capsule (shared across Stuff Explainer and Executive Summary for the same pitcher).
 
 On Anthropic, these translate to explicit `cache_control` headers. On OpenAI, automatic prefix caching benefits from the same structure. On Gemini, CachePoints are silently ignored.
 
@@ -405,8 +443,26 @@ On Anthropic, these translate to explicit `cache_control` headers. On OpenAI, au
 
 After the reflection loop produces the final capsule and downstream phases complete, two verification steps run:
 
-1. **Revision status** — the CLI reports the anchor check outcome to stderr (clean, converged, or exhausted with surviving warnings).
+1. **Revision status** — the CLI reports the anchor check outcome: "Passed on first draft" / "Revised N time(s) — passed" / "Revised N time(s) — remaining issues:" with each surviving warning.
 2. **Metric hallucination guard** — a regex scan of the narrative for metric-like patterns (xMetric, Acronym%, P+/S+/L+ family) flags any term not present in a known-safe set. It also detects traditional outcome stats (ERA, WHIP, W-L) that the editor prompt warns against citing. Flagged terms are reported as warnings on stderr.
+
+---
+
+## Q&A Analyst
+
+The `pitcher-ask` CLI provides a natural-language Q&A interface grounded in the same data pipeline.
+
+**Architecture:** A tool-calling pydantic-ai agent (Pro tier, temp=0.3) with `RunContext[QADeps]` dependency injection. The agent receives system instructions but no pre-loaded data — it calls tools to retrieve what it needs. The agent is constructed dynamically via `_make_qa_agent()`, respecting the user's `--provider` and `--thinking` flags.
+
+**Two tools:**
+1. `get_pitcher_summary()` — returns the full `to_prompt()` context plus league baselines with stddev and NORMAL/OUTLIER annotations
+2. `get_pitch_detail(pitch_type)` — returns per-pitch-type detail including S-variant probabilities, P-vs-S deltas, and 13-outcome component attribution
+
+**Reasoning chain:** Trace from physical pitch characteristics → model predictions → plus scores. Five-step chain: physical inputs, S+ via stuff profile, P-vs-S location isolation, component attribution, summary grades.
+
+**Data grounding rules:** Answer only from tool output, never from training data. Compare metrics against league baselines (within 1.5 stddev = NORMAL). Enforce directional consistency. Reconcile strengths before labeling a pitch poor.
+
+**Scope boundaries:** Declines predictions, fantasy advice, historical comparisons, cross-pitcher rankings, and game-by-game play-by-play.
 
 ---
 
@@ -419,7 +475,7 @@ After the reflection loop produces the final capsule and downstream phases compl
                     │  Appearance CSVs + Statcast                 │
                     │      │                                      │
                     │      ▼                                      │
-                    │  9 signal checkers (pure Python)            │
+                    │  10 signal checkers (pure Python)           │
                     │      │                                      │
                     │      ▼                                      │
                     │  Scored + ranked appearances                │
@@ -437,28 +493,34 @@ After the reflection loop produces the final capsule and downstream phases compl
                     │  Statcast parquet + 8 Pitching+ CSVs        │
                     │      │                                      │
                     │      ▼                                      │
-                    │  Computation Engine (9 analysis modules)    │
+                    │  Computation Engine (11 analysis modules)   │
                     │      │                                      │
                     │      ▼                                      │
-                    │  Context Assembly (~1000 tokens markdown)   │
+                    │  Context Assembly (12-section markdown)     │
                     │      │                                      │
-                    │      ▼                                      │
-                    │  Phase 1: Synthesizer                       │
+                    │      ├──▶ Simple Pipeline (report.py)       │
+                    │      │     Synth → Editor → Anchor          │
+                    │      │       ├──▶ Stuff Explainer           │
+                    │      │       └──▶ Executive Summary         │
                     │      │                                      │
-                    │      ▼                                      │
-                    │  Phase 2: Editor (capsule, streamed)        │
-                    │      │                                      │
-                    │      ▼                                      │
-                    │  Phase 2.5: Anchor Check + Reflection Loop  │
-                    │      │  ┌─ CLEAN → proceed                  │
-                    │      │  └─ warnings → revise → re-check     │
-                    │      │       (up to 2 revision passes)      │
-                    │      │                                      │
-                    │      ├──▶ Phase 3: Hook Writer              │
-                    │      └──▶ Phase 4: Fantasy Analyst          │
+                    │      └──▶ Multi-Specialist (pipeline.py)    │
+                    │            5 Specialists → 5 Audits         │
+                    │              → Writer + Summary → Anchor    │
                     │      │                                      │
                     │      ▼                                      │
                     │  Hallucination Guard + Output               │
+                    └─────────────────────────────────────────────┘
+
+                    ┌─────────────────────────────────────────────┐
+                    │          Q&A ANALYST (pitcher-ask)          │
+                    │                                             │
+                    │  Same data pipeline + league baselines      │
+                    │      │                                      │
+                    │      ▼                                      │
+                    │  Tool-calling agent (2 tools)               │
+                    │      │                                      │
+                    │      ▼                                      │
+                    │  Streamed prose answer                      │
                     └─────────────────────────────────────────────┘
 ```
 

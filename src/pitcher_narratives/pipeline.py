@@ -800,8 +800,8 @@ async def audit_and_revise_specialists(
             result = await auditor.run(**agent_kwargs(audit_input, _model_override))
             return name, result.output
         except Exception:
-            log.warning("Audit failed for %s specialist, treating as clean.", name, exc_info=True)
-            return name, AuditResult(flags=[])
+            log.error("Audit failed for %s specialist.", name, exc_info=True)
+            raise
 
     audit_tasks = [_audit_one(name) for name in specialist_names]
     audit_results = await asyncio.gather(*audit_tasks)
@@ -1026,7 +1026,7 @@ def make_pipeline_agents(
         game_shape=_mini_specialist(_GAME_SHAPE_SPECIALIST_PROMPT),
         writer=_writer(_WRITER_PROMPT),
         auditor=Agent(mini_model, output_type=AuditResult, system_prompt=_DATA_AUDITOR_PROMPT,
-                      model_settings=checker_settings, retries=3, defer_model_check=True),
+                      model_settings=checker_settings, retries=5, defer_model_check=True),
         anchor=Agent(mini_model, output_type=AnchorResult, system_prompt=ANCHOR_PROMPT,
                      model_settings=checker_settings, defer_model_check=True),
         summary=Agent(mini_model, output_type=str, system_prompt=_EXECUTIVE_SUMMARY_PROMPT,
