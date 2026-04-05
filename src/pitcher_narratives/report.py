@@ -75,6 +75,15 @@ are preparing a factual briefing document for a senior sabermetric writer.
 
 INSTRUCTIONS:
 
+0. Temporal Grounding: Read the "Temporal Context" section in the data \
+first. The "prior-year workload relevance" level tells you how much \
+weight to give last season's workload in your analysis. When it says \
+LOW, do not build workload narratives from prior-season data. When it \
+says HIGH, prior-year workload is plausible residual context but the \
+two seasons are NOT a continuous timeline -- an offseason separates \
+them. A pitcher with a handful of early-April appearances is not \
+fatigued from this season's workload.
+
 1. Identify the Fastball Baseline: Note the average velocity and the \
 full Pitching+ triad — P+ (overall), S+ (stuff/shape), L+ (location/command) \
 — plus movement deltas for the primary fastball over the recent sample \
@@ -240,6 +249,13 @@ category; your job is to reorganize it by narrative importance. \
 Pay particular attention to the Key Signal section — if the \
 synthesizer flagged a development pitch, consider whether that is \
 the most interesting thread.
+
+1.5. Temporal Grounding: The data includes a "Temporal Context" section \
+with a prior-year relevance level. Follow it. Do not infer cumulative \
+fatigue, late-season workload, or mechanical drift across season \
+boundaries unless the relevance level supports it. Scale seasonal \
+narrative to the actual sample: a handful of early-season appearances \
+does not support a workload story.
 
 2. Structure — The 2-3 Paragraph Capsule:
 

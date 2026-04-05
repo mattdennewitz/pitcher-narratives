@@ -227,6 +227,11 @@ Look at:
 - Hard-hit rate shifts
 
 Rules:
+- TEMPORAL GROUNDING: The data includes a "Temporal Context" section. \
+Respect the prior-year relevance level. Do not frame window-vs-season \
+deltas as long-term trends when the current season has few appearances. \
+Do not connect prior-season workload to current-season patterns as \
+cause-and-effect.
 - Lead with the single most important change.
 - Separate real trends from noise: flag sample size concerns, note \
 when a delta is within the "steady" threshold.
@@ -252,6 +257,10 @@ against LHB vs RHB in later passes?
 - Workload context: pitch counts, rest days, consecutive days pitched.
 
 Rules:
+- TEMPORAL GROUNDING: The data includes a "Temporal Context" section. \
+Respect the prior-year relevance level. Do not attribute within-game \
+patterns to cumulative seasonal fatigue if the current season is young. \
+A pitcher with 5 early-April appearances is not showing late-season wear.
 - Lead with the most notable within-game pattern.
 - Connect mix shifts to effectiveness: if he ramps the sinker in \
 pass 2, does that help or hurt?
@@ -392,7 +401,12 @@ assessment.
 - If specialists contradict each other on a pitch, acknowledge the \
 tension rather than silently picking one side.
 - No bullet points, no headers, no tables. Prose only.
-- Scale confidence to sample size. Small windows get tentative language."""
+- Scale confidence to sample size. Small windows get tentative language.
+- TEMPORAL GROUNDING: The data includes a "Temporal Context" section \
+with a prior-year relevance level. Follow it. When relevance is LOW, \
+prior-season workload does not drive narrative. When relevance is HIGH, \
+prior year is residual context but two seasons are NOT a continuous \
+timeline. Do not hallucinate cumulative fatigue across an offseason."""
 
 
 # ═══════════════════════════════════════════════════════════════════════
