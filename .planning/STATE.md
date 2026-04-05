@@ -4,8 +4,8 @@ milestone: v1.8
 milestone_name: Cross-Season Trend Analysis
 status: executing
 stopped_at: Roadmap created for v1.8
-last_updated: "2026-04-03T12:48:24.222Z"
-last_activity: 2026-04-03
+last_updated: "2026-04-05T13:36:17Z"
+last_activity: 2026-04-05
 progress:
   total_phases: 4
   completed_phases: 4
@@ -53,10 +53,11 @@ None.
 |---|-------------|------|--------|-----------|
 | 260403-cr4 | Add per-pitch-type movement and velocity deltas to YoY arsenal trends | 2026-04-03 | 3d714bc | [260403-cr4-add-per-pitch-type-movement-and-velocity](./quick/260403-cr4-add-per-pitch-type-movement-and-velocity/) |
 | 260403-f5t | Add per-appearance pitch trends (three-way comparison) | 2026-04-03 | 9292143 | [260403-f5t-add-per-appearance-pitch-trends-comparin](./quick/260403-f5t-add-per-appearance-pitch-trends-comparin/) |
+| 260405-d6c | Add MINI_PROVIDERS model tier and route lightweight agents to mini models | 2026-04-05 | c43da35 | [260405-d6c-add-mini-providers-model-tier-and-route-](./quick/260405-d6c-add-mini-providers-model-tier-and-route-/) |
 
 ## Session Continuity
 
-Last session: 2026-04-03
-Last activity: 2026-04-03 - Completed quick task 260403-f5t: Per-appearance pitch trends
-Stopped at: Completed quick task 260403-f5t
+Last session: 2026-04-05
+Last activity: 2026-04-05 - Completed quick task 260405-d6c: MINI_PROVIDERS model tier and dual-model routing
+Stopped at: Completed quick task 260405-d6c
 Resume file: None
