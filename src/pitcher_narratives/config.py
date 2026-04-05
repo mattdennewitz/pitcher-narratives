@@ -18,6 +18,7 @@ from pydantic_ai.settings import ModelSettings, ThinkingEffort
 __all__ = [
     "API_KEYS",
     "MAX_REVISIONS",
+    "MINI_PROVIDERS",
     "PROVIDERS",
     "THINKING_LEVELS",
     "TOKEN_BUDGET_LARGE",
@@ -33,6 +34,12 @@ PROVIDERS = {
     "openai": "openai:gpt-5.4",
     "claude": "anthropic:claude-sonnet-4-6",
     "gemini": "google-gla:gemini-3.1-pro-preview",
+}
+
+MINI_PROVIDERS = {
+    "openai": "openai:gpt-5.4-mini",
+    "claude": "anthropic:claude-haiku-4-5",
+    "gemini": "google-gla:gemini-3.1-flash",
 }
 
 THINKING_LEVELS: list[ThinkingEffort] = ["minimal", "low", "medium", "high", "xhigh"]

@@ -4,8 +4,8 @@ milestone: v1.8
 milestone_name: Cross-Season Trend Analysis
 status: ready_to_plan
 stopped_at: Roadmap created for v1.8
-last_updated: "2026-04-02"
-last_activity: 2026-04-02
+last_updated: "2026-04-05T13:36:17Z"
+last_activity: 2026-04-05
 progress:
   total_phases: 4
   completed_phases: 0
@@ -55,10 +55,11 @@ None.
 | 260403-f5t | Add per-appearance pitch trends (three-way comparison) | 2026-04-03 | 9292143 | [260403-f5t-add-per-appearance-pitch-trends-comparin](./quick/260403-f5t-add-per-appearance-pitch-trends-comparin/) |
 | 260404-vya | Add CachePoint support to pipeline specialist builders | 2026-04-05 | e79d2c9 | [260404-vya-fully-examine-new-prompts-and-reset-cach](./quick/260404-vya-fully-examine-new-prompts-and-reset-cach/) |
 | 260405-cmp | Optimize LLM spend: right-size max_tokens and thinking per agent role | 2026-04-05 | 3c7bf6b | [260405-cmp-optimize-llm-spend-right-size-max-tokens](./quick/260405-cmp-optimize-llm-spend-right-size-max-tokens/) |
+| 260405-d6c | Add MINI_PROVIDERS model tier and route lightweight agents to mini models | 2026-04-05 | c43da35 | [260405-d6c-add-mini-providers-model-tier-and-route-](./quick/260405-d6c-add-mini-providers-model-tier-and-route-/) |
 
 ## Session Continuity
 
 Last session: 2026-04-05
-Last activity: 2026-04-05 - Completed quick task 260405-cmp: Optimize LLM spend
-Stopped at: Completed quick task 260405-cmp
+Last activity: 2026-04-05 - Completed quick task 260405-d6c: MINI_PROVIDERS model tier
+Stopped at: Completed quick task 260405-d6c
 Resume file: None

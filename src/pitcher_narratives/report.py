@@ -39,6 +39,7 @@ from pitcher_narratives.anchor import (
 )
 from pitcher_narratives.config import (
     MAX_REVISIONS,
+    MINI_PROVIDERS,
     PROVIDERS,
     THINKING_LEVELS,
     TOKEN_BUDGET_LARGE,
@@ -448,6 +449,7 @@ def _make_agents(
     if provider not in PROVIDERS:
         raise ValueError(f"Unknown provider {provider!r}, expected one of: {', '.join(PROVIDERS)}")
     model = PROVIDERS[provider]
+    mini_model = MINI_PROVIDERS[provider]
 
     analyst_settings = make_model_settings(provider, cap_thinking(thinking, "medium"), 0.3, max_tokens=TOKEN_BUDGET_MEDIUM)
     writer_settings = make_model_settings(provider, thinking, 0.7, max_tokens=TOKEN_BUDGET_LARGE)
@@ -455,18 +457,18 @@ def _make_agents(
     stuff_settings = make_model_settings(provider, cap_thinking(thinking, "medium"), 0.3, max_tokens=TOKEN_BUDGET_LARGE)
     summary_settings = make_model_settings(provider, cap_thinking(thinking, "medium"), 0.3, max_tokens=TOKEN_BUDGET_SMALL)
 
-    str_prompts_and_settings = [
-        (_SYNTHESIZER_PROMPT, analyst_settings),
-        (_EDITOR_PROMPT, writer_settings),
-        (_STUFF_EXPLAINER_PROMPT, stuff_settings),
-        (_EXECUTIVE_SUMMARY_PROMPT, summary_settings),
-    ]
-    str_agents: _StrAgents = tuple(  # type: ignore[assignment]
-        Agent(model, output_type=str, system_prompt=p, model_settings=s, defer_model_check=True)
-        for p, s in str_prompts_and_settings
+    str_agents: _StrAgents = (
+        Agent(mini_model, output_type=str, system_prompt=_SYNTHESIZER_PROMPT,
+              model_settings=analyst_settings, defer_model_check=True),
+        Agent(model, output_type=str, system_prompt=_EDITOR_PROMPT,
+              model_settings=writer_settings, defer_model_check=True),
+        Agent(model, output_type=str, system_prompt=_STUFF_EXPLAINER_PROMPT,
+              model_settings=stuff_settings, defer_model_check=True),
+        Agent(mini_model, output_type=str, system_prompt=_EXECUTIVE_SUMMARY_PROMPT,
+              model_settings=summary_settings, defer_model_check=True),
     )
     anchor_agent = Agent(
-        model, output_type=AnchorResult, system_prompt=ANCHOR_PROMPT,
+        mini_model, output_type=AnchorResult, system_prompt=ANCHOR_PROMPT,
         model_settings=checker_settings, defer_model_check=True,
     )
     result: _AgentSet = (str_agents, anchor_agent)
