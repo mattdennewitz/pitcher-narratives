@@ -53,10 +53,11 @@ None.
 |---|-------------|------|--------|-----------|
 | 260403-cr4 | Add per-pitch-type movement and velocity deltas to YoY arsenal trends | 2026-04-03 | 3d714bc | [260403-cr4-add-per-pitch-type-movement-and-velocity](./quick/260403-cr4-add-per-pitch-type-movement-and-velocity/) |
 | 260403-f5t | Add per-appearance pitch trends (three-way comparison) | 2026-04-03 | 9292143 | [260403-f5t-add-per-appearance-pitch-trends-comparin](./quick/260403-f5t-add-per-appearance-pitch-trends-comparin/) |
+| 260404-vya | Add CachePoint support to pipeline specialist builders | 2026-04-04 | e79d2c9 | [260404-vya-fully-examine-new-prompts-and-reset-cach](./quick/260404-vya-fully-examine-new-prompts-and-reset-cach/) |
 
 ## Session Continuity
 
-Last session: 2026-04-03
-Last activity: 2026-04-03 - Completed quick task 260403-f5t: Per-appearance pitch trends
-Stopped at: Completed quick task 260403-f5t
+Last session: 2026-04-04
+Last activity: 2026-04-04 - Completed quick task 260404-vya: CachePoint support for pipeline specialist builders
+Stopped at: Completed quick task 260404-vya
 Resume file: None
