@@ -53,10 +53,11 @@ None.
 |---|-------------|------|--------|-----------|
 | 260403-cr4 | Add per-pitch-type movement and velocity deltas to YoY arsenal trends | 2026-04-03 | 3d714bc | [260403-cr4-add-per-pitch-type-movement-and-velocity](./quick/260403-cr4-add-per-pitch-type-movement-and-velocity/) |
 | 260403-f5t | Add per-appearance pitch trends (three-way comparison) | 2026-04-03 | 9292143 | [260403-f5t-add-per-appearance-pitch-trends-comparin](./quick/260403-f5t-add-per-appearance-pitch-trends-comparin/) |
+| 260405-gtv | Add TemporalContext with sliding prior-year relevance | 2026-04-05 | e68c7bd | [260405-gtv-add-temporalcontext-with-sliding-prior-y](./quick/260405-gtv-add-temporalcontext-with-sliding-prior-y/) |
 
 ## Session Continuity
 
-Last session: 2026-04-03
-Last activity: 2026-04-03 - Completed quick task 260403-f5t: Per-appearance pitch trends
-Stopped at: Completed quick task 260403-f5t
+Last session: 2026-04-05
+Last activity: 2026-04-05 - Completed quick task 260405-gtv: TemporalContext with sliding prior-year relevance
+Stopped at: Completed quick task 260405-gtv
 Resume file: None
