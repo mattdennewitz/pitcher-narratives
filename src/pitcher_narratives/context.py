@@ -6,6 +6,8 @@ to_prompt() method that renders prompt-ready markdown under 2,000 tokens.
 
 from __future__ import annotations
 
+from typing import Any
+
 from pydantic import BaseModel, ConfigDict
 
 from pitcher_narratives.data import PitcherData
@@ -73,6 +75,11 @@ class PitcherContext(BaseModel):
     release_point: ReleasePointMetrics
     workload: WorkloadContext
     tto: TTOAnalysis | None
+
+    # Cross-season features (not yet implemented — stubs so pipeline guards work)
+    cross_season_summary: Any | None = None
+    arsenal_trend: Any | None = None
+    appearance_pitch_trends: Any | None = None
 
     def to_prompt(self) -> str:
         """Render as prompt-ready markdown under 2,000 tokens."""

@@ -39,7 +39,7 @@ PROVIDERS = {
 MINI_PROVIDERS = {
     "openai": "openai:gpt-5.4-mini",
     "claude": "anthropic:claude-haiku-4-5",
-    "gemini": "google-gla:gemini-3.1-flash",
+    "gemini": "google-gla:gemini-flash-latest",
 }
 
 THINKING_LEVELS: list[ThinkingEffort] = ["minimal", "low", "medium", "high", "xhigh"]
@@ -53,7 +53,7 @@ TOKEN_BUDGET_MEDIUM = 2048
 TOKEN_BUDGET_LARGE = 4096
 """Writer, editor, answerer, stuff explainer -- long-form prose."""
 
-MAX_REVISIONS = 2
+MAX_REVISIONS = 3
 """Maximum number of editor revision passes before accepting the capsule."""
 
 API_KEYS = {
@@ -69,12 +69,13 @@ def make_model_settings(
     temperature: float,
     *,
     max_tokens: int = 16384,
+    mini: bool = False,
 ) -> ModelSettings:
     """Build provider-aware ModelSettings with thinking-effort translation.
 
-    Gemini uses a discrete ``thinking_level`` instead of the continuous
-    ``ThinkingEffort`` enum, so we map high/xhigh → ``"high"`` and
-    everything else → ``"low"``.
+    Args:
+        mini: True when targeting a mini-tier model. Disables thinking for
+              providers where mini models don't support it (OpenAI, Claude).
     """
     if provider == "gemini":
         gemini_level = "high" if thinking in ("high", "xhigh") else "low"
@@ -84,15 +85,21 @@ def make_model_settings(
             max_tokens=max_tokens,
         )
     elif provider == "claude":
-        # Claude requires max_tokens > thinking.budget_tokens.  For small
-        # budgets (checkers, specialists, summaries) disable thinking entirely
-        # — these roles already have thinking capped to low/medium and produce
-        # short structured output that doesn't benefit from extended thinking.
-        if max_tokens <= TOKEN_BUDGET_MEDIUM:
+        # Claude: disable thinking for small budgets (thinking.budget_tokens
+        # would exceed max_tokens) and for mini models (Haiku).
+        if mini or max_tokens <= TOKEN_BUDGET_MEDIUM:
             return ModelSettings(temperature=1, max_tokens=max_tokens)
         return ModelSettings(thinking=thinking, temperature=1, max_tokens=max_tokens)
     else:
-        return ModelSettings(thinking=thinking, temperature=temperature, max_tokens=max_tokens)
+        # OpenAI: gpt-5.4-mini doesn't support reasoning_effort via chat
+        # completions API, and small max_tokens choke the model when reasoning
+        # tokens count against the cap.
+        kwargs: dict[str, Any] = {"temperature": temperature}
+        if not mini:
+            kwargs["thinking"] = thinking
+        if max_tokens > TOKEN_BUDGET_MEDIUM:
+            kwargs["max_tokens"] = max_tokens
+        return ModelSettings(**kwargs)
 
 
 def cap_thinking(thinking: ThinkingEffort, ceiling: ThinkingEffort) -> ThinkingEffort:
