@@ -52,8 +52,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--thinking",
         choices=["minimal", "low", "medium", "high", "xhigh"],
-        default="high",
-        help="Thinking/reasoning effort level (default: high)",
+        default="medium",
+        help="Thinking/reasoning effort level (default: medium)",
     )
     parser.add_argument(
         "--pipeline",
