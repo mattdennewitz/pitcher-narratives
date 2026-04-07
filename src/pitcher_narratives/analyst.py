@@ -584,7 +584,6 @@ OUT OF SCOPE (decline gracefully):
 def ask_question_pipeline(
     question: str,
     context: PitcherContext,
-    data: PitcherData,
     *,
     provider: str = "gemini",
     thinking: ThinkingEffort = "high",
@@ -600,13 +599,12 @@ def ask_question_pipeline(
     Args:
         question: The user's question in natural language.
         context: Assembled PitcherContext for the pitcher.
-        data: Loaded PitcherData for the pitcher.
         provider: LLM provider key.
         thinking: Thinking effort level.
         _model_override: Optional model override for testing.
 
     Returns:
-        PipelineAnswer with the streamed answer, stuff summary, and audit flags.
+        PipelineAnswer with the streamed answer, stuff summary, and key signals.
     """
     import asyncio
 

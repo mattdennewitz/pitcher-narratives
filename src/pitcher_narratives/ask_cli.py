@@ -134,7 +134,6 @@ def main() -> None:
         pipeline_result = ask_question_pipeline(
             args.question,
             ctx,
-            pitcher_data,
             provider=args.provider,
             thinking=args.thinking,
             _model_override=model_override,
