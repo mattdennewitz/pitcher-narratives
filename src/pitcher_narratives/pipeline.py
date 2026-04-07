@@ -1081,7 +1081,7 @@ def make_pipeline_agents(
         summary=Agent(mini_model, output_type=str, system_prompt=_EXECUTIVE_SUMMARY_PROMPT,
                       model_settings=summary_settings, defer_model_check=True),
         signal_extractor=Agent(mini_model, output_type=KeySignals, system_prompt=SIGNAL_EXTRACTOR_PROMPT,
-                               model_settings=checker_settings, defer_model_check=True),
+                               model_settings=summary_settings, defer_model_check=True),
     )
 
 
