@@ -1,6 +1,6 @@
 """Tests for key signal extraction model and rendering."""
 
-from pitcher_narratives.signals import KeySignals, render_key_signals
+from pitcher_narratives.signals import KeySignals, SIGNAL_EXTRACTOR_PROMPT, render_key_signals
 
 
 class TestKeySignals:
@@ -63,3 +63,19 @@ class TestRenderKeySignals:
         )
         rendered = render_key_signals(ks)
         assert "Development Pitch" not in rendered
+
+
+class TestSignalExtractorPrompt:
+    def test_mentions_all_signal_types(self):
+        for keyword in [
+            "top_improvement", "top_concern", "development_pitch",
+            "specialist_tension", "arsenal_dependency", "connected_changes",
+            "platoon_vulnerability", "sample_size_caution",
+        ]:
+            assert keyword in SIGNAL_EXTRACTOR_PROMPT
+
+    def test_instructs_null_for_absent(self):
+        assert "null" in SIGNAL_EXTRACTOR_PROMPT
+
+    def test_instructs_no_invention(self):
+        assert "invent" in SIGNAL_EXTRACTOR_PROMPT.lower()
