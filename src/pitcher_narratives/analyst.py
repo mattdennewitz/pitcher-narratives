@@ -557,9 +557,6 @@ INTERPRETATION RULES:
 specialist says a pitch is weak, do not spin it positive.
 - If a pitch shows xWhiff_S ≥ 25%, that is a meaningful whiff rate. \
 Reconcile this strength before labeling the pitch as poor.
-- If DATA AUDIT FLAGS are present, those specialist claims have been \
-flagged as inaccurate. Do NOT repeat flagged claims — use the \
-suggested correction instead.
 
 VOICE:
 - Write like an analyst talking to another analyst. Plain, specific, \
@@ -655,12 +652,13 @@ def ask_question_pipeline(
         log.info("Answering...")
 
         # Phase 2: Answerer composes from clean specialist outputs (streamed)
-        model_name, model_settings = _make_qa_agent(provider, thinking)
+        model = PROVIDERS[provider]
+        answerer_settings = make_model_settings(provider, thinking, 0.3, max_tokens=TOKEN_BUDGET_LARGE)
         answerer = Agent(
-            _model_override if _model_override is not None else model_name,
+            _model_override if _model_override is not None else model,
             output_type=str,
             instructions=ANSWERER_INSTRUCTIONS,
-            model_settings=model_settings,
+            model_settings=answerer_settings,
             defer_model_check=True,
         )
 
