@@ -636,16 +636,21 @@ def ask_question_pipeline(
             raw_specialists, specialist_agents, agents.auditor, context, _model_override,
         )
         # Phase 1.75: Extract key signals from clean specialist outputs
+        # Non-critical enrichment — pipeline continues without signals on failure.
         log.info("Extracting key signals...")
         signal_input = build_writer_input(
             context, specialists.stuff, specialists.location,
             specialists.runvalue, specialists.trends, specialists.game_shape,
         )
-        signal_result = await agents.signal_extractor.run(
-            **agent_kwargs(signal_input, _model_override)
-        )
-        key_signals = signal_result.output
-        log.info("Key signals extracted.")
+        try:
+            signal_result = await agents.signal_extractor.run(
+                **agent_kwargs(signal_input, _model_override)
+            )
+            key_signals = signal_result.output
+            log.info("Key signals extracted.")
+        except Exception:
+            log.warning("Signal extractor failed, continuing without key signals.", exc_info=True)
+            key_signals = None
 
         log.info("Answering...")
 
@@ -660,17 +665,20 @@ def ask_question_pipeline(
             defer_model_check=True,
         )
 
-        # Answerer gets key signals + clean specialist outputs
+        # Answerer gets key signals (when available) + clean specialist outputs
         answerer_parts = [
             f"## Question\n{question}\n",
             f"## Pitcher: {context.pitcher_name} ({context.throws}HP, {context.role})\n",
-            render_key_signals(key_signals) + "\n",
+        ]
+        if key_signals is not None:
+            answerer_parts.append(render_key_signals(key_signals) + "\n")
+        answerer_parts.extend([
             f"## Specialist Analysis: Stuff\n{specialists.stuff}\n",
             f"## Specialist Analysis: Location\n{specialists.location}\n",
             f"## Specialist Analysis: Run Value\n{specialists.runvalue}\n",
             f"## Specialist Analysis: Trends\n{specialists.trends}\n",
             f"## Specialist Analysis: Game Shape\n{specialists.game_shape}",
-        ]
+        ])
         answerer_input = "\n\n".join(answerer_parts)
 
         # Build summary input from clean specialist outputs + key signals

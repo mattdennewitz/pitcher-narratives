@@ -1,7 +1,10 @@
 """Tests for key signal extraction model and rendering."""
 
-from pitcher_narratives.signals import KeySignals, SIGNAL_EXTRACTOR_PROMPT, render_key_signals
-from pitcher_narratives.anchor import AnchorWarning, WarningCategory
+import pytest
+from pydantic import ValidationError
+
+from pitcher_narratives.signals import KeySignals, SIGNAL_EXTRACTOR_PROMPT, _FIELD_LABELS, render_key_signals
+from pitcher_narratives.anchor import AnchorWarning
 
 
 class TestAnchorWarningCategory:
@@ -14,7 +17,20 @@ class TestAnchorWarningCategory:
         assert w.category == "MISSED_SIGNAL"
 
 
+class TestFieldLabelsSync:
+    def test_field_labels_match_model_fields(self):
+        """_FIELD_LABELS keys must exactly match KeySignals model fields."""
+        assert set(_FIELD_LABELS.keys()) == set(KeySignals.model_fields.keys())
+
+
 class TestKeySignals:
+    def test_required_fields_reject_empty_string(self):
+        """Primary signals must be non-empty."""
+        with pytest.raises(ValidationError):
+            KeySignals(top_improvement="", top_concern="Fastball velo down")
+        with pytest.raises(ValidationError):
+            KeySignals(top_improvement="Slider S+ jumped", top_concern="")
+
     def test_required_fields_only(self):
         ks = KeySignals(
             top_improvement="Slider S+ jumped to 135 with new gyro shape",

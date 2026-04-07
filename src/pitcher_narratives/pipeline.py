@@ -394,10 +394,10 @@ the writing.
 
 CRITICAL: These are INGREDIENTS, not sections to preserve. You must:
 - Find the thread. What is the single most important story across \
-all four analyses? Maybe the stuff is fine but location is killing a \
+all five analyses? Maybe the stuff is fine but location is killing a \
 pitch. Maybe a velocity trend is changing the entire arsenal picture. \
 Maybe one pitch is carrying the whole profile.
-- Write as one voice. The reader should not be able to tell that four \
+- Write as one voice. The reader should not be able to tell that five \
 separate analysts contributed. No section breaks, no "meanwhile," no \
 "turning to the location data."
 - Drop what's redundant. If stuff and run value both say the slider \
@@ -950,7 +950,7 @@ def write_pipeline_data_file(
     sections.append(f"## System Prompt\n\n{SIGNAL_EXTRACTOR_PROMPT}\n")
     sections.append(
         "## User Message\n\n"
-        "[Receives: all 5 specialist outputs (same as writer input)]\n"
+        "[Receives: all 5 specialist outputs (without key signals)]\n"
     )
 
     if question is not None:
@@ -1086,7 +1086,7 @@ def make_pipeline_agents(
         summary=Agent(mini_model, output_type=str, system_prompt=_EXECUTIVE_SUMMARY_PROMPT,
                       model_settings=summary_settings, defer_model_check=True),
         signal_extractor=Agent(mini_model, output_type=KeySignals, system_prompt=SIGNAL_EXTRACTOR_PROMPT,
-                               model_settings=summary_settings, defer_model_check=True),
+                               model_settings=summary_settings, retries=3, defer_model_check=True),
     )
 
 
@@ -1171,16 +1171,21 @@ async def _run_pipeline(
     )
 
     # Phase 1.75: Extract key signals from clean specialist outputs
+    # Non-critical enrichment — pipeline continues without signals on failure.
     log.info("Extracting key signals...")
     signal_input = build_writer_input(
         ctx, specialists.stuff, specialists.location,
         specialists.runvalue, specialists.trends, specialists.game_shape,
     )
-    signal_result = await agents.signal_extractor.run(
-        **agent_kwargs(signal_input, _model_override)
-    )
-    key_signals = signal_result.output
-    log.info("Key signals extracted.")
+    try:
+        signal_result = await agents.signal_extractor.run(
+            **agent_kwargs(signal_input, _model_override)
+        )
+        key_signals = signal_result.output
+        log.info("Key signals extracted.")
+    except Exception:
+        log.warning("Signal extractor failed, continuing without key signals.", exc_info=True)
+        key_signals = None
 
     # Phase 2: Writer + Executive Summary run concurrently
     # Writer gets clean specialist outputs + key signals.
@@ -1220,13 +1225,17 @@ async def _run_pipeline(
 
     # Phase 2.5: Anchor check + revision loop
     revision_count = 0
-    synthesis = (
-        f"{render_key_signals(key_signals)}\n\n"
+    specialist_synthesis = (
         f"STUFF:\n{specialists.stuff}\n\n"
         f"LOCATION:\n{specialists.location}\n\n"
         f"RUN VALUE:\n{specialists.runvalue}\n\n"
         f"TRENDS:\n{specialists.trends}\n\n"
         f"GAME SHAPE:\n{specialists.game_shape}"
+    )
+    synthesis = (
+        f"{render_key_signals(key_signals)}\n\n{specialist_synthesis}"
+        if key_signals is not None
+        else specialist_synthesis
     )
 
     for _ in range(MAX_REVISIONS):

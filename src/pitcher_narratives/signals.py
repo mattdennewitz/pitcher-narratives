@@ -9,7 +9,7 @@ validation targets.
 
 from __future__ import annotations
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 __all__ = [
     "KeySignals",
@@ -25,9 +25,9 @@ class KeySignals(BaseModel):
     Secondary signals (optional) are advisory via UNDERWEIGHTED.
     """
 
-    # Primary signals (required)
-    top_improvement: str
-    top_concern: str
+    # Primary signals (required, must be non-empty)
+    top_improvement: str = Field(min_length=1)
+    top_concern: str = Field(min_length=1)
 
     # Secondary signals (optional)
     development_pitch: str | None = None
