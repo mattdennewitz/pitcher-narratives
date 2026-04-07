@@ -1,4 +1,4 @@
-"""Multi-agent specialist→auditor→writer report pipeline (v1.6 prototype).
+"""Multi-agent specialist→auditor→writer report pipeline (v1.7 prototype).
 
 Architecture:
   Phase 1: 5 specialist agents run in parallel, each producing a focused
@@ -16,10 +16,18 @@ Architecture:
   input + audit corrections to produce clean output. The writer never sees
   flawed prose — only corrected versions.
 
-  Phase 2: Writer composes a unified capsule from clean specialist outputs.
-  Executive summary agent runs concurrently with writer.
+  Phase 1.75: Signal extractor reads clean specialist outputs and identifies
+  cross-specialist patterns (top improvement, top concern, development pitch,
+  specialist tensions, arsenal dependency, connected changes, platoon
+  vulnerability, sample size caveats). These key signals feed both the
+  writer (as narrative priorities) and the anchor checker (as validation
+  targets).
 
-  Phase 2.5: Anchor check + revision loop.
+  Phase 2: Writer composes a unified capsule from clean specialist outputs
+  + key signals. Executive summary agent runs concurrently with writer.
+
+  Phase 2.5: Anchor check + revision loop. Primary signals are enforced
+  (MISSED_SIGNAL), secondary signals are advisory (UNDERWEIGHTED).
 
 Anti-hallucination guardrails:
   - Specialists receive pre-computed NORMAL/OUTLIER tags on every metric.
@@ -1132,7 +1140,8 @@ async def _run_pipeline(
 
     Phase 1: 5 specialists run concurrently.
     Phase 1.5: Data auditor validates specialist outputs against ground truth.
-    Phase 2: Writer composes capsule (with audit flags if any).
+    Phase 1.75: Signal extractor identifies cross-specialist patterns.
+    Phase 2: Writer composes capsule from specialist outputs + key signals.
     Phase 2.5: Anchor check + revision loop.
     """
     agents = make_pipeline_agents(provider, thinking)
