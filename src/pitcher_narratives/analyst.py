@@ -15,10 +15,11 @@ from typing import Any
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.settings import ThinkingEffort
 
-from pitcher_narratives.config import PROVIDERS, TOKEN_BUDGET_LARGE, make_model_settings
+from pitcher_narratives.config import PROVIDERS, TOKEN_BUDGET_LARGE, agent_kwargs, make_model_settings
 from pitcher_narratives.context import PitcherContext
 from pitcher_narratives.data import PitcherData
 from pitcher_narratives.engine import compute_league_baselines
+from pitcher_narratives.signals import render_key_signals
 
 __all__ = [
     "ANALYST_INSTRUCTIONS", "ANSWERER_INSTRUCTIONS",
@@ -535,6 +536,10 @@ APPROACH:
 a specific pitch's stuff should lean on the stuff analysis. A question \
 about trends should lean on the trend analysis. A broad question should \
 synthesize across all five.
+- The Key Signals section (when present) highlights cross-specialist \
+patterns — tensions, connected changes, arsenal dependencies. For broad \
+questions, these are high-value starting points. For narrow questions, \
+use them only if directly relevant.
 - The specialist analyses are your ONLY source of truth. Do not invent \
 metrics or cite numbers not present in the analyses.
 
@@ -591,6 +596,7 @@ def ask_question_pipeline(
 
     Phase 1: 5 specialists run concurrently on the full context.
     Phase 1.5: Data auditor validates specialist outputs against ground truth.
+    Phase 1.75: Signal extractor identifies cross-specialist patterns.
     Phase 2: Answerer composes a focused response (streamed).
 
     Args:
@@ -606,7 +612,6 @@ def ask_question_pipeline(
     """
     import asyncio
 
-    from pitcher_narratives.config import agent_kwargs
     from pitcher_narratives.pipeline import (
         audit_and_revise_specialists,
         build_writer_input,
@@ -634,6 +639,18 @@ def ask_question_pipeline(
         specialists, audit_flags = await audit_and_revise_specialists(
             raw_specialists, specialist_agents, agents.auditor, context, _model_override,
         )
+        # Phase 1.75: Extract key signals from clean specialist outputs
+        log.info("Extracting key signals...")
+        signal_input = build_writer_input(
+            context, specialists.stuff, specialists.location,
+            specialists.runvalue, specialists.trends, specialists.game_shape,
+        )
+        signal_result = await agents.signal_extractor.run(
+            **agent_kwargs(signal_input, _model_override)
+        )
+        key_signals = signal_result.output
+        log.info("Key signals extracted.")
+
         log.info("Answering...")
 
         # Phase 2: Answerer composes from clean specialist outputs (streamed)
@@ -646,16 +663,18 @@ def ask_question_pipeline(
             defer_model_check=True,
         )
 
-        # Answerer gets clean specialist outputs — no flags section needed
-        answerer_input = "\n\n".join([
+        # Answerer gets key signals + clean specialist outputs
+        answerer_parts = [
             f"## Question\n{question}\n",
             f"## Pitcher: {context.pitcher_name} ({context.throws}HP, {context.role})\n",
+            render_key_signals(key_signals) + "\n",
             f"## Specialist Analysis: Stuff\n{specialists.stuff}\n",
             f"## Specialist Analysis: Location\n{specialists.location}\n",
             f"## Specialist Analysis: Run Value\n{specialists.runvalue}\n",
             f"## Specialist Analysis: Trends\n{specialists.trends}\n",
             f"## Specialist Analysis: Game Shape\n{specialists.game_shape}",
-        ])
+        ]
+        answerer_input = "\n\n".join(answerer_parts)
 
         # Build summary input from clean specialist outputs
         summary_input = build_writer_input(
