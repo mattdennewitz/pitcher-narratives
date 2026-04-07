@@ -72,9 +72,15 @@ from pitcher_narratives.anchor import (
     build_anchor_message,
     build_revision_message,
 )
+from pitcher_narratives.signals import (
+    KeySignals,
+    SIGNAL_EXTRACTOR_PROMPT,
+    render_key_signals,
+)
 
 __all__ = [
-    "AuditFlag", "AuditResult", "ExecutiveSummary", "PipelineAgents", "PipelineResult",
+    "AuditFlag", "AuditResult", "ExecutiveSummary", "KeySignals",
+    "PipelineAgents", "PipelineResult",
     "UserPrompt", "audit_and_revise_specialists", "build_writer_input",
     "generate_pipeline_streaming", "make_pipeline_agents", "run_specialists",
     "write_pipeline_data_file",
@@ -388,10 +394,10 @@ the writing.
 
 CRITICAL: These are INGREDIENTS, not sections to preserve. You must:
 - Find the thread. What is the single most important story across \
-all four analyses? Maybe the stuff is fine but location is killing a \
+all five analyses? Maybe the stuff is fine but location is killing a \
 pitch. Maybe a velocity trend is changing the entire arsenal picture. \
 Maybe one pitch is carrying the whole profile.
-- Write as one voice. The reader should not be able to tell that four \
+- Write as one voice. The reader should not be able to tell that five \
 separate analysts contributed. No section breaks, no "meanwhile," no \
 "turning to the location data."
 - Drop what's redundant. If stuff and run value both say the slider \
@@ -399,6 +405,13 @@ is elite, say it once with the best evidence from either.
 - Prioritize the surprising. If three specialists agree on something \
 obvious, give it one sentence. If one specialist found something \
 the others didn't highlight, that's probably the lead.
+- Use the Key Signals. The Key Signals section contains cross-specialist \
+patterns identified by a signal extractor. Primary signals (Top \
+Improvement, Top Concern) are your narrative priorities — your lead \
+must address one. Secondary signals (Specialist Tension, Connected \
+Changes, etc.) are high-value if they serve the thread — use your \
+judgment on weight. You are not required to mention every secondary \
+signal.
 
 STRUCTURE:
 Paragraph 1 (The Setup): What is different about this pitcher right now. \
@@ -724,20 +737,26 @@ def build_writer_input(
     runvalue: str,
     trends: str,
     game_shape: str,
+    *,
+    key_signals: KeySignals | None = None,
 ) -> str:
     """Compose all specialist outputs into writer input.
 
     Specialist outputs should already be clean (post-audit revision),
-    so no audit flags are needed here.
+    so no audit flags are needed here. If key_signals is provided,
+    a Key Signals section is prepended before the specialist analyses.
     """
-    return "\n\n".join([
-        f"## Pitcher: {ctx.pitcher_name} ({ctx.throws}HP, {ctx.role})\n",
+    parts = [f"## Pitcher: {ctx.pitcher_name} ({ctx.throws}HP, {ctx.role})\n"]
+    if key_signals is not None:
+        parts.append(render_key_signals(key_signals) + "\n")
+    parts.extend([
         f"## Specialist Analysis 1: Stuff\n{stuff}\n",
         f"## Specialist Analysis 2: Location\n{location}\n",
         f"## Specialist Analysis 3: Run Value\n{runvalue}\n",
         f"## Specialist Analysis 4: Trends\n{trends}\n",
         f"## Specialist Analysis 5: Game Shape\n{game_shape}",
     ])
+    return "\n\n".join(parts)
 
 
 def _build_specialist_audit_input(ground_truth: str, specialist_output: str) -> str:
@@ -926,6 +945,14 @@ def write_pipeline_data_file(
         "all 5 specialist outputs for validation]\n"
     )
 
+    # Signal extractor
+    sections.append(f"\n{sep}\nSIGNAL EXTRACTOR\n{sep}\n")
+    sections.append(f"## System Prompt\n\n{SIGNAL_EXTRACTOR_PROMPT}\n")
+    sections.append(
+        "## User Message\n\n"
+        "[Receives: all 5 specialist outputs (without key signals)]\n"
+    )
+
     if question is not None:
         # Ask pipeline: answerer phase
         from pitcher_narratives.analyst import ANSWERER_INSTRUCTIONS
@@ -936,7 +963,7 @@ def write_pipeline_data_file(
             f"## User Message\n\n"
             f"## Question\n{question}\n\n"
             f"## Pitcher: {ctx.pitcher_name} ({ctx.throws}HP, {ctx.role})\n\n"
-            f"[Receives: all 5 specialist outputs + any audit flags]\n"
+            f"[Receives: key signals + all 5 specialist outputs]\n"
         )
     else:
         # Narrative pipeline: writer + anchor + executive summary
@@ -944,7 +971,7 @@ def write_pipeline_data_file(
         sections.append(f"## System Prompt\n\n{_WRITER_PROMPT}\n")
         sections.append(
             "## User Message\n\n"
-            "[Receives: all 5 specialist outputs + any audit flags]\n"
+            "[Receives: key signals + all 5 specialist outputs]\n"
         )
 
         sections.append(f"\n{sep}\nEXECUTIVE SUMMARY\n{sep}\n")
@@ -958,7 +985,7 @@ def write_pipeline_data_file(
         sections.append(f"## System Prompt\n\n{ANCHOR_PROMPT}\n")
         sections.append(
             "## User Message\n\n"
-            "[Receives: concatenated specialist outputs + writer capsule]\n"
+            "[Receives: key signals + concatenated specialist outputs + writer capsule]\n"
         )
 
     mode = "ask" if question else "pipeline"
@@ -985,6 +1012,7 @@ class PipelineResult(BaseModel):
     narrative: str
     executive_summary: list[str] = []
     specialists: SpecialistOutputs
+    key_signals: KeySignals | None = None
     audit_flags: list[AuditFlag] = []
     anchor_warnings: list[AnchorWarning] = []
     revision_count: int = 0
@@ -1006,6 +1034,7 @@ class PipelineAgents(NamedTuple):
     auditor: Agent[None, AuditResult]
     anchor: Agent[None, AnchorResult]
     summary: Agent[None, str]
+    signal_extractor: Agent[None, KeySignals]
 
 
 def make_pipeline_agents(
@@ -1020,8 +1049,9 @@ def make_pipeline_agents(
     # Split temperature by role: specialists need precision, writer needs voice,
     # auditor/anchor need maximum determinism.
     # Thinking caps: checker=low, specialist=medium, writer=uncapped.
-    stuff_settings = make_model_settings(provider, cap_thinking(thinking, "medium"), 0.3, max_tokens=TOKEN_BUDGET_MEDIUM)
-    mini_specialist_settings = make_model_settings(provider, cap_thinking(thinking, "medium"), 0.3, max_tokens=TOKEN_BUDGET_MEDIUM, mini=True)
+    stuff_settings = make_model_settings(provider, cap_thinking(thinking, "medium"), 0.3, max_tokens=TOKEN_BUDGET_LARGE)
+    mini_specialist_settings = make_model_settings(provider, cap_thinking(thinking, "medium"), 0.3, max_tokens=TOKEN_BUDGET_LARGE, mini=True)
+    mini_specialist_compact_settings = make_model_settings(provider, cap_thinking(thinking, "medium"), 0.3, max_tokens=TOKEN_BUDGET_MEDIUM, mini=True)
     writer_settings = make_model_settings(provider, thinking, 0.7, max_tokens=TOKEN_BUDGET_LARGE)
     checker_settings = make_model_settings(provider, cap_thinking(thinking, "low"), 0.1, max_tokens=TOKEN_BUDGET_SMALL, mini=True)
     summary_settings = make_model_settings(provider, cap_thinking(thinking, "medium"), 0.3, max_tokens=TOKEN_BUDGET_SMALL, mini=True)
@@ -1034,6 +1064,10 @@ def make_pipeline_agents(
         return Agent(mini_model, output_type=str, system_prompt=prompt,
                      model_settings=mini_specialist_settings, defer_model_check=True)
 
+    def _mini_specialist_compact(prompt: str) -> Agent[None, str]:
+        return Agent(mini_model, output_type=str, system_prompt=prompt,
+                     model_settings=mini_specialist_compact_settings, defer_model_check=True)
+
     def _writer(prompt: str) -> Agent[None, str]:
         return Agent(model, output_type=str, system_prompt=prompt,
                      model_settings=writer_settings, defer_model_check=True)
@@ -1042,8 +1076,8 @@ def make_pipeline_agents(
         stuff=_specialist(_STUFF_SPECIALIST_PROMPT),
         location=_mini_specialist(_LOCATION_SPECIALIST_PROMPT),
         runvalue=_mini_specialist(_RUNVALUE_SPECIALIST_PROMPT),
-        trends=_mini_specialist(_TREND_SPECIALIST_PROMPT),
-        game_shape=_mini_specialist(_GAME_SHAPE_SPECIALIST_PROMPT),
+        trends=_mini_specialist_compact(_TREND_SPECIALIST_PROMPT),
+        game_shape=_mini_specialist_compact(_GAME_SHAPE_SPECIALIST_PROMPT),
         writer=_writer(_WRITER_PROMPT),
         auditor=Agent(mini_model, output_type=AuditResult, system_prompt=_DATA_AUDITOR_PROMPT,
                       model_settings=checker_settings, retries=5, defer_model_check=True),
@@ -1051,6 +1085,8 @@ def make_pipeline_agents(
                      model_settings=checker_settings, defer_model_check=True),
         summary=Agent(mini_model, output_type=str, system_prompt=_EXECUTIVE_SUMMARY_PROMPT,
                       model_settings=summary_settings, defer_model_check=True),
+        signal_extractor=Agent(mini_model, output_type=KeySignals, system_prompt=SIGNAL_EXTRACTOR_PROMPT,
+                               model_settings=summary_settings, retries=3, defer_model_check=True),
     )
 
 
@@ -1134,11 +1170,29 @@ async def _run_pipeline(
         raw_specialists, specialist_agents, agents.auditor, ctx, _model_override,
     )
 
+    # Phase 1.75: Extract key signals from clean specialist outputs
+    # Non-critical enrichment — pipeline continues without signals on failure.
+    log.info("Extracting key signals...")
+    signal_input = build_writer_input(
+        ctx, specialists.stuff, specialists.location,
+        specialists.runvalue, specialists.trends, specialists.game_shape,
+    )
+    try:
+        signal_result = await agents.signal_extractor.run(
+            **agent_kwargs(signal_input, _model_override)
+        )
+        key_signals = signal_result.output
+        log.info("Key signals extracted.")
+    except Exception:
+        log.warning("Signal extractor failed, continuing without key signals.", exc_info=True)
+        key_signals = None
+
     # Phase 2: Writer + Executive Summary run concurrently
-    # Writer gets clean specialist outputs (flagged claims already revised).
+    # Writer gets clean specialist outputs + key signals.
     writer_input = build_writer_input(
         ctx, specialists.stuff, specialists.location,
         specialists.runvalue, specialists.trends, specialists.game_shape,
+        key_signals=key_signals,
     )
     writer_kwargs = agent_kwargs(writer_input, _model_override)
 
@@ -1171,12 +1225,17 @@ async def _run_pipeline(
 
     # Phase 2.5: Anchor check + revision loop
     revision_count = 0
-    synthesis = (
+    specialist_synthesis = (
         f"STUFF:\n{specialists.stuff}\n\n"
         f"LOCATION:\n{specialists.location}\n\n"
         f"RUN VALUE:\n{specialists.runvalue}\n\n"
         f"TRENDS:\n{specialists.trends}\n\n"
         f"GAME SHAPE:\n{specialists.game_shape}"
+    )
+    synthesis = (
+        f"{render_key_signals(key_signals)}\n\n{specialist_synthesis}"
+        if key_signals is not None
+        else specialist_synthesis
     )
 
     for _ in range(MAX_REVISIONS):
@@ -1204,6 +1263,7 @@ async def _run_pipeline(
         narrative=capsule,
         executive_summary=summary_bullets,
         specialists=specialists,
+        key_signals=key_signals,
         audit_flags=audit_flags,
         anchor_warnings=anchor_check.warnings,
         revision_count=revision_count,
@@ -1221,7 +1281,8 @@ def generate_pipeline_streaming(
 
     Phase 1: 5 specialists run concurrently (silent).
     Phase 1.5: Data auditor validates specialist outputs against ground truth.
-    Phase 2: Writer composes capsule from specialist outputs + audit flags (streamed).
+    Phase 1.75: Signal extractor identifies cross-specialist patterns.
+    Phase 2: Writer composes capsule from specialist outputs + key signals (streamed).
     Phase 2.5: Anchor check + revision loop.
 
     Args:

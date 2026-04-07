@@ -30,6 +30,7 @@ from pitcher_narratives.pipeline import (
     generate_pipeline_streaming,
     make_pipeline_agents,
 )
+from pitcher_narratives.signals import KeySignals
 
 
 TEST_PITCHER = 592155
@@ -217,6 +218,10 @@ class TestMakePipelineAgents:
         with pytest.raises(ValueError, match="Unknown provider"):
             make_pipeline_agents("invalid", "high")
 
+    def test_has_signal_extractor(self):
+        agents = make_pipeline_agents("gemini", "high")
+        assert agents.signal_extractor is not None
+
 
 # ── Audit loop smoke tests ───────────────────────────────────────────
 
@@ -327,3 +332,19 @@ class TestGeneratePipelineStreaming:
             value = getattr(result.specialists, name)
             assert isinstance(value, str)
             assert len(value) > 0
+
+
+# ── Key signals integration test ─────────────────────────────────────
+
+
+class TestPipelineKeySignals:
+    def test_pipeline_result_includes_key_signals(self, ctx):
+        """Full pipeline produces key_signals in result."""
+        test_model = TestModel()
+        result = generate_pipeline_streaming(
+            ctx, provider="gemini", thinking="high", _model_override=test_model,
+        )
+        assert result.key_signals is not None
+        assert isinstance(result.key_signals, KeySignals)
+        assert result.key_signals.top_improvement is not None
+        assert result.key_signals.top_concern is not None
