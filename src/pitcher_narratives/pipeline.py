@@ -64,9 +64,15 @@ from pitcher_narratives.anchor import (
     build_anchor_message,
     build_revision_message,
 )
+from pitcher_narratives.signals import (
+    KeySignals,
+    SIGNAL_EXTRACTOR_PROMPT,
+    render_key_signals,
+)
 
 __all__ = [
-    "AuditFlag", "AuditResult", "ExecutiveSummary", "PipelineAgents", "PipelineResult",
+    "AuditFlag", "AuditResult", "ExecutiveSummary", "KeySignals",
+    "PipelineAgents", "PipelineResult",
     "UserPrompt", "audit_and_revise_specialists", "build_writer_input",
     "generate_pipeline_streaming", "make_pipeline_agents", "run_specialists",
     "write_pipeline_data_file",
@@ -977,6 +983,7 @@ class PipelineResult(BaseModel):
     narrative: str
     executive_summary: list[str] = []
     specialists: SpecialistOutputs
+    key_signals: KeySignals | None = None
     audit_flags: list[AuditFlag] = []
     anchor_warnings: list[AnchorWarning] = []
     revision_count: int = 0
@@ -998,6 +1005,7 @@ class PipelineAgents(NamedTuple):
     auditor: Agent[None, AuditResult]
     anchor: Agent[None, AnchorResult]
     summary: Agent[None, str]
+    signal_extractor: Agent[None, KeySignals]
 
 
 def make_pipeline_agents(
@@ -1043,6 +1051,8 @@ def make_pipeline_agents(
                      model_settings=checker_settings, defer_model_check=True),
         summary=Agent(mini_model, output_type=str, system_prompt=_EXECUTIVE_SUMMARY_PROMPT,
                       model_settings=summary_settings, defer_model_check=True),
+        signal_extractor=Agent(mini_model, output_type=KeySignals, system_prompt=SIGNAL_EXTRACTOR_PROMPT,
+                               model_settings=checker_settings, defer_model_check=True),
     )
 
 

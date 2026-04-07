@@ -217,6 +217,10 @@ class TestMakePipelineAgents:
         with pytest.raises(ValueError, match="Unknown provider"):
             make_pipeline_agents("invalid", "high")
 
+    def test_has_signal_extractor(self):
+        agents = make_pipeline_agents("gemini", "high")
+        assert agents.signal_extractor is not None
+
 
 # ── Audit loop smoke tests ───────────────────────────────────────────
 
