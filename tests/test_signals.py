@@ -115,6 +115,17 @@ class TestBuildWriterInputWithSignals:
         assert "## Key Signals" not in result
 
 
+class TestWriterPromptKeySignals:
+    def test_references_key_signals(self):
+        from pitcher_narratives.pipeline import _WRITER_PROMPT
+        assert "Key Signals" in _WRITER_PROMPT
+
+    def test_distinguishes_primary_secondary(self):
+        from pitcher_narratives.pipeline import _WRITER_PROMPT
+        assert "Primary" in _WRITER_PROMPT or "primary" in _WRITER_PROMPT
+        assert "Secondary" in _WRITER_PROMPT or "secondary" in _WRITER_PROMPT
+
+
 class TestSignalExtractorPrompt:
     def test_mentions_all_signal_types(self):
         for keyword in [

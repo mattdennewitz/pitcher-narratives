@@ -397,6 +397,13 @@ is elite, say it once with the best evidence from either.
 - Prioritize the surprising. If three specialists agree on something \
 obvious, give it one sentence. If one specialist found something \
 the others didn't highlight, that's probably the lead.
+- Use the Key Signals. The Key Signals section contains cross-specialist \
+patterns identified by a signal extractor. Primary signals (Top \
+Improvement, Top Concern) are your narrative priorities — your lead \
+must address one. Secondary signals (Specialist Tension, Connected \
+Changes, etc.) are high-value if they serve the thread — use your \
+judgment on weight. You are not required to mention every secondary \
+signal.
 
 STRUCTURE:
 Paragraph 1 (The Setup): What is different about this pitcher right now. \
