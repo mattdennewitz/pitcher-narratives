@@ -1,6 +1,17 @@
 """Tests for key signal extraction model and rendering."""
 
 from pitcher_narratives.signals import KeySignals, SIGNAL_EXTRACTOR_PROMPT, render_key_signals
+from pitcher_narratives.anchor import AnchorWarning, WarningCategory
+
+
+class TestAnchorWarningCategory:
+    def test_underweighted_is_valid(self):
+        w = AnchorWarning(category="UNDERWEIGHTED", description="test")
+        assert w.category == "UNDERWEIGHTED"
+
+    def test_missed_signal_still_valid(self):
+        w = AnchorWarning(category="MISSED_SIGNAL", description="test")
+        assert w.category == "MISSED_SIGNAL"
 
 
 class TestKeySignals:

@@ -31,9 +31,13 @@ that the capsule is faithfully anchored to the synthesis.
 
 Check for these specific problems:
 
-1. Missed Key Signals: The synthesis has a "Key Signal" section with the \
-most important improvement, concern, and development pitch. If the capsule \
-ignores any of these entirely, flag it.
+1. Missed Key Signals: The synthesis includes a Key Signals section with \
+primary and secondary findings. Primary signals (Top Improvement, Top \
+Concern) are mandatory — if the capsule ignores either entirely, flag it \
+as MISSED_SIGNAL. Secondary signals (Development Pitch, Specialist \
+Tension, Arsenal Dependency, Connected Changes, Platoon Vulnerability, \
+Sample Size Caution) are advisory — if the capsule ignores a populated \
+secondary signal, flag it as UNDERWEIGHTED.
 
 2. Unsupported Claims: If the capsule states a metric, trend, or fact \
 that does not appear anywhere in the synthesis, flag it. The capsule \
@@ -49,7 +53,7 @@ For each problem found, report it with its category and a concise description.
 If everything checks out, return an empty list of warnings."""
 
 
-WarningCategory = Literal["MISSED_SIGNAL", "UNSUPPORTED", "DIRECTION_ERROR", "OVERSTATED"]
+WarningCategory = Literal["MISSED_SIGNAL", "UNSUPPORTED", "DIRECTION_ERROR", "OVERSTATED", "UNDERWEIGHTED"]
 """Anchor check warning categories matching ANCHOR_PROMPT output format."""
 
 
