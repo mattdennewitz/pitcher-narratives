@@ -76,6 +76,45 @@ class TestRenderKeySignals:
         assert "Development Pitch" not in rendered
 
 
+class TestBuildWriterInputWithSignals:
+    def test_includes_key_signals_section(self):
+        ks = KeySignals(
+            top_improvement="Slider S+ jumped to 135",
+            top_concern="Fastball velo down 2.1 mph",
+        )
+
+        # Minimal PitcherContext mock — build_writer_input only reads
+        # ctx.pitcher_name, ctx.throws, ctx.role from the context.
+        from types import SimpleNamespace
+        from pitcher_narratives.pipeline import build_writer_input
+
+        ctx = SimpleNamespace(pitcher_name="Test Pitcher", throws="R", role="SP")
+
+        result = build_writer_input(
+            ctx, "stuff output", "location output", "runvalue output",
+            "trends output", "game_shape output", key_signals=ks,
+        )
+        assert "## Key Signals" in result
+        assert "- Top Improvement: Slider S+ jumped to 135" in result
+        assert "- Top Concern: Fastball velo down 2.1 mph" in result
+        # Key Signals should appear before specialist analyses
+        signals_pos = result.index("## Key Signals")
+        stuff_pos = result.index("## Specialist Analysis 1")
+        assert signals_pos < stuff_pos
+
+    def test_no_signals_omits_section(self):
+        from types import SimpleNamespace
+        from pitcher_narratives.pipeline import build_writer_input
+
+        ctx = SimpleNamespace(pitcher_name="Test Pitcher", throws="R", role="SP")
+
+        result = build_writer_input(
+            ctx, "stuff output", "location output", "runvalue output",
+            "trends output", "game_shape output",
+        )
+        assert "## Key Signals" not in result
+
+
 class TestSignalExtractorPrompt:
     def test_mentions_all_signal_types(self):
         for keyword in [

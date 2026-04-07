@@ -722,20 +722,26 @@ def build_writer_input(
     runvalue: str,
     trends: str,
     game_shape: str,
+    *,
+    key_signals: KeySignals | None = None,
 ) -> str:
     """Compose all specialist outputs into writer input.
 
     Specialist outputs should already be clean (post-audit revision),
-    so no audit flags are needed here.
+    so no audit flags are needed here. If key_signals is provided,
+    a Key Signals section is prepended before the specialist analyses.
     """
-    return "\n\n".join([
-        f"## Pitcher: {ctx.pitcher_name} ({ctx.throws}HP, {ctx.role})\n",
+    parts = [f"## Pitcher: {ctx.pitcher_name} ({ctx.throws}HP, {ctx.role})\n"]
+    if key_signals is not None:
+        parts.append(render_key_signals(key_signals) + "\n")
+    parts.extend([
         f"## Specialist Analysis 1: Stuff\n{stuff}\n",
         f"## Specialist Analysis 2: Location\n{location}\n",
         f"## Specialist Analysis 3: Run Value\n{runvalue}\n",
         f"## Specialist Analysis 4: Trends\n{trends}\n",
         f"## Specialist Analysis 5: Game Shape\n{game_shape}",
     ])
+    return "\n\n".join(parts)
 
 
 def _build_specialist_audit_input(ground_truth: str, specialist_output: str) -> str:
