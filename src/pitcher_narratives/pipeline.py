@@ -1050,7 +1050,8 @@ def make_pipeline_agents(
     # auditor/anchor need maximum determinism.
     # Thinking caps: checker=low, specialist=medium, writer=uncapped.
     stuff_settings = make_model_settings(provider, cap_thinking(thinking, "medium"), 0.3, max_tokens=TOKEN_BUDGET_LARGE)
-    mini_specialist_settings = make_model_settings(provider, cap_thinking(thinking, "medium"), 0.3, max_tokens=TOKEN_BUDGET_MEDIUM, mini=True)
+    mini_specialist_settings = make_model_settings(provider, cap_thinking(thinking, "medium"), 0.3, max_tokens=TOKEN_BUDGET_LARGE, mini=True)
+    mini_specialist_compact_settings = make_model_settings(provider, cap_thinking(thinking, "medium"), 0.3, max_tokens=TOKEN_BUDGET_MEDIUM, mini=True)
     writer_settings = make_model_settings(provider, thinking, 0.7, max_tokens=TOKEN_BUDGET_LARGE)
     checker_settings = make_model_settings(provider, cap_thinking(thinking, "low"), 0.1, max_tokens=TOKEN_BUDGET_SMALL, mini=True)
     summary_settings = make_model_settings(provider, cap_thinking(thinking, "medium"), 0.3, max_tokens=TOKEN_BUDGET_SMALL, mini=True)
@@ -1063,6 +1064,10 @@ def make_pipeline_agents(
         return Agent(mini_model, output_type=str, system_prompt=prompt,
                      model_settings=mini_specialist_settings, defer_model_check=True)
 
+    def _mini_specialist_compact(prompt: str) -> Agent[None, str]:
+        return Agent(mini_model, output_type=str, system_prompt=prompt,
+                     model_settings=mini_specialist_compact_settings, defer_model_check=True)
+
     def _writer(prompt: str) -> Agent[None, str]:
         return Agent(model, output_type=str, system_prompt=prompt,
                      model_settings=writer_settings, defer_model_check=True)
@@ -1071,8 +1076,8 @@ def make_pipeline_agents(
         stuff=_specialist(_STUFF_SPECIALIST_PROMPT),
         location=_mini_specialist(_LOCATION_SPECIALIST_PROMPT),
         runvalue=_mini_specialist(_RUNVALUE_SPECIALIST_PROMPT),
-        trends=_mini_specialist(_TREND_SPECIALIST_PROMPT),
-        game_shape=_mini_specialist(_GAME_SHAPE_SPECIALIST_PROMPT),
+        trends=_mini_specialist_compact(_TREND_SPECIALIST_PROMPT),
+        game_shape=_mini_specialist_compact(_GAME_SHAPE_SPECIALIST_PROMPT),
         writer=_writer(_WRITER_PROMPT),
         auditor=Agent(mini_model, output_type=AuditResult, system_prompt=_DATA_AUDITOR_PROMPT,
                       model_settings=checker_settings, retries=5, defer_model_check=True),
