@@ -937,6 +937,14 @@ def write_pipeline_data_file(
         "all 5 specialist outputs for validation]\n"
     )
 
+    # Signal extractor
+    sections.append(f"\n{sep}\nSIGNAL EXTRACTOR\n{sep}\n")
+    sections.append(f"## System Prompt\n\n{SIGNAL_EXTRACTOR_PROMPT}\n")
+    sections.append(
+        "## User Message\n\n"
+        "[Receives: all 5 specialist outputs (same as writer input)]\n"
+    )
+
     if question is not None:
         # Ask pipeline: answerer phase
         from pitcher_narratives.analyst import ANSWERER_INSTRUCTIONS

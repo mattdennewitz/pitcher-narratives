@@ -140,3 +140,32 @@ class TestSignalExtractorPrompt:
 
     def test_instructs_no_invention(self):
         assert "invent" in SIGNAL_EXTRACTOR_PROMPT.lower()
+
+
+class TestDataFileSignalExtractor:
+    def test_includes_signal_extractor_section(self, tmp_path):
+        import os
+        os.chdir(tmp_path)
+        from pitcher_narratives.data import load_pitcher_data
+        from pitcher_narratives.context import assemble_pitcher_context
+        from pitcher_narratives.pipeline import write_pipeline_data_file
+        data = load_pitcher_data(592155, window_days=30)
+        ctx = assemble_pitcher_context(data)
+        path = write_pipeline_data_file(ctx, 592155, "gemini")
+        content = open(path).read()
+        assert "SIGNAL EXTRACTOR" in content
+        assert "SIGNAL_EXTRACTOR_PROMPT" in content or "cross-specialist" in content.lower()
+
+    def test_signal_extractor_appears_before_writer(self, tmp_path):
+        import os
+        os.chdir(tmp_path)
+        from pitcher_narratives.data import load_pitcher_data
+        from pitcher_narratives.context import assemble_pitcher_context
+        from pitcher_narratives.pipeline import write_pipeline_data_file
+        data = load_pitcher_data(592155, window_days=30)
+        ctx = assemble_pitcher_context(data)
+        path = write_pipeline_data_file(ctx, 592155, "gemini")
+        content = open(path).read()
+        signal_pos = content.index("SIGNAL EXTRACTOR")
+        writer_pos = content.index("WRITER")
+        assert signal_pos < writer_pos
