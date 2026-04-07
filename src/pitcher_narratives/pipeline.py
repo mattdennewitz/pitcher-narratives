@@ -985,7 +985,7 @@ def write_pipeline_data_file(
         sections.append(f"## System Prompt\n\n{ANCHOR_PROMPT}\n")
         sections.append(
             "## User Message\n\n"
-            "[Receives: concatenated specialist outputs + writer capsule]\n"
+            "[Receives: key signals + concatenated specialist outputs + writer capsule]\n"
         )
 
     mode = "ask" if question else "pipeline"
@@ -1267,7 +1267,8 @@ def generate_pipeline_streaming(
 
     Phase 1: 5 specialists run concurrently (silent).
     Phase 1.5: Data auditor validates specialist outputs against ground truth.
-    Phase 2: Writer composes capsule from specialist outputs + audit flags (streamed).
+    Phase 1.75: Signal extractor identifies cross-specialist patterns.
+    Phase 2: Writer composes capsule from specialist outputs + key signals (streamed).
     Phase 2.5: Anchor check + revision loop.
 
     Args:
