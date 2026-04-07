@@ -655,7 +655,7 @@ def ask_question_pipeline(
         log.info("Answering...")
 
         # Phase 2: Answerer composes from clean specialist outputs (streamed)
-        model_name, model_settings = _make_analyst(provider, thinking)
+        model_name, model_settings = _make_qa_agent(provider, thinking)
         answerer = Agent(
             _model_override if _model_override is not None else model_name,
             output_type=str,
