@@ -1141,11 +1141,24 @@ async def _run_pipeline(
         raw_specialists, specialist_agents, agents.auditor, ctx, _model_override,
     )
 
+    # Phase 1.75: Extract key signals from clean specialist outputs
+    log.info("Extracting key signals...")
+    signal_input = build_writer_input(
+        ctx, specialists.stuff, specialists.location,
+        specialists.runvalue, specialists.trends, specialists.game_shape,
+    )
+    signal_result = await agents.signal_extractor.run(
+        **agent_kwargs(signal_input, _model_override)
+    )
+    key_signals = signal_result.output
+    log.info("Key signals extracted.")
+
     # Phase 2: Writer + Executive Summary run concurrently
-    # Writer gets clean specialist outputs (flagged claims already revised).
+    # Writer gets clean specialist outputs + key signals.
     writer_input = build_writer_input(
         ctx, specialists.stuff, specialists.location,
         specialists.runvalue, specialists.trends, specialists.game_shape,
+        key_signals=key_signals,
     )
     writer_kwargs = agent_kwargs(writer_input, _model_override)
 
@@ -1179,6 +1192,7 @@ async def _run_pipeline(
     # Phase 2.5: Anchor check + revision loop
     revision_count = 0
     synthesis = (
+        f"{render_key_signals(key_signals)}\n\n"
         f"STUFF:\n{specialists.stuff}\n\n"
         f"LOCATION:\n{specialists.location}\n\n"
         f"RUN VALUE:\n{specialists.runvalue}\n\n"
@@ -1211,6 +1225,7 @@ async def _run_pipeline(
         narrative=capsule,
         executive_summary=summary_bullets,
         specialists=specialists,
+        key_signals=key_signals,
         audit_flags=audit_flags,
         anchor_warnings=anchor_check.warnings,
         revision_count=revision_count,
