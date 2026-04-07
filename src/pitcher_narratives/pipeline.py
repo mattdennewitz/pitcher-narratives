@@ -963,7 +963,7 @@ def write_pipeline_data_file(
             f"## User Message\n\n"
             f"## Question\n{question}\n\n"
             f"## Pitcher: {ctx.pitcher_name} ({ctx.throws}HP, {ctx.role})\n\n"
-            f"[Receives: all 5 specialist outputs + any audit flags]\n"
+            f"[Receives: key signals + all 5 specialist outputs]\n"
         )
     else:
         # Narrative pipeline: writer + anchor + executive summary
@@ -971,7 +971,7 @@ def write_pipeline_data_file(
         sections.append(f"## System Prompt\n\n{_WRITER_PROMPT}\n")
         sections.append(
             "## User Message\n\n"
-            "[Receives: all 5 specialist outputs + any audit flags]\n"
+            "[Receives: key signals + all 5 specialist outputs]\n"
         )
 
         sections.append(f"\n{sep}\nEXECUTIVE SUMMARY\n{sep}\n")

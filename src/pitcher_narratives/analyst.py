@@ -19,7 +19,7 @@ from pitcher_narratives.config import PROVIDERS, TOKEN_BUDGET_LARGE, agent_kwarg
 from pitcher_narratives.context import PitcherContext
 from pitcher_narratives.data import PitcherData
 from pitcher_narratives.engine import compute_league_baselines
-from pitcher_narratives.signals import render_key_signals
+from pitcher_narratives.signals import KeySignals, render_key_signals
 
 __all__ = [
     "ANALYST_INSTRUCTIONS", "ANSWERER_INSTRUCTIONS",
@@ -522,6 +522,7 @@ class PipelineAnswer:
 
     answer: str
     stuff_summary: str
+    key_signals: KeySignals | None = None
     executive_summary: list[str] | None = None
     audit_flags: list[Any] | None = None
 
@@ -676,10 +677,11 @@ def ask_question_pipeline(
         ]
         answerer_input = "\n\n".join(answerer_parts)
 
-        # Build summary input from clean specialist outputs
+        # Build summary input from clean specialist outputs + key signals
         summary_input = build_writer_input(
             context, specialists.stuff, specialists.location,
             specialists.runvalue, specialists.trends, specialists.game_shape,
+            key_signals=key_signals,
         )
 
         # Run summary in background while answerer streams
@@ -709,6 +711,7 @@ def ask_question_pipeline(
         return PipelineAnswer(
             answer="".join(chunks),
             stuff_summary=specialists.stuff,
+            key_signals=key_signals,
             executive_summary=summary_bullets or None,
             audit_flags=audit_flags or None,
         )
