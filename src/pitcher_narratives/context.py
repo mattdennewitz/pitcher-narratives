@@ -6,13 +6,14 @@ to_prompt() method that renders prompt-ready markdown under 2,000 tokens.
 
 from __future__ import annotations
 
-from typing import Any
-
 from pydantic import BaseModel, ConfigDict
 
 from pitcher_narratives.data import PitcherData
 from pitcher_narratives.engine import (
+    ArsenalPitchTrend,
+    ArsenalTrends,
     ComponentAttribution,
+    CrossSeasonSummary,
     ExecutionMetrics,
     FastballSummary,
     FirstPitchWeaponry,
@@ -28,7 +29,9 @@ from pitcher_narratives.engine import (
     VelocityArc,
     WorkloadContext,
     compute_arsenal_summary,
+    compute_arsenal_trends,
     compute_component_attribution,
+    compute_cross_season_summary,
     compute_execution_metrics,
     compute_fastball_summary,
     compute_first_pitch_weaponry,
@@ -79,10 +82,11 @@ class PitcherContext(BaseModel):
     temporal: TemporalContext
     tto: TTOAnalysis | None
 
-    # Cross-season features (not yet implemented — stubs so pipeline guards work)
-    cross_season_summary: Any | None = None
-    arsenal_trend: Any | None = None
-    appearance_pitch_trends: Any | None = None
+    cross_season_summary: CrossSeasonSummary | None = None
+    """Year-over-year pitcher-level metric deltas (velocity, P+, S+, L+)."""
+
+    arsenal_trend: ArsenalTrends | None = None
+    """Year-over-year per-pitch-type arsenal changes (added/dropped/continued)."""
 
     def to_prompt(self) -> str:
         """Render as prompt-ready markdown under 2,000 tokens."""
@@ -599,6 +603,8 @@ def assemble_pitcher_context(data: PitcherData) -> PitcherContext:
     workload = compute_workload_context(data)
     temporal = compute_temporal_context(data, workload)
     tto = compute_tto_analysis(data)
+    cross_season_summary = compute_cross_season_summary(data)
+    arsenal_trend = compute_arsenal_trends(data)
 
     # Determine role from most recent appearance
     most_recent = data.appearances.sort("game_date", descending=True).row(0, named=True)
@@ -622,4 +628,6 @@ def assemble_pitcher_context(data: PitcherData) -> PitcherContext:
         workload=workload,
         temporal=temporal,
         tto=tto,
+        cross_season_summary=cross_season_summary,
+        arsenal_trend=arsenal_trend,
     )
