@@ -17,7 +17,7 @@
 - [x] **Phase 19: Cross-Season Baseline Exposure** - Make prior-season baselines available to engine computations (completed 2026-04-08)
 - [x] **Phase 20: Season-Delta Engine** - Compute year-over-year deltas for top-level pitcher metrics (completed 2026-04-08)
 - [x] **Phase 21: Arsenal Trend Engine** - Compute year-over-year deltas per pitch type (added/dropped pitches, usage shifts, grade changes) (completed 2026-04-08)
-- [ ] **Phase 22: Context Assembly & Prompt Rendering** - Integrate cross-season insights into PitcherContext and LLM prompt
+- [x] **Phase 22: Context Assembly & Prompt Rendering** - Integrate cross-season insights into PitcherContext and LLM prompt (completed 2026-04-08)
 
 ## Phase Details
 
@@ -66,10 +66,10 @@ Plans:
   2. to_prompt() renders a "Year-over-Year" section with top-level deltas and arsenal changes when multi-season data exists
   3. to_prompt() omits the cross-season section entirely for single-season pitchers (no empty headers, no "N/A" placeholders)
   4. Specialist pipeline agents receive cross-season data in their context blocks
-**Plans:** 1/2 plans executed
+**Plans:** 2/2 plans complete
 Plans:
 - [x] 22-01-PLAN.md — Type cross-season fields on PitcherContext, wire assembly, implement _render_yoy_section()
-- [ ] 22-02-PLAN.md — Fix pipeline.py attribute names, remove dead code, add integration tests
+- [x] 22-02-PLAN.md — Fix pipeline.py attribute names, remove dead code, add integration tests
 
 ## Progress
 
@@ -96,7 +96,7 @@ Plans:
 | 19. Cross-Season Baseline Exposure | v1.8 | 1/1 | Complete    | 2026-04-08 |
 | 20. Season-Delta Engine | v1.8 | 1/1 | Complete    | 2026-04-08 |
 | 21. Arsenal Trend Engine | v1.8 | 1/1 | Complete    | 2026-04-08 |
-| 22. Context Assembly & Prompt Rendering | v1.8 | 1/2 | In Progress|  |
+| 22. Context Assembly & Prompt Rendering | v1.8 | 2/2 | Complete   | 2026-04-08 |
 
 ---
 *Full phase details archived in `.planning/milestones/`*
