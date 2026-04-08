@@ -1,5 +1,19 @@
 # Milestones
 
+## v1.8 Cross-Season Trend Analysis (Shipped: 2026-04-08)
+
+**Phases completed:** 4 phases, 5 plans, 11 tasks
+
+**Key accomplishments:**
+
+- Prior-season baseline fields on PitcherData via N-1 filtering of existing multi-season baseline DataFrames
+- Working compute_cross_season_summary() with _per_season_velo helper producing YoY deltas for velocity, P+, S+, L+ using existing qualitative delta-string functions
+- YoY per-pitch-type delta engine identifying added/dropped/continued pitches with qualitative usage, P+/S+/L+, and velocity delta strings
+- Typed cross-season fields on PitcherContext with _render_yoy_section() rendering velocity/P+/S+/L+ deltas and arsenal changes for multi-season pitchers
+- Fixed specialist prompt builders to use correct ArsenalTrends attribute names (added, dropped, continued) and removed dead pfx_x_delta/pfx_z_delta code
+
+---
+
 ## v1.7 Multi-Year Data & Game Type Filtering (Shipped: 2026-04-03)
 
 **Phases completed:** 10 phases, 16 plans, 24 tasks

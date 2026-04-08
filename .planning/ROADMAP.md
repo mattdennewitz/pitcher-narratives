@@ -8,68 +8,7 @@
 - ✅ **v1.5 Model-Explainable Narratives** — Phases 11-14 (shipped 2026-04-01)
 - ✅ **v1.6 Multi-Agent Pipeline** — Phase 15 (shipped 2026-04-03)
 - ✅ **v1.7 Multi-Year Data & Game Type Filtering** — Phases 16-18 (shipped 2026-04-03)
-- 🚧 **v1.8 Cross-Season Trend Analysis** — Phases 19-22 (in progress)
-
-### v1.8 Cross-Season Trend Analysis
-
-**Milestone Goal:** Reports surface year-over-year changes -- a pitcher who added a sweeper, gained 2 mph, or saw Stuff+ collapse gets that story told automatically.
-
-- [x] **Phase 19: Cross-Season Baseline Exposure** - Make prior-season baselines available to engine computations (completed 2026-04-08)
-- [x] **Phase 20: Season-Delta Engine** - Compute year-over-year deltas for top-level pitcher metrics (completed 2026-04-08)
-- [x] **Phase 21: Arsenal Trend Engine** - Compute year-over-year deltas per pitch type (added/dropped pitches, usage shifts, grade changes) (completed 2026-04-08)
-- [x] **Phase 22: Context Assembly & Prompt Rendering** - Integrate cross-season insights into PitcherContext and LLM prompt (completed 2026-04-08)
-
-## Phase Details
-
-### Phase 19: Cross-Season Baseline Exposure
-**Goal**: Engine functions can access both current-season and prior-season baselines for any pitcher
-**Depends on**: Phase 18 (all data access centralized through data.py)
-**Requirements**: XSBL-01, XSBL-02, XSBL-03
-**Success Criteria** (what must be TRUE):
-  1. PitcherData contains both current-season and prior-season baseline DataFrames when multi-year data exists
-  2. When a pitcher has only one season of data, prior-season baselines are empty (not None, not crash)
-  3. Existing engine functions continue to work unchanged (no regression in single-season behavior)
-**Plans:** 1/1 plans complete
-Plans:
-- [ ] 19-01-PLAN.md — Add prior-season baseline fields to PitcherData and populate in load_pitcher_data()
-
-### Phase 20: Season-Delta Engine
-**Goal**: Users see year-over-year changes in top-level pitcher metrics (velocity, P+/S+/L+, workload profile)
-**Depends on**: Phase 19
-**Requirements**: SDLT-01, SDLT-02, SDLT-03
-**Success Criteria** (what must be TRUE):
-  1. Engine produces a cross-season summary dataclass with YoY deltas for velocity, P+, S+, L+ at the pitcher level
-  2. Delta strings use the same qualitative language as within-season deltas ("Up sharply", "Down modestly", "Steady") so the LLM prompt stays consistent
-  3. When prior-season data is missing, the cross-season summary is None (not empty strings or zeroes)
-**Plans:** 1/1 plans complete
-Plans:
-- [ ] 20-01-PLAN.md — Fix compute_cross_season_summary() scaffolding: add _per_season_velo helper, export in __all__, TDD
-
-### Phase 21: Arsenal Trend Engine
-**Goal**: Users see which pitches a pitcher added, dropped, or significantly changed year-over-year
-**Depends on**: Phase 19
-**Requirements**: ATRN-01, ATRN-02, ATRN-03
-**Success Criteria** (what must be TRUE):
-  1. Engine identifies pitches present in prior season but absent in current season (dropped) and vice versa (added)
-  2. Engine computes per-pitch-type YoY deltas for usage rate, P+, S+, and velocity
-  3. When a pitcher has only one season of data, arsenal trend output is None (no fabricated trends)
-**Plans:** 1/1 plans complete
-Plans:
-- [ ] 21-01-PLAN.md — ArsenalTrend dataclass and compute_arsenal_trend() with TDD (RED/GREEN)
-
-### Phase 22: Context Assembly & Prompt Rendering
-**Goal**: Cross-season insights appear in the LLM prompt so narratives can reference year-over-year changes
-**Depends on**: Phase 20, Phase 21
-**Requirements**: CPMT-01, CPMT-02, CPMT-03
-**Success Criteria** (what must be TRUE):
-  1. PitcherContext includes cross-season summary and arsenal trend fields
-  2. to_prompt() renders a "Year-over-Year" section with top-level deltas and arsenal changes when multi-season data exists
-  3. to_prompt() omits the cross-season section entirely for single-season pitchers (no empty headers, no "N/A" placeholders)
-  4. Specialist pipeline agents receive cross-season data in their context blocks
-**Plans:** 2/2 plans complete
-Plans:
-- [x] 22-01-PLAN.md — Type cross-season fields on PitcherContext, wire assembly, implement _render_yoy_section()
-- [x] 22-02-PLAN.md — Fix pipeline.py attribute names, remove dead code, add integration tests
+- ✅ **v1.8 Cross-Season Trend Analysis** — Phases 19-22 (shipped 2026-04-08)
 
 ## Progress
 
@@ -93,10 +32,10 @@ Plans:
 | 16. Data Foundation | v1.7 | 1/1 | Complete | 2026-04-03 |
 | 17. Multi-Year Loading | v1.7 | 1/1 | Complete | 2026-04-03 |
 | 18. Consumer Module Updates | v1.7 | 2/2 | Complete | 2026-04-03 |
-| 19. Cross-Season Baseline Exposure | v1.8 | 1/1 | Complete    | 2026-04-08 |
-| 20. Season-Delta Engine | v1.8 | 1/1 | Complete    | 2026-04-08 |
-| 21. Arsenal Trend Engine | v1.8 | 1/1 | Complete    | 2026-04-08 |
-| 22. Context Assembly & Prompt Rendering | v1.8 | 2/2 | Complete    | 2026-04-08 |
+| 19. Cross-Season Baseline Exposure | v1.8 | 1/1 | Complete | 2026-04-08 |
+| 20. Season-Delta Engine | v1.8 | 1/1 | Complete | 2026-04-08 |
+| 21. Arsenal Trend Engine | v1.8 | 1/1 | Complete | 2026-04-08 |
+| 22. Context Assembly & Prompt Rendering | v1.8 | 2/2 | Complete | 2026-04-08 |
 
 ---
 *Full phase details archived in `.planning/milestones/`*

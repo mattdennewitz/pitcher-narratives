@@ -68,20 +68,26 @@ The report must read like a scout wrote it — surfacing *changes, adaptations, 
 - All data access centralized through data.py: zero bypass reads in engine.py, resolver.py, scout.py — v1.7
 - Resolver builds pitcher name table from all available years — v1.7
 
+- Prior-season baselines exposed on PitcherData (current + N-1 season) — v1.8
+- YoY deltas for velocity, P+, S+, L+ with qualitative language consistency — v1.8
+- Arsenal trend detection: added/dropped/continued pitches with per-pitch-type YoY deltas — v1.8
+- Year-over-Year prompt section with single-season omission — v1.8
+- Specialist pipeline agents receive cross-season data — v1.8
+
 ### Active
 
-(See Current Milestone below)
+(No active milestone — run `/gsd:new-milestone` to start next)
 
-## Current Milestone: v1.8 Cross-Season Trend Analysis
+## Current State (v1.8 shipped)
 
-**Goal:** Enable season-over-season and appearance-over-appearance comparisons so reports and Q&A surface what changed, when, and how — from macro shifts (dropped a pitch to LHH this year) to micro trends (curveball shape changed between last two starts).
+v1.8 Cross-Season Trend Analysis shipped 2026-04-08. Reports now surface year-over-year changes automatically — velocity shifts, P+/S+/L+ deltas, added/dropped pitches, and per-pitch-type trend analysis.
 
-**Target features:**
-- Cross-season baselines in PitcherData (current + prior season)
-- Season-over-season delta engine (pitch mix, velocity, movement, platoon splits)
-- Appearance-over-appearance trends (pitch shape evolution, mix adjustments, command shifts across recent outings)
-- Context layer enrichment with "Year-over-Year Changes" and "Recent Appearance Trends" sections
-- LLM prompt updates to discuss what changed and why
+**What shipped:**
+- Prior-season baselines on PitcherData (N-1 season filtering)
+- CrossSeasonSummary engine (velocity, P+, S+, L+ YoY deltas with qualitative language)
+- ArsenalTrends engine (added/dropped/continued pitch detection with per-pitch-type YoY deltas)
+- Year-over-Year prompt section rendered for multi-season pitchers, omitted for single-season
+- Specialist pipeline agents receive cross-season data in their context blocks
 
 ### Out of Scope
 
@@ -96,11 +102,12 @@ The report must read like a scout wrote it — surfacing *changes, adaptations, 
 
 ## Context
 
-### Current State (v1.7 shipped)
+### Codebase (v1.8)
 
-**Modules:** config.py (shared constants), anchor.py (anchor quality gate), data.py (loading with multi-year support and game type filtering), engine.py (computation via data.py), context.py (assembly), report.py (single-agent LLM pipeline + reflection loop), pipeline.py (multi-agent specialist pipeline + audit loop), scout.py (appearance scoring via data.py), curator.py (LLM curation), cli.py (narrative CLI), scout_cli.py (scout CLI), resolver.py (fuzzy name resolution via data.py), analyst.py (tool-calling Q&A agent), ask_cli.py (Q&A CLI).
+**Modules:** config.py (shared constants), anchor.py (anchor quality gate), data.py (loading with multi-year support, game type filtering, prior-season baselines), engine.py (computation — including CrossSeasonSummary, ArsenalTrends), context.py (assembly with YoY rendering), report.py (single-agent LLM pipeline + reflection loop), pipeline.py (multi-agent specialist pipeline + audit loop with cross-season injection), scout.py (appearance scoring via data.py), curator.py (LLM curation), cli.py (narrative CLI), scout_cli.py (scout CLI), resolver.py (fuzzy name resolution via data.py), analyst.py (tool-calling Q&A agent), ask_cli.py (Q&A CLI).
 
 **Tech stack:** Python 3.14, polars 1.39, pydantic-ai 1.72, rapidfuzz 3.14, nameparser 1.1, multi-provider (OpenAI gpt-5.4-mini, Claude Sonnet 4.6, Gemini 3.1 Pro).
+**LOC:** ~9,100 source + ~4,500 test
 
 **Key v1.7 additions:** Game type filtering at load time (allowlist: R/F/D/L/W). Multi-year data loading via `_YEARS = [2025, 2026]` with graceful missing-file handling. Per-season baselines (group by pitcher+season). All data access centralized through data.py — zero direct `read_csv`/`read_parquet` calls outside data.py. New league-wide loading functions: `load_all_statcast()` and `load_full_agg()`. 179 tests passing across data/engine/resolver modules.
 
