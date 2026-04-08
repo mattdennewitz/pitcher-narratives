@@ -96,7 +96,7 @@ Plans:
 | 19. Cross-Season Baseline Exposure | v1.8 | 1/1 | Complete    | 2026-04-08 |
 | 20. Season-Delta Engine | v1.8 | 1/1 | Complete    | 2026-04-08 |
 | 21. Arsenal Trend Engine | v1.8 | 1/1 | Complete    | 2026-04-08 |
-| 22. Context Assembly & Prompt Rendering | v1.8 | 2/2 | Complete   | 2026-04-08 |
+| 22. Context Assembly & Prompt Rendering | v1.8 | 2/2 | Complete    | 2026-04-08 |
 
 ---
 *Full phase details archived in `.planning/milestones/`*
