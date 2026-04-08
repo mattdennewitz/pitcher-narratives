@@ -178,27 +178,32 @@ class TestSummaryBulletParsing:
 # ── Data builder tests ───────────────────────────────────────────────
 
 
+def _flatten(parts):
+    """Join UserPrompt list parts into a single string for assertion checks."""
+    return "\n".join(p for p in parts if isinstance(p, str))
+
+
 class TestBuildStuffInput:
     def test_contains_outlier_tags(self, ctx):
-        output = _build_stuff_input(ctx)
+        output = _flatten(_build_stuff_input(ctx))
         assert "NORMAL" in output or "OUTLIER" in output
 
     def test_contains_league_comparison(self, ctx):
-        output = _build_stuff_input(ctx)
+        output = _flatten(_build_stuff_input(ctx))
         assert "vs league avg" in output or "vs avg" in output
 
     def test_contains_s_variant_predictions(self, ctx):
-        output = _build_stuff_input(ctx)
+        output = _flatten(_build_stuff_input(ctx))
         assert "xSwing_S" in output
         assert "xWhiff_S" in output
         assert "xRV100_S" in output
 
     def test_contains_league_baselines(self, ctx):
-        output = _build_stuff_input(ctx)
+        output = _flatten(_build_stuff_input(ctx))
         assert "League Baselines" in output
 
     def test_contains_pitcher_name(self, ctx):
-        output = _build_stuff_input(ctx)
+        output = _flatten(_build_stuff_input(ctx))
         assert ctx.pitcher_name in output
 
 
