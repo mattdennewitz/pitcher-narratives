@@ -22,6 +22,7 @@ from pitcher_narratives.data import (
 
 TEST_PITCHER = 592155  # Booser, Cam -- 1 regular-season RP appearance
 SWINGMAN_PITCHER = 676571  # Poulin, PJ -- 4 R-game appearances: 1 SP + 3 RP
+SINGLE_SEASON_PITCHER = 823810  # Moring, Reed -- only in 2026
 
 
 def test_load_statcast_filters_by_pitcher():
@@ -554,3 +555,68 @@ def test_new_functions_in_all():
 
     assert "load_all_statcast" in data_mod.__all__
     assert "load_full_agg" in data_mod.__all__
+
+
+# ---------------------------------------------------------------------------
+# Tests for prior-season baseline fields (XSBL-01, XSBL-02, XSBL-03)
+# ---------------------------------------------------------------------------
+
+
+def test_prior_season_baseline_populated():
+    """XSBL-01: Multi-season pitcher has non-empty prior_season_baseline."""
+    data = load_pitcher_data(TEST_PITCHER)
+    assert hasattr(data, "prior_season_baseline")
+    assert isinstance(data.prior_season_baseline, pl.DataFrame)
+    assert not data.prior_season_baseline.is_empty()
+    assert "season" in data.prior_season_baseline.columns
+
+
+def test_prior_pitch_type_baseline_populated():
+    """XSBL-01: Multi-season pitcher has non-empty prior_pitch_type_baseline."""
+    data = load_pitcher_data(TEST_PITCHER)
+    assert hasattr(data, "prior_pitch_type_baseline")
+    assert isinstance(data.prior_pitch_type_baseline, pl.DataFrame)
+    assert not data.prior_pitch_type_baseline.is_empty()
+    assert "season" in data.prior_pitch_type_baseline.columns
+
+
+def test_prior_season_baseline_is_n_minus_1():
+    """XSBL-01/D-01: Prior season baseline contains only the N-1 season."""
+    data = load_pitcher_data(TEST_PITCHER)
+    current_seasons = data.season_baseline["season"].unique().to_list()
+    prior_seasons = data.prior_season_baseline["season"].unique().to_list()
+    assert len(current_seasons) == 1
+    assert len(prior_seasons) == 1
+    assert prior_seasons[0] == current_seasons[0] - 1
+
+
+def test_current_season_baseline_unchanged():
+    """XSBL-02/D-06: Current season baseline still contains only max season."""
+    data = load_pitcher_data(TEST_PITCHER)
+    seasons = data.season_baseline["season"].unique().to_list()
+    assert seasons == [2026]
+
+
+def test_prior_baseline_empty_single_season():
+    """XSBL-03: Single-season pitcher has empty prior baselines."""
+    data = load_pitcher_data(SINGLE_SEASON_PITCHER)
+    assert data.prior_season_baseline.is_empty()
+    assert data.prior_pitch_type_baseline.is_empty()
+
+
+def test_prior_baseline_not_none():
+    """XSBL-03/D-05: Prior baselines are DataFrames, not None."""
+    data = load_pitcher_data(SINGLE_SEASON_PITCHER)
+    assert data.prior_season_baseline is not None
+    assert data.prior_pitch_type_baseline is not None
+    assert isinstance(data.prior_season_baseline, pl.DataFrame)
+    assert isinstance(data.prior_pitch_type_baseline, pl.DataFrame)
+
+
+def test_prior_baseline_schema_preserved():
+    """XSBL-03: Empty prior baselines preserve column schema."""
+    data = load_pitcher_data(SINGLE_SEASON_PITCHER)
+    assert "season" in data.prior_season_baseline.columns
+    assert "P+" in data.prior_season_baseline.columns
+    assert "season" in data.prior_pitch_type_baseline.columns
+    assert "P+" in data.prior_pitch_type_baseline.columns
