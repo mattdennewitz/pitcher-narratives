@@ -559,20 +559,22 @@ def _build_stuff_input(ctx: PitcherContext) -> UserPrompt:
             data_lines.append(f"- S+ YoY: {css.s_plus_delta}")
         at = ctx.arsenal_trend
         if at is not None:
-            if at.added_pitches:
-                added = ", ".join(p.pitch_name for p in at.added_pitches)
+            if at.added:
+                added = ", ".join(p.pitch_name for p in at.added)
                 data_lines.append(f"- Added pitches: {added}")
-            if at.dropped_pitches:
-                dropped = ", ".join(p.pitch_name for p in at.dropped_pitches)
+            if at.dropped:
+                dropped = ", ".join(p.pitch_name for p in at.dropped)
                 data_lines.append(f"- Dropped pitches: {dropped}")
-            for pt in at.pitch_trends[:4]:
-                mov_parts = []
-                if "Steady" not in pt.pfx_x_delta:
-                    mov_parts.append(f"H-mov {pt.pfx_x_delta}")
-                if "Steady" not in pt.pfx_z_delta:
-                    mov_parts.append(f"V-mov {pt.pfx_z_delta}")
-                if mov_parts:
-                    data_lines.append(f"- {pt.pitch_name} movement: {', '.join(mov_parts)}")
+            for pt in at.continued[:4]:
+                parts = []
+                if pt.usage_delta and "Steady" not in pt.usage_delta:
+                    parts.append(f"usage {pt.usage_delta}")
+                if pt.velo_delta and "Steady" not in pt.velo_delta:
+                    parts.append(f"velo {pt.velo_delta}")
+                if pt.s_plus_delta and "Steady" not in pt.s_plus_delta:
+                    parts.append(f"S+ {pt.s_plus_delta}")
+                if parts:
+                    data_lines.append(f"- {pt.pitch_name}: {', '.join(parts)}")
 
     return ["\n".join(header_lines), CachePoint(), "\n".join(data_lines)]
 
@@ -661,9 +663,6 @@ def _build_trend_input(ctx: PitcherContext) -> UserPrompt:
         ctx._render_release_point_section(),
         ctx._render_hard_hit_section(),
     ]
-    # Per-appearance pitch trends (three-way comparison)
-    if ctx.appearance_pitch_trends is not None:
-        data_sections.append(ctx._render_appearance_pitch_trends_section())
     # Cross-season context (when available) — trends specialist gets full YoY section
     if ctx.cross_season_summary is not None or ctx.arsenal_trend is not None:
         data_sections.append(ctx._render_yoy_section())
@@ -704,23 +703,21 @@ def _build_game_shape_input(ctx: PitcherContext) -> UserPrompt:
                 f"(prior {t.prior_season}: {t.prior_season_appearances} app / {t.prior_season_ip} IP)"
             )
         if at is not None:
-            for pt in at.pitch_trends[:4]:
+            for pt in at.continued[:4]:
                 parts = []
-                if "Steady" not in pt.usage_delta:
+                if pt.usage_delta and "Steady" not in pt.usage_delta:
                     parts.append(f"usage {pt.usage_delta}")
-                if "Steady" not in pt.pfx_x_delta:
-                    parts.append(f"H-mov {pt.pfx_x_delta}")
-                if "Steady" not in pt.pfx_z_delta:
-                    parts.append(f"V-mov {pt.pfx_z_delta}")
+                if pt.velo_delta and "Steady" not in pt.velo_delta:
+                    parts.append(f"velo {pt.velo_delta}")
                 if parts:
                     yoy_lines.append(f"- {pt.pitch_name}: {', '.join(parts)}")
-            if at.added_pitches:
+            if at.added:
                 yoy_lines.append(
-                    f"- Added: {', '.join(p.pitch_name for p in at.added_pitches)}"
+                    f"- Added: {', '.join(p.pitch_name for p in at.added)}"
                 )
-            if at.dropped_pitches:
+            if at.dropped:
                 yoy_lines.append(
-                    f"- Dropped: {', '.join(p.pitch_name for p in at.dropped_pitches)}"
+                    f"- Dropped: {', '.join(p.pitch_name for p in at.dropped)}"
                 )
         data_sections.append("\n".join(yoy_lines))
     return [
