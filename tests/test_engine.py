@@ -14,6 +14,7 @@ from pitcher_narratives.engine import (
     _CSW_DESCRIPTIONS,
     AppearanceWorkload,
     ComponentAttribution,
+    CrossSeasonSummary,
     ExecutionMetrics,
     FastballSummary,
     FirstPitchEntry,
@@ -39,6 +40,7 @@ from pitcher_narratives.engine import (
     _velo_delta_string,
     compute_arsenal_summary,
     compute_component_attribution,
+    compute_cross_season_summary,
     compute_execution_metrics,
     compute_fastball_summary,
     compute_first_pitch_weaponry,
@@ -1079,3 +1081,51 @@ def test_component_attribution_pitch_names():
         assert attr.pitch_name == expected_names.get(attr.pitch_type, attr.pitch_type), (
             f"{attr.pitch_type}: pitch_name={attr.pitch_name}"
         )
+
+
+# ── Cross-season summary ────────────────────────────────────────────
+
+
+SINGLE_SEASON_PITCHER = 823810  # Moring, Reed -- only 2026 data
+
+
+def test_cross_season_summary_returns_dataclass_for_multi_season_pitcher():
+    """SDLT-01: Multi-season pitcher gets CrossSeasonSummary with all YoY deltas."""
+    data = load_pitcher_data(TEST_PITCHER)
+    result = compute_cross_season_summary(data)
+    assert result is not None
+    assert isinstance(result, CrossSeasonSummary)
+    assert isinstance(result.current_season, int)
+    assert isinstance(result.prior_season, int)
+    assert result.current_season > result.prior_season
+    assert result.current_velo > 0
+    assert result.prior_velo > 0
+    assert isinstance(result.velo_delta, str) and len(result.velo_delta) > 0
+    assert isinstance(result.p_plus_delta, str) and len(result.p_plus_delta) > 0
+    assert isinstance(result.s_plus_delta, str) and len(result.s_plus_delta) > 0
+    assert isinstance(result.l_plus_delta, str) and len(result.l_plus_delta) > 0
+
+
+def test_cross_season_summary_delta_strings_use_qualitative_language():
+    """SDLT-02: YoY deltas use same language as within-season (Steady/Up/Down)."""
+    data = load_pitcher_data(TEST_PITCHER)
+    result = compute_cross_season_summary(data)
+    assert result is not None
+    for delta_str in [result.velo_delta, result.p_plus_delta, result.s_plus_delta, result.l_plus_delta]:
+        assert any(word in delta_str for word in ("Steady", "Up", "Down")), (
+            f"Delta string '{delta_str}' missing qualitative language"
+        )
+
+
+def test_cross_season_summary_returns_none_for_single_season_pitcher():
+    """SDLT-03: Single-season pitcher gets None, not empty or zeroes."""
+    data = load_pitcher_data(SINGLE_SEASON_PITCHER)
+    result = compute_cross_season_summary(data)
+    assert result is None
+
+
+def test_cross_season_summary_in_engine_all():
+    """CrossSeasonSummary and compute_cross_season_summary exported in __all__."""
+    import pitcher_narratives.engine as eng
+    assert "CrossSeasonSummary" in eng.__all__
+    assert "compute_cross_season_summary" in eng.__all__
