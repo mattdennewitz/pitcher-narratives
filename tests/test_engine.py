@@ -1,10 +1,11 @@
-"""Tests for the fastball quality, arsenal, execution metrics, and workload engine.
+"""Tests for the fastball quality, arsenal, execution metrics, workload, and trend engine.
 
 Covers delta string helpers, FastballSummary computation, VelocityArc
 computation, cold start fallback, small sample flagging, arsenal summary,
 platoon mix shifts, first-pitch weaponry analysis, execution metrics
-(CSW%, zone rate, chase rate, xWhiff, xSwing, xRV100 percentile), and
-workload context (rest days, IP, pitch counts, consecutive days).
+(CSW%, zone rate, chase rate, xWhiff, xSwing, xRV100 percentile),
+workload context (rest days, IP, pitch counts, consecutive days), and
+year-over-year arsenal trend computation (added/dropped/continued pitches).
 """
 
 import polars as pl
@@ -13,6 +14,8 @@ from pitcher_narratives.data import load_pitcher_data
 from pitcher_narratives.engine import (
     _CSW_DESCRIPTIONS,
     AppearanceWorkload,
+    ArsenalPitchTrend,
+    ArsenalTrends,
     ComponentAttribution,
     ExecutionMetrics,
     FastballSummary,
@@ -38,6 +41,7 @@ from pitcher_narratives.engine import (
     _usage_delta_string,
     _velo_delta_string,
     compute_arsenal_summary,
+    compute_arsenal_trends,
     compute_component_attribution,
     compute_execution_metrics,
     compute_fastball_summary,
@@ -1079,3 +1083,192 @@ def test_component_attribution_pitch_names():
         assert attr.pitch_name == expected_names.get(attr.pitch_type, attr.pitch_type), (
             f"{attr.pitch_type}: pitch_name={attr.pitch_name}"
         )
+
+
+# ── Arsenal Trends (Year-over-Year) ────────────────────────────────────
+
+
+MULTI_YEAR_PITCHER = 607625  # Multi-year pitcher with varied arsenal
+
+
+def test_arsenal_trends_single_season_returns_none():
+    """ATRN-03: Pitcher with only one season of data gets None."""
+    data = load_pitcher_data(TEST_PITCHER, window_days=30)
+    # Simulate single-season by filtering agg_csvs to max season only
+    from pitcher_narratives.data import PitcherData
+
+    pt_df = data.agg_csvs["pitcher_type"]
+    if "season" in pt_df.columns:
+        max_season = pt_df["season"].max()
+        single_season_pt = pt_df.filter(pl.col("season") == max_season)
+    else:
+        single_season_pt = pt_df
+
+    single_data = PitcherData(
+        statcast=data.statcast,
+        appearances=data.appearances,
+        window_appearances=data.window_appearances,
+        season_baseline=data.season_baseline,
+        pitch_type_baseline=data.pitch_type_baseline,
+        agg_csvs={**data.agg_csvs, "pitcher_type": single_season_pt},
+        pitcher_id=data.pitcher_id,
+        pitcher_name=data.pitcher_name,
+        throws=data.throws,
+    )
+    result = compute_arsenal_trends(single_data)
+    assert result is None, "Single-season pitcher should return None"
+
+
+def test_arsenal_trends_returns_arsenal_trends():
+    """Multi-season pitcher returns ArsenalTrends container."""
+    data = load_pitcher_data(MULTI_YEAR_PITCHER, window_days=30)
+    result = compute_arsenal_trends(data)
+    assert result is not None, "Multi-season pitcher should return ArsenalTrends"
+    assert isinstance(result, ArsenalTrends)
+
+
+def test_arsenal_trends_identifies_added_dropped():
+    """ATRN-01: Correctly classifies added and dropped pitches."""
+    data = load_pitcher_data(MULTI_YEAR_PITCHER, window_days=30)
+    result = compute_arsenal_trends(data)
+    assert result is not None
+
+    # All entries have correct status
+    for trend in result.added:
+        assert trend.status == "added"
+        assert trend.prior_usage_pct is None, "Added pitch should have no prior usage"
+        assert trend.current_usage_pct is not None, "Added pitch should have current usage"
+        assert trend.n_pitches_prior is None
+        assert trend.n_pitches_current is not None and trend.n_pitches_current > 0
+
+    for trend in result.dropped:
+        assert trend.status == "dropped"
+        assert trend.prior_usage_pct is not None, "Dropped pitch should have prior usage"
+        assert trend.current_usage_pct is None, "Dropped pitch should have no current usage"
+        assert trend.n_pitches_prior is not None and trend.n_pitches_prior > 0
+        assert trend.n_pitches_current is None
+
+    # Added + dropped + continued covers all pitch types across both seasons
+    all_types = (
+        {t.pitch_type for t in result.added}
+        | {t.pitch_type for t in result.dropped}
+        | {t.pitch_type for t in result.continued}
+    )
+    assert len(all_types) > 0, "Should have at least one pitch type"
+
+
+def test_arsenal_trends_computes_yoy_deltas():
+    """ATRN-02: Continued pitches have per-pitch-type YoY deltas."""
+    data = load_pitcher_data(MULTI_YEAR_PITCHER, window_days=30)
+    result = compute_arsenal_trends(data)
+    assert result is not None
+    assert len(result.continued) > 0, "Should have continued pitches"
+
+    for trend in result.continued:
+        assert trend.status == "continued"
+        # Usage delta
+        assert trend.prior_usage_pct is not None
+        assert trend.current_usage_pct is not None
+        assert trend.usage_delta is not None
+        assert isinstance(trend.usage_delta, str)
+        # P+/S+/L+ deltas
+        assert trend.prior_p_plus is not None
+        assert trend.current_p_plus is not None
+        assert trend.p_plus_delta is not None
+        assert trend.s_plus_delta is not None
+        assert trend.l_plus_delta is not None
+        # Pitch counts
+        assert trend.n_pitches_prior is not None and trend.n_pitches_prior > 0
+        assert trend.n_pitches_current is not None and trend.n_pitches_current > 0
+
+
+def test_arsenal_trends_uses_qualitative_language():
+    """Delta strings match existing qualitative style (Up/Down/Steady/sharply)."""
+    data = load_pitcher_data(MULTI_YEAR_PITCHER, window_days=30)
+    result = compute_arsenal_trends(data)
+    assert result is not None
+
+    valid_prefixes = ("Steady", "Up", "Down")
+    for trend in result.continued:
+        assert trend.usage_delta is not None
+        assert any(trend.usage_delta.startswith(p) for p in valid_prefixes), (
+            f"usage_delta '{trend.usage_delta}' doesn't start with Steady/Up/Down"
+        )
+        assert trend.p_plus_delta is not None
+        assert any(trend.p_plus_delta.startswith(p) for p in valid_prefixes), (
+            f"p_plus_delta '{trend.p_plus_delta}' doesn't start with Steady/Up/Down"
+        )
+        assert trend.s_plus_delta is not None
+        assert any(trend.s_plus_delta.startswith(p) for p in valid_prefixes), (
+            f"s_plus_delta '{trend.s_plus_delta}' doesn't start with Steady/Up/Down"
+        )
+
+
+def test_arsenal_trends_minimum_pitch_threshold():
+    """Pitches below minimum threshold excluded from trends."""
+    data = load_pitcher_data(MULTI_YEAR_PITCHER, window_days=30)
+    result = compute_arsenal_trends(data)
+    assert result is not None
+
+    from pitcher_narratives.engine import _MIN_PITCHES
+
+    for trend in result.continued:
+        assert trend.n_pitches_current is not None and trend.n_pitches_current >= _MIN_PITCHES
+        assert trend.n_pitches_prior is not None and trend.n_pitches_prior >= _MIN_PITCHES
+    for trend in result.added:
+        assert trend.n_pitches_current is not None and trend.n_pitches_current >= _MIN_PITCHES
+    for trend in result.dropped:
+        assert trend.n_pitches_prior is not None and trend.n_pitches_prior >= _MIN_PITCHES
+
+
+def test_arsenal_trends_season_fields():
+    """ArsenalTrends has correct prior and current season values."""
+    data = load_pitcher_data(MULTI_YEAR_PITCHER, window_days=30)
+    result = compute_arsenal_trends(data)
+    assert result is not None
+    assert result.prior_season < result.current_season
+    assert result.prior_season == 2025
+    assert result.current_season == 2026
+
+    # Individual trends also carry season info
+    for trend in [*result.added, *result.dropped, *result.continued]:
+        assert trend.prior_season == result.prior_season
+        assert trend.current_season == result.current_season
+
+
+def test_arsenal_trends_has_changes_property():
+    """has_changes property reflects whether any changes exist."""
+    data = load_pitcher_data(MULTI_YEAR_PITCHER, window_days=30)
+    result = compute_arsenal_trends(data)
+    assert result is not None
+    assert result.has_changes is True, "Multi-year pitcher should have changes"
+
+
+def test_arsenal_trends_velocity_deltas():
+    """Continued pitches include velocity deltas from statcast data."""
+    data = load_pitcher_data(MULTI_YEAR_PITCHER, window_days=30)
+    result = compute_arsenal_trends(data)
+    assert result is not None
+
+    has_velo = False
+    for trend in result.continued:
+        if trend.velo_delta is not None:
+            has_velo = True
+            assert trend.prior_velo is not None
+            assert trend.current_velo is not None
+            valid_prefixes = ("Steady", "Up", "Down")
+            assert any(trend.velo_delta.startswith(p) for p in valid_prefixes), (
+                f"velo_delta '{trend.velo_delta}' doesn't use qualitative language"
+            )
+    assert has_velo, "Should have at least one continued pitch with velocity data"
+
+
+def test_arsenal_trends_pitch_names():
+    """All trends include human-readable pitch names."""
+    data = load_pitcher_data(MULTI_YEAR_PITCHER, window_days=30)
+    result = compute_arsenal_trends(data)
+    assert result is not None
+
+    for trend in [*result.added, *result.dropped, *result.continued]:
+        assert trend.pitch_name, f"pitch_name should not be empty for {trend.pitch_type}"
+        assert isinstance(trend.pitch_name, str)
