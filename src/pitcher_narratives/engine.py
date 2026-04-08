@@ -1145,10 +1145,10 @@ class CrossSeasonSummary:
     prior_season: int
 
     # Velocity
-    current_velo: float
-    prior_velo: float
+    current_velo: float | None
+    prior_velo: float | None
     velo_delta: str
-    """Qualitative YoY velocity delta, e.g., 'Up 1.2 mph'."""
+    """Qualitative YoY velocity delta, e.g., 'Up 1.2 mph' or 'N/A'."""
 
     # P+ / S+ / L+
     current_p_plus: float
@@ -1613,26 +1613,17 @@ def compute_arsenal_trends(data: PitcherData) -> ArsenalTrends | None:
         ArsenalTrends container, or None when the pitcher has only one
         season of data.
     """
-    from pitcher_narratives.data import compute_pitch_type_baseline
+    current_df = data.pitch_type_baseline
+    prior_df = data.prior_pitch_type_baseline
 
-    pt_df = data.agg_csvs.get("pitcher_type")
-    if pt_df is None or pt_df.is_empty():
+    if prior_df.is_empty():
         return None
 
-    # Compute per-season, per-pitch-type baselines
-    pt_baseline = compute_pitch_type_baseline(pt_df)
-    if pt_baseline.is_empty() or "season" not in pt_baseline.columns:
+    if "season" not in current_df.columns or current_df.is_empty():
         return None
 
-    seasons = sorted(pt_baseline["season"].unique().to_list())
-    if len(seasons) < 2:
-        return None
-
-    current_season = seasons[-1]
-    prior_season = seasons[-2]
-
-    current_df = pt_baseline.filter(pl.col("season") == current_season)
-    prior_df = pt_baseline.filter(pl.col("season") == prior_season)
+    current_season = int(current_df["season"].max())
+    prior_season = int(prior_df["season"].max())
 
     current_types = set(current_df["pitch_type"].to_list())
     prior_types = set(prior_df["pitch_type"].to_list())
@@ -2534,11 +2525,15 @@ def compute_cross_season_summary(data: PitcherData) -> CrossSeasonSummary | None
 
     # Velocity from statcast release_speed per season (SDLT-01)
     velo_by_season = _per_season_velo(data.statcast)
-    current_velo = velo_by_season.get(current_season, 0.0)
-    prior_velo = velo_by_season.get(prior_season, 0.0)
+    current_velo = velo_by_season.get(current_season)
+    prior_velo = velo_by_season.get(prior_season)
 
     # Delta strings reusing existing functions (SDLT-02)
-    velo_delta = _velo_delta_string(current_velo - prior_velo)
+    velo_delta = (
+        _velo_delta_string(current_velo - prior_velo)
+        if current_velo is not None and prior_velo is not None
+        else "N/A"
+    )
     p_plus_delta = _pplus_delta_string(current_p_plus - prior_p_plus)
     s_plus_delta = _pplus_delta_string(current_s_plus - prior_s_plus)
     l_plus_delta = _pplus_delta_string(current_l_plus - prior_l_plus)

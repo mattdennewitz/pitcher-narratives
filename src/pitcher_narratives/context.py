@@ -613,7 +613,7 @@ class PitcherContext(BaseModel):
                 lines.append(f"- Dropped pitches: {names}")
             if at.continued:
                 lines.append("Pitch-level changes:")
-                for pt in at.continued[:4]:
+                for pt in at.continued:
                     parts: list[str] = []
                     if pt.usage_delta and "Steady" not in pt.usage_delta:
                         parts.append(f"usage {pt.usage_delta}")
