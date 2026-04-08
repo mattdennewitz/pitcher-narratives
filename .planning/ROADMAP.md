@@ -53,7 +53,7 @@ Plans:
   1. Engine identifies pitches present in prior season but absent in current season (dropped) and vice versa (added)
   2. Engine computes per-pitch-type YoY deltas for usage rate, P+, S+, and velocity
   3. When a pitcher has only one season of data, arsenal trend output is None (no fabricated trends)
-**Plans:** 1 plan
+**Plans:** 1/1 plans complete
 Plans:
 - [ ] 21-01-PLAN.md — ArsenalTrend dataclass and compute_arsenal_trend() with TDD (RED/GREEN)
 
@@ -92,7 +92,7 @@ Plans:
 | 18. Consumer Module Updates | v1.7 | 2/2 | Complete | 2026-04-03 |
 | 19. Cross-Season Baseline Exposure | v1.8 | 1/1 | Complete    | 2026-04-08 |
 | 20. Season-Delta Engine | v1.8 | 1/1 | Complete    | 2026-04-08 |
-| 21. Arsenal Trend Engine | v1.8 | 1/1 | Complete   | 2026-04-08 |
+| 21. Arsenal Trend Engine | v1.8 | 1/1 | Complete    | 2026-04-08 |
 | 22. Context Assembly & Prompt Rendering | v1.8 | 0/0 | Not started | - |
 
 ---
