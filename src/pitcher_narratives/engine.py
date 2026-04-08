@@ -28,6 +28,7 @@ def _float(val: Any) -> float:
 __all__ = [
     "AppearanceWorkload",
     "ComponentAttribution",
+    "CrossSeasonSummary",
     "ExecutionMetrics",
     "FastballSummary",
     "FirstPitchEntry",
@@ -49,6 +50,7 @@ __all__ = [
     "WorkloadContext",
     "compute_arsenal_summary",
     "compute_component_attribution",
+    "compute_cross_season_summary",
     "compute_execution_metrics",
     "compute_fastball_summary",
     "compute_first_pitch_weaponry",
@@ -457,6 +459,28 @@ def _safe_metric(df: pl.DataFrame, col: str, default: float = 0.0) -> float:
     if df.is_empty() or col not in df.columns:
         return default
     return float(df[col][0])
+
+
+def _per_season_velo(statcast: pl.DataFrame) -> dict[int, float]:
+    """Compute mean release_speed per season from statcast pitch-level data.
+
+    Derives season from game_date year. Filters to non-null release_speed rows.
+
+    Args:
+        statcast: Pitch-level Statcast DataFrame with game_date and release_speed columns.
+
+    Returns:
+        Dict mapping season year (int) to mean velocity (float).
+    """
+    df = statcast.filter(pl.col("release_speed").is_not_null())
+    if df.is_empty() or "game_date" not in df.columns:
+        return {}
+    agg = df.with_columns(
+        pl.col("game_date").dt.year().alias("_season")
+    ).group_by("_season").agg(
+        pl.col("release_speed").mean().alias("mean_velo")
+    )
+    return {int(row["_season"]): float(row["mean_velo"]) for row in agg.iter_rows(named=True)}
 
 
 def _pplus_delta_strings(
