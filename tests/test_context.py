@@ -183,3 +183,147 @@ def test_to_prompt_no_intermediates_when_empty(ctx):
     empty_ctx = ctx.model_copy(update={"intermediates": []})
     prompt = empty_ctx.to_prompt()
     assert "Model Internals" not in prompt
+
+
+# ── Year-over-Year rendering tests ───────────────────────────────────
+
+
+def test_yoy_section_present_for_multi_season(ctx):
+    """to_prompt() includes Year-over-Year section when cross-season data exists."""
+    prompt = ctx.to_prompt()
+    if ctx.cross_season_summary is not None or ctx.arsenal_trend is not None:
+        assert "## Year-over-Year" in prompt
+    else:
+        assert "## Year-over-Year" not in prompt
+
+
+def test_yoy_section_omitted_for_single_season():
+    """_render_yoy_section returns empty string when both fields are None."""
+    from datetime import date
+
+    from pitcher_narratives.context import PitcherContext
+    from pitcher_narratives.engine import (
+        FirstPitchWeaponry,
+        HardHitRate,
+        PlatoonMix,
+        ReleasePointMetrics,
+        TemporalContext,
+        WorkloadContext,
+    )
+
+    # Minimal PitcherContext with no cross-season data
+    ctx = PitcherContext(
+        pitcher_name="Test Pitcher",
+        pitcher_id=0,
+        throws="R",
+        role="SP",
+        fastball=None,
+        velocity_arc=None,
+        arsenal=[],
+        platoon_mix=PlatoonMix(splits=[], cold_start=True),
+        first_pitch=FirstPitchWeaponry(
+            entries=[], total_first_pitches_season=0,
+            total_first_pitches_window=0, cold_start=True,
+        ),
+        execution=[],
+        intermediates=[],
+        attributions=[],
+        hard_hit_rate=HardHitRate(
+            hard_hit_pct=0, season_hard_hit_pct=0, delta="Steady",
+            n_batted_balls=0, n_hard_hit=0, small_sample=True, cold_start=True,
+        ),
+        release_point=ReleasePointMetrics(pitch_types=[], cold_start=True),
+        workload=WorkloadContext(
+            appearances=[], max_consecutive_days=0, workload_concern=False,
+        ),
+        temporal=TemporalContext(
+            analysis_date=date(2026, 4, 8),
+            current_season=2026,
+            current_season_appearances=10,
+            current_season_ip="20.0",
+            current_season_first_date="2026-03-28",
+            prior_season=2025,
+            prior_season_appearances=0,
+            prior_season_ip="0.0",
+            prior_year_relevance="LOW",
+            prior_year_relevance_reason="No prior season data",
+        ),
+        tto=None,
+        cross_season_summary=None,
+        arsenal_trend=None,
+    )
+    result = ctx._render_yoy_section()
+    assert result == ""
+    prompt = ctx.to_prompt()
+    assert "Year-over-Year" not in prompt
+
+
+def test_yoy_section_renders_cross_season_summary():
+    """_render_yoy_section renders top-level deltas from CrossSeasonSummary."""
+    from datetime import date
+
+    from pitcher_narratives.context import PitcherContext
+    from pitcher_narratives.engine import (
+        CrossSeasonSummary,
+        FirstPitchWeaponry,
+        HardHitRate,
+        PlatoonMix,
+        ReleasePointMetrics,
+        TemporalContext,
+        WorkloadContext,
+    )
+
+    css = CrossSeasonSummary(
+        current_season=2026, prior_season=2025,
+        current_velo=93.5, prior_velo=92.0, velo_delta="Up 1.5 mph",
+        current_p_plus=110, prior_p_plus=100, p_plus_delta="Up 10 pts",
+        current_s_plus=115, prior_s_plus=105, s_plus_delta="Up 10 pts",
+        current_l_plus=95, prior_l_plus=100, l_plus_delta="Down 5 pts",
+    )
+    ctx = PitcherContext(
+        pitcher_name="Test Pitcher",
+        pitcher_id=0,
+        throws="R",
+        role="SP",
+        fastball=None,
+        velocity_arc=None,
+        arsenal=[],
+        platoon_mix=PlatoonMix(splits=[], cold_start=True),
+        first_pitch=FirstPitchWeaponry(
+            entries=[], total_first_pitches_season=0,
+            total_first_pitches_window=0, cold_start=True,
+        ),
+        execution=[],
+        intermediates=[],
+        attributions=[],
+        hard_hit_rate=HardHitRate(
+            hard_hit_pct=0, season_hard_hit_pct=0, delta="Steady",
+            n_batted_balls=0, n_hard_hit=0, small_sample=True, cold_start=True,
+        ),
+        release_point=ReleasePointMetrics(pitch_types=[], cold_start=True),
+        workload=WorkloadContext(
+            appearances=[], max_consecutive_days=0, workload_concern=False,
+        ),
+        temporal=TemporalContext(
+            analysis_date=date(2026, 4, 8),
+            current_season=2026,
+            current_season_appearances=10,
+            current_season_ip="20.0",
+            current_season_first_date="2026-03-28",
+            prior_season=2025,
+            prior_season_appearances=30,
+            prior_season_ip="180.0",
+            prior_year_relevance="HIGH",
+            prior_year_relevance_reason="Full prior season",
+        ),
+        tto=None,
+        cross_season_summary=css,
+        arsenal_trend=None,
+    )
+    section = ctx._render_yoy_section()
+    assert "## Year-over-Year" in section
+    assert "2026 vs 2025" in section
+    assert "Up 1.5 mph" in section
+    assert "P+" in section
+    assert "S+" in section
+    assert "L+" in section

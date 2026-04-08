@@ -134,6 +134,9 @@ class PitcherContext(BaseModel):
         # Recent appearances
         sections.append(self._render_appearances_section())
 
+        # Year-over-Year (omitted for single-season pitchers)
+        sections.append(self._render_yoy_section())
+
         return "\n\n".join(s for s in sections if s)
 
     # ── Private render helpers ────────────────────────────────────────
@@ -578,6 +581,51 @@ class PitcherContext(BaseModel):
         for a in sorted_apps:
             rest = f"{a.rest_days}d" if a.rest_days is not None else "--"
             lines.append(f"| {a.game_date} | {a.ip} | {a.pitch_count} | {rest} |")
+        return "\n".join(lines)
+
+    def _render_yoy_section(self) -> str:
+        """Render year-over-year section with top-level deltas and arsenal changes.
+
+        Omitted entirely for single-season pitchers (per CPMT-02).
+        """
+        css = self.cross_season_summary
+        at = self.arsenal_trend
+        if css is None and at is None:
+            return ""
+
+        lines: list[str] = ["## Year-over-Year"]
+
+        if css is not None:
+            lines.append(
+                f"Comparing {css.current_season} vs {css.prior_season}:"
+            )
+            lines.append(f"- Velocity: {css.velo_delta}")
+            lines.append(f"- Pitching+ (P+): {css.p_plus_delta}")
+            lines.append(f"- Stuff+ (S+): {css.s_plus_delta}")
+            lines.append(f"- Location+ (L+): {css.l_plus_delta}")
+
+        if at is not None:
+            if at.added:
+                names = ", ".join(p.pitch_name for p in at.added)
+                lines.append(f"- Added pitches: {names}")
+            if at.dropped:
+                names = ", ".join(p.pitch_name for p in at.dropped)
+                lines.append(f"- Dropped pitches: {names}")
+            if at.continued:
+                lines.append("Pitch-level changes:")
+                for pt in at.continued[:4]:
+                    parts: list[str] = []
+                    if pt.usage_delta and "Steady" not in pt.usage_delta:
+                        parts.append(f"usage {pt.usage_delta}")
+                    if pt.velo_delta and "Steady" not in pt.velo_delta:
+                        parts.append(f"velo {pt.velo_delta}")
+                    if pt.p_plus_delta and "Steady" not in pt.p_plus_delta:
+                        parts.append(f"P+ {pt.p_plus_delta}")
+                    if pt.s_plus_delta and "Steady" not in pt.s_plus_delta:
+                        parts.append(f"S+ {pt.s_plus_delta}")
+                    if parts:
+                        lines.append(f"- {pt.pitch_name}: {', '.join(parts)}")
+
         return "\n".join(lines)
 
 
