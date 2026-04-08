@@ -29,7 +29,9 @@
   1. PitcherData contains both current-season and prior-season baseline DataFrames when multi-year data exists
   2. When a pitcher has only one season of data, prior-season baselines are empty (not None, not crash)
   3. Existing engine functions continue to work unchanged (no regression in single-season behavior)
-**Plans**: TBD
+**Plans:** 1 plan
+Plans:
+- [ ] 19-01-PLAN.md — Add prior-season baseline fields to PitcherData and populate in load_pitcher_data()
 
 ### Phase 20: Season-Delta Engine
 **Goal**: Users see year-over-year changes in top-level pitcher metrics (velocity, P+/S+/L+, workload profile)
@@ -84,7 +86,7 @@
 | 16. Data Foundation | v1.7 | 1/1 | Complete | 2026-04-03 |
 | 17. Multi-Year Loading | v1.7 | 1/1 | Complete | 2026-04-03 |
 | 18. Consumer Module Updates | v1.7 | 2/2 | Complete | 2026-04-03 |
-| 19. Cross-Season Baseline Exposure | v1.8 | 0/0 | Not started | - |
+| 19. Cross-Season Baseline Exposure | v1.8 | 0/1 | In progress | - |
 | 20. Season-Delta Engine | v1.8 | 0/0 | Not started | - |
 | 21. Arsenal Trend Engine | v1.8 | 0/0 | Not started | - |
 | 22. Context Assembly & Prompt Rendering | v1.8 | 0/0 | Not started | - |
