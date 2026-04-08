@@ -27,8 +27,8 @@ Requirements for Cross-Season Trend Analysis milestone. Each maps to roadmap pha
 
 ### Context & Prompt
 
-- [ ] **CPMT-01**: PitcherContext model includes optional cross-season summary and arsenal trend fields
-- [ ] **CPMT-02**: to_prompt() renders a Year-over-Year section with top-level deltas and arsenal changes when multi-season data exists, omits it entirely for single-season pitchers
+- [x] **CPMT-01**: PitcherContext model includes optional cross-season summary and arsenal trend fields
+- [x] **CPMT-02**: to_prompt() renders a Year-over-Year section with top-level deltas and arsenal changes when multi-season data exists, omits it entirely for single-season pitchers
 - [ ] **CPMT-03**: Specialist pipeline agents (stuff, trends, game shape) receive cross-season data in their context blocks
 
 ## Future Requirements
@@ -80,8 +80,8 @@ Which phases cover which requirements. Updated during roadmap creation.
 | ATRN-01 | Phase 21 | Complete |
 | ATRN-02 | Phase 21 | Complete |
 | ATRN-03 | Phase 21 | Complete |
-| CPMT-01 | Phase 22 | Pending |
-| CPMT-02 | Phase 22 | Pending |
+| CPMT-01 | Phase 22 | Complete |
+| CPMT-02 | Phase 22 | Complete |
 | CPMT-03 | Phase 22 | Pending |
 
 **Coverage:**
