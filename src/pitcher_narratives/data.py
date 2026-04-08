@@ -76,6 +76,8 @@ class PitcherData:
     window_appearances: pl.DataFrame
     season_baseline: pl.DataFrame
     pitch_type_baseline: pl.DataFrame
+    prior_season_baseline: pl.DataFrame
+    prior_pitch_type_baseline: pl.DataFrame
     agg_csvs: dict[str, pl.DataFrame]
     pitcher_id: int
     pitcher_name: str
@@ -420,14 +422,22 @@ def load_pitcher_data(pitcher_id: int, window_days: int = 30) -> PitcherData:
     if "season" in season_baseline_all.columns and not season_baseline_all.is_empty():
         max_season = season_baseline_all["season"].max()
         season_baseline = season_baseline_all.filter(pl.col("season") == max_season)
+        # Prior season: strictly N-1 per D-01/D-02
+        prior_season_rows = season_baseline_all.filter(pl.col("season") == max_season - 1)
+        prior_season_baseline = prior_season_rows if not prior_season_rows.is_empty() else season_baseline_all.clear()
     else:
         season_baseline = season_baseline_all
+        prior_season_baseline = season_baseline_all.clear()
 
     if "season" in pitch_type_baseline_all.columns and not pitch_type_baseline_all.is_empty():
         max_season = pitch_type_baseline_all["season"].max()
         pitch_type_baseline = pitch_type_baseline_all.filter(pl.col("season") == max_season)
+        # Prior pitch-type baseline: strictly N-1 per D-01/D-02
+        prior_pt_rows = pitch_type_baseline_all.filter(pl.col("season") == max_season - 1)
+        prior_pitch_type_baseline = prior_pt_rows if not prior_pt_rows.is_empty() else pitch_type_baseline_all.clear()
     else:
         pitch_type_baseline = pitch_type_baseline_all
+        prior_pitch_type_baseline = pitch_type_baseline_all.clear()
     pitcher_name = str(statcast["player_name"][0])
     throws = str(statcast["p_throws"][0])
 
@@ -437,6 +447,8 @@ def load_pitcher_data(pitcher_id: int, window_days: int = 30) -> PitcherData:
         window_appearances=window_appearances,
         season_baseline=season_baseline,
         pitch_type_baseline=pitch_type_baseline,
+        prior_season_baseline=prior_season_baseline,
+        prior_pitch_type_baseline=prior_pitch_type_baseline,
         agg_csvs=agg_csvs,
         pitcher_id=pitcher_id,
         pitcher_name=pitcher_name,
