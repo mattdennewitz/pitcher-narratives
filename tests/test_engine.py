@@ -1160,6 +1160,8 @@ def test_arsenal_trends_single_season_returns_none():
         window_appearances=data.window_appearances,
         season_baseline=data.season_baseline,
         pitch_type_baseline=data.pitch_type_baseline,
+        prior_season_baseline=data.prior_season_baseline.clear(),
+        prior_pitch_type_baseline=data.prior_pitch_type_baseline.clear(),
         agg_csvs={**data.agg_csvs, "pitcher_type": single_season_pt},
         pitcher_id=data.pitcher_id,
         pitcher_name=data.pitcher_name,
