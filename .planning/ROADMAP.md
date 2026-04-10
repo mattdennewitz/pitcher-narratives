@@ -34,7 +34,7 @@
 **Plans**: 2 plans
 
 Plans:
-- [ ] 23-01-PLAN.md — Relocate hallucination guard to pipeline.py, rewrite CLIs to use pipeline path exclusively
+- [x] 23-01-PLAN.md — Relocate hallucination guard to pipeline.py, rewrite CLIs to use pipeline path exclusively
 - [ ] 23-02-PLAN.md — Delete report.py and test_report.py, verify clean state
 
 ### Phase 24: Verification & Cleanup
@@ -58,5 +58,5 @@ Plans:
 
 | Phase | Milestone | Plans Complete | Status | Completed |
 |-------|-----------|----------------|--------|-----------|
-| 23. Remove Old Pipeline | v1.9 | 0/2 | Planned | - |
+| 23. Remove Old Pipeline | v1.9 | 1/2 | In progress | - |
 | 24. Verification & Cleanup | v1.9 | 0/? | Not started | - |

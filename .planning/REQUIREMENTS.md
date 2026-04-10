@@ -11,12 +11,12 @@ Requirements for Pipeline Consolidation milestone. Remove old single-agent repor
 
 - [ ] **REM-01**: report.py is deleted — old single-agent pipeline and reflection loop removed entirely
 - [ ] **REM-02**: test_report.py is deleted — old pipeline tests removed
-- [ ] **REM-03**: All imports of report.py removed from cli.py and any other consumers
+- [x] **REM-03**: All imports of report.py removed from cli.py and any other consumers
 
 ### CLI Consolidation
 
-- [ ] **CLI-01**: `--pipeline` flag removed from CLI — multi-agent pipeline is the only reporting path
-- [ ] **CLI-02**: CLI generates reports via pipeline.py by default with no flag required
+- [x] **CLI-01**: `--pipeline` flag removed from CLI — multi-agent pipeline is the only reporting path
+- [x] **CLI-02**: CLI generates reports via pipeline.py by default with no flag required
 - [ ] **CLI-03**: All existing CLI features (hallucination check, streaming, info mode) work through pipeline path
 
 ### Verification
@@ -42,9 +42,9 @@ None — this is a cleanup milestone.
 |-------------|-------|--------|
 | REM-01 | Phase 23 | Pending |
 | REM-02 | Phase 23 | Pending |
-| REM-03 | Phase 23 | Pending |
-| CLI-01 | Phase 23 | Pending |
-| CLI-02 | Phase 23 | Pending |
+| REM-03 | Phase 23 | Complete |
+| CLI-01 | Phase 23 | Complete |
+| CLI-02 | Phase 23 | Complete |
 | CLI-03 | Phase 24 | Pending |
 | VER-01 | Phase 24 | Pending |
 | VER-02 | Phase 24 | Pending |
@@ -56,4 +56,4 @@ None — this is a cleanup milestone.
 
 ---
 *Requirements defined: 2026-04-09*
-*Last updated: 2026-04-09 after roadmap creation*
+*Last updated: 2026-04-10 after 23-01 completion*
