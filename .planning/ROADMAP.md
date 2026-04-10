@@ -31,10 +31,11 @@
   3. No module in the codebase imports from report.py
   4. Running the CLI without `--pipeline` generates a report via pipeline.py (flag is gone, pipeline is the default)
   5. anchor.py is unchanged and still importable by pipeline.py
-**Plans**: TBD
+**Plans**: 2 plans
 
 Plans:
-- [ ] 23-01: TBD
+- [ ] 23-01-PLAN.md — Relocate hallucination guard to pipeline.py, rewrite CLIs to use pipeline path exclusively
+- [ ] 23-02-PLAN.md — Delete report.py and test_report.py, verify clean state
 
 ### Phase 24: Verification & Cleanup
 **Goal**: The codebase is clean post-removal -- all tests pass and every CLI feature works through the pipeline path
@@ -57,5 +58,5 @@ Plans:
 
 | Phase | Milestone | Plans Complete | Status | Completed |
 |-------|-----------|----------------|--------|-----------|
-| 23. Remove Old Pipeline | v1.9 | 0/? | Not started | - |
+| 23. Remove Old Pipeline | v1.9 | 0/2 | Planned | - |
 | 24. Verification & Cleanup | v1.9 | 0/? | Not started | - |
