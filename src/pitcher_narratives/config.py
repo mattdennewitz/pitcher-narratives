@@ -1,7 +1,7 @@
 """Shared configuration: provider map, model settings factory, and CLI helpers.
 
-Centralises constants and utilities that were previously scattered across
-report.py, pipeline.py, analyst.py, and the CLI modules.
+Centralises constants and utilities shared by pipeline.py, analyst.py,
+and the CLI modules.
 """
 
 from __future__ import annotations

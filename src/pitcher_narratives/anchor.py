@@ -1,7 +1,7 @@
 """Anchor check quality gate: verifies capsules are faithful to the synthesis.
 
-Shared by both the single-agent report pipeline (report.py) and the
-multi-agent specialist pipeline (pipeline.py).
+Used by the multi-agent specialist pipeline (pipeline.py) to verify
+capsule faithfulness to the synthesis.
 """
 
 from __future__ import annotations
