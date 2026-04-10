@@ -54,11 +54,6 @@ def parse_args() -> argparse.Namespace:
         default="medium",
         help="Thinking/reasoning effort level (default: medium)",
     )
-    parser.add_argument(
-        "--pipeline",
-        action="store_true",
-        help="Use multi-agent specialist→writer pipeline (v1.6 prototype)",
-    )
     return parser.parse_args()
 
 
@@ -93,20 +88,22 @@ def main() -> None:
         _print_verbose_summary(pitcher_data)
 
     from pitcher_narratives.context import assemble_pitcher_context
-    from pitcher_narratives.report import (
+    from pitcher_narratives.pipeline import (
         check_hallucinated_metrics,
-        generate_report_streaming,
-        print_prompts,
-        write_data_file,
+        generate_pipeline_streaming,
+        write_pipeline_data_file,
     )
 
     ctx = assemble_pitcher_context(pitcher_data)
 
-    data_file = write_data_file(ctx, args.pitcher, args.provider)
+    data_file = write_pipeline_data_file(ctx, args.pitcher, args.provider)
     log.info("Wrote prompt data to %s", data_file)
 
     if args.print_prompts:
-        print_prompts(ctx)
+        import sys as _sys
+        from pathlib import Path
+
+        print(Path(data_file).read_text(), file=_sys.stderr)
         sys.exit(0)
 
     # Support test mode: use TestModel when env var is set
@@ -122,86 +119,47 @@ def main() -> None:
         log.error("%s not set.", env_var)
         sys.exit(1)
 
-    if args.pipeline:
-        from pitcher_narratives.pipeline import generate_pipeline_streaming, write_pipeline_data_file
+    # The narrative streams to stdout during this call
+    print("# Scouting Report\n")
+    pipe_result = generate_pipeline_streaming(
+        ctx,
+        provider=args.provider,
+        thinking=args.thinking,
+        _model_override=model_override,
+    )
 
-        data_file = write_pipeline_data_file(ctx, args.pitcher, args.provider)
-        log.info("Wrote prompt data to %s", data_file)
+    # Executive summary
+    if pipe_result.executive_summary:
+        print("\n\n# Executive Summary\n")
+        for bullet in pipe_result.executive_summary:
+            print(f"- {bullet}")
 
-        # The narrative streams to stdout during this call
-        print("# Scouting Report\n")
-        pipe_result = generate_pipeline_streaming(
-            ctx,
-            provider=args.provider,
-            thinking=args.thinking,
-            _model_override=model_override,
-        )
+    # Stuff analysis
+    print(f"\n\n# Stuff Analysis\n\n{pipe_result.specialists.stuff}")
 
-        # Executive summary
-        if pipe_result.executive_summary:
-            print("\n\n# Executive Summary\n")
-            for bullet in pipe_result.executive_summary:
-                print(f"- {bullet}")
-
-        # Stuff analysis
-        print(f"\n\n# Stuff Analysis\n\n{pipe_result.specialists.stuff}")
-
-        # Data audit
-        print("\n\n# Data Audit\n")
-        if pipe_result.audit_flags:
-            for f in pipe_result.audit_flags:
-                print(f"- **[{f.category}]** {f.specialist}: {f.claim}")
-                print(f"  - Data shows: {f.data_shows}")
-        else:
-            print("Clean — no issues found.")
-
-        # Anchor check
-        print("\n\n# Anchor Check\n")
-        if pipe_result.revision_count == 0 and not pipe_result.anchor_warnings:
-            print("Passed on first draft.")
-        elif pipe_result.anchor_warnings:
-            print(f"Revised {pipe_result.revision_count} time(s) — remaining issues:")
-            for w in pipe_result.anchor_warnings:
-                print(f"- **[{w.category}]** {w.description}")
-        else:
-            print(f"Revised {pipe_result.revision_count} time(s) — passed.")
-
-        # Hallucination check
-        hallucination_report = check_hallucinated_metrics(pipe_result.narrative)
+    # Data audit
+    print("\n\n# Data Audit\n")
+    if pipe_result.audit_flags:
+        for f in pipe_result.audit_flags:
+            print(f"- **[{f.category}]** {f.specialist}: {f.claim}")
+            print(f"  - Data shows: {f.data_shows}")
     else:
-        # The narrative streams to stdout during this call
-        print("# Scouting Report\n")
-        result = generate_report_streaming(
-            ctx,
-            provider=args.provider,
-            thinking=args.thinking,
-            _model_override=model_override,
-        )
+        print("Clean — no issues found.")
 
-        # Executive summary
-        if result.executive_summary:
-            print("\n\n# Executive Summary\n")
-            for bullet in result.executive_summary:
-                print(f"- {bullet}")
+    # Anchor check
+    print("\n\n# Anchor Check\n")
+    if pipe_result.revision_count == 0 and not pipe_result.anchor_warnings:
+        print("Passed on first draft.")
+    elif pipe_result.anchor_warnings:
+        print(f"Revised {pipe_result.revision_count} time(s) — remaining issues:")
+        for w in pipe_result.anchor_warnings:
+            print(f"- **[{w.category}]** {w.description}")
+    else:
+        print(f"Revised {pipe_result.revision_count} time(s) — passed.")
 
-        # Stuff analysis
-        print(f"\n\n# Stuff Analysis\n\n{result.stuff_summary}")
+    # Hallucination check
+    hallucination_report = check_hallucinated_metrics(pipe_result.narrative)
 
-        # Anchor check
-        print("\n\n# Anchor Check\n")
-        if result.revision_count == 0 and not result.anchor_warnings:
-            print("Passed on first draft.")
-        elif result.anchor_warnings:
-            print(f"Revised {result.revision_count} time(s) — remaining issues:")
-            for w in result.anchor_warnings:
-                print(f"- **[{w.category}]** {w.description}")
-        else:
-            print(f"Revised {result.revision_count} time(s) — passed.")
-
-        # Hallucination check
-        hallucination_report = check_hallucinated_metrics(result.narrative)
-
-    # Hallucination check (shared across both paths)
     if not hallucination_report.is_clean:
         print("\n\n# Hallucination Check\n")
         if hallucination_report.unknown_metrics:

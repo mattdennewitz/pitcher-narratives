@@ -55,11 +55,6 @@ def parse_args() -> argparse.Namespace:
         default="medium",
         help="Thinking/reasoning effort level (default: medium)",
     )
-    parser.add_argument(
-        "--pipeline",
-        action="store_true",
-        help="Use multi-agent specialist→answerer pipeline",
-    )
     return parser.parse_args()
 
 
@@ -119,69 +114,41 @@ def main() -> None:
 
     ctx = assemble_pitcher_context(pitcher_data)
 
-    if args.pipeline:
-        from pitcher_narratives.pipeline import write_pipeline_data_file
+    from pitcher_narratives.analyst import ask_question_pipeline
+    from pitcher_narratives.pipeline import write_pipeline_data_file
 
-        data_file = write_pipeline_data_file(
-            ctx, pitcher_id, args.provider, question=args.question,
-        )
-        log.info("Wrote prompt data to %s", data_file)
+    data_file = write_pipeline_data_file(
+        ctx, pitcher_id, args.provider, question=args.question,
+    )
+    log.info("Wrote prompt data to %s", data_file)
 
-        from pitcher_narratives.analyst import ask_question_pipeline
+    # The answer streams to stdout during this call
+    print("# Answer\n")
+    pipeline_result = ask_question_pipeline(
+        args.question,
+        ctx,
+        provider=args.provider,
+        thinking=args.thinking,
+        _model_override=model_override,
+    )
 
-        # The answer streams to stdout during this call
-        print("# Answer\n")
-        pipeline_result = ask_question_pipeline(
-            args.question,
-            ctx,
-            provider=args.provider,
-            thinking=args.thinking,
-            _model_override=model_override,
-        )
+    # Executive summary
+    if pipeline_result.executive_summary:
+        print("\n\n# Executive Summary\n")
+        for bullet in pipeline_result.executive_summary:
+            print(f"- {bullet}")
 
-        # Executive summary
-        if pipeline_result.executive_summary:
-            print("\n\n# Executive Summary\n")
-            for bullet in pipeline_result.executive_summary:
-                print(f"- {bullet}")
-
-        # Data audit
-        print("\n\n# Data Audit\n")
-        if pipeline_result.audit_flags:
-            for f in pipeline_result.audit_flags:
-                print(f"- **[{f.category}]** {f.specialist}: {f.claim}")
-                print(f"  - Data shows: {f.data_shows}")
-        else:
-            print("Clean — no issues found.")
-
-        # Stuff analysis
-        print(f"\n\n# Stuff Analysis\n\n{pipeline_result.stuff_summary}")
+    # Data audit
+    print("\n\n# Data Audit\n")
+    if pipeline_result.audit_flags:
+        for f in pipeline_result.audit_flags:
+            print(f"- **[{f.category}]** {f.specialist}: {f.claim}")
+            print(f"  - Data shows: {f.data_shows}")
     else:
-        from pitcher_narratives.analyst import ANALYST_INSTRUCTIONS, ask_question_streaming
-        from pathlib import Path
+        print("Clean — no issues found.")
 
-        # Write prompt data for single-agent path
-        data_sections = [
-            f"{'═' * 72}\nANALYST AGENT\n{'═' * 72}\n",
-            f"## System Prompt\n\n{ANALYST_INSTRUCTIONS}\n",
-            f"## User Question\n\n{args.question}\n",
-            f"## Tool: get_pitcher_summary\n\n[Returns full pitcher context with league baselines]\n",
-            f"## Tool: get_pitch_detail\n\n[Returns per-pitch detail on demand]\n",
-        ]
-        data_file = f"data-{pitcher_id}-{args.provider}-ask-single.md"
-        Path(data_file).write_text("\n".join(data_sections))
-        log.info("Wrote prompt data to %s", data_file)
-
-        # The answer streams to stdout during this call
-        print("# Answer\n")
-        ask_question_streaming(
-            args.question,
-            ctx,
-            pitcher_data,
-            provider=args.provider,
-            thinking=args.thinking,
-            _model_override=model_override,
-        )
+    # Stuff analysis
+    print(f"\n\n# Stuff Analysis\n\n{pipeline_result.stuff_summary}")
 
 
 if __name__ == "__main__":
