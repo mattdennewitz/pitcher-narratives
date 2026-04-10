@@ -47,10 +47,10 @@ Plans:
   3. CLI streaming output works for a report generated through pipeline.py
   4. CLI `--hallucination-check` flag works through the pipeline path
   5. CLI `--info` mode works through the pipeline path
-**Plans**: TBD
+**Plans**: 1 plan
 
 Plans:
-- [ ] 24-01: TBD
+- [ ] 24-01-PLAN.md — Verify test suite, CLI features through pipeline path, clean stale docstrings
 
 ## Progress
 
@@ -59,4 +59,4 @@ Plans:
 | Phase | Milestone | Plans Complete | Status | Completed |
 |-------|-----------|----------------|--------|-----------|
 | 23. Remove Old Pipeline | v1.9 | 2/2 | Complete    | 2026-04-10 |
-| 24. Verification & Cleanup | v1.9 | 0/? | Not started | - |
+| 24. Verification & Cleanup | v1.9 | 0/1 | Not started | - |
