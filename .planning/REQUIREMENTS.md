@@ -40,20 +40,20 @@ None — this is a cleanup milestone.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| REM-01 | — | Pending |
-| REM-02 | — | Pending |
-| REM-03 | — | Pending |
-| CLI-01 | — | Pending |
-| CLI-02 | — | Pending |
-| CLI-03 | — | Pending |
-| VER-01 | — | Pending |
-| VER-02 | — | Pending |
+| REM-01 | Phase 23 | Pending |
+| REM-02 | Phase 23 | Pending |
+| REM-03 | Phase 23 | Pending |
+| CLI-01 | Phase 23 | Pending |
+| CLI-02 | Phase 23 | Pending |
+| CLI-03 | Phase 24 | Pending |
+| VER-01 | Phase 24 | Pending |
+| VER-02 | Phase 24 | Pending |
 
 **Coverage:**
 - v1.9 requirements: 8 total
-- Mapped to phases: 0
-- Unmapped: 8 (pending roadmap)
+- Mapped to phases: 8
+- Unmapped: 0
 
 ---
 *Requirements defined: 2026-04-09*
-*Last updated: 2026-04-09 after initial definition*
+*Last updated: 2026-04-09 after roadmap creation*
