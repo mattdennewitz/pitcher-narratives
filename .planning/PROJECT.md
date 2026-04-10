@@ -76,7 +76,17 @@ The report must read like a scout wrote it — surfacing *changes, adaptations, 
 
 ### Active
 
-(No active milestone — run `/gsd:new-milestone` to start next)
+## Current Milestone: v1.9 Pipeline Consolidation
+
+**Goal:** Remove old single-agent reporting infrastructure so the multi-agent specialist pipeline is the sole reporting path.
+
+**Target features:**
+- Delete report.py (single-agent pipeline + reflection loop)
+- Delete test_report.py
+- Remove CLI flags/branches that select between old and new pipelines
+- Remove orphaned code in anchor.py or elsewhere that only served report.py
+- Ensure pipeline.py is the single entry point for report generation
+- Update documentation and prompts referencing the old path
 
 ## Current State (v1.8 shipped)
 
@@ -184,4 +194,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-04-09 after v1.8 milestone completed — Cross-Season Trend Analysis*
+*Last updated: 2026-04-09 after v1.9 milestone started — Pipeline Consolidation*
