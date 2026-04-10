@@ -58,5 +58,5 @@ Plans:
 
 | Phase | Milestone | Plans Complete | Status | Completed |
 |-------|-----------|----------------|--------|-----------|
-| 23. Remove Old Pipeline | v1.9 | 2/2 | Complete   | 2026-04-10 |
+| 23. Remove Old Pipeline | v1.9 | 2/2 | Complete    | 2026-04-10 |
 | 24. Verification & Cleanup | v1.9 | 0/? | Not started | - |
