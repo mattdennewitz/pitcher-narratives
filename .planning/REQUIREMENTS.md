@@ -9,8 +9,8 @@ Requirements for Pipeline Consolidation milestone. Remove old single-agent repor
 
 ### Code Removal
 
-- [ ] **REM-01**: report.py is deleted — old single-agent pipeline and reflection loop removed entirely
-- [ ] **REM-02**: test_report.py is deleted — old pipeline tests removed
+- [x] **REM-01**: report.py is deleted — old single-agent pipeline and reflection loop removed entirely
+- [x] **REM-02**: test_report.py is deleted — old pipeline tests removed
 - [x] **REM-03**: All imports of report.py removed from cli.py and any other consumers
 
 ### CLI Consolidation
@@ -40,8 +40,8 @@ None — this is a cleanup milestone.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| REM-01 | Phase 23 | Pending |
-| REM-02 | Phase 23 | Pending |
+| REM-01 | Phase 23 | Complete |
+| REM-02 | Phase 23 | Complete |
 | REM-03 | Phase 23 | Complete |
 | CLI-01 | Phase 23 | Complete |
 | CLI-02 | Phase 23 | Complete |

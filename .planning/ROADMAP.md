@@ -12,7 +12,7 @@
 
 ## Phases
 
-- [ ] **Phase 23: Remove Old Pipeline** - Delete report.py, test_report.py, strip old-path imports, and consolidate CLI to use pipeline.py exclusively
+- [x] **Phase 23: Remove Old Pipeline** - Delete report.py, test_report.py, strip old-path imports, and consolidate CLI to use pipeline.py exclusively (completed 2026-04-10)
 - [ ] **Phase 24: Verification & Cleanup** - Confirm all tests pass, anchor.py intact, and all CLI features work through the pipeline path
 
 ## Phase Details
@@ -35,7 +35,7 @@
 
 Plans:
 - [x] 23-01-PLAN.md — Relocate hallucination guard to pipeline.py, rewrite CLIs to use pipeline path exclusively
-- [ ] 23-02-PLAN.md — Delete report.py and test_report.py, verify clean state
+- [x] 23-02-PLAN.md — Delete report.py and test_report.py, verify clean state
 
 ### Phase 24: Verification & Cleanup
 **Goal**: The codebase is clean post-removal -- all tests pass and every CLI feature works through the pipeline path
@@ -58,5 +58,5 @@ Plans:
 
 | Phase | Milestone | Plans Complete | Status | Completed |
 |-------|-----------|----------------|--------|-----------|
-| 23. Remove Old Pipeline | v1.9 | 1/2 | In progress | - |
+| 23. Remove Old Pipeline | v1.9 | 2/2 | Complete   | 2026-04-10 |
 | 24. Verification & Cleanup | v1.9 | 0/? | Not started | - |
