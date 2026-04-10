@@ -47,6 +47,13 @@ from pydantic import BaseModel
 from pydantic_ai import Agent, CachePoint
 from pydantic_ai.settings import ThinkingEffort
 
+from pitcher_narratives.anchor import (
+    ANCHOR_PROMPT,
+    AnchorResult,
+    AnchorWarning,
+    build_anchor_message,
+    build_revision_message,
+)
 from pitcher_narratives.config import (
     MAX_REVISIONS,
     MINI_PROVIDERS,
@@ -65,13 +72,6 @@ from pitcher_narratives.engine import (
     format_s_variant_comparisons,
     outlier_tag,
     render_league_baselines,
-)
-from pitcher_narratives.anchor import (
-    ANCHOR_PROMPT,
-    AnchorResult,
-    AnchorWarning,
-    build_anchor_message,
-    build_revision_message,
 )
 from pitcher_narratives.signals import (
     KeySignals,
@@ -895,30 +895,17 @@ async def audit_and_revise_specialists(
 # PROMPT DATA FILE (for traceability)
 # ═══════════════════════════════════════════════════════════════════════
 
-def write_pipeline_data_file(
+def _render_pipeline_data_sections(
     ctx: PitcherContext,
-    pitcher_id: int,
-    provider: str,
     *,
     question: str | None = None,
-) -> str:
-    """Write all pipeline prompts to a data file for end-to-end tracing.
+) -> list[str]:
+    """Render all pipeline prompt sections as a list of strings.
 
-    Dumps every system prompt and user message that would be sent to the
-    LLM at each phase of the pipeline. For the ask pipeline, also includes
-    the user's question and the answerer prompt.
-
-    Args:
-        ctx: Assembled pitcher context.
-        pitcher_id: MLB pitcher ID for the filename.
-        provider: LLM provider key for the filename.
-        question: If provided, includes the ask-pipeline answerer phase.
-
-    Returns:
-        Path to the written file.
+    Pure rendering helper — no I/O. Used by write_pipeline_data_file and
+    by callers that want the rendered text without a disk roundtrip
+    (e.g. cli.py --print-prompts).
     """
-    from pathlib import Path
-
     sep = "═" * 72
     sections: list[str] = []
 
@@ -987,10 +974,46 @@ def write_pipeline_data_file(
             "[Receives: key signals + concatenated specialist outputs + writer capsule]\n"
         )
 
+    return sections
+
+
+def write_pipeline_data_file(
+    ctx: PitcherContext,
+    pitcher_id: int,
+    provider: str,
+    *,
+    question: str | None = None,
+) -> tuple[str, str]:
+    """Write all pipeline prompts to a data file for end-to-end tracing.
+
+    Dumps every system prompt and user message that would be sent to the
+    LLM at each phase of the pipeline. For the ask pipeline, also includes
+    the user's question and the answerer prompt.
+
+    Args:
+        ctx: Assembled pitcher context.
+        pitcher_id: MLB pitcher ID for the filename.
+        provider: LLM provider key for the filename.
+        question: If provided, includes the ask-pipeline answerer phase.
+
+    Returns:
+        Tuple of (filename, rendered_text). Callers that need to display
+        the text (e.g. --print-prompts) should use the returned string
+        directly rather than re-reading the file from disk.
+
+    Raises:
+        OSError: If writing the file fails (disk full, permissions, etc.).
+            The caller should log and exit with a clear message.
+    """
+    from pathlib import Path
+
+    sections = _render_pipeline_data_sections(ctx, question=question)
+    text = "\n".join(sections)
+
     mode = "ask" if question else "pipeline"
     filename = f"data-{pitcher_id}-{provider}-{mode}.md"
-    Path(filename).write_text("\n".join(sections))
-    return filename
+    Path(filename).write_text(text, encoding="utf-8")
+    return filename, text
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -1396,8 +1419,11 @@ _TRADITIONAL_STATS = frozenset(
 
 _METRIC_PATTERN = re.compile(
     r"\b("
-    # xMetric pattern (xBA, xWhiff, xwOBA, xRV100, etc.)
-    r"x[A-Za-z][A-Za-z0-9]*"
+    # xMetric pattern (xBA, xWhiff, xwOBA, xRV100, x_whiff, etc.)
+    # Underscores are tolerated for variant spellings that sometimes appear
+    # in technical writing (e.g. x_whiff) — false positives simply get
+    # flagged as "unknown" and can be manually verified.
+    r"x[A-Za-z_][A-Za-z0-9_]*"
     r"|"
     # Acronym+% pattern (CSW%, O-Swing%, Zone%, K-BB%, SwStr%, Barrel%)
     r"[A-Z][A-Za-z]*-?[A-Z]*%"
@@ -1439,11 +1465,29 @@ def check_hallucinated_metrics(report_text: str) -> HallucinationReport:
     outcome stats that the editor prompt warns against using.
 
     Args:
-        report_text: The LLM-generated report text.
+        report_text: The LLM-generated report text. Must be a non-empty
+            string — an empty narrative is a pipeline failure, not a
+            "clean" report, so the caller should check before invoking.
 
     Returns:
         HallucinationReport with unknown_metrics and outcome_stat_warnings.
+
+    Raises:
+        TypeError: If report_text is not a string.
+        ValueError: If report_text is empty. An empty narrative means the
+            pipeline produced nothing to check — a misleading `is_clean`
+            result would hide that failure, so we fail loudly.
     """
+    if not isinstance(report_text, str):
+        raise TypeError(
+            f"report_text must be str, got {type(report_text).__name__}"
+        )
+    if not report_text:
+        raise ValueError(
+            "report_text is empty — cannot check hallucinations on an "
+            "empty narrative (likely a pipeline failure)"
+        )
+
     found = set(_METRIC_PATTERN.findall(report_text))
     unknown = sorted(found - _KNOWN_METRICS - _TRADITIONAL_STATS)
 

@@ -196,3 +196,55 @@ def test_cli_anchor_check_in_output():
     )
     assert result.returncode == 0
     assert "# Anchor Check" in result.stdout
+
+
+# ── Integration: --print-prompts ──
+
+
+def test_cli_print_prompts_exits_zero(tmp_path):
+    """--print-prompts exits 0 and dumps pipeline prompts to stderr without calling LLM."""
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pitcher_narratives.cli",
+            "-p",
+            "592155",
+            "--print-prompts",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        cwd=tmp_path,  # keep the data file out of the repo root
+        env=_test_env(),  # No API key, no test model — --print-prompts must not need them
+    )
+    assert result.returncode == 0, f"stderr: {result.stderr}"
+    # Stdout should be empty (or nothing meaningful) — the report was never generated
+    assert "# Scouting Report" not in result.stdout
+    # Stderr should contain the specialist prompts that --print-prompts dumps
+    assert "SPECIALIST 1: STUFF" in result.stderr
+    assert "WRITER" in result.stderr
+    assert "ANCHOR CHECK" in result.stderr
+
+
+def test_cli_print_prompts_bypasses_api_key_check(tmp_path):
+    """--print-prompts must work without any API key set (no LLM call happens)."""
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pitcher_narratives.cli",
+            "-p",
+            "592155",
+            "--print-prompts",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        cwd=tmp_path,
+        env=_test_env(),
+    )
+    # With no API key, the normal path exits 1 with "API_KEY not set".
+    # --print-prompts must bypass that check and exit 0.
+    assert result.returncode == 0
+    assert "API_KEY" not in result.stderr or "not set" not in result.stderr

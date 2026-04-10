@@ -12,7 +12,9 @@ import os
 import sys
 from typing import TYPE_CHECKING
 
+import polars as pl
 from dotenv import load_dotenv
+from pydantic_ai.exceptions import AgentRunError
 
 from pitcher_narratives.config import API_KEYS, setup_logging
 
@@ -40,7 +42,9 @@ def parse_args() -> argparse.Namespace:
         help="Show pitcher name, game dates, and pitch counts before generating report",
     )
     parser.add_argument(
-        "--print-prompts", action="store_true", help="Print both prompts as sent to the LLM, then exit"
+        "--print-prompts",
+        action="store_true",
+        help="Print the pipeline prompts that would be sent to the LLM, then exit without calling the model",
     )
     parser.add_argument(
         "--provider",
@@ -81,11 +85,40 @@ def main() -> None:
     try:
         pitcher_data = load_pitcher_data(args.pitcher, args.window)
     except ValueError as e:
+        # "Pitcher not found" and other user-input validation errors.
         log.error("%s", e)
+        sys.exit(1)
+    except FileNotFoundError as e:
+        log.error("Data file not found: %s", e)
+        sys.exit(1)
+    except pl.exceptions.PolarsError as e:
+        log.error("Failed to read pitcher data (polars): %s", e)
+        sys.exit(1)
+    except OSError as e:
+        log.error("I/O error loading pitcher data: %s", e)
         sys.exit(1)
 
     if args.verbose:
         _print_verbose_summary(pitcher_data)
+
+    # Support test mode: use TestModel when env var is set
+    model_override = None
+    if os.environ.get("PITCHER_NARRATIVES_TEST_MODEL"):
+        from pydantic_ai.models.test import TestModel
+
+        model_override = TestModel()
+
+    # Pre-flight API key check — fail fast before writing files or hitting
+    # the LLM. --print-prompts intentionally bypasses this check because it
+    # never calls the model (it only renders the prompts that would be sent).
+    if (
+        not args.print_prompts
+        and model_override is None
+        and not os.environ.get(API_KEYS[args.provider])
+    ):
+        env_var = API_KEYS[args.provider]
+        log.error("%s not set.", env_var)
+        sys.exit(1)
 
     from pitcher_narratives.context import assemble_pitcher_context
     from pitcher_narratives.pipeline import (
@@ -96,37 +129,31 @@ def main() -> None:
 
     ctx = assemble_pitcher_context(pitcher_data)
 
-    data_file = write_pipeline_data_file(ctx, args.pitcher, args.provider)
+    try:
+        data_file, data_text = write_pipeline_data_file(ctx, args.pitcher, args.provider)
+    except OSError as e:
+        log.error("Failed to write prompt data file: %s", e)
+        sys.exit(1)
     log.info("Wrote prompt data to %s", data_file)
 
     if args.print_prompts:
-        import sys as _sys
-        from pathlib import Path
-
-        print(Path(data_file).read_text(), file=_sys.stderr)
+        # Use the text we just rendered — no disk roundtrip, no new failure
+        # surface from re-reading the file we just wrote.
+        print(data_text, file=sys.stderr)
         sys.exit(0)
-
-    # Support test mode: use TestModel when env var is set
-    model_override = None
-    if os.environ.get("PITCHER_NARRATIVES_TEST_MODEL"):
-        from pydantic_ai.models.test import TestModel
-
-        model_override = TestModel()
-
-    # Pre-flight API key check — fail fast instead of hanging on missing key
-    if model_override is None and not os.environ.get(API_KEYS[args.provider]):
-        env_var = API_KEYS[args.provider]
-        log.error("%s not set.", env_var)
-        sys.exit(1)
 
     # The narrative streams to stdout during this call
     print("# Scouting Report\n")
-    pipe_result = generate_pipeline_streaming(
-        ctx,
-        provider=args.provider,
-        thinking=args.thinking,
-        _model_override=model_override,
-    )
+    try:
+        pipe_result = generate_pipeline_streaming(
+            ctx,
+            provider=args.provider,
+            thinking=args.thinking,
+            _model_override=model_override,
+        )
+    except AgentRunError as e:
+        log.error("LLM call failed: %s", e)
+        sys.exit(2)
 
     # Executive summary
     if pipe_result.executive_summary:
@@ -157,10 +184,17 @@ def main() -> None:
     else:
         print(f"Revised {pipe_result.revision_count} time(s) — passed.")
 
-    # Hallucination check
+    # Hallucination check — skipped if the narrative is empty (pipeline
+    # produced nothing, which is a failure worth flagging loudly).
+    if not pipe_result.narrative:
+        log.warning("Pipeline produced empty narrative — skipping hallucination check")
+        return
+
     hallucination_report = check_hallucinated_metrics(pipe_result.narrative)
 
-    if not hallucination_report.is_clean:
+    if hallucination_report.is_clean:
+        log.info("Hallucination check passed (no unknown metrics or outcome stats).")
+    else:
         print("\n\n# Hallucination Check\n")
         if hallucination_report.unknown_metrics:
             print(f"Unknown metrics referenced: {', '.join(hallucination_report.unknown_metrics)}")

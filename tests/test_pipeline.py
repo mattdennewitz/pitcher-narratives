@@ -333,6 +333,19 @@ class TestGeneratePipelineStreaming:
         assert isinstance(result.audit_flags, list)
         assert isinstance(result.anchor_warnings, list)
         assert isinstance(result.revision_count, int)
+        # Revision count must be bounded — MAX_REVISIONS caps the loop
+        # to prevent runaway passes. Anything outside [0, MAX_REVISIONS]
+        # means the loop logic is broken.
+        from pitcher_narratives.config import MAX_REVISIONS
+        assert 0 <= result.revision_count <= MAX_REVISIONS, (
+            f"revision_count {result.revision_count} outside [0, {MAX_REVISIONS}] — "
+            "revision loop logic is broken"
+        )
+
+    def test_max_revisions_constant_is_nonzero(self):
+        """MAX_REVISIONS must allow at least one revision pass."""
+        from pitcher_narratives.config import MAX_REVISIONS
+        assert MAX_REVISIONS >= 1, "MAX_REVISIONS must allow at least one revision"
 
     def test_specialist_outputs_populated(self, ctx):
         """All 5 specialist slots are non-empty strings."""

@@ -4,7 +4,25 @@ Tests for check_hallucinated_metrics and HallucinationReport, now
 imported from pipeline.py where the hallucination guard lives.
 """
 
+import pytest
+
 from pitcher_narratives.pipeline import HallucinationReport, check_hallucinated_metrics
+
+
+def test_check_hallucinated_metrics_rejects_empty_string():
+    """Empty narrative is a pipeline failure, not a clean report."""
+    with pytest.raises(ValueError, match="empty"):
+        check_hallucinated_metrics("")
+
+
+def test_check_hallucinated_metrics_rejects_non_string():
+    """Non-string input raises TypeError with a clear message."""
+    with pytest.raises(TypeError, match="must be str"):
+        check_hallucinated_metrics(None)  # type: ignore[arg-type]
+    with pytest.raises(TypeError, match="must be str"):
+        check_hallucinated_metrics(42)  # type: ignore[arg-type]
+    with pytest.raises(TypeError, match="must be str"):
+        check_hallucinated_metrics(b"bytes not str")  # type: ignore[arg-type]
 
 
 def test_hallucination_guard_clean():

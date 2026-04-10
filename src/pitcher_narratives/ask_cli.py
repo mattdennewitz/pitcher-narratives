@@ -11,7 +11,9 @@ import logging
 import os
 import sys
 
+import polars as pl
 from dotenv import load_dotenv
+from pydantic_ai.exceptions import AgentRunError
 
 from pitcher_narratives.config import API_KEYS, setup_logging
 
@@ -111,26 +113,43 @@ def main() -> None:
     except ValueError as e:
         log.error("%s", e)
         sys.exit(1)
+    except FileNotFoundError as e:
+        log.error("Data file not found: %s", e)
+        sys.exit(1)
+    except pl.exceptions.PolarsError as e:
+        log.error("Failed to read pitcher data (polars): %s", e)
+        sys.exit(1)
+    except OSError as e:
+        log.error("I/O error loading pitcher data: %s", e)
+        sys.exit(1)
 
     ctx = assemble_pitcher_context(pitcher_data)
 
     from pitcher_narratives.analyst import ask_question_pipeline
     from pitcher_narratives.pipeline import write_pipeline_data_file
 
-    data_file = write_pipeline_data_file(
-        ctx, pitcher_id, args.provider, question=args.question,
-    )
+    try:
+        data_file, _data_text = write_pipeline_data_file(
+            ctx, pitcher_id, args.provider, question=args.question,
+        )
+    except OSError as e:
+        log.error("Failed to write prompt data file: %s", e)
+        sys.exit(1)
     log.info("Wrote prompt data to %s", data_file)
 
     # The answer streams to stdout during this call
     print("# Answer\n")
-    pipeline_result = ask_question_pipeline(
-        args.question,
-        ctx,
-        provider=args.provider,
-        thinking=args.thinking,
-        _model_override=model_override,
-    )
+    try:
+        pipeline_result = ask_question_pipeline(
+            args.question,
+            ctx,
+            provider=args.provider,
+            thinking=args.thinking,
+            _model_override=model_override,
+        )
+    except AgentRunError as e:
+        log.error("LLM call failed: %s", e)
+        sys.exit(2)
 
     # Executive summary
     if pipeline_result.executive_summary:
