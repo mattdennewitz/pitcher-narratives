@@ -70,11 +70,11 @@ def test_parse_window_flag(monkeypatch):
 
 
 def test_parse_defaults(monkeypatch):
-    """parse_args defaults: provider=gemini, thinking=high, window=30."""
+    """parse_args defaults: provider=gemini, thinking=medium, window=30."""
     monkeypatch.setattr(sys, "argv", ["ask_cli", "Q?"])
     args = parse_args()
     assert args.provider == "gemini"
-    assert args.thinking == "high"
+    assert args.thinking == "medium"
     assert args.window == 30
 
 
