@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from typing import Any, NamedTuple
 
 from pydantic import BaseModel
@@ -79,10 +80,11 @@ from pitcher_narratives.signals import (
 )
 
 __all__ = [
-    "AuditFlag", "AuditResult", "ExecutiveSummary", "KeySignals",
-    "PipelineAgents", "PipelineResult",
+    "AuditFlag", "AuditResult", "ExecutiveSummary", "HallucinationReport",
+    "KeySignals", "PipelineAgents", "PipelineResult",
     "UserPrompt", "audit_and_revise_specialists", "build_writer_input",
-    "generate_pipeline_streaming", "make_pipeline_agents", "run_specialists",
+    "check_hallucinated_metrics", "generate_pipeline_streaming",
+    "make_pipeline_agents", "run_specialists",
     "write_pipeline_data_file",
 ]
 
@@ -1293,4 +1295,162 @@ def generate_pipeline_streaming(
     """
     return asyncio.run(
         _run_pipeline(ctx, provider=provider, thinking=thinking, _model_override=_model_override)
+    )
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# METRIC HALLUCINATION GUARD
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class HallucinationReport(BaseModel):
+    """Structured result from metric hallucination checking.
+
+    Separates unknown (possibly hallucinated) metrics from traditional
+    outcome stats that the editor prompt warns against using.
+    """
+
+    unknown_metrics: list[str]
+    outcome_stat_warnings: list[str]
+
+    @property
+    def is_clean(self) -> bool:
+        """True when no unknown metrics and no outcome stat warnings found."""
+        return not self.unknown_metrics and not self.outcome_stat_warnings
+
+
+# Metrics that appear in the prompt payload and are safe to reference
+_KNOWN_METRICS = frozenset(
+    {
+        # Core Pitching+ family
+        "P+",
+        "S+",
+        "L+",
+        "Pitching+",
+        "Stuff+",
+        "Location+",
+        "P+2080",
+        "S+2080",
+        "L+2080",
+        # Run value
+        "xRV100",
+        "xRV",
+        # Expected outcomes
+        "xWhiff",
+        "xSwing",
+        "xGOr",
+        "xPUr",
+        "xBA",
+        "xwOBA",
+        "xSLG",
+        "xERA",
+        "xSwSt",
+        # Batted ball / approach
+        "CSW%",
+        "CSW",
+        "O-Swing%",
+        "Zone%",
+        "Chase%",
+        "HardHit%",
+        "Barrel%",
+        "xHR100",
+        # Velocity / movement
+        "IVB",
+        "HB",
+        "pfx_x",
+        "pfx_z",
+        # Statcast standard
+        "wOBA",
+        "BABIP",
+        "ISO",
+        # Commonly referenced in editorial voice
+        "SwStr%",
+        "K-BB%",
+        "xFIP",
+    }
+)
+
+# Traditional outcome stats that the editor prompt warns against citing.
+# These aren't "hallucinated" but should be flagged as potentially
+# inappropriate for a scouting report focused on process metrics.
+_TRADITIONAL_STATS = frozenset(
+    {
+        "ERA",
+        "FIP",
+        "WHIP",
+        "WAR",
+        "W-L",
+        "K%",
+        "BB%",
+        "HR/9",
+        "K/9",
+        "BB/9",
+        "ERA+",
+        "FIP-",
+        "Wins",
+        "Losses",
+        "Saves",
+        "IP",
+    }
+)
+
+_METRIC_PATTERN = re.compile(
+    r"\b("
+    # xMetric pattern (xBA, xWhiff, xwOBA, xRV100, etc.)
+    r"x[A-Za-z][A-Za-z0-9]*"
+    r"|"
+    # Acronym+% pattern (CSW%, O-Swing%, Zone%, K-BB%, SwStr%, Barrel%)
+    r"[A-Z][A-Za-z]*-?[A-Z]*%"
+    r"|"
+    # Pitching+ family (P+, S+, L+, P+2080, etc.)
+    r"[PSL]\+(?:2080)?"
+    r"|"
+    # Other named advanced metrics
+    r"(?:IVB|HB|pfx_[xz]|wOBA|BABIP|ISO|xRV100|xFIP|Pitching\+|Stuff\+|Location\+)"
+    r")(?=[\s,.);\-:]|$)"
+)
+
+_TRADITIONAL_PATTERN = re.compile(
+    r"(?<![A-Za-z\-])("
+    r"ERA\+?"
+    r"|FIP-?"
+    r"|WHIP"
+    r"|WAR"
+    r"|W-L"
+    r"|K%"
+    r"|BB%"
+    r"|HR/9"
+    r"|K/9"
+    r"|BB/9"
+    r"|Wins"
+    r"|Losses"
+    r"|Saves"
+    r"|IP"
+    r")(?=[\s,.);\-:]|$)"
+)
+
+
+def check_hallucinated_metrics(report_text: str) -> HallucinationReport:
+    """Find metric-like and traditional stat terms in report text.
+
+    Scans the LLM output for patterns that look like advanced baseball
+    metrics (xMetric, Acronym%, P+/S+/L+ family) and flags any not
+    present in _KNOWN_METRICS as unknown. Also detects traditional
+    outcome stats that the editor prompt warns against using.
+
+    Args:
+        report_text: The LLM-generated report text.
+
+    Returns:
+        HallucinationReport with unknown_metrics and outcome_stat_warnings.
+    """
+    found = set(_METRIC_PATTERN.findall(report_text))
+    unknown = sorted(found - _KNOWN_METRICS - _TRADITIONAL_STATS)
+
+    traditional_found = set(_TRADITIONAL_PATTERN.findall(report_text))
+    outcome_warnings = sorted(traditional_found & _TRADITIONAL_STATS)
+
+    return HallucinationReport(
+        unknown_metrics=unknown,
+        outcome_stat_warnings=outcome_warnings,
     )
