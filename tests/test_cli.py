@@ -201,8 +201,12 @@ def test_cli_anchor_check_in_output():
 # ── Integration: --print-prompts ──
 
 
-def test_cli_print_prompts_exits_zero(tmp_path):
-    """--print-prompts exits 0 and dumps pipeline prompts to stderr without calling LLM."""
+def test_cli_print_prompts_dumps_prompts_and_bypasses_api_key(tmp_path):
+    """--print-prompts exits 0, dumps pipeline prompts to stderr, bypasses API key check.
+
+    Uses _test_env() which has no API key set — proves the flag bypasses
+    the preflight (the normal path would exit 1 with 'API_KEY not set').
+    """
     result = subprocess.run(
         [
             sys.executable,
@@ -216,35 +220,15 @@ def test_cli_print_prompts_exits_zero(tmp_path):
         text=True,
         timeout=60,
         cwd=tmp_path,  # keep the data file out of the repo root
-        env=_test_env(),  # No API key, no test model — --print-prompts must not need them
+        env=_test_env(),  # No API key, no test model
     )
     assert result.returncode == 0, f"stderr: {result.stderr}"
-    # Stdout should be empty (or nothing meaningful) — the report was never generated
+    # The normal path would have logged "API_KEY not set" and exit 1.
+    # --print-prompts must not trigger that branch.
+    assert "API_KEY not set" not in result.stderr
+    # Stdout should not contain the report — the LLM was never called.
     assert "# Scouting Report" not in result.stdout
-    # Stderr should contain the specialist prompts that --print-prompts dumps
+    # Stderr should contain the specialist prompts that --print-prompts dumps.
     assert "SPECIALIST 1: STUFF" in result.stderr
     assert "WRITER" in result.stderr
     assert "ANCHOR CHECK" in result.stderr
-
-
-def test_cli_print_prompts_bypasses_api_key_check(tmp_path):
-    """--print-prompts must work without any API key set (no LLM call happens)."""
-    result = subprocess.run(
-        [
-            sys.executable,
-            "-m",
-            "pitcher_narratives.cli",
-            "-p",
-            "592155",
-            "--print-prompts",
-        ],
-        capture_output=True,
-        text=True,
-        timeout=60,
-        cwd=tmp_path,
-        env=_test_env(),
-    )
-    # With no API key, the normal path exits 1 with "API_KEY not set".
-    # --print-prompts must bypass that check and exit 0.
-    assert result.returncode == 0
-    assert "API_KEY" not in result.stderr or "not set" not in result.stderr

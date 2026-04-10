@@ -11,9 +11,7 @@ import logging
 import os
 import sys
 
-import polars as pl
 from dotenv import load_dotenv
-from pydantic_ai.exceptions import AgentRunError
 
 from pitcher_narratives.config import API_KEYS, setup_logging
 
@@ -104,7 +102,9 @@ def main() -> None:
         log.error("%s not set.", env_var)
         sys.exit(1)
 
-    # Lazy imports for fast startup
+    # Lazy imports for fast startup — polars is ~90ms, and we only need
+    # its exception type for the except clause below.
+    import polars as pl
     from pitcher_narratives.context import assemble_pitcher_context
     from pitcher_narratives.data import load_pitcher_data
 
@@ -136,6 +136,10 @@ def main() -> None:
         log.error("Failed to write prompt data file: %s", e)
         sys.exit(1)
     log.info("Wrote prompt data to %s", data_file)
+
+    # Lazy import: pydantic_ai.exceptions pulls in the whole package
+    # (~330ms) and is only used in the except clause below.
+    from pydantic_ai.exceptions import AgentRunError
 
     # The answer streams to stdout during this call
     print("# Answer\n")

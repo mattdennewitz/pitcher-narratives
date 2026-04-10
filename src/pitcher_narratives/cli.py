@@ -12,9 +12,7 @@ import os
 import sys
 from typing import TYPE_CHECKING
 
-import polars as pl
 from dotenv import load_dotenv
-from pydantic_ai.exceptions import AgentRunError
 
 from pitcher_narratives.config import API_KEYS, setup_logging
 
@@ -80,6 +78,10 @@ def main() -> None:
     args = parse_args()
     setup_logging()
 
+    # Lazy imports: polars is heavy (~90ms) and only referenced in the
+    # except clause below. Keep module-level imports minimal so
+    # `pitcher-narratives --help` stays fast.
+    import polars as pl
     from pitcher_narratives.data import load_pitcher_data
 
     try:
@@ -141,6 +143,10 @@ def main() -> None:
         # surface from re-reading the file we just wrote.
         print(data_text, file=sys.stderr)
         sys.exit(0)
+
+    # Lazy import: pydantic_ai.exceptions pulls in the whole package
+    # (~330ms) and is only used in the except clause below.
+    from pydantic_ai.exceptions import AgentRunError
 
     # The narrative streams to stdout during this call
     print("# Scouting Report\n")
