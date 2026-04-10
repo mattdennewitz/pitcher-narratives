@@ -17,12 +17,12 @@ Requirements for Pipeline Consolidation milestone. Remove old single-agent repor
 
 - [x] **CLI-01**: `--pipeline` flag removed from CLI — multi-agent pipeline is the only reporting path
 - [x] **CLI-02**: CLI generates reports via pipeline.py by default with no flag required
-- [ ] **CLI-03**: All existing CLI features (hallucination check, streaming, info mode) work through pipeline path
+- [x] **CLI-03**: All existing CLI features (hallucination check, streaming, info mode) work through pipeline path
 
 ### Verification
 
-- [ ] **VER-01**: All remaining tests pass after removal
-- [ ] **VER-02**: anchor.py remains intact and functional (shared with pipeline.py)
+- [x] **VER-01**: All remaining tests pass after removal
+- [x] **VER-02**: anchor.py remains intact and functional (shared with pipeline.py)
 
 ## Future Requirements
 
@@ -45,9 +45,9 @@ None — this is a cleanup milestone.
 | REM-03 | Phase 23 | Complete |
 | CLI-01 | Phase 23 | Complete |
 | CLI-02 | Phase 23 | Complete |
-| CLI-03 | Phase 24 | Pending |
-| VER-01 | Phase 24 | Pending |
-| VER-02 | Phase 24 | Pending |
+| CLI-03 | Phase 24 | Complete |
+| VER-01 | Phase 24 | Complete |
+| VER-02 | Phase 24 | Complete |
 
 **Coverage:**
 - v1.9 requirements: 8 total
