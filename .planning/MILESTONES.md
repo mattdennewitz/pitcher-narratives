@@ -1,5 +1,17 @@
 # Milestones
 
+## v1.9 Pipeline Consolidation (Shipped: 2026-04-10)
+
+**Phases completed:** 2 phases, 3 plans, 6 tasks
+
+**Key accomplishments:**
+
+- Hallucination guard relocated to pipeline.py, both CLIs rewritten to use pipeline path exclusively with --pipeline flag removed
+- Old single-agent report.py and its tests deleted, pipeline.py confirmed as sole reporting path with all imports clean
+- Post-removal verification: all import chains intact, CLI features confirmed through pipeline path, stale report.py docstring references cleaned
+
+---
+
 ## v1.8 Cross-Season Trend Analysis (Shipped: 2026-04-08)
 
 **Phases completed:** 4 phases, 5 plans, 11 tasks

@@ -2,7 +2,7 @@
 
 ## What This Is
 
-A CLI tool that generates LLM-written scouting reports for MLB pitchers and answers natural-language questions about their performance. Given a pitcher ID or name, it assembles pitch-level Statcast data and pre-computed Pitching+ aggregations, computes deltas and trend strings across a configurable lookback window, and runs either a multi-agent specialist pipeline (5 specialist micro-analysts → per-specialist audit → writer → anchor check) or the original single-agent pipeline with a self-correcting reflection loop. Also provides a tool-calling analyst agent for focused Q&A and a standalone scout CLI that scores appearances for interestingness.
+A CLI tool that generates LLM-written scouting reports for MLB pitchers and answers natural-language questions about their performance. Given a pitcher ID or name, it assembles pitch-level Statcast data and pre-computed Pitching+ aggregations, computes deltas and trend strings across a configurable lookback window, and runs a multi-agent specialist pipeline (5 specialist micro-analysts → per-specialist audit → writer → anchor check). Also provides a tool-calling analyst agent for focused Q&A and a standalone scout CLI that scores appearances for interestingness.
 
 ## Core Value
 
@@ -74,30 +74,30 @@ The report must read like a scout wrote it — surfacing *changes, adaptations, 
 - Year-over-Year prompt section with single-season omission — v1.8
 - Specialist pipeline agents receive cross-season data — v1.8
 
+- ✓ report.py (old single-agent pipeline) deleted — v1.9
+- ✓ test_report.py deleted — v1.9
+- ✓ --pipeline flag removed from both CLIs — pipeline.py is now the default and only path — v1.9
+- ✓ HallucinationReport and check_hallucinated_metrics relocated to pipeline.py — v1.9
+- ✓ anchor.py remains intact (shared by pipeline.py) — v1.9
+- ✓ All CLI features (--verbose, --print-prompts, automatic hallucination check) route through pipeline.py — v1.9
+
 ### Active
 
-## Current Milestone: v1.9 Pipeline Consolidation
+No active requirements — awaiting next milestone definition.
 
-**Goal:** Remove old single-agent reporting infrastructure so the multi-agent specialist pipeline is the sole reporting path.
+## Current State (v1.9 shipped)
 
-**Target features:**
-- Delete report.py (single-agent pipeline + reflection loop)
-- Delete test_report.py
-- Remove CLI flags/branches that select between old and new pipelines
-- Remove orphaned code in anchor.py or elsewhere that only served report.py
-- Ensure pipeline.py is the single entry point for report generation
-- Update documentation and prompts referencing the old path
-
-## Current State (v1.8 shipped)
-
-v1.8 Cross-Season Trend Analysis shipped 2026-04-08. Reports now surface year-over-year changes automatically — velocity shifts, P+/S+/L+ deltas, added/dropped pitches, and per-pitch-type trend analysis.
+v1.9 Pipeline Consolidation shipped 2026-04-10. The old single-agent reporting path (report.py, ~850 lines) and its tests (test_report.py, ~635 lines) have been fully removed. The multi-agent specialist pipeline (pipeline.py) is now the sole report generation path.
 
 **What shipped:**
-- Prior-season baselines on PitcherData (N-1 season filtering)
-- CrossSeasonSummary engine (velocity, P+, S+, L+ YoY deltas with qualitative language)
-- ArsenalTrends engine (added/dropped/continued pitch detection with per-pitch-type YoY deltas)
-- Year-over-Year prompt section rendered for multi-season pitchers, omitted for single-season
-- Specialist pipeline agents receive cross-season data in their context blocks
+- Deleted report.py and test_report.py (~1,485 lines removed)
+- Relocated hallucination guard (HallucinationReport, check_hallucinated_metrics, regex patterns) to pipeline.py
+- Rewrote cli.py and ask_cli.py to use pipeline.py exclusively, removing the `--pipeline` flag
+- Created standalone tests/test_hallucination_guard.py with 17 passing tests
+- Cleaned stale report.py references from anchor.py and config.py docstrings
+- Verified all import chains intact, zero orphaned references
+
+**Pre-existing issues carried forward** (not caused by v1.9): tests/test_analyst.py has a broken import (_analyst_agent) and tests/test_pipeline.py has one pydantic-ai TestModel assertion error. Both predate v1.9.
 
 ### Out of Scope
 
@@ -114,7 +114,7 @@ v1.8 Cross-Season Trend Analysis shipped 2026-04-08. Reports now surface year-ov
 
 ### Codebase (v1.8)
 
-**Modules:** config.py (shared constants), anchor.py (anchor quality gate), data.py (loading with multi-year support, game type filtering, prior-season baselines), engine.py (computation — including CrossSeasonSummary, ArsenalTrends), context.py (assembly with YoY rendering), report.py (single-agent LLM pipeline + reflection loop), pipeline.py (multi-agent specialist pipeline + audit loop with cross-season injection), scout.py (appearance scoring via data.py), curator.py (LLM curation), cli.py (narrative CLI), scout_cli.py (scout CLI), resolver.py (fuzzy name resolution via data.py), analyst.py (tool-calling Q&A agent), ask_cli.py (Q&A CLI).
+**Modules:** config.py (shared constants), anchor.py (anchor quality gate, shared with pipeline.py), data.py (loading with multi-year support, game type filtering, prior-season baselines), engine.py (computation — including CrossSeasonSummary, ArsenalTrends), context.py (assembly with YoY rendering), pipeline.py (sole report generation path — multi-agent specialist pipeline + audit loop + hallucination guard), scout.py (appearance scoring via data.py), curator.py (LLM curation), cli.py (narrative CLI, pipeline-only), scout_cli.py (scout CLI), resolver.py (fuzzy name resolution via data.py), analyst.py (tool-calling Q&A agent), ask_cli.py (Q&A CLI, pipeline-only).
 
 **Tech stack:** Python 3.14, polars 1.39, pydantic-ai 1.72, rapidfuzz 3.14, nameparser 1.1, multi-provider (OpenAI gpt-5.4-mini, Claude Sonnet 4.6, Gemini 3.1 Pro).
 **LOC:** ~9,100 source + ~4,500 test
@@ -175,6 +175,8 @@ v1.8 Cross-Season Trend Analysis shipped 2026-04-08. Reports now surface year-ov
 | Per-season baseline grouping | Prevents cross-season averaging artifacts (e.g., season=2025.375) | ✓ Good |
 | filter_game_type at load time (not computation) | Data flows clean from the gate; no unfiltered data escapes | ✓ Good |
 | Centralize all data access through data.py | Game type filtering + multi-year applied consistently everywhere | ✓ Good |
+| Relocate hallucination guard to pipeline.py (not separate module) | Single consumer, simpler import graph, co-located with its sole user | ✓ Good |
+| Delete report.py entirely (not deprecate) | pipeline.py is strictly better; no migration path needed; removal simplifies the codebase | ✓ Good |
 
 ## Evolution
 
@@ -194,4 +196,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-04-09 after v1.9 milestone started — Pipeline Consolidation*
+*Last updated: 2026-04-10 after v1.9 milestone shipped — Pipeline Consolidation*
