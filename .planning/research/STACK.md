@@ -1,212 +1,277 @@
-# Stack Research: v1.6 Multi-Year Data & Game Type Filtering
+# Technology Stack — v1.10 Output Personas
 
 **Project:** Pitcher Narratives
-**Milestone:** v1.6 -- Multi-Year Data & Game Type Filtering
-**Researched:** 2026-04-02
-**Confidence:** HIGH
-**Scope:** Stack additions/changes ONLY for multi-year parquet/CSV loading and game type filtering. Existing validated stack (Python 3.14, polars 1.39.3, pydantic-ai 1.72, rapidfuzz, multi-provider LLM) is unchanged.
+**Researched:** 2026-04-11
+**Mode:** Scoped ecosystem research (subsequent milestone, not greenfield)
+**Overall confidence:** HIGH
 
-## Executive Summary
+## TL;DR
 
-No new dependencies. Polars 1.39.3 already supports every pattern needed: `read_parquet` accepts `list[Path]` for multi-file loading, `pl.concat(how="vertical")` handles multi-year CSV concatenation, and `is_in` filtering handles game type exclusion. This milestone is a refactor of `data.py` internals -- not a stack change.
+**Recommendation:** No new libraries. Use plain Python string composition at module import time (`BASE + "\n\n" + OVERLAY`), store persona configs as frozen dataclasses in a new `src/pitcher_narratives/personas.py` module, and construct **one writer `Agent` per persona** inside `make_pipeline_agents()`. Pass the selected writer agent through the pipeline; leave the revision loop's call site unchanged.
 
-## Stack Changes for v1.6
+Do **not** use:
+- jinja2 / chevron / handlebars — no runtime variable substitution is needed; overlays are static text with zero placeholders.
+- TOML config files — three personas, all developer-authored, ship as code; TOML adds a file + loader for no win.
+- `Agent.override(instructions=...)` context manager — it's a replacement, not a layering primitive, and it discards capability-contributed instructions.
+- Per-run `agent.run(instructions=...)` layering on a shared agent — technically works, but forces switching the base from `system_prompt=` to `instructions=`, and the resolved text is still concatenated into one system string before it hits any provider, so it buys nothing over three pre-built agents.
+- A single shared writer `Agent` called with persona chosen at runtime — no caching benefit, extra branching in the hot path.
 
-### New Dependencies
+## Recommended Stack (deltas from v1.9)
 
-None.
+### New Files (no new dependencies)
 
-### What Changes
+| File | Purpose | Content |
+|------|---------|---------|
+| `src/pitcher_narratives/personas.py` | Persona registry + prompt composition | `PersonaKey` Literal, `PersonaConfig` frozen dataclass, three module-level constants (`SCOUT`, `ANALYST`, `GENERIC`), `PERSONAS` dict, `build_writer_prompt(key) -> str` helper |
 
-| Component | Current (v1.5) | Change for v1.6 | Why |
-|-----------|----------------|------------------|-----|
-| `PARQUET_PATH` constant | Single `Path` to `statcast_2026.parquet` | List of paths or glob-based discovery | Support 2025 + 2026 parquet files |
-| `_SEASON_CSVS` / `_APPEARANCE_CSVS` dicts | Hardcoded `"2026-pitcher.csv"` etc. | Year-parameterized templates with multi-year iteration | Support year-prefixed CSV files for both years |
-| `load_statcast()` | `pl.read_parquet(PARQUET_PATH)` | `pl.read_parquet(list_of_paths)` + game type filter | Multi-file load with immediate filtering |
-| `_load_csv_with_dates()` | Loads single CSV | Loads per-year CSVs and `pl.concat`s | Multi-year aggregation data |
-| `compute_season_baseline()` | Weights across game_type rows (S/C/R) | Weights across game_type rows after filtering to R only | Correct baselines exclude spring training |
+### Modified Files
 
-### What Does NOT Change
+| File | Change |
+|------|--------|
+| `pipeline.py` | Move `_WRITER_PROMPT` → `personas.BASE_WRITER_PROMPT`; `make_pipeline_agents` gains a `persona: PersonaKey = "scout"` kwarg and builds one writer agent with `system_prompt=build_writer_prompt(persona)`; `PipelineAgents.writer` stays singular |
+| `cli.py` | Add `--persona {scout,analyst,generic}` argparse flag, default `"scout"`, pass through to `generate_report()` |
+| `anchor.py` | No change for the persona mechanism itself. A tolerance pass for the `generic` persona's summary-table format is a separate problem (see PITFALLS.md) and belongs to `ANCHOR_PROMPT` text, not to the stack |
 
-- **engine.py**: All compute functions receive DataFrames from `data.py`. No interface changes.
-- **context.py**: Receives `PitcherData` bundle. No changes.
-- **report.py**: 5-phase pipeline receives assembled context. No changes.
-- **analyst.py / ask_cli.py**: Tool-calling agent receives `PitcherData`. No changes.
-- **resolver.py**: Needs minor update (reads from multi-year parquet), but the fuzzy matching logic is unchanged.
-- **scout.py**: Needs minor update (reads `PARQUET_PATH` for velo data), but scoring logic is unchanged.
+### Unchanged
 
-## Polars Patterns for Multi-Year Loading
+- `pydantic-ai 1.72.0` — supports everything we need with the API we already use
+- `pydantic 2.12.5` — frozen dataclass is fine; no need to promote to BaseModel
+- `polars`, `rapidfuzz`, `logfire`, `python-dotenv` — irrelevant to this milestone
+- `pyproject.toml` dependencies — **no additions, no removals**
 
-### Pattern 1: Parquet -- `pl.read_parquet` with `list[Path]`
+## Direct Answers to the Five Questions
 
-**Verified:** polars 1.39.3 `FileSource` type resolves to `str | Path | IO[bytes] | bytes | list[str] | list[Path] | list[IO[bytes]] | list[bytes]`. Passing a list of `Path` objects works natively -- polars reads each file in parallel and auto-concatenates.
+### 1. Does pydantic-ai 1.72 have built-in prompt composition / layering / overrides?
 
+**Yes, three mechanisms exist. None of them are better than plain string concatenation for our case.**
+
+Direct evidence from the installed source:
+
+**a) Per-run `instructions=` on `run()` / `run_sync()` / `run_stream()`**
+`pydantic_ai/agent/abstract.py:178` (and again at 200, 221) — every `run*` overload accepts:
 ```python
-YEARS: list[int] = [2025, 2026]
-
-def _discover_parquet_paths() -> list[Path]:
-    """Build ordered list of statcast parquet paths for all configured years."""
-    paths = [DATA_DIR / f"statcast_{year}.parquet" for year in YEARS]
-    missing = [p for p in paths if not p.exists()]
-    if missing:
-        raise FileNotFoundError(f"Missing parquet files: {missing}")
-    return paths
-
-def load_statcast(pitcher_id: int) -> pl.DataFrame:
-    paths = _discover_parquet_paths()
-    df = pl.read_parquet(paths)
-    df = df.filter(pl.col("game_type").is_in(REGULAR_SEASON_GAME_TYPES))
-    result = df.filter(pl.col("pitcher") == pitcher_id)
-    if result.is_empty():
-        raise ValueError(f"Pitcher {pitcher_id} not found")
-    return result
+instructions: _instructions.AgentInstructions[AgentDepsT] = None
 ```
-
-**Why `list[Path]` over glob string:** Explicit path construction from `YEARS` constant fails fast on missing files. A glob like `statcast_*.parquet` would silently succeed with fewer files than expected (e.g., if `statcast_2025.parquet` is missing, glob returns only 2026 and continues with incomplete data).
-
-**Why `read_parquet` (eager) over `scan_parquet` (lazy):** Total dataset is ~50MB across both years. Eager read takes <1s. The code immediately filters to one pitcher (~200 rows). LazyFrame adds `.collect()` calls everywhere for zero measurable benefit. The existing codebase is entirely eager -- no reason to introduce lazy evaluation for a small dataset.
-
-**Key parameter notes:**
-- `include_file_paths="source_file"` could tag rows with origin, useful for debugging. Not needed in production.
-- `missing_columns="raise"` (the default) is correct. Statcast schema is stable across 2025-2026. If schemas diverge, we want a loud error, not silent nulls.
-
-### Pattern 2: CSV -- `pl.concat` with per-year `pl.read_csv`
-
-**Verified:** polars 1.39.3 `read_csv` source type is `str | Path | IO[str] | IO[bytes] | bytes` -- does NOT accept a list of paths (unlike `read_parquet`). Glob patterns via `read_csv("aggs/*-pitcher.csv")` fail when multiple grains match ("schema lengths differ").
-
+These are **additive**, not replacement. From `pydantic_ai/agent/__init__.py:2280-2293` (`_get_instructions`):
 ```python
-_SEASON_CSV_GRAINS = {
-    "pitcher": "pitcher.csv",
-    "pitcher_type": "pitcher_type.csv",
-    "pitcher_type_platoon": "pitcher_type_platoon.csv",
-    "team": "team.csv",
+instructions = self._instructions.copy()
+instructions.extend(cap_instructions if ... else self._cap_instructions)
+if additional_instructions is not None:
+    instructions.extend(_instructions.normalize_instructions(additional_instructions))
+```
+So per-run instructions append to the agent's init-time instructions, then get joined with `\n`.
+
+**b) `Agent.override(instructions=...)` context manager**
+`pydantic_ai/agent/__init__.py:1614-1732`. This **replaces** the agent's instructions entirely for the duration of the `with` block, including capability-contributed instructions (the docstring explicitly calls this out at line 1638-1640). It's designed for testing, not production layering.
+
+**c) `@agent.instructions` decorator for dynamic instruction functions**
+`pydantic_ai/agent/__init__.py:1735-1793`. Lets you register a `Callable[[RunContext], str]` that runs on each request. Useful when overlays depend on `deps`, but our personas are pure static text — this is overkill.
+
+**d) `TemplateStr` (Handlebars)**
+`pydantic_ai/_template.py:16-89`. Backed by `pydantic-handlebars` 0.1.0, already installed transitively. Allows `{{deps.name}}` interpolation inside instructions. **Not relevant** — our overlays have zero placeholders.
+
+**Why none of these beat plain strings for v1.10:**
+
+The current code uses `system_prompt=_WRITER_PROMPT` on the writer Agent. Whether we switch to `instructions=` or stick with `system_prompt=`, the eventual bytes sent to the provider are the same: one combined system string. From `pydantic_ai/models/anthropic.py:775-1002`:
+```python
+system_prompt_parts: list[str] = []
+for m in messages:
+    ... system_prompt_parts.append(request_part.content)   # from system_prompt=
+if instructions := self._get_instructions(messages, ...):  # from instructions=
+    system_prompt_parts.append(instructions)
+system_prompt = '\n\n'.join(system_prompt_parts)
+```
+Per-run `instructions=` layering would give us one writer Agent instead of three, but it would require changing the base from `system_prompt=` to `instructions=` (no structural benefit), and complicates the anchor revision loop which currently just hands `writer_agent` around as an opaque callable.
+
+**Confidence:** HIGH. Direct source read of pydantic-ai 1.72.0.
+
+### 2. Is there a lightweight templating library worth pulling in?
+
+**No.** Our overlays are fixed literal strings with zero variable substitution. Evaluated options:
+
+| Library | Version | What it buys | Needed? | Integration cost |
+|---------|---------|--------------|---------|------------------|
+| jinja2 | 3.1.x | Full templating, conditionals, loops | **No** — zero placeholders in the overlays | 1 dep, 1 loader module, runtime compile cost |
+| `string.Template` (stdlib) | n/a | `$name` substitution | **No** — nothing to substitute | Zero |
+| f-strings / plain concat | n/a | String concatenation | **Yes, this** | Zero |
+| chevron / mustache | n/a | Logic-less templates | **No** | 1 dep |
+| pydantic-ai `TemplateStr` | 0.1.0 | Handlebars over `RunContext.deps` | **No** — already in the tree but no deps model to template over | Zero new deps, but adds a TemplateStr instantiation per agent and an opaque compile step |
+
+The overlay text for each persona is fully known at import time. `BASE_WRITER_PROMPT + "\n\n" + overlay_text` is the entire mechanism. If a future persona needs variable text (e.g., `{pitcher_name}` injected into the system prompt), revisit — `str.format` or `TemplateStr` would both work, and `TemplateStr` is already in the tree via `pydantic-handlebars 0.1.0` at `.venv/lib/python3.14/site-packages/pydantic_handlebars/`.
+
+**Confidence:** HIGH.
+
+### 3. Where should persona definitions live — Python constants, TOML, dataclass, pydantic model?
+
+**Frozen `@dataclass` module-level constants in `src/pitcher_narratives/personas.py`.** Not TOML, not pydantic BaseModel.
+
+Reasoning:
+
+- **Not TOML.** `tomllib` is stdlib in 3.14, so loading is free, but three developer-authored personas shipped as code do not benefit from file-based config. It would add: a `personas.toml` file, a `_load_personas()` function with error handling, test fixtures for malformed TOML, an import-time vs runtime question, and a new surface area for "why doesn't my persona work." User-configurable personas are explicitly out of scope for v1.10.
+- **Not pydantic BaseModel.** Overkill for a record with two string fields (`key`, `overlay`) plus maybe a length hint or voice tag. Validation is a no-op because these values are authored in-repo. BaseModel also makes it unnecessarily easy for a future contributor to load personas from JSON/YAML/etc. when we've deliberately decided not to.
+- **Frozen dataclass is the sweet spot.** Gives us typed fields, immutability (matches the "data is static, keys are closed Literal" model), and zero runtime cost. The `Literal["scout", "analyst", "generic"]` persona key plays nicely with ty/pyright exhaustiveness checks in argparse dispatch.
+
+Reference shape:
+```python
+# src/pitcher_narratives/personas.py
+from dataclasses import dataclass
+from typing import Literal
+
+PersonaKey = Literal["scout", "analyst", "generic"]
+
+BASE_WRITER_PROMPT = """..."""  # the shared base (current _WRITER_PROMPT, minus scout-specific voice)
+
+@dataclass(frozen=True, slots=True)
+class PersonaConfig:
+    key: PersonaKey
+    overlay: str
+
+SCOUT = PersonaConfig(key="scout", overlay="""...""")
+ANALYST = PersonaConfig(key="analyst", overlay="""...""")
+GENERIC = PersonaConfig(key="generic", overlay="""...""")
+
+PERSONAS: dict[PersonaKey, PersonaConfig] = {
+    "scout": SCOUT, "analyst": ANALYST, "generic": GENERIC,
 }
 
-def _load_csv_multi_year(grain: str, pitcher_id: int | None) -> pl.DataFrame:
-    """Load a CSV agg file across all available years and concatenate."""
-    template = {**_SEASON_CSV_GRAINS, **_APPEARANCE_CSV_GRAINS}[grain]
-    frames = []
-    for year in YEARS:
-        path = AGGS_DIR / f"{year}-{template}"
-        if path.exists():
-            df = pl.read_csv(path)
-            frames.append(df)
-    if not frames:
-        raise FileNotFoundError(f"No CSV files found for grain '{grain}'")
-    combined = pl.concat(frames, how="vertical")
-    # Apply game_type filter and pitcher filter
-    if "game_type" in combined.columns:
-        combined = combined.filter(pl.col("game_type").is_in(REGULAR_SEASON_GAME_TYPES))
-    if "game_date" in combined.columns:
-        combined = combined.with_columns(pl.col("game_date").str.to_date("%Y-%m-%d"))
-    if pitcher_id is not None and "pitcher" in combined.columns:
-        combined = combined.filter(pl.col("pitcher") == pitcher_id)
-    return combined
+def build_writer_prompt(key: PersonaKey) -> str:
+    return f"{BASE_WRITER_PROMPT}\n\n{PERSONAS[key].overlay}"
 ```
 
-**Why `pl.concat` over glob:** The 8 grain files have different schemas (pitcher.csv: 30 columns, pitcher_type.csv: 32+, etc.), so glob patterns match wrong files. Explicit per-year loading with `pl.concat(how="vertical")` is predictable.
+What the pydantic-ai community typically does: its own examples in `examples/` and the docs consistently use Python constants / literal strings for system prompts (see the `Agent(..., system_prompt="...")` shape repeated across `_WRITER_PROMPT`, `_EXECUTIVE_SUMMARY_PROMPT`, `_STUFF_SPECIALIST_PROMPT` in our own `pipeline.py`, which mirrors the framework's own patterns). Dynamic personas via `@agent.instructions` are shown in the API reference but not used in any of the framework's own examples for the static case.
 
-**Why `how="vertical"`:** All year-files for the same grain share identical schemas. Vertical concat stacks rows. This is the default but explicit is clearer.
+**Confidence:** HIGH.
 
-**Why `path.exists()` check instead of raising:** CSVs might lag -- 2025 data could exist before 2026, or vice versa. Graceful fallback to available years is safer than requiring all years to be present. The parquet files should all be present (they're the primary data), but agg CSVs are derived and may be generated incrementally.
+### 4. Should `make_pipeline_agents()` build one writer agent per persona, or one agent that takes persona at call time?
 
-### Pattern 3: Game Type Filtering
+**One writer Agent per persona, selected at construction time, not runtime.**
 
-**Verified from actual data:**
+The cleanest change: `make_pipeline_agents()` takes a new `persona: PersonaKey = "scout"` kwarg. It builds a single writer Agent with `system_prompt=build_writer_prompt(persona)`. `PipelineAgents.writer` remains a single `Agent[None, str]` field. The anchor revision loop in `_run_anchor_revision_loop` (pipeline.py:1209-1276) receives `writer_agent` as before — it never has to know which persona was selected.
 
-| Source | game_type values | Row counts (2026) |
-|--------|-----------------|-------------------|
-| `statcast_2026.parquet` | S, R, C | S=133,887; R=31,331; C=11,162 |
-| `aggs/2026-pitcher.csv` | R only | All rows are game_type=R |
+Why this over a shared agent + per-run `instructions=`:
 
-- **S** = Spring Training (75.9% of 2026 statcast rows -- early-season data dominated by ST)
-- **R** = Regular Season (17.8%)
-- **C** = Championship Series / All-Star / Exhibition (6.3%)
-- Agg CSVs only contain R rows because the upstream Pitching+ aggregation pipeline already filters
+1. **Revision loop is already a closure over `writer_agent`.** The loop calls `writer_agent.run(...)` twice (initial capsule + per-revision). If the agent holds the composed persona prompt, the loop does not change at all. If we used per-run `instructions=`, every one of those call sites would need to thread the overlay text through — three new parameters for zero behavioral gain.
+2. **`system_prompt` vs `instructions` byte-equality.** As noted in #1, the eventual system string sent to the provider is identical either way. There is no caching, token, or latency difference.
+3. **Model-level debugging.** Logfire spans (we already `logfire.instrument_pydantic_ai()` in `config.py:122-123`) surface the system prompt on the first request. Having three distinct agents means spans are cleanly labeled per persona and per-persona evals are trivial to add later.
+4. **Constructor cost is negligible.** `Agent(..., defer_model_check=True)` is a dict assignment — three of them at pipeline start is free. We already construct ~10 agents per pipeline invocation (see `make_pipeline_agents` at pipeline.py:1112-1162).
+5. **Matches existing code shape.** Every agent in `make_pipeline_agents` is built with a fixed system prompt. The persona selection fits the existing pattern exactly: pass a different prompt literal to `_writer()`. No new pattern to learn, no new mental model.
 
-**Filtering constant:**
+Why not `Agent.override(instructions=...)`:
 
+- `override` is a context manager intended for testing. Its docstring (pydantic_ai/agent/__init__.py:1627-1632) literally says so.
+- It **replaces** all agent-level instructions, including any capability-contributed ones, rather than appending.
+- Wrapping every `writer_agent.run()` call inside `with writer_agent.override(...)` is strictly worse than holding a preconfigured agent.
+
+**Confidence:** HIGH. The pipeline architecture already treats agents as immutable per-pipeline configurations.
+
+### 5. Prompt-cache interactions with persona overlays on each provider
+
+The persona overlay goes into the **system prompt**. The specialists' user-message `CachePoint`s (which are the milestone's main caching investment) are untouched. Provider-by-provider:
+
+#### Anthropic (Claude)
+
+**Risk level:** MEDIUM — real, but the current code already has this problem in a latent form.
+
+How pydantic-ai sends the system string (verified directly in `pydantic_ai/models/anthropic.py:775-1036`):
+1. It collects every `SystemPromptPart` from messages and every `instructions` string resolved via `_get_instructions`, concatenates them with `\n\n`, and sends them as Anthropic's `system` field.
+2. A `cache_control` breakpoint is added to the last system block **only if** `anthropic_cache_instructions=True` is set on `AnthropicModelSettings`.
+3. CachePoint markers in user messages add breakpoints via `_add_cache_control_to_last_param` (anthropic.py:785, 1121-1149).
+4. Anthropic allows at most 4 cache points per request; pydantic-ai enforces this in `_limit_cache_points` (anthropic.py:1039-1105).
+
+**Current state (v1.9):** Our code does NOT set `anthropic_cache_instructions` anywhere (grep confirms: zero hits in `src/pitcher_narratives/`). The writer's `_WRITER_PROMPT` is therefore NOT cached at the system level today. All caching is on specialist *user* messages via `CachePoint`. The revision loop also sends a brand-new user message on each pass, so the writer system prompt is re-read every time.
+
+**v1.10 impact:** Swapping persona changes the system text, so if we were to turn on `anthropic_cache_instructions`, each persona would have its own cache lineage. With three personas and a 5-minute TTL, that would still amortize nicely across a batch of reports with the same persona. Cross-persona invalidation is a non-issue because the three caches are simply independent — Anthropic matches on an exact prefix of the combined system string (base+overlay), so `scout` hits a different entry than `analyst` but each is internally stable.
+
+**Anchor revision loop caveat:** Anchor + writer revisions already pay a full re-encode cost of the writer's system prompt on every pass (because `anthropic_cache_instructions` is off). Adding a persona overlay does not make that worse. If we ever turn caching on for instructions, we'd want to make sure the overlay sits inside the cached block (not after it), which it does by construction — `f"{BASE}\n\n{OVERLAY}"` is a fixed string per agent.
+
+**Recommendation for v1.10:** Leave `anthropic_cache_instructions` unset (match current behavior; do not conflate persona work with a caching optimization). File a follow-up if we want to measure the cost.
+
+**Confidence:** HIGH for the pydantic-ai wiring; MEDIUM for Anthropic's prefix-matching semantics (training-data, not re-verified this session because WebFetch/WebSearch are denied in this environment).
+
+#### OpenAI (gpt-5.4 / gpt-5.4-mini)
+
+**Risk level:** LOW.
+
+Direct evidence: `pydantic_ai/models/openai.py:1322-1324`:
 ```python
-REGULAR_SEASON_GAME_TYPES = frozenset({"R"})
+elif isinstance(item, CachePoint):
+    # OpenAI doesn't support prompt caching via CachePoint, so we filter it out
+    return None
 ```
 
-**Where to filter:**
+OpenAI does implicit prompt caching on Chat Completions / Responses based on stable prompt prefixes — no explicit markers, no settings, no cache_control field. The persona overlay extends the system prompt suffix, so different personas are three distinct caching lineages, each amortizing across its own reruns.
 
-1. **Statcast parquet** -- filter in `load_statcast()` immediately after `read_parquet`, before any downstream processing. This is the critical filter: 82% of statcast rows are non-regular-season.
+Because OpenAI caching is implicit, there is nothing to configure or break in pydantic-ai. Each persona will cache independently once a baseline threshold of reruns is hit.
 
-2. **Agg CSVs** -- filter in `_load_csv_multi_year()` as defense-in-depth. The upstream pipeline already filters to R, but if that changes or if 2025 data has different behavior, we're protected.
+**Confidence:** HIGH for the pydantic-ai behavior (it filters `CachePoint` as a no-op). MEDIUM for OpenAI's internal cache mechanics (training-data knowledge; not re-verified this session).
 
-3. **NOT in downstream consumers.** `engine.py`, `context.py`, `report.py`, `analyst.py` should all receive already-filtered data. Single filtering point in `data.py` prevents leakage.
+#### Google (Gemini 3.1 Pro)
 
-**Why `frozenset` + `is_in`:** Extensible to include postseason game types (D=Division Series, L=League Championship, W=World Series) later without code changes. Constant makes allowed types explicit and grep-able.
+**Risk level:** LOW.
 
-**Impact on baselines:** `compute_season_baseline()` currently uses n_pitches-weighted averaging across game_type rows. After filtering CSVs to R only, this averaging becomes a passthrough (single game_type). The function still works correctly -- it just collapses fewer rows. No code change needed in the function itself.
+Direct evidence: `pydantic_ai/models/google.py:917-921`:
+```python
+elif isinstance(item, CachePoint):
+    # Google doesn't support inline CachePoint markers. Google's caching requires
+    # pre-creating cache objects via the API, then referencing them by name using
+    # `GoogleModelSettings.google_cached_content`. See https://ai.google.dev/gemini-api/docs/caching
+    pass
+```
 
-## Integration Points
+The pipeline does not use `google_cached_content` anywhere. Gemini prompt caching is effectively off for this application and has been throughout v1.6–v1.9. Persona swaps therefore change nothing about caching on the Gemini path.
 
-### Files that import from `data.py` and need attention:
+**Confidence:** HIGH. Direct source read.
 
-| Module | Import | Impact |
-|--------|--------|--------|
-| `resolver.py` | `PARQUET_PATH` (singular `Path`) | Must change to use multi-file loading. Options: (a) import a new function that returns concatenated name table, or (b) import a `PARQUET_PATHS` list. Recommend (a) -- expose a `load_pitcher_names() -> pl.DataFrame` function from `data.py`. |
-| `scout.py` | `PARQUET_PATH` (singular `Path`) | Line 283: `pl.read_parquet(PARQUET_PATH, columns=[...])` for velo data. Must change to multi-file read. Same pattern: `pl.read_parquet(paths, columns=[...])`. |
-| `engine.py` | `AGGS_DIR`, `PitcherData` | Uses `AGGS_DIR` for `RV_df.csv` (not year-prefixed, no change needed). `PitcherData` interface unchanged. |
-| `cli.py` | `load_pitcher_data` | No change -- calls orchestrator function. |
-| `ask_cli.py` | `load_pitcher_data` | No change -- calls orchestrator function. |
-| `context.py` | `PitcherData` | No change -- receives already-loaded data. |
-| `analyst.py` | `PitcherData` | No change -- receives already-loaded data. |
+### Summary: caching interaction
 
-### Key design decision: Year-awareness scope
+| Provider | Cache mechanism in use | Impact of persona overlay |
+|----------|------------------------|---------------------------|
+| Anthropic | User-message `CachePoint` only; system prompt not cached | **None** — system string differs per persona but isn't cached anyway |
+| OpenAI | Implicit prefix caching (provider-side) | Each persona caches as an independent prefix; no overlap, but no regression either |
+| Google | No caching in use (`google_cached_content` unset) | None |
 
-**Recommendation:** Year-awareness lives entirely in `data.py`. Replace `PARQUET_PATH` (singular constant) with either:
-- A `YEARS` constant + discovery functions, or
-- A `PARQUET_PATHS` list constant
+The headline worry — "Claude cache_control on a stable base plus per-persona suffix invalidates the base" — **does not apply** because we don't currently cache the writer's system prompt on Claude. And even if we turn that on later, `cache_control` is exact-prefix anyway: each persona gets its own cached base+overlay block, which is exactly what we want.
 
-The CSV filename dicts (`_SEASON_CSVS`, `_APPEARANCE_CSVS`) become grain-only templates (strip the `2026-` prefix), with the year applied at load time.
+## Library Checklist (for planner)
 
-No other module should know about year prefixes or file naming conventions.
+| Library | Version | Buys us | Need? | Integration cost |
+|---------|---------|---------|-------|------------------|
+| jinja2 | 3.1.x | Template engine with loops/conditionals | No | — |
+| chevron | 0.14.x | Mustache templates | No | — |
+| pydantic-handlebars | 0.1.0 (already installed) | Handlebars via `TemplateStr` | No | — |
+| `string.Template` (stdlib) | n/a | `$var` substitution | No | — |
+| tomllib (stdlib) | n/a | Parse TOML configs | No | — |
+| **none** | — | Plain f-string concat + frozen dataclass | **Yes** | Zero |
 
-### The `PitcherData` dataclass
+## Concrete Recommendation for Phase 1 + Phase 2
 
-**No interface change.** Downstream consumers receive the same `PitcherData` bundle. The data inside it now spans multiple years, but the fields (statcast, appearances, agg_csvs, etc.) are the same type and shape. This is the key benefit of centralizing loading in `data.py`.
+**Phase 1 (new `personas.py` module):**
+- Zero new dependencies
+- ~80 lines total: `PersonaKey` Literal, `PersonaConfig` frozen dataclass, `BASE_WRITER_PROMPT` constant (derived from current `_WRITER_PROMPT` with scout-specific voice extracted), three persona constants, a `PERSONAS` dict, one helper function `build_writer_prompt(key: PersonaKey) -> str`
+- Unit tests: persona key exhaustiveness (Literal), scout overlay produces byte-identical output to current `_WRITER_PROMPT` (regression safety net for the no-regression constraint), base prompt contains no voice-specific language
 
-## What NOT to Add
+**Phase 2 (pipeline.py integration):**
+- Delete `_WRITER_PROMPT` from pipeline.py
+- Import `PersonaKey, build_writer_prompt` from `.personas`
+- `make_pipeline_agents` signature gains `persona: PersonaKey = "scout"` (default preserves behavior)
+- `_writer(build_writer_prompt(persona))` replaces `_writer(_WRITER_PROMPT)` at pipeline.py:1153
+- `_run_pipeline` and its CLI entry point gain a `persona` kwarg threaded through to `make_pipeline_agents`
+- Anchor revision loop: **no changes** — `writer_agent` is already whatever it is
+- `cli.py` gains `--persona` argparse flag
 
-| Avoid | Why | Use Instead |
-|-------|-----|-------------|
-| `scan_parquet` / LazyFrames | ~50MB total across 2 years. Eager read <1s. Lazy adds `.collect()` everywhere for zero benefit. | `pl.read_parquet(list[Path])` |
-| `pyarrow.dataset` | Polars handles multi-file parquet natively. PyArrow adds API surface for no gain. | `pl.read_parquet(list[Path])` |
-| `duckdb` | Sometimes suggested for multi-file queries. Massive dependency, overkill for 2 files. | `pl.read_parquet` + `pl.concat` |
-| Hive partitioning | Requires reorganizing files into `year=2025/` directories. Unnecessary for 2 flat files. | Year-prefixed filenames |
-| `glob` stdlib module | `pathlib.Path.glob()` or explicit path construction is sufficient. | `DATA_DIR / f"statcast_{year}.parquet"` |
-| New config system for years | Two years don't justify YAML/TOML config. A module-level `YEARS = [2025, 2026]` constant is sufficient. Add config later if year count grows. | `YEARS` constant |
-| `missing_columns="insert"` | Only needed if schemas differ across years. Statcast schema is stable 2025-2026. Silent null columns mask real problems. | Default `missing_columns="raise"` |
-| `include_file_paths` parameter | Adds a source column to every DataFrame. Useful for debugging but unnecessary overhead in production. The `season` column already identifies year. | The existing `season` column in the data |
-| Environment variable for game type filter | The filter is a safety/correctness concern, not a user preference. Allowing `GAME_TYPES=S,R` via env var invites broken baselines. | Hardcoded `REGULAR_SEASON_GAME_TYPES` constant |
-
-## Version Compatibility
-
-| Package | Version | Status | Notes |
-|---------|---------|--------|-------|
-| polars | 1.39.3 | Already installed | `read_parquet(list[Path])` verified. `pl.concat(how="vertical")` verified. `is_in` filtering verified. No upgrade needed. |
-| Python | 3.14 | Already pinned | `pathlib.Path` works as expected. `frozenset` for game type constant works. |
-
-No new packages. No version upgrades. The existing polars 1.39.3 handles this milestone completely.
+Byte-equality regression check: a snapshot test that asserts `build_writer_prompt("scout") == <the old _WRITER_PROMPT text>` enforces the constraint that scout callers see zero regression.
 
 ## Sources
 
-| Source | What Verified | Confidence |
-|--------|---------------|------------|
-| polars 1.39.3 venv (`inspect.signature`) | `read_parquet` accepts `list[Path]` via `FileSource` type alias | HIGH |
-| polars 1.39.3 venv (`inspect.signature`) | `read_csv` does NOT accept `list[Path]` -- source is `str \| Path \| IO` only | HIGH |
-| polars 1.39.3 venv (`inspect.signature`) | `pl.concat` signature: `how: ConcatMethod = 'vertical'` | HIGH |
-| polars 1.39.3 venv (`FileSource` type) | Resolves to `str \| Path \| IO[bytes] \| bytes \| list[str] \| list[Path] \| list[IO[bytes]] \| list[bytes]` | HIGH |
-| Actual data: `statcast_2026.parquet` | game_type distribution: S=133,887, R=31,331, C=11,162 | HIGH |
-| Actual data: `aggs/2026-pitcher.csv` | Contains only `game_type="R"` rows | HIGH |
-| Project source: `data.py` | Current loading patterns, constant structure, baseline computation | HIGH |
-| [Polars multiple files guide](https://docs.pola.rs/user-guide/io/multiple/) | Glob and concat patterns for multi-file loading | MEDIUM |
-| [polars.read_parquet API](https://docs.pola.rs/api/python/stable/reference/api/polars.read_parquet.html) | Parameter reference | MEDIUM |
-
----
-*Stack research for: v1.6 Multi-Year Data & Game Type Filtering*
-*Researched: 2026-04-02*
+- `/Users/matt/src/pitcher-narratives/.venv/lib/python3.14/site-packages/pydantic_ai/agent/__init__.py` — Agent class `__init__`, `override`, `instructions`, `_get_instructions` (HIGH)
+- `/Users/matt/src/pitcher-narratives/.venv/lib/python3.14/site-packages/pydantic_ai/agent/abstract.py` — `run()` / `run_sync()` / `run_stream()` signatures with per-call `instructions` parameter (HIGH)
+- `/Users/matt/src/pitcher-narratives/.venv/lib/python3.14/site-packages/pydantic_ai/_instructions.py` — `normalize_instructions` (HIGH)
+- `/Users/matt/src/pitcher-narratives/.venv/lib/python3.14/site-packages/pydantic_ai/_template.py` — `TemplateStr` and pydantic-handlebars backing (HIGH)
+- `/Users/matt/src/pitcher-narratives/.venv/lib/python3.14/site-packages/pydantic_ai/models/anthropic.py` — system prompt assembly, `anthropic_cache_instructions`, `CachePoint` handling, `_limit_cache_points` (HIGH)
+- `/Users/matt/src/pitcher-narratives/.venv/lib/python3.14/site-packages/pydantic_ai/models/openai.py:1322-1324` — `CachePoint` is a no-op on OpenAI (HIGH)
+- `/Users/matt/src/pitcher-narratives/.venv/lib/python3.14/site-packages/pydantic_ai/models/google.py:917-921` — `CachePoint` is a no-op on Google; caching requires `google_cached_content` (HIGH)
+- `/Users/matt/src/pitcher-narratives/.venv/lib/python3.14/site-packages/pydantic_ai_slim-1.72.0.dist-info/METADATA` — version pin confirmation (HIGH)
+- `/Users/matt/src/pitcher-narratives/src/pitcher_narratives/pipeline.py` — current `_WRITER_PROMPT`, `make_pipeline_agents`, `_run_anchor_revision_loop`, `build_writer_input` (HIGH)
+- `/Users/matt/src/pitcher-narratives/src/pitcher_narratives/config.py` — current agent settings and provider map (HIGH)
+- `/Users/matt/src/pitcher-narratives/src/pitcher_narratives/anchor.py` — `build_revision_message` showing user-message CachePoint pattern (HIGH)
+- Anthropic / OpenAI provider cache semantics — training-data only this session (WebFetch/WebSearch denied); MEDIUM confidence. Flagged where used.

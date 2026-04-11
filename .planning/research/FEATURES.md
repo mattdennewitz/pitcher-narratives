@@ -1,216 +1,264 @@
-# Feature Research: Multi-Year Data Loading & Game Type Filtering
+# Feature Landscape — v1.10 Output Personas
 
-**Domain:** MLB pitcher scouting narrative generation (CLI tool)
-**Researched:** 2026-04-02
-**Confidence:** HIGH
+**Project:** Pitcher Narratives
+**Milestone:** v1.10 — Output Personas
+**Domain:** Persona / voice system layered on an existing multi-agent LLM writing CLI
+**Researched:** 2026-04-11
+**Confidence:** HIGH for codebase-grounded findings (schema, overlay mechanism, voice targets against existing `_WRITER_PROMPT`), MEDIUM for sports-writing voice references (based on training data, not live fetches — WebSearch unavailable in this environment)
 
-## Context
+## Scope Guardrail
 
-The project currently loads a single `statcast_2026.parquet` and 8 CSV files prefixed `2026-`. The statcast parquet contains game_type values S (Spring Training: 133,887 rows), C (Cactus League: 11,162 rows), and R (Regular Season: 31,331 rows), but the Pitching+ CSV aggregations only contain R rows. The `compute_season_baseline` function weight-averages across all game_type rows (S/C/R) when multiple exist. Since spring training data represents 76% of current pitch-level data and has fundamentally different competitive context, any downstream computation that touches the raw parquet is contaminated by non-competitive pitches.
+Every feature below touches ONLY these surfaces:
+- `src/pitcher_narratives/cli.py` (new `--persona` flag and related CLI affordances)
+- `src/pitcher_narratives/pipeline.py` (writer prompt assembly, shared base, per-persona overlay injection)
+- A NEW module, `src/pitcher_narratives/personas.py` (persona registry, schemas, and overlay text)
+- Persona fixtures under `tests/fixtures/personas/` (new) and test files under `tests/test_personas.py` / `tests/test_pipeline_persona.py` (new)
 
-The milestone adds two capabilities: (1) filtering by game type so narratives reflect regular-season performance, and (2) loading data from multiple seasons (2025 + 2026) so year-over-year trends become visible.
-
-## Feature Landscape
-
-### Table Stakes (Users Expect These)
-
-Features that must ship for multi-year + game-type filtering to be useful. Without these, the feature is broken or misleading.
-
-| Feature | Why Expected | Complexity | Notes |
-|---------|--------------|------------|-------|
-| Filter statcast parquet by game_type before all downstream computation | Spring training pitches (76% of current rows) have different competitive context: pitchers experiment with new grips, face minor leaguers, limit effort to 85%, cap pitch counts. Including ST data in baselines corrupts every metric. This is the highest-priority fix. | LOW | Add `game_type` filter param to `load_statcast()`, default to `"R"`. The parquet already has the column. Single `pl.filter()` call. |
-| Filter appearance-level CSV aggs by game_type | `compute_season_baseline` weight-averages across game_type rows. Currently the CSVs only contain R, so this is a no-op today -- but it must be defensive for when CSVs gain S/C/R rows. | LOW | CSVs already have `game_type` column. Filter before baseline computation. Protect against future data shape changes. |
-| Multi-year parquet discovery and loading | Users expect `pitcher-narratives -p 592155` to use all available season data. A pitcher's 2025 regular season is the baseline their 2026 performance should be compared against. | MEDIUM | Glob `statcast_*.parquet` in DATA_DIR, concatenate with `pl.concat(how="diagonal")`. Must handle schema differences across years (new columns, removed columns). |
-| Multi-year CSV agg discovery and loading | Pitching+ CSVs are year-prefixed (`2026-pitcher.csv`). Loading 2025 data means discovering `2025-pitcher.csv` etc. and concatenating. | MEDIUM | Glob `*-{grain}.csv` pattern per grain. CSVs have a `season` column for disambiguation after concat. Must handle missing grains (e.g., 2025 may lack some appearance-level files). |
-| CLI flag to select game types | Users need to opt into spring training data when desired (e.g., early-March scouting of a prospect). Default must be regular season only. | LOW | `--game-type R` (default). Accept comma-separated codes for multi-select (e.g., `R,S`). Treat C and S equivalently as "spring training" for user convenience. |
-| Name resolver works across all loaded seasons | `resolve()` builds a name table from the parquet. Multi-year means scanning all parquets so a pitcher who only appears in 2025 data is still findable. | MEDIUM | `_build_name_table()` currently reads one `PARQUET_PATH`. Must read all discovered parquets and deduplicate by pitcher ID, preferring the most recent season's name. |
-| Season-aware baseline computation | Season baselines must reflect only the relevant season, not blend 2025 and 2026 metrics. A pitcher's "season baseline" for a 2026 appearance should use 2026 data only. | MEDIUM | Group by `season` column before weight-averaging in `compute_season_baseline` and `compute_pitch_type_baseline`. The `season` column exists in all CSVs. |
-| Hardcoded file references eliminated | `_SEASON_CSVS` and `_APPEARANCE_CSVS` hardcode `"2026-"` prefixes. `compute_execution_metrics` hardcodes `"2026-pitcher_type.csv"`. `PARQUET_PATH` points to a single file. | MEDIUM | Replace all hardcoded year-prefixed references with discovery-based loading. This touches data.py, engine.py (line 1791), and resolver.py. |
-| Graceful single-year fallback | When only one year of data exists, all features must work identically to today. Early-career pitchers and new additions have no prior data. | LOW | Every multi-year feature must handle missing prior year as `None`, not error. Pattern: check availability, skip cross-year output if missing. |
-
-### Differentiators (Competitive Advantage)
-
-Features that make multi-year data genuinely insightful rather than just "more rows."
-
-| Feature | Value Proposition | Complexity | Notes |
-|---------|-------------------|------------|-------|
-| Year-over-year velocity trend | "Velo down 1.2 mph from 2025 full season" is higher-signal than "velo down 0.3 from this month." Season-scale velocity trends reveal physical changes (arm fatigue, mechanical adjustment, aging). | LOW | Subtract prior-season fastball velo baseline from current-season baseline. Small addition to `compute_fastball_summary`. Depends on season-aware baselines. |
-| Cross-year pitch repertoire evolution | Detecting that a pitcher added a sweeper in 2026 that didn't exist in 2025, or dropped a curveball. Arsenal changes are the single highest-signal finding for scouts. | MEDIUM | Compare pitch_type sets between season baselines. Flag new/dropped types in context assembly. Depends on season-aware baselines. |
-| Year-over-year physical observable deltas | Cross-year deltas for velocity, movement (pfx_x, pfx_z), and usage rates. These are directly comparable across years (unlike plus metrics). | MEDIUM | New engine function comparing prior-season and current-season baselines on physical columns only. |
-| Postseason game_type support | Playoff data (F/D/L/W) is higher-leverage than regular season. Users analyzing October pitchers want to isolate postseason performance. | LOW | Already handled by game_type filter infrastructure -- just document the valid codes. No extra logic needed beyond what table-stakes game_type filtering provides. |
-| Level filtering (MLB vs AAA) | The data includes minor league rows (`level = "AAA"` in both parquet and CSVs). For MLB pitcher reports, AAA appearances should be excluded by default. | LOW | Add `level` filter alongside `game_type` filter. Default to `"MLB"`. |
-
-### Anti-Features (Commonly Requested, Often Problematic)
-
-Features that seem useful but create problems in this specific domain.
-
-| Feature | Why Requested | Why Problematic | Alternative |
-|---------|---------------|-----------------|-------------|
-| Blending spring training into regular-season baselines | "More data = better baselines" | Spring training is fundamentally non-competitive. Pitchers work on new pitches, face minor leaguers, sit at 85% effort, pitch 2-3 innings max. Including ST data actively degrades baseline quality. The current parquet has 134K ST pitches vs 31K regular season -- ST would overwhelm the signal by 4:1. | Filter to R by default. Let users opt in via `--game-type S` for explicit ST analysis. |
-| Automatic cross-year P+/S+/L+ comparison | "Compare his 2025 P+ to his 2026 P+" | Pitching+ models are recalibrated annually. P+ 110 in 2025 does not equal P+ 110 in 2026 -- the league baseline shifts, the model is retrained with new data, and standard deviations change. FanGraphs has documented that "the probability that excellent stuff actually turns into excellent results is significantly lower" in recent years despite identical grades. Cross-year plus-metric deltas would be actively misleading. | Compare physical observables cross-year (velocity, movement, usage rates). Keep plus metrics within-season only. Flag this limitation in narrative prompts so the LLM does not fabricate cross-year P+ comparisons. |
-| Loading unlimited historical years | "Load 2020-2026 for full career view" | Each parquet is ~24MB with 145K+ rows. Loading 7 years means ~1M rows in memory. More importantly, Statcast schema has evolved (new columns, spin axis methodology changes, Hawk-Eye transition in 2020). The value drops sharply past 2 years -- a pitcher's 2021 slider has little relevance to their 2026 slider. | Support current + prior year only (hardcap at 2). This covers the useful case (year-over-year trends) without the complexity. Make the cap a constant for future expansion if needed. |
-| Mid-season team filtering | "Only show his stats with the Yankees, not the Mets" | Statcast pitch-level data has `home_team`/`away_team` but no clean `pitcher_team` field. You must infer pitcher team from game context. The Pitching+ CSVs have `team_code` but a traded pitcher has rows for both teams. The narrative pipeline does not surface team-specific context. | If team filtering matters later, add it at the Pitching+ CSV level where `team_code` is explicit. Not needed for this milestone. |
-| Spring training scouting report mode | "Generate a full scouting report from spring training data" | ST data violates nearly every assumption in the pipeline: baselines are unreliable, opponent quality unknown, pitch counts non-representative, workload context meaningless. The narrative prompts assume competitive regular-season context. A "spring training scouting report" is a different product. | Allow `--game-type S` for data exploration via the Q&A analyst. Warn or refuse full narrative reports from ST-only data since the pipeline's assumptions break. |
-| Automatic year detection based on current date | "Just load the right year based on today's date" | The data files are static parquets, not live feeds. The "current" year depends on when the data was downloaded, not today's date. A user in January 2027 analyzing 2026 data should not have the tool guess wrong. | Discover available years from the files on disk. Use the most recent year as "current." Simple and correct. |
-
-## Feature Dependencies
-
-```
-[Game type filtering (statcast)]
-    +--must-precede--> [ALL downstream computation]
-    +--enables--------> [CLI --game-type flag]
-
-[Game type filtering (CSVs)]
-    +--must-precede--> [compute_season_baseline]
-    +--must-precede--> [compute_pitch_type_baseline]
-    +--must-precede--> [_compute_platoon_baseline]
-
-[Multi-year parquet discovery]
-    +--requires--> [Schema alignment via pl.concat(how="diagonal")]
-    +--requires--> [Name resolver reads all parquets]
-    +--enables---> [Year-over-year delta computation]
-
-[Multi-year CSV agg discovery]
-    +--requires--> [Hardcoded file references eliminated]
-    +--requires--> [Season-aware baseline computation]
-    +--enables---> [Year-over-year delta computation]
-    +--enables---> [Cross-year repertoire evolution]
-
-[Season-aware baselines]
-    +--requires--> [Multi-year CSV discovery]
-    +--enables---> [YoY velocity trend]
-    +--enables---> [YoY physical deltas]
-    +--enables---> [Cross-year repertoire evolution]
-
-[Graceful single-year fallback]
-    +--required-by--> [ALL cross-year features]
-```
-
-### Dependency Notes
-
-- **Game type filtering must come first:** Every downstream computation (baselines, engine metrics, context assembly) depends on the data being correctly scoped. Filtering is the foundation -- it fixes a latent correctness bug and must precede any multi-year work.
-- **Hardcoded references block multi-year:** The `_SEASON_CSVS`/`_APPEARANCE_CSVS` dicts and `PARQUET_PATH` constant must be replaced with discovery logic before multi-year CSVs or parquets can be loaded.
-- **Season-aware baselines before cross-year deltas:** Cross-year comparisons require separate per-season baselines to diff. Without per-season separation, you get a blended baseline that helps nobody.
-- **Single-year fallback is a pattern, not a feature:** Enforce it through the data model (Optional fields on cross-year types) rather than per-callsite None checks. This keeps the code clean as more cross-year features are added.
-- **Game type filtering and multi-year discovery are independent.** They can be built in parallel or either order, though filtering is simpler and higher-impact, so it should ship first even if multi-year takes longer.
-
-## MVP Definition
-
-### Launch With (P1)
-
-Minimum set to make game-type filtering and multi-year loading functional and correct.
-
-- [ ] Game type filter on statcast parquet (default `R`, configurable) -- fixes the latent data contamination bug
-- [ ] Game type filter on CSV aggs (defensive filtering before baselines)
-- [ ] CLI `--game-type` flag with `R` default
-- [ ] Multi-year parquet discovery via glob (`statcast_*.parquet`)
-- [ ] Multi-year CSV discovery via glob pattern per grain
-- [ ] Schema alignment for concatenated parquets (`pl.concat(how="diagonal")`)
-- [ ] Eliminate all hardcoded `"2026-"` references and `PARQUET_PATH` singleton
-- [ ] Season-aware baseline computation (group by season before averaging)
-- [ ] Name resolver reads all discovered parquets
-- [ ] Graceful single-year fallback (no errors when only one year exists)
-- [ ] Propagate game_type and multi-year awareness through `load_pitcher_data`, CLI, and ask CLI
-
-### Add After Validation (P2)
-
-Features that need the P1 foundation but follow shortly after.
-
-- [ ] Year-over-year velocity trend in `FastballSummary` -- simple delta, high narrative value
-- [ ] Cross-year pitch repertoire evolution detection (added/dropped pitches)
-- [ ] Year-over-year delta for physical observables (velo, movement, usage rates) in `PitcherContext`
-- [ ] Narrative prompt updates to leverage cross-year context when available
-- [ ] Level filtering (MLB vs AAA, default MLB) as additional data quality control
-
-### Future Consideration (P3)
-
-Defer until multi-year is proven useful and 2-year data is validated.
-
-- [ ] Postseason-specific analysis mode (`--game-type F,D,L,W`)
-- [ ] Qualitative trend strings for cross-year deltas ("velo trending down from 2025")
-- [ ] Historical career arc support (3+ years) -- only if 2-year proves insufficient
-- [ ] Spring training scouting report mode with appropriately modified assumptions
-
-## Feature Prioritization Matrix
-
-| Feature | User Value | Implementation Cost | Priority |
-|---------|------------|---------------------|----------|
-| Game type filter (statcast) | HIGH | LOW | P1 |
-| Game type filter (CSVs) | HIGH | LOW | P1 |
-| CLI --game-type flag | HIGH | LOW | P1 |
-| Eliminate hardcoded year refs | HIGH | MEDIUM | P1 |
-| Multi-year parquet discovery | HIGH | MEDIUM | P1 |
-| Multi-year CSV discovery | HIGH | MEDIUM | P1 |
-| Schema alignment (concat) | MEDIUM | LOW | P1 |
-| Season-aware baselines | HIGH | MEDIUM | P1 |
-| Name resolver multi-year | HIGH | LOW | P1 |
-| Single-year fallback | HIGH | LOW | P1 |
-| YoY velocity trend | HIGH | LOW | P2 |
-| YoY repertoire evolution | HIGH | MEDIUM | P2 |
-| YoY physical deltas | MEDIUM | MEDIUM | P2 |
-| Narrative prompt updates | MEDIUM | LOW | P2 |
-| Level filtering (MLB/AAA) | MEDIUM | LOW | P2 |
-| Postseason mode | LOW | LOW | P3 |
-
-## Edge Cases and Domain-Specific Concerns
-
-### Cross-Year Data Combination Pitfalls
-
-1. **Pitcher transfers between teams:** A pitcher traded mid-season has rows with different `team_code` values. The `pitcher` ID (MLB player ID) is stable across teams and years. No action needed for data loading -- the pitcher ID is the join key everywhere. Baseline `team_code` will reflect whichever team had more pitches (correct for weighted average) or last appearance (for display).
-
-2. **Pitching+ model recalibration:** Plus metrics are recalibrated annually. FanGraphs documents that "the probability that excellent stuff actually turns into excellent results is significantly lower" in recent years despite identical P+ grades. Cross-year plus-metric deltas would be actively misleading. The system must only compare physical observables (velocity, movement, usage) across years and must explicitly instruct the narrative LLM not to compare P+/S+/L+ between seasons.
-
-3. **Statcast schema evolution:** New columns may be added between years (e.g., new tracking metrics). `pl.concat(how="diagonal")` handles this by filling missing columns with null. Removed columns are rare but possible. Test with actual 2025 + 2026 files once 2025 data is acquired.
-
-4. **Player name changes:** A pitcher's `player_name` could change between years (marriage, legal name change, diacritics normalization). The `pitcher` (numeric ID) is the stable key. Name resolution should prefer the most recent season's name for display but match against all name variants.
-
-5. **Rule changes between 2025 and 2026:** The 2026 season introduced the Automated Ball-Strike Challenge System (ABS), allowing players to challenge ball-strike calls. This could subtly affect pitch location strategies (pitchers may target edges more aggressively knowing bad calls can be challenged). Not something the code needs to handle, but narrative prompts should note rule context when cross-year location metrics diverge.
-
-6. **Spring training vs regular season date ranges:** In 2026, S/C games: Feb 20 - Mar 24; R games: Mar 25 onwards. No date overlap. Filtering on `game_type` column (not date ranges) is the correct, future-proof approach since overlap patterns may vary by year.
-
-7. **Empty prior year:** Many pitchers will have no 2025 data (rookies, international signings, pitchers returning from multi-year injury). Every cross-year feature must handle this gracefully. Design pattern: `prior_season_baseline: SeasonBaseline | None` where `None` means "no prior data available," and all delta computations return `None` when either side is missing.
-
-8. **Level column (MLB vs AAA):** Both parquet and CSVs contain AAA rows. A pitcher called up mid-season has mixed-level data. The default filter should be `level = "MLB"` alongside `game_type = "R"`. Consider making level a second filter parameter, defaulting to MLB.
-
-9. **game_type "C" vs "S":** Both are spring training. C = Cactus League (Arizona), S = Spring Training (Grapefruit League, Florida). They should be treated identically. When user specifies `--game-type S`, include both S and C. The Statcast documentation lists the full set: E (Exhibition), S (Spring Training), R (Regular Season), F (Wild Card), D (Division Series), L (League Championship Series), W (World Series).
-
-10. **Appearance CSVs vs season CSVs, different game_type coverage:** Season-grain CSVs (pitcher.csv, pitcher_type.csv, etc.) may have different game_type rows than appearance-grain CSVs. Currently all CSVs only have R, but this may not hold for 2025 data or future refreshes. Filter consistently everywhere.
-
-## Existing Code Touchpoints
-
-Specific locations in the codebase that need modification, mapped by module.
-
-| File | Location | Change Needed |
-|------|----------|---------------|
-| `data.py` | `PARQUET_PATH` (line 36) | Replace single path with discovery function returning list of paths |
-| `data.py` | `_SEASON_CSVS` dict (lines 41-46) | Replace hardcoded `"2026-"` filenames with glob-based discovery per grain |
-| `data.py` | `_APPEARANCE_CSVS` dict (lines 47-52) | Same: replace hardcoded prefixes with discovery |
-| `data.py` | `load_statcast()` (line 104) | Add `game_type` and `seasons` parameters; load from multiple parquets; filter |
-| `data.py` | `load_csv()` (line 84) | Add optional `game_type` filter parameter |
-| `data.py` | `load_agg_csvs()` (line 133) | Discover and load multi-year CSVs per grain, concat by season |
-| `data.py` | `compute_season_baseline()` (line 181) | Group by season column before weight-averaging |
-| `data.py` | `compute_pitch_type_baseline()` (line 207) | Group by season column before weight-averaging |
-| `data.py` | `PitcherData` dataclass (line 69) | Add `seasons` field tracking which seasons are loaded |
-| `data.py` | `load_pitcher_data()` (line 263) | Accept `game_type` param, propagate to all loaders |
-| `engine.py` | Line 1791 | Remove hardcoded `"2026-pitcher_type.csv"`, use discovered CSVs from PitcherData |
-| `engine.py` | `compute_league_baselines()` (line 200) | Read from discovered parquets via helper, not `PARQUET_PATH` |
-| `engine.py` | `_compute_platoon_baseline()` (line 583) | Ensure game_type filtering is applied before weight-averaging |
-| `resolver.py` | `_build_name_table()` (line 96) | Read all discovered parquets; deduplicate by pitcher ID, prefer most recent name |
-| `resolver.py` | `PARQUET_PATH` import (line 19) | Replace with multi-parquet discovery |
-| `cli.py` | `parse_args()` (line 25) | Add `--game-type` argument |
-| `cli.py` | `main()` (line 78) | Pass game_type to `load_pitcher_data` |
-| `ask_cli.py` | Entry point | Propagate game_type to data loading |
-| `scout.py` | `score_appearances()` | Ensure game_type-filtered data flows through |
-
-## Sources
-
-- [Statcast Search CSV Documentation](https://baseballsavant.mlb.com/csv-docs) -- game_type field values: E (Exhibition), S (Spring Training), R (Regular Season), F (Wild Card), D (Division Series), L (League Championship Series), W (World Series). HIGH confidence.
-- [FanGraphs: They Don't Make Pitch Models Like They Used To](https://blogs.fangraphs.com/they-dont-make-pitch-models-like-they-used-to/) -- Documents Pitching+ annual recalibration and why cross-year plus-metric comparisons are unreliable. HIGH confidence.
-- [MLB Rule Changes for 2026](https://bleacherreport.com/articles/25409037-explaining-mlb-pace-play-and-more-rule-changes-2026-season) -- ABS challenge system introduced in 2026. MEDIUM confidence (details from article summary).
-- Direct inspection of `statcast_2026.parquet` -- Confirmed game_type distribution: S=133,887, C=11,162, R=31,331. Date ranges: S/C Feb 20 - Mar 24, R Mar 25 - Apr 1. HIGH confidence.
-- Direct inspection of `aggs/2026-pitcher.csv` -- Confirmed game_type column only contains `R` values. Confirmed `season`, `level`, `game_type` columns present in all CSVs. HIGH confidence.
-- Codebase analysis of data.py, engine.py, resolver.py, context.py, cli.py, scout.py -- All hardcoded references and game_type handling verified by code inspection. HIGH confidence.
+EXPLICITLY untouched: `ask_cli.py`, `analyst.py`, `scout.py`, `scout_cli.py`, `resolver.py`, `data.py`, `engine.py`, `context.py`, `anchor.py` (module stays read-only — we only wrap its outputs at the pipeline level). No changes to any specialist prompt, the data auditor prompt, the signal extractor prompt, or the executive summary prompt.
 
 ---
-*Feature research for: Multi-Year Data Loading & Game Type Filtering*
-*Researched: 2026-04-02*
+
+## Category 1: Persona Definition Schema
+
+### Table Stakes
+
+- **Persona is a typed object, not a free-form string.** A new `Persona` pydantic BaseModel in `personas.py` with fields: `id: Literal["scout","analyst","generic"]`, `display_name: str`, `overlay_prompt: str`, `length_target: LengthTarget`, `format_mode: Literal["prose","sectioned"]`, `description: str` (one-line `--describe-persona` text).
+- **Length targets are bounded, not open-ended.** `LengthTarget` carries `min_words: int`, `max_words: int`, and an advisory `target_words: int`. Scout ≈ 180–320 words (matches current 2–3 paragraph capsule). Analyst ≈ 450–800 words. Generic ≈ 400–700 words including the summary table. Word counts enforced post-hoc by a smoke test, not by the writer prompt (writers are bad at counting — see PITFALLS.md).
+- **Every persona has a single canonical overlay string.** Not a templating DSL, not a partial-prompt builder. The overlay is one self-contained block of natural-language guidance that the pipeline concatenates onto the shared base.
+- **Format mode is explicit.** `"prose"` tells the hallucination check to use the current regex pass unchanged. `"sectioned"` tells the hallucination check to pre-strip Markdown table cells before regex scanning (the generic persona is the only current consumer, but the field exists so future personas can opt in).
+- **A single registry exports personas.** `PERSONAS: dict[str, Persona]` keyed by id, plus a `get_persona(id: str) -> Persona` function that raises a typed error on unknown id with a helpful "did you mean" message. No dynamic discovery, no plugin system.
+- **Persona id → display name and description are stored once.** The `--list-personas` and `--describe-persona` CLI commands and any test fixtures all read from the same registry so docs and behavior never drift.
+
+### Differentiators (defensible to defer to v1.11)
+
+- **Persona exemplars (few-shot snippets).** A `exemplars: list[str] | None` field holding 1–2 hand-written paragraphs in the target voice, injected as a user-message few-shot. Deferred because v1.10's overlay prompts can ship voice guidance in plain English and because exemplars are expensive to maintain (every change to the underlying data shape risks making exemplars contradict reality).
+- **Vocabulary allow/deny lists per persona.** Structured `vocabulary_avoid: frozenset[str]` and `vocabulary_prefer: frozenset[str]`. The current `_WRITER_PROMPT` embeds a "Never use" list inline and it works. Structuring it is cleaner but doesn't unblock v1.10.
+- **Per-persona temperature override.** A `temperature: float | None = None` field. Analyst might benefit from 0.8 (more associative prose), generic might benefit from 0.5 (more predictable structure). Defer until we measure — v1.10 ships with the existing 0.7 for all three.
+- **Per-persona `max_tokens` override.** The analyst persona plausibly wants a larger token budget than `TOKEN_BUDGET_LARGE`. Deferred — start with the shared budget and raise it in v1.11 only if golden samples show clipping.
+
+### Anti-Features
+
+- **Persona inheritance / "extends" relationships.** Rejected: three personas, one level. A class hierarchy is gold-plating until we have ≥5 personas or a clear child-of-child pattern.
+- **User-defined personas from a config file or environment variable.** Rejected: every persona must pass the anchor check and the hallucination guard; opening it up to user overrides breaks the quality gates before they even run. Custom personas are a v2.x concern, not v1.10.
+- **Persona defined as a Jinja/Mustache template over the base prompt.** Rejected: templating adds a second grammar on top of the prompt and makes the writer prompt harder to read in isolation. Plain-string concatenation is sufficient for three personas.
+- **Persona registry as a Python plugin entry point.** Rejected: personas are internal, versioned with the codebase, and need to be tested as a unit with the writer prompt. Entry-point discovery adds complexity without delivering anything v1.10 needs.
+
+---
+
+## Category 2: Overlay Mechanism
+
+### Table Stakes
+
+- **Shared base prompt + trailing overlay.** The current `_WRITER_PROMPT` constant is refactored into `_WRITER_BASE_PROMPT` (shared, mandatory, defines the "explain the model" contract and the directional-consistency / anti-hallucination rules) plus a per-persona overlay. At pipeline-build time, the writer's `system_prompt` is `f"{_WRITER_BASE_PROMPT}\n\n{persona.overlay_prompt}"`. Simple, debuggable, one code path.
+- **The base owns everything that cannot be safely overridden.** Directional consistency, "use only specialist data", KeySignals obligations (top_improvement and top_concern must each be addressed), the temporal-grounding rule, the "explain Pitching+ model decisions" contract. These live in the base and cannot be weakened by any overlay.
+- **The overlay owns everything the persona controls.** Voice, sentence rhythm, length target, structural template (prose vs. sectioned), vocabulary preferences, what the reader is assumed to know, how much to teach the Pitching+ framework.
+- **Overlay is appended, not spliced.** No anchor tags in the base (`<<VOICE>>`, etc.), no search-and-replace. LLMs interpret the last block of the system prompt as the most salient, which is exactly where persona voice should land.
+- **Writer agent is built per-request with the selected persona.** `make_pipeline_agents(..., persona: Persona)` takes the persona and constructs the writer agent with the composed prompt. `_WRITER_PROMPT` the constant goes away; `build_writer_prompt(persona: Persona) -> str` replaces it. `make_pipeline_agents` default arg is `PERSONAS["scout"]` so every existing caller is unchanged.
+- **The base prompt's rules are self-describing and the overlay can reference them by section name.** E.g. the base has a section header "DIRECTIONAL CONSISTENCY" and the analyst overlay can say "Explain decisions in the tone described below, but never soften the DIRECTIONAL CONSISTENCY rule above." This keeps the two halves coherent without introducing a templating mechanism.
+- **`pipeline.py` exposes a single public helper for prompt assembly.** `build_writer_prompt(persona)` returns the fully-composed writer system prompt. `--print-prompts` uses it so operators can see the exact composed prompt per persona without rerunning the model.
+
+### Differentiators
+
+- **Overlay validation at import time.** A module-level assertion that every registered persona's composed prompt contains the KeySignals obligations and the directional-consistency rule (easy substring check). Catches a malformed overlay before any test runs. Cheap and worth it — move to table stakes if it takes <30 minutes to implement.
+- **Per-section caching of the base prompt via `CachePoint`.** The base prompt is identical across all three personas, so inserting a `CachePoint` between base and overlay lets pydantic-ai reuse the cached prefix across per-persona runs. Defer — measurable only under `--compare` batch runs, which is itself deferred.
+
+### Anti-Features
+
+- **Anchor-tag splicing.** Overlays with `{{VOICE}}` / `{{STRUCTURE}}` placeholders inside the base prompt. Rejected: introduces a template engine and obscures the actual prompt text for debugging.
+- **Overlay as a system-prompt prepend.** Rejected: putting voice guidance BEFORE the hard rules makes the model rank voice higher than correctness. Overlays must come last.
+- **Two-message system prompt (base as system, overlay as user preamble).** Rejected: pydantic-ai's `system_prompt=` takes a single string, mixing levels is a footgun, and the anchor check would have to know about the split.
+- **Overlay as a function that mutates the base prompt string.** Rejected: makes the composed prompt impossible to predict without running Python. Overlays are data, not code.
+
+---
+
+## Category 3: Voice / Format Differentiation (per persona)
+
+**Reference sources (MEDIUM confidence, training data, not live-fetched):** Baseball Prospectus feature articles and Effectively Wild show notes (conversational sabermetric tone; explains model internals; assumes sophisticated-but-not-specialist readers), Pitcher List pitch-by-pitch analytical pieces (heavier lean on GIFs and specific-pitch callouts; more playful voice), FanGraphs community research posts (longer, model-explaining, teaching tone), and the current `_WRITER_PROMPT` itself (for the scout persona, which must be preserved byte-identically in voice).
+
+### 3a. Scout persona (default)
+
+**Voice target (HIGH confidence — codified in the current `_WRITER_PROMPT`):**
+Analyst-to-analyst voice. Front-office tone. Short-form. 2–3 paragraphs, prose only, no headings inside the capsule. Leads with the thread — the single most important story across the five specialists. Varies sentence length, short sentences land points. Scouting vocabulary ("stuff", "feel", "finding a groove", "getting tagged"). Avoids the banned vocabulary list ("degradation", "binary", "profiles as", "dominant", "elite", "massive spike"). At most three primary metrics across the whole capsule. No bullet points, no headers, no tables.
+
+**Length target:** 180–320 words, 2–3 paragraphs. Matches current behavior.
+
+**Structural elements:** Pure prose capsule. No internal headings. No tables. Followed (by the CLI, not the writer) by the three-bullet executive summary, Stuff Analysis, Data Audit, and Anchor Check sections.
+
+**How much Pitching+ model explanation:** Light. Assumes the reader knows S+ = stuff-only and L+ = location-given-the-stuff. Explains ONLY the specific decision that the pipeline reached (e.g. "The slider's S+ of 128 is driven by the new vertical break, not the velocity"). Does not teach the framework from scratch.
+
+**What it leads with:** The concrete change. "The two-seamer lost an inch of arm-side run last start and the whiff rate on it halved" — never "This report examines the recent performance of X".
+
+**Preservation test:** A regression test (`tests/test_personas.py::test_scout_overlay_byte_identical_to_v1_9_writer_prompt`) asserts that `build_writer_prompt(PERSONAS["scout"]).strip() == _LEGACY_WRITER_PROMPT_SNAPSHOT.strip()` where the snapshot is the v1.9 `_WRITER_PROMPT` verbatim. This is the "byte-identical-ish" guarantee the milestone requires.
+
+### 3b. Analyst persona (newsletter for analytically-inclined fans)
+
+**Voice target (MEDIUM confidence — modeled on Baseball Prospectus + Effectively Wild + FanGraphs community research tone):**
+Newsletter voice. First-person plural optional ("what we're seeing here is…"). Teaches as it analyzes — when it names S+ or L+, it takes a sentence to remind the reader what the metric measures and why the specialist reached its grade. Reader is assumed to be a fan with strong baseball literacy but NOT a working analyst. Longer sentences, more subordinate clauses than the scout voice, but still conversational. Similes and analogies are allowed ("think of L+ as the grade the command gets after the stuff is already priced in"). Can digress briefly to contextualize a finding ("for reference, league-average S+ on a sweeper is close to 100"). Still avoids cheerleading, still enforces directional consistency.
+
+**Length target:** 450–800 words, 4–6 paragraphs. Long enough to teach, short enough to read over coffee.
+
+**Structural elements:** Prose with optional narrative section markers (a bolded leading phrase at the start of each paragraph is allowed; full Markdown `##` headings are NOT — headings invite "meanwhile" energy that contradicts the base prompt's one-voice rule). No tables. No bullet lists. The expanded word budget is spent on explanation and context, not on more sections.
+
+**Vocabulary shift:** Keeps the scout-persona banned-word list (still no "elite", no "dominant"). ADDS permission for teaching vocabulary: "model", "credit", "grade", "below-average", "holds up", "pencils out". Still three-metric-maximum per paragraph, but allowed to cite the same metric twice if the second citation is explaining the first.
+
+**How much Pitching+ model explanation:** Heavy. The analyst overlay explicitly asks the writer to explain — in the reader's first encounter with each plus-metric — what the metric measures and why the pipeline's grade is what it is. "S+ of 128 on the slider means the stuff-only model scored it 28 percent above league average on physical characteristics alone; the vertical break is the driver."
+
+**What it leads with:** The narrative hook, which can be a question or a setup ("Something changed in X's slider last start, and it isn't what you'd expect"). Still anchored to the top_improvement or top_concern signal per the base prompt, just dressed in a slower opening.
+
+### 3c. Generic persona (sectioned + summary table)
+
+**Voice target (MEDIUM confidence — modeled on default-LLM structured responses and front-office internal report layouts):**
+Structured, category-first, teaching tone. This is the persona for the user who asks an LLM a question and wants the kind of sectioned response LLMs produce by default. Reader could be anyone — from a fantasy manager to a coach to a data consumer pasting the output into a shared doc. Each section stands on its own. Tone is informative, not conversational, but still avoids recitation (the three-metric cap still applies per section, not per capsule — the sectioning expands the total budget).
+
+**Length target:** 400–700 words total across all sections, with a final summary table.
+
+**Structural elements (HIGH importance — this is the one persona that breaks the "prose only" rule):**
+- Markdown `##` headings for exactly these sections, in this order: `## Stuff`, `## Location`, `## Run Value & Execution`, `## Trend`, `## Game Shape`, `## Summary Table`. The section names are fixed by the persona so the anchor check and tests can rely on them.
+- Each section is 2–4 sentences. No bullet lists inside sections (bullet lists encourage the writer to pad with category labels — see PITFALLS.md, pitfall 2).
+- The final `## Summary Table` is a Markdown table with columns `Category | Grade | Note`, and rows `Stuff | ... | ...`, `Location | ... | ...`, `Run Value | ... | ...`, `Trend | ... | ...`, `Game Shape | ... | ...`. Grades are short scout-scale tags ("plus", "average", "below-average", "no change", "improving", "slipping"). Notes are one short phrase each. The table is tightly bounded — no free-form columns.
+- The generic persona MUST NOT introduce section headings the writer invented. The allowed set is fixed by the overlay and enforced by a test.
+
+**Vocabulary shift:** Same banned list as scout. Teaches a little less than analyst (the structure does the teaching — the reader can skim to the section they care about). Allowed to use the model names ("Stuff+", "Location+", "Pitching+") as section subjects without introducing them.
+
+**How much Pitching+ model explanation:** Medium. Each section explains, in one sentence, what its column of the Pitching+ model measures, before citing the pipeline's finding. The summary table itself stands as a quick-reference explanation of the framework.
+
+**What it leads with:** The Stuff section. There is no "lead" in the scout sense — the structure is the lead.
+
+**Summary table tolerance rules (see Category 6 for testing implications):**
+- Table cells are allowed to contain plus-metric names without triggering hallucination warnings (they're section subjects, not inventions).
+- Table rows must correspond 1:1 with the five specialists. No extra rows, no missing rows.
+- Anchor check sees the full generic-persona output, including the table. The base prompt's "do not invent data" rule still applies inside table cells.
+
+### Shared (across all three personas)
+
+- **All three personas must satisfy the KeySignals obligation.** Top improvement and top concern are both addressed in every persona. The base prompt enforces this and the anchor check validates it.
+- **All three personas explain the model's decisions, not just its outputs.** The shared base owns this rule (see Category 6).
+- **All three personas inherit the banned-word list and the three-metric cap.** The overlay can add to the banned list but cannot remove from it.
+- **All three personas run through the same executive summary, data audit, anchor check, hallucination guard, and revision loop.** Persona affects ONLY the writer agent's system prompt and (for the generic persona) the hallucination-guard pre-processing step.
+
+---
+
+## Category 4: CLI & UX Affordances
+
+### Table Stakes
+
+- **`--persona {scout,analyst,generic}`** flag on `pitcher-narratives`. Default is `scout`. Invalid values produce an error that names the three valid choices plus the output of `--list-personas`.
+- **Default is scout and existing scripts keep working.** No persona = scout persona. The CLI default value is not a hardcoded string; it reads from a `DEFAULT_PERSONA_ID = "scout"` module constant in `personas.py`.
+- **`--list-personas`** — prints each persona's id, display name, and one-line description, then exits 0. No LLM call. Reads from the registry. Used by docs and by users who forgot the flag values.
+- **`--print-prompts` includes the composed writer prompt for the selected persona.** The existing `--print-prompts` flow already dumps every phase's system prompt via `write_pipeline_data_file`. The writer section must use the composed prompt for the selected persona so operators can see exactly what the model will receive.
+- **Provider + persona are independent.** `--persona analyst --provider claude` is valid. All 3 personas × 3 providers = 9 configurations, all supported.
+- **Report output still prefixes with `# Scouting Report\n`** regardless of persona. The CLI header is persona-agnostic so downstream tooling that greps for section markers doesn't break.
+- **The persona id is logged to stderr in verbose mode.** `log.info("persona=%s", args.persona)` in the verbose summary so operators can tell at a glance which overlay produced which output.
+
+### Differentiators
+
+- **`--describe-persona <id>`** — prints the persona's full overlay prompt plus length target. Useful for explaining the system to new users, but `--print-prompts` already exposes this via the composed prompt dump. Defer.
+- **`--compare` mode that runs two or three personas in one invocation and prints them side-by-side.** Genuinely useful for evaluating the persona system but it triples the LLM cost and the test surface. Defer — operators can script it with `for p in scout analyst generic; do pitcher-narratives --persona $p -p 592155; done`.
+- **Persona alias: `--voice` as a synonym for `--persona`.** One-line change, some users will type `--voice` reflexively. Cheap to add later; not needed for v1.10.
+- **Per-persona default length override on the CLI.** `--length short|medium|long`. Defer — each persona has a length target already and the CLI flag would need to reconcile with the overlay's written guidance.
+
+### Anti-Features
+
+- **`--custom-persona path/to/overlay.txt`** — loads a user-supplied overlay file. Rejected: breaks the quality gates, bypasses the registry, and invites the anchor check to fail on prompts no one tested.
+- **Persona set via environment variable (`PITCHER_NARRATIVES_PERSONA`).** Rejected: scripts that assumed the default scout voice would silently change output if someone exported the env var in their shell. Flags are explicit and traceable; env defaults are invisible.
+- **Interactive persona picker when no flag is given.** Rejected: v1.10 needs to be a pure superset of v1.9 behavior. Prompting breaks non-TTY scripts and `--help` pipelines.
+- **Persona flag on `pitcher-ask` or `pitcher-scout`.** Rejected: milestone constraint. `pitcher-ask` and `pitcher-scout` are out of scope. Even if someone argues "analyst persona would be nice for ask", that's a v1.11 feature and needs a different design because the ask agent's output contract is different.
+- **Per-persona output filename suffix on the `data-*.md` file written by `write_pipeline_data_file`.** Rejected for v1.10 — the filename already includes provider and mode; adding persona changes every integration that greps for the filename pattern. The persona is written into the file contents, not the name.
+
+---
+
+## Category 5: Testing & Golden Samples
+
+### Table Stakes
+
+- **Per-persona smoke test using `TestModel`.** For each of the three personas, run `generate_pipeline_streaming` under `PITCHER_NARRATIVES_TEST_MODEL=1` with a frozen pitcher fixture and assert the pipeline returns a non-empty narrative, that the composed writer prompt contains the persona overlay, and that `PipelineResult.narrative` is produced without raising.
+- **Scout byte-identical regression test.** As described in 3a: `build_writer_prompt(PERSONAS["scout"]).strip() == _LEGACY_WRITER_PROMPT_SNAPSHOT.strip()`. This is the guarantee that scout users see zero behavior change. The snapshot constant is imported from a `tests/fixtures/personas/legacy_writer_prompt.txt` file so it's diff-visible.
+- **Overlay composition test.** For each persona: assert `build_writer_prompt(p).startswith(_WRITER_BASE_PROMPT)` and `build_writer_prompt(p).endswith(p.overlay_prompt)`. Catches any future accidental reordering.
+- **Base-prompt contract test.** Assert that `_WRITER_BASE_PROMPT` contains known substrings for: the KeySignals obligation, the directional-consistency rule, the "explain how the Pitching+ model works" rule, and the temporal-grounding rule. This is a canary — if someone removes one of these from the base, the test fails loudly.
+- **Persona registry test.** Assert `set(PERSONAS.keys()) == {"scout", "analyst", "generic"}` and that every persona has a non-empty overlay, a display name, a length target, and a format mode. Catches import-time errors and partial additions.
+- **Hallucination check tolerance for generic persona's summary table.** A test that feeds a synthetic generic-persona narrative with a complete `## Summary Table` section through `check_hallucinated_metrics` and asserts it returns clean. Implementation-wise this may require a pre-pass that strips Markdown table cells before regex scanning, or it may "just work" if the table cells use only `_KNOWN_METRICS`; the test is the forcing function.
+- **Anchor check structural tolerance for generic persona.** A test that runs the anchor check over a synthetic generic-persona capsule (headings + table) against a matching synthesis and asserts the anchor returns clean. The anchor prompt doesn't know about sections yet — the test will tell us whether the prompt needs a note like "the capsule may contain section headings and a summary table; treat them as prose."
+- **Generic persona section-set test.** Assert that the generic persona's overlay prompt text contains all six required section names (`## Stuff`, `## Location`, `## Run Value & Execution`, `## Trend`, `## Game Shape`, `## Summary Table`). Separately, a smoke test using `TestModel` can validate the overlay reaches the writer; actual section enforcement is deferred to golden samples.
+- **CLI flag test.** Argparse-level test that `pitcher-narratives --persona bogus` exits non-zero with a message listing valid choices, and that `--persona analyst` sets `args.persona == "analyst"`. No LLM call needed.
+- **`--list-personas` test.** Subprocess (or click-runner-style) test that asserts the output contains all three ids and exits 0.
+
+### Differentiators
+
+- **Golden-output regression samples per persona.** Commit three reference outputs (one per persona) generated against a frozen pitcher fixture and a fixed provider, and diff them in CI. Differentiator (not table stakes) because golden samples on LLM output are flaky — the diff is noise-prone even at temperature 0.7 — and a flaky CI is worse than no CI. Revisit once the persona system has stabilized, or add only for the scout persona (which is supposed to be byte-identical anyway).
+- **Cross-persona shared-infrastructure test.** Run the same pitcher through all three personas and assert that the executive summary bullets are identical (they come from the shared `_EXECUTIVE_SUMMARY_PROMPT`, not from the writer). Nice correctness canary. Defer — the base-prompt contract test already covers the conceptual case.
+- **Word-count enforcement test per persona.** Run `TestModel` (deterministic) output through the writer and assert `min_words ≤ word_count ≤ max_words`. `TestModel` output is too canned to exercise real length targets, so this test would only catch the most egregious drift. Defer.
+- **Vocabulary-ban test per persona.** Assert that the banned-word list in each composed prompt is a superset of the scout banned-word list. Cheap but low value — the base-prompt contract test already owns the vocabulary lineage.
+
+### Anti-Features
+
+- **End-to-end LLM tests that actually call Anthropic/OpenAI/Gemini.** Rejected: cost, flakiness, rate limiting. Tests use `TestModel` only. Golden samples (if added) are regenerated manually, not in CI.
+- **Property-based tests that fuzz the persona schema.** Rejected: three personas, no user-defined personas, zero fuzz value.
+- **Persona-specific anchor warning categories.** Rejected: the existing five categories (MISSED_SIGNAL, UNSUPPORTED, DIRECTION_ERROR, OVERSTATED, UNDERWEIGHTED) are shared. Adding `GENERIC_STRUCTURE_VIOLATION` would proliferate anchor types that the anchor agent was never trained to emit and would require a separate revision prompt path. The anchor check stays persona-agnostic.
+- **Snapshot tests of the full CLI output per persona.** Rejected: the output includes the LLM-generated narrative, which is non-deterministic even at the same seed for some providers. Snapshot the composed writer prompt, not the model output.
+
+---
+
+## Category 6: "Explain the Model" Delivery
+
+This is the milestone's load-bearing editorial constraint: every persona must contextualize its findings by explaining how Pitching+ works (S+ = stuff-only physical characteristics, L+ = location given the stuff, P+ = combined grade) and WHY the pipeline reached the specific grades it did.
+
+### Recommendation: Shared base-prompt rule, per-persona overlay controls depth
+
+**Delivery mechanism:**
+1. The shared `_WRITER_BASE_PROMPT` carries the rule in a new section titled "EXPLAIN THE MODEL." This section states: "Every plus-metric you cite must be accompanied, somewhere in the capsule, by (a) a one-phrase reminder of what the metric measures and (b) the pipeline's reason for the specific grade. The reason must come from the specialist analyses — do not speculate."
+2. Each persona overlay modulates **depth**, not **presence**:
+   - Scout overlay: "Explain the model tersely and only the first time a metric appears. One clause is enough. Example: 'the slider's S+ of 128, driven by the new vertical break'."
+   - Analyst overlay: "Explain the model in full the first time each metric appears. A sentence is expected. Assume the reader is a literate fan but not a working analyst. The teaching is part of the value."
+   - Generic overlay: "Explain the model once per section, at the start. The summary table columns do not need re-explaining. Example: 'S+ is the stuff-only grade from the physical characteristics of the pitch — for the slider, the pipeline credited 128, citing the new vertical break.'"
+3. The anchor check gets a new warning category — NO. The anchor check does NOT get a new warning category. See "Why not structured output" below.
+
+**Why shared base, not per-persona toggle:** The rule is a correctness / truth-in-labeling obligation, not a stylistic preference. Making it per-persona means someone could ship a persona that skips it, which defeats the whole point. The base owning the rule means the anchor check can (eventually) enforce it without knowing which persona is in play.
+
+**Why not structured output:** A structured output type (e.g., `WriterResult = {capsule: str, model_explanation: str}`) would guarantee the explanation is present but would also fragment the narrative voice — readers would see the explanation as a separate block, which is the opposite of how the scout persona wants it delivered (inline, one clause). Keeping the rule in free prose lets each persona deliver the explanation in its own voice.
+
+**Why not add an anchor warning category for "explanation missing":** The anchor check operates on "is this capsule faithful to the synthesis." Adding an editorial obligation (did the writer teach the model) to the anchor agent conflates fact-checking with style enforcement. An editorial check for explanation presence is a future concern (v1.11?) and would belong in a new agent, not inside the anchor.
+
+**Testing this rule in v1.10:** The base-prompt contract test (Category 5) asserts the "EXPLAIN THE MODEL" section is present in the composed prompt for every persona. That's the full test surface for v1.10. Validation that the writer actually follows the rule is a manual golden-sample review during the v1.10 milestone, not an automated test.
+
+### Table Stakes (for this category)
+
+- **The "EXPLAIN THE MODEL" rule lives in the shared base prompt and applies to all three personas.**
+- **Each persona overlay states its depth expectation (terse / full / once-per-section).**
+- **The base-prompt contract test asserts the rule is present in every composed prompt.**
+- **No structured output type is introduced for the explanation — it is prose-integrated per persona.**
+- **No new anchor warning category is introduced for explanation presence.**
+- **A manual golden-sample review during milestone execution confirms that each persona's output actually explains the model at its declared depth.** This is a human validation step, not an automated test, and the milestone plan should allocate time for it.
+
+### Differentiators
+
+- **A separate "editorial check" agent (sibling to the anchor check) that validates the writer explained the model.** Deferred to v1.11 or later. Worth exploring once the persona system proves stable, but adds a third verification agent to the pipeline and a fourth regex-heavy test file. Not v1.10.
+- **Machine-readable markers in the capsule (e.g. invisible `<!-- EXPLAINED: S+ -->` HTML comments) that a post-processor can validate.** Too clever. Fails the "would a human scout write this" smell test.
+
+### Anti-Features
+
+- **Per-persona toggle for the explanation rule.** Rejected: a persona that opts out of explaining the model is not a persona we want to ship.
+- **Splitting the explanation into its own CLI section (like Executive Summary).** Rejected: the rule is specifically about inline contextualization. Pulling the explanation out of the narrative defeats the purpose.
+
+---
+
+## Requirements Mapping Hint
+
+Each table-stakes bullet above is intended to map to one REQ line in the requirements-definition step. Expected REQ count from this document: roughly 40–48 lines across the six categories, weighted toward Category 3 (voice differentiation has the most concrete sub-requirements) and Category 5 (testing has the most independently verifiable line items). Anti-features should map to "Out of Scope" lines in PROJECT.md, not REQs.
+
+## Sources & Confidence
+
+- **HIGH confidence — codebase-grounded:**
+  - `src/pitcher_narratives/pipeline.py` (`_WRITER_PROMPT` constant, lines 408–477; `make_pipeline_agents`, lines 1112–1162; `write_pipeline_data_file`, lines 1030–1067; `check_hallucinated_metrics`, lines 1566–1606; metric allow-list, lines 1453–1525)
+  - `src/pitcher_narratives/anchor.py` (full file — `ANCHOR_PROMPT`, `AnchorWarning`, `WarningCategory`)
+  - `src/pitcher_narratives/signals.py` (full file — `KeySignals`, `SIGNAL_EXTRACTOR_PROMPT`)
+  - `src/pitcher_narratives/cli.py` (full file — argparse surface, `--print-prompts` flow, output section ordering)
+  - `.planning/PROJECT.md` (v1.10 milestone section, constraints, validated requirements history)
+- **MEDIUM confidence — training data for sports-analytics writing voices:**
+  - Baseball Prospectus feature-article voice (training data, not live-fetched in this session; WebSearch was not available)
+  - Pitcher List analytical-article voice (training data)
+  - FanGraphs community research voice (training data)
+  - Effectively Wild show-notes voice (training data)
+  - Default-LLM sectioned response format (training data, universal pattern)
+  - Front-office internal scouting report layout (training data, no public exemplars referenced)
+  - Confidence caveat: the voice-target descriptions are defensible but should be sanity-checked against 1–2 real articles from each source during milestone execution. Flag this as a golden-sample review task.
+- **LOW confidence — none.** All claims are either codebase-verifiable or are editorial recommendations grounded in well-known sports-writing conventions.

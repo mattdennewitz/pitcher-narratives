@@ -1,392 +1,511 @@
-# Architecture Patterns
+# Architecture Research: v1.10 Output Personas
 
-**Domain:** Multi-year data loading and game type filtering for pitcher narratives CLI
-**Researched:** 2026-04-02
+**Milestone:** v1.10 Output Personas
+**Researched:** 2026-04-11
+**Scope:** How the `--persona {scout,analyst,generic}` flag should integrate into the existing multi-agent pipeline without disturbing specialists, anchor check, hallucination guard, or `pitcher-ask`.
+**Confidence:** HIGH (grounded entirely in current source; no external API/library speculation).
 
-## Recommended Architecture
+## TL;DR Recommendation
 
-### Design Principle: Filter Early, Concatenate at the Loader
+1. New module `src/pitcher_narratives/personas.py` holds persona data (frozen dataclasses + a registry dict) and a single composer function `build_writer_system_prompt(persona) -> str`.
+2. `make_pipeline_agents(provider, thinking, persona=SCOUT)` takes an optional persona argument with a default that preserves the current call graph for `analyst.py`. Writer Agent is constructed once with the composed system prompt baked in. No runtime `override()` games, no writer factory.
+3. `_run_anchor_revision_loop` stays byte-identical. It already accepts the writer Agent as a parameter, so whichever writer the caller built is whichever writer does revisions. The generic instruction in `build_revision_message` is persona-agnostic and survives unchanged.
+4. `build_writer_input` stays `str`-typed and stays shared across personas. Persona-specific output shape lives in the prompt, not the input.
+5. CLI threading: `--persona` parses in `cli.parse_args`, threads through `generate_pipeline_streaming(ctx, provider, thinking, persona, _model_override)` as a new kwarg with default `"scout"`, forwards to `_run_pipeline`, forwards to `make_pipeline_agents`.
+6. Output formatting: `# Scouting Report` heading stays as the outer wrapper for all personas. The generic persona emits sectioned markdown (`## Command`, `## Stuff`, summary table, etc.) as its capsule body. `cli.py` prints the capsule verbatim. Least-invasive.
+7. Phase order: persona data module → pipeline wiring (scout parity gate) → analyst overlay → generic overlay (with anchor tolerance + hallucination-guard regression) → CLI wiring + `--list-personas` + docs. See Phase Ordering section for dependency rationale.
 
-Game type filtering and multi-year concatenation belong in `data.py` at load time -- before `PitcherData` is constructed. Every downstream consumer (`engine.py`, `context.py`, `scout.py`, `resolver.py`) already operates on `PitcherData` fields or raw DataFrames from `data.py` exports. If filtered data enters `PitcherData`, nothing downstream needs to change.
+---
 
-This is the single most important architectural decision: **filtering happens inside the loaders, not after construction.**
+## 1. Persona Module Location & Shape
 
-### Data Flow (Current vs Proposed)
+**Decision:** New file `src/pitcher_narratives/personas.py`.
 
-```
-CURRENT:
-  statcast_2026.parquet ──> load_statcast() ──> PitcherData.statcast
-  2026-pitcher.csv ────────> load_agg_csvs() ─> PitcherData.agg_csvs
-  (single year, all game types including S/E)
+### Rejected: inline in `pipeline.py`
+`pipeline.py` is already ~1,400 lines across specialist prompts, writer prompt, data builders, agent factory, and orchestration. Adding three overlay strings plus a composer and a registry inside `pipeline.py` pushes it further toward the "everything bucket" anti-pattern. The v1.9 archive notes already flagged pipeline.py as the codebase's largest module.
 
-PROPOSED:
-  statcast_2025.parquet ─┐
-  statcast_2026.parquet ─┴─> load_statcast() ──> filter game_type ──> PitcherData.statcast
-  2025-pitcher.csv ──────┐
-  2026-pitcher.csv ──────┴─> load_agg_csvs() ──> filter game_type ──> PitcherData.agg_csvs
-  (multi-year, regular season only)
-```
+### Rejected: in `config.py`
+`config.py` is a hard constants + provider-map file (PROVIDERS, MINI_PROVIDERS, TOKEN_BUDGET_*, API_KEYS, `make_model_settings`, `cap_thinking`, `agent_kwargs`, `setup_logging`). It has zero prompt content today. Putting three large overlay strings there breaks its single responsibility ("shared constants and utilities shared by pipeline.py, analyst.py, and the CLI modules") and creates a weird import loop where pipeline.py imports prompt text from config.py.
 
-## Component Boundaries
+### Accepted: new `personas.py`
+Mirrors `signals.py` (which owns `KeySignals`, `SIGNAL_EXTRACTOR_PROMPT`, and `render_key_signals`) and `anchor.py` (which owns `ANCHOR_PROMPT`, `AnchorResult`, `AnchorWarning`, `build_anchor_message`, `build_revision_message`). Each of those modules owns "one agent role's data + prompts + helpers." Personas is the same shape: a new dimension of writer configuration.
 
-### What Changes
+### Responsibility
+- Define a `Persona` frozen dataclass (not a pydantic BaseModel — personas are static code constants, not validated input, and dataclasses keep the import graph light).
+- Define persona instances as module-level constants: `SCOUT`, `ANALYST`, `GENERIC`.
+- Define a `PERSONAS: dict[str, Persona]` registry keyed by name for CLI lookup.
+- Define `build_writer_system_prompt(persona: Persona) -> str` composer: `SHARED_WRITER_BASE + "\n\n" + persona.overlay`.
+- Define `SHARED_WRITER_BASE` as the subset of `_WRITER_PROMPT` that every persona shares (the "always explain how Pitching+ works and the decisions it made" contract, directional consistency, temporal grounding, no-fabricated-metrics, key signals contract).
+- Each persona's `.overlay` is the voice + length + shape instructions (scout's current "elite sabermetrically inclined baseball writer" framing, analyst's newsletter-teaching frame, generic's sectioned-format-with-summary-table frame).
 
-| Component | Change Type | Scope |
-|-----------|-------------|-------|
-| `data.py` | **Modified (primary)** | Multi-year paths, concat, game_type filter |
-| `scout.py` | **Modified (secondary)** | Has its own hardcoded CSV filenames + PARQUET_PATH import |
-| `engine.py` | **Modified (one line)** | Line 1563: hardcoded `2026-pitcher_type.csv` |
-| `resolver.py` | **Modified (minimal)** | Uses `PARQUET_PATH` for name table; needs multi-parquet |
-| `context.py` | **No change** | Consumes `PitcherData`, agnostic to data source |
-| `analyst.py` | **No change** | Consumes `PitcherContext`, no direct data loading |
-| `report.py` | **No change** | Consumes context/capsules, no data loading |
-| `cli.py` | **No change** | Calls `load_pitcher_data()`, interface unchanged |
-| `curator.py` | **No change** | Consumes `ScoredAppearance` list |
-| `ask_cli.py` | **No change** | Calls `load_pitcher_data()` via analyst |
-| `scout_cli.py` | **No change** | Calls `scout_appearances()`, interface unchanged |
+### Dataclass (not pydantic) rationale
+- No validation logic needed — personas are hand-authored code constants, not untrusted input.
+- No `model_dump`/`model_validate` roundtrip needed — no serialization.
+- Dataclasses import from stdlib; pydantic is heavier. The `pitcher-narratives --help` path is already careful about lazy imports (see `cli.py` lines 82-85).
+- Frozen dataclasses are hashable and safely module-level — pydantic BaseModel instances are not frozen by default and create gotchas for module-level singletons.
 
-### Component Detail
-
-#### data.py (Primary Target)
-
-**Current hardcoded state:**
-- `PARQUET_PATH = DATA_DIR / "statcast_2026.parquet"` -- single file
-- `_SEASON_CSVS` -- 4 entries, all `"2026-"` prefixed
-- `_APPEARANCE_CSVS` -- 4 entries, all `"2026-"` prefixed
-- `_ID_COLS` includes `"game_type"` already (used to exclude from metric averaging)
-
-**Changes needed:**
-
-1. **Add centralized constants** for years and excluded game types:
-   ```python
-   _YEARS = [2025, 2026]
-   _EXCLUDED_GAME_TYPES = frozenset({"S", "E"})
-   ```
-
-2. **Replace `PARQUET_PATH` with `PARQUET_PATHS`** -- a list of paths:
-   ```python
-   PARQUET_PATHS: list[Path] = [DATA_DIR / f"statcast_{y}.parquet" for y in _YEARS]
-   ```
-
-3. **Replace `_SEASON_CSVS` / `_APPEARANCE_CSVS` with year-aware generation**:
-   ```python
-   _SEASON_GRAINS = ["pitcher", "pitcher_type", "pitcher_type_platoon", "team"]
-   _APPEARANCE_GRAINS = ["pitcher_appearance", "pitcher_type_appearance",
-                          "pitcher_type_platoon_appearance", "all_pitches"]
-   ```
-
-4. **Add a shared game_type filter helper**:
-   ```python
-   def _filter_game_type(df: pl.DataFrame) -> pl.DataFrame:
-       if "game_type" in df.columns:
-           return df.filter(~pl.col("game_type").is_in(list(_EXCLUDED_GAME_TYPES)))
-       return df
-   ```
-
-5. **Update `load_statcast()`** to concat multiple parquets and filter:
-   ```python
-   def load_statcast(pitcher_id: int) -> pl.DataFrame:
-       frames = [pl.read_parquet(p) for p in PARQUET_PATHS if p.exists()]
-       if not frames:
-           raise FileNotFoundError("No statcast parquet files found")
-       df = pl.concat(frames)
-       df = _filter_game_type(df)
-       result = df.filter(pl.col("pitcher") == pitcher_id)
-       if result.is_empty():
-           raise ValueError(f"Pitcher {pitcher_id} not found")
-       return result
-   ```
-
-6. **Update `_load_csv_with_dates()`** to accept a list of filenames:
-   ```python
-   def _load_csv_with_dates(filenames: list[str], pitcher_id: int | None) -> pl.DataFrame:
-       frames = [pl.read_csv(AGGS_DIR / f) for f in filenames if (AGGS_DIR / f).exists()]
-       if not frames:
-           raise FileNotFoundError(f"No CSV files found for {filenames}")
-       df = pl.concat(frames)
-       df = _filter_game_type(df)
-       if "game_date" in df.columns:
-           df = df.with_columns(pl.col("game_date").str.to_date("%Y-%m-%d"))
-       if pitcher_id is not None and "pitcher" in df.columns:
-           df = df.filter(pl.col("pitcher") == pitcher_id)
-       return df
-   ```
-
-7. **Update `load_agg_csvs()`** to generate multi-year filename lists:
-   ```python
-   def load_agg_csvs(pitcher_id: int) -> dict[str, pl.DataFrame]:
-       result: dict[str, pl.DataFrame] = {}
-       for grain in _SEASON_GRAINS + _APPEARANCE_GRAINS:
-           filenames = [f"{y}-{grain}.csv" for y in _YEARS]
-           pid = None if grain == "team" else pitcher_id
-           result[grain] = _load_csv_with_dates(filenames, pid)
-       return result
-   ```
-
-8. **Add `load_full_agg()` export** for engine.py and scout.py:
-   ```python
-   def load_full_agg(grain: str) -> pl.DataFrame:
-       """Load full (unfiltered-by-pitcher) multi-year agg CSV, game_type filtered."""
-       filenames = [f"{y}-{grain}.csv" for y in _YEARS]
-       return _load_csv_with_dates(filenames, pitcher_id=None)
-   ```
-
-9. **`compute_season_baseline()` and `compute_pitch_type_baseline()` need no structural changes.** These already group by `pitcher` (not by season or game_type) and weight by `n_pitches`. After game_type filtering removes S/E rows upstream, the weighted averaging math remains correct. The `_ID_COLS` frozenset already includes `"game_type"` and `"season"`, so multi-year data with `season` column values [2025, 2026] will have metric columns correctly identified and averaged.
-
-10. **`load_pitcher_data()` signature stays the same:** `load_pitcher_data(pitcher_id: int, window_days: int = 30) -> PitcherData`. No new parameters. Multi-year and game_type filtering are internal to the loaders.
-
-#### resolver.py (Minimal Change)
-
-**Current:** Imports `PARQUET_PATH` from `data.py`, reads single parquet for name table.
-
-**Change:** Import `PARQUET_PATHS`, concat:
+### Proposed signatures
 ```python
-from pitcher_narratives.data import PARQUET_PATHS
+# personas.py
+from dataclasses import dataclass
 
-def _build_name_table() -> _NameTable:
+@dataclass(frozen=True)
+class Persona:
+    name: str                       # "scout", "analyst", "generic"
+    display_name: str               # "Scout" for --list-personas
+    overlay: str                    # voice/length/shape system-prompt fragment
+    description: str                # one-liner for --list-personas help text
+
+SHARED_WRITER_BASE: str             # module-level constant
+SCOUT: Persona                      # module-level singleton
+ANALYST: Persona
+GENERIC: Persona
+PERSONAS: dict[str, Persona]        # {"scout": SCOUT, "analyst": ANALYST, "generic": GENERIC}
+DEFAULT_PERSONA: Persona = SCOUT
+
+def build_writer_system_prompt(persona: Persona) -> str: ...
+def get_persona(name: str) -> Persona: ...  # raises ValueError with known keys on miss
+```
+
+### Confidence: HIGH
+Mirrors two existing precedents (`signals.py`, `anchor.py`). No novel patterns.
+
+---
+
+## 2. Writer Agent Construction
+
+**Decision:** Option (a) with a default. `make_pipeline_agents(provider, thinking, persona=SCOUT)` takes an optional persona and bakes the composed system_prompt into the writer Agent at construction time.
+
+### Why option (a) wins
+
+#### Matches the existing factory contract exactly
+`pipeline.py:1112-1162` constructs agents with `system_prompt=...` at instantiation. Every other agent in `PipelineAgents` follows this pattern. Option (a) extends the existing pattern with a single new parameter — one argument flows in, one Agent flows out, the rest of the pipeline is untouched.
+
+```python
+def make_pipeline_agents(
+    provider: str = "gemini",
+    thinking: ThinkingEffort = "high",
+    persona: Persona = DEFAULT_PERSONA,  # NEW
+) -> PipelineAgents:
     ...
-    frames = [pl.read_parquet(p, columns=["pitcher", "player_name"])
-              for p in PARQUET_PATHS if p.exists()]
-    df = pl.concat(frames)
-    unique = df.unique(subset=["pitcher"])
+    writer_prompt = build_writer_system_prompt(persona)  # NEW
     ...
+    return PipelineAgents(
+        ...
+        writer=_writer(writer_prompt),  # was: _writer(_WRITER_PROMPT)
+        ...
+    )
 ```
 
-No game_type filter needed here -- name resolution should work for all pitchers regardless of game type. A pitcher who only appeared in spring training should still be resolvable (the downstream data just will not have regular-season rows for them, and `load_statcast` will raise `ValueError`).
+#### The default matters for `analyst.py`
+`analyst.py:618` calls `make_pipeline_agents(provider, thinking)` with two positional args as part of `pitcher-ask --pipeline`. The milestone explicitly forbids touching `ask_cli.py` or `analyst.py`. Defaulting `persona=SCOUT` in the factory signature means `analyst.py`'s existing call continues to work byte-identically. Without the default, the milestone's "no cross-cutting changes" quality gate fails.
 
-#### scout.py (Secondary Target)
+#### Revision loop compatibility is free
+`_run_anchor_revision_loop` already takes the writer Agent as a parameter (`writer_agent: Agent[None, str]`). Whatever writer Agent the caller constructed is the one that does revisions. If `make_pipeline_agents` baked the analyst overlay into the writer prompt, the revision loop automatically gets an analyst-voiced revision. Zero changes to `anchor.py`, zero changes to the revision loop, zero changes to `build_revision_message`.
 
-**Current state:** Has its own `_load_csv()` helper with 4 hardcoded `"2026-"` filenames (lines 115-118), and imports `PARQUET_PATH` (line 277). Also filters on `level == "MLB"` (lines 121-124) but does not filter game_type.
+### Why option (b) loses
+A writer factory or a `dict[persona_name, Agent]` adds a level of indirection for no benefit. Only one writer runs per pipeline invocation — pre-constructing three and picking one is wasted work and wasted import-time token budget (system prompts are potentially 4-10KB each at the mid-case). It also forces `_run_pipeline` to carry the persona name through to pick the right agent, re-introducing the coupling option (a) avoids.
 
-**Changes needed:**
+### Why option (c) loses
+Runtime `Agent.override(system_prompt=...)` or `with_instructions(...)` is an advanced pydantic-ai pattern that the Stack researcher is investigating in parallel. Even if it exists and works:
+- It's a mutation pattern — harder to test, harder to reason about, harder to snapshot in traces.
+- It couples the pipeline orchestrator to the persona concept. Today the orchestrator only knows "a writer agent." Option (c) would require the orchestrator to know which persona to override with, which is strictly worse factoring than option (a) where the persona is fully absorbed at construction time.
+- The existing codebase does not use `Agent.override` anywhere (grep confirms — the only `override` matches are `_model_override` parameters and the word "override" in prose comments). Introducing a new pydantic-ai concept for no benefit violates "least-invasive path."
 
-1. **Replace 4 hardcoded CSV loads** with the new `load_full_agg()` from data.py:
-   ```python
-   from pitcher_narratives.data import PARQUET_PATHS, load_full_agg
-   
-   def scout_appearances(...) -> list[ScoredAppearance]:
-       app_df = load_full_agg("pitcher_appearance")
-       app_type_df = load_full_agg("pitcher_type_appearance")
-       season_type_df = load_full_agg("pitcher_type")
-       season_df = load_full_agg("pitcher")
-   ```
-   This eliminates scout.py's `_load_csv()` helper entirely. Game_type filtering comes from `load_full_agg` for free.
+### Confidence: HIGH
+The factory pattern is the dominant idiom in `make_pipeline_agents`; option (a) slots in cleanly. The analyst.py constraint is load-bearing and confirmed by direct grep.
 
-2. **Add game_type filter alongside existing `level == "MLB"` filter** (lines 121-124). After switching to `load_full_agg()`, game_type is already filtered, so these lines only need the `level` filter. But verify -- if `load_full_agg` handles game_type, scout only needs `level`.
+---
 
-3. **Replace `PARQUET_PATH` import** with `PARQUET_PATHS` in `_compute_velo_baselines()` (line 277-284):
-   ```python
-   frames = [pl.read_parquet(p, columns=[...]) for p in PARQUET_PATHS if p.exists()]
-   df = pl.concat(frames)
-   # game_type filter for statcast too
-   df = df.filter(~pl.col("game_type").is_in(["S", "E"]))
-   ```
-   Note: `_compute_velo_baselines` loads specific columns from parquet and does not go through `load_statcast()`, so it needs its own game_type filter or should use the shared `_filter_game_type` helper. Since scout.py already imports from `data.py`, importing `_EXCLUDED_GAME_TYPES` or using `load_full_agg` patterns works. But the parquet load here is not a CSV -- it is the raw statcast parquet for velocity computation. Best approach: import `_filter_game_type` (or make it public as `filter_game_type`) from data.py and apply it after concat.
+## 3. Revision Loop Compatibility
 
-#### engine.py (One-Line Fix)
+**Decision:** Zero changes to `_run_anchor_revision_loop`, zero changes to `anchor.py`.
 
-**Line 1563:** `full_pitcher_type_df = pl.read_csv(AGGS_DIR / "2026-pitcher_type.csv")`
-
-This loads the full (unfiltered-by-pitcher) pitcher_type CSV for league-wide xRV100 percentile computation in `_compute_xrv100_percentile`.
-
-**Fix:** Import and use `load_full_agg`:
+### The loop is already persona-agnostic
+`pipeline.py:1209-1276` signature:
 ```python
-from pitcher_narratives.data import load_full_agg
-
-# In compute_execution_metrics():
-full_pitcher_type_df = load_full_agg("pitcher_type")
+async def _run_anchor_revision_loop(
+    *,
+    anchor_agent: "Agent[None, AnchorResult]",
+    writer_agent: "Agent[None, str]",
+    synthesis: str,
+    capsule: str,
+    max_revisions: int,
+    _model_override: Any = None,
+) -> tuple[str, AnchorResult, int]:
 ```
 
-This single change gets multi-year concat + game_type filtering for free.
+The loop receives the writer Agent as an injected dependency. It has no idea whether that writer has the scout overlay, the analyst overlay, or the generic overlay baked in. It just calls `writer_agent.run(user_prompt=build_revision_message(...))` and trusts the Agent to speak in its own voice.
 
-## Patterns to Follow
+This is *exactly* the shape option (a) needs. Nothing to refactor.
 
-### Pattern 1: Filter at the Gate
+### Is `build_revision_message` generic enough across all three personas?
+The instruction text (`anchor.py:113-116`):
+> "Revise the capsule to address ONLY the warnings listed above. Preserve the voice, structure, and all unflagged material. Do not add new analysis or metrics not in the briefing."
 
-**What:** Apply game_type exclusion (`~game_type.is_in(["S", "E"])`) inside every load function, not in consumer code.
+Yes, this is generic enough. It says "preserve the voice" (personas supply their own voice via system prompt), "preserve the structure" (personas emit different structures and this instruction lets each persona preserve its own), "preserve unflagged material." None of this is scout-specific.
 
-**When:** Always. Every function that reads from parquet or CSV should strip spring training and exhibition data before returning.
+### The real risk is the anchor check, not the revision loop
+`ANCHOR_PROMPT` (`anchor.py:26-53`) was written assuming the writer emits prose paragraphs. It knows about:
+- Missed key signals (persona-agnostic — all personas consume the same KeySignals)
+- Unsupported claims (persona-agnostic)
+- Directional errors (persona-agnostic)
+- Overstated confidence (persona-agnostic)
 
-**Why:** Downstream code (engine, context, scout, report) never sees non-regular-season data. No risk of a forgotten filter in one code path producing tainted baselines. The `compute_season_baseline` docstring currently says "Combines game_type rows (S/C/R)" -- after filtering, it only sees R and C (championship/postseason), which is correct.
+The anchor prompt does NOT enforce "no bullet points" or "no headers" or "no tables." So in principle the prompt is persona-neutral. BUT — the `generic` persona emits a summary table INSIDE the capsule, and the anchor checker has never seen a structured table before. There's a non-zero risk the anchor agent returns a false-positive warning like "UNSUPPORTED: the capsule contains a '|—|—|' row not in the synthesis" or trips on numeric cells it treats as novel metric claims.
 
-**Implementation:**
+**Recommendation:** For the generic persona phase specifically, add a single sentence to `ANCHOR_PROMPT` or to the anchor user-message builder that says "the capsule may contain markdown headings and tables; validate their semantic content against the synthesis, not their formatting." This is the one place where the anchor check touches persona concerns, and it should be scoped to the phase that introduces the risk. Everything else stays intact.
+
+An alternative is to pass a "format hint" through `build_anchor_message` (e.g., `build_anchor_message(synthesis, capsule, capsule_format="sectioned")`) and let the anchor prompt branch on it. This is more invasive but cleaner. **Flag for planner:** choose between (i) a one-line static prompt addendum that's always active, or (ii) a conditional format hint threaded through. (i) is least-invasive; (ii) is most principled. I lean toward (i) because the addendum costs nothing when the capsule is plain prose.
+
+### Confidence: HIGH on loop compatibility, MEDIUM on anchor-check tolerance.
+The loop compatibility claim is verified by reading the function signature directly. The anchor-tolerance claim is a prediction about LLM behavior that should be validated with goldens in Phase D.
+
+---
+
+## 4. `build_writer_input` Changes
+
+**Decision:** No changes. The input stays `str`, stays shared across all personas.
+
+### Rationale
+`build_writer_input` at `pipeline.py:782-808` currently composes:
+1. A pitcher header
+2. An optional rendered Key Signals section (from `render_key_signals(key_signals)`)
+3. Five specialist-output sections in a fixed order (stuff, location, run value, trends, game shape)
+
+None of these pieces are persona-specific. They are the raw material. The persona is about how the writer *renders* that raw material, not about which raw material the writer receives.
+
+Specifically:
+- **Key signals rendering:** `render_key_signals` in `signals.py:53-64` produces a labeled bullet list. This is the briefing format the writer reads, not the output format the user reads. The analyst persona doesn't need a different input rendering — it needs a different output format (which comes from its system prompt).
+- **Specialist order:** The writer prompt explicitly says "CRITICAL: These are INGREDIENTS, not sections to preserve." The fixed order (stuff → location → runvalue → trends → game_shape) is the writer's buffet, not the user's menu. Reordering them per persona would make the three personas solve different analytical problems, which is not what personas are for.
+- **Bullets vs paragraphs in signals:** The key signals section is always a bulleted briefing in the writer's input. The generic persona rendering a table in its output is an output-shape decision (persona overlay), not an input-shape decision.
+- **UserPrompt vs str:** The writer input is str today and the specialist inputs are UserPrompt (with CachePoints) for Gemini context caching. There's no persona reason to promote the writer input to UserPrompt — the persona doesn't affect cache boundaries. The only reason to change this is if we discover that caching specialist outputs across personas is valuable, which is out of scope for v1.10.
+
+### The one place persona *could* touch the input
+If the generic persona's "summary table" needs to cite specific pre-computed values that the specialists would not naturally mention, the writer would need those values explicitly in the input. For example, a table row like "Velocity | 94.2 mph | +0.3 vs season" requires the writer to know the velocity delta as a distinct fact, not just as prose buried in a specialist's paragraph.
+
+**Flag for planner:** inspect the proposed generic-persona table schema during Phase D. If the table needs values that aren't already surfaced cleanly in the specialist outputs, two options:
+1. Extract the needed values from `ctx` directly (low cost, keeps input unified) and append them to `build_writer_input` as a "Summary Table Facts" block that all personas ignore except generic.
+2. Pipe the specialist outputs through a small extraction step. More architectural churn.
+
+Default to option 1. Don't implement until the generic overlay is drafted and the table columns are nailed down.
+
+### Confidence: HIGH on "no changes needed for scout + analyst." MEDIUM on "no changes needed for generic" — depends on final table spec.
+
+---
+
+## 5. CLI Threading Path
+
+**Decision:** `persona` is a plain string kwarg that threads through cli → generate_pipeline_streaming → _run_pipeline → make_pipeline_agents, resolved to a `Persona` object at the `make_pipeline_agents` boundary.
+
+### Full path
+
+**`cli.py:parse_args`** — add the argparse argument, choices taken from `PERSONAS.keys()`:
 ```python
-_EXCLUDED_GAME_TYPES = frozenset({"S", "E"})
-
-def _filter_game_type(df: pl.DataFrame) -> pl.DataFrame:
-    """Remove spring training and exhibition rows if game_type column exists."""
-    if "game_type" in df.columns:
-        return df.filter(~pl.col("game_type").is_in(list(_EXCLUDED_GAME_TYPES)))
-    return df
+from pitcher_narratives.personas import PERSONAS
+parser.add_argument(
+    "--persona",
+    choices=sorted(PERSONAS.keys()),
+    default="scout",
+    help="Writer voice and output shape (default: scout)",
+)
 ```
+Also add `--list-personas` as an `action="store_true"` flag that prints the registry and exits.
 
-### Pattern 2: Year-Agnostic Consumers
-
-**What:** No code outside `data.py` should know about year prefixes or file counts.
-
-**When:** Always. If a new year (2027) is added, only `data.py`'s `_YEARS` list should change.
-
-**Why:** Single point of configuration. The rest of the codebase operates on concatenated DataFrames and does not care how many years contributed to them.
-
-### Pattern 3: Graceful Degradation on Missing Files
-
-**What:** If a parquet or CSV file for a given year does not exist, skip it silently and load available years.
-
-**When:** During development and data ingestion when years arrive incrementally.
-
-**Example:**
+**`cli.py:main`** — pass `args.persona` into the pipeline call:
 ```python
-frames = [pl.read_parquet(p) for p in PARQUET_PATHS if p.exists()]
-if not frames:
-    raise FileNotFoundError("No statcast parquet files found")
-df = pl.concat(frames)
+pipe_result = generate_pipeline_streaming(
+    ctx,
+    provider=args.provider,
+    thinking=args.thinking,
+    persona=args.persona,  # NEW
+    _model_override=model_override,
+)
 ```
 
-**Why:** Fail loud when no data exists (zero frames = error). Degrade gracefully when partial data exists (one year missing = proceed with available data).
+**`pipeline.generate_pipeline_streaming`** — new kwarg with default `"scout"` for backward compatibility with `analyst.py`:
+```python
+def generate_pipeline_streaming(
+    ctx: PitcherContext,
+    *,
+    provider: str = "gemini",
+    thinking: ThinkingEffort = "high",
+    persona: str = "scout",  # NEW
+    _model_override: Any = None,
+) -> PipelineResult:
+```
 
-### Pattern 4: Centralized Year Configuration
+**`pipeline._run_pipeline`** — same shape:
+```python
+async def _run_pipeline(
+    ctx: PitcherContext,
+    *,
+    provider: str = "gemini",
+    thinking: ThinkingEffort = "high",
+    persona: str = "scout",  # NEW
+    _model_override: Any = None,
+) -> PipelineResult:
+    ...
+    from pitcher_narratives.personas import get_persona
+    persona_obj = get_persona(persona)  # raises ValueError on bad name
+    agents = make_pipeline_agents(provider, thinking, persona_obj)
+```
 
-**What:** A single `_YEARS` constant in `data.py` drives all file discovery.
+**`pipeline.make_pipeline_agents`** — accepts the resolved `Persona` object:
+```python
+def make_pipeline_agents(
+    provider: str = "gemini",
+    thinking: ThinkingEffort = "high",
+    persona: "Persona" = ...,  # see below
+) -> PipelineAgents:
+```
 
-**When:** Always. No magic year detection from filesystem -- explicit is better.
+### Why string at the boundary, Persona object inside
+- **CLI and public API**: strings are stable, simple, and don't leak internal types. `generate_pipeline_streaming` is the public function; it should not force callers to import `Persona` from `personas.py`.
+- **Factory internals**: the factory needs the overlay string and the name, which `Persona` carries. Resolving the string to the object at the `_run_pipeline` boundary is the correct seam.
+- **`analyst.py` unchanged**: `analyst.py:618` calls `make_pipeline_agents(provider, thinking)` — the `persona` parameter defaults to the SCOUT singleton, `analyst.py` needs zero changes. For `make_pipeline_agents` to use a module-level `SCOUT` singleton as a default, import personas.py at the top of pipeline.py (negligible overhead, same module layer).
 
-**Why:** Predictable behavior. An accidental `statcast_2024.parquet` in the data dir will not silently load stale data. Adding a new year is a one-line change with clear intent.
+### Default value gotcha
+The default `persona: "Persona" = SCOUT` in `make_pipeline_agents` creates a module-load-order dependency (pipeline.py must import personas.py before defining the function signature). This is fine — `personas.py` has no pipeline.py imports, so the dependency is one-way. Verify during implementation by running the test suite after adding the import.
 
-## Anti-Patterns to Avoid
+### `--list-personas`
+Lightweight: prints name, display_name, one-liner description from the registry and exits 0. No pipeline work.
 
-### Anti-Pattern 1: Filtering in PitcherData Consumers
+### Confidence: HIGH
+Threading path is mechanical and follows existing patterns (`--provider`, `--thinking` have the same shape).
 
-**What:** Letting engine.py or context.py filter game_type from DataFrames they receive.
+---
 
-**Why bad:** Duplicated filter logic across 5+ modules. One missed filter means spring training data contaminates baselines or scout scores. The current `compute_season_baseline` averages across game_type rows by design -- if S/E rows are present, they get averaged in, silently biasing metrics toward spring training performance.
+## 6. Output Formatting (CLI Heading Stability)
 
-**Instead:** Filter once in `data.py` loaders. Consumers get clean data.
+**Decision:** `# Scouting Report` stays as the outer wrapper heading for all three personas. The capsule body is whatever the persona's writer prompt emits. `cli.py` prints the capsule verbatim — no restructuring.
 
-### Anti-Pattern 2: Changing PitcherData's Interface
+### Current `cli.py:main` output sections (lines 152-218):
+1. `# Scouting Report` (wrapper heading)
+2. `<streamed capsule from writer>` (currently plain prose)
+3. `# Executive Summary` + bullets
+4. `# Stuff Analysis` + specialist output
+5. `# Data Audit` + audit flags
+6. `# Anchor Check` + revision status
+7. `# Hallucination Check` (only if dirty)
 
-**What:** Adding `game_types: list[str]` or `years: list[int]` fields to `PitcherData`.
+### The generic persona's inner format
+The milestone spec says generic wants "section breakouts + a summary table INSIDE the capsule, between `# Scouting Report` and the next heading." Translation: the writer's output *is* the sectioned content. Scout emits paragraphs, analyst emits paragraphs (newsletter voice), generic emits markdown with `##` sub-headings and a table.
 
-**Why bad:** `PitcherData` is a value object -- a bundle of processed data for a single pitcher. It should not carry metadata about how it was filtered. Every consumer would need to check these fields or ignore them. The dataclass has 9 fields today and is passed through engine, context, report, analyst. Adding filter metadata is noise.
+### Why least-invasive is the right call
+- `cli.py` already treats the capsule as an opaque streamed blob via `stream.stream_text(delta=True)`. It doesn't parse it, doesn't reformat it, doesn't re-heading it.
+- The downstream sections (`# Executive Summary`, `# Stuff Analysis`, etc.) are CLI-owned wrapper content — they're stable across personas because they render pipeline metadata (audit flags, revision counts), not writer output.
+- The generic persona's `##` sub-headings nest correctly under `# Scouting Report`. Markdown is hierarchical; `# Scouting Report` → `## Command` → (content) → `## Stuff` → (content) → table works out of the box.
 
-**Instead:** `load_pitcher_data()` applies filtering during construction. Downstream code receives clean data and does not second-guess it.
+### What NOT to do
+- Do not add a `capsule_format` field to `PipelineResult` and branch in `cli.py`. That pushes persona awareness up into the CLI and creates a new surface area for regressions.
+- Do not restructure `cli.py` to emit different heading sequences per persona. The milestone spec says `scout` must be byte-identical, and different heading sequences break that immediately.
+- Do not inject the summary table after-the-fact in `cli.py`. The writer composes the capsule; the CLI prints it. Splitting responsibility is a maintenance nightmare.
 
-### Anti-Pattern 3: Dynamic Year Discovery from Filesystem
+### The one structural risk
+If the generic persona emits `# Scouting Report` or `# Executive Summary` headings INSIDE its capsule (because it's a large LLM and those tokens are "natural" closing sections), the output becomes garbled. **Mitigation:** the generic persona's overlay system prompt must explicitly forbid `#` (h1) headings inside the capsule. Only `##` (h2) and below. This is a one-line constraint in the overlay string.
 
-**What:** Scanning `DATA_DIR` for `statcast_*.parquet` and auto-loading all matches.
+**Flag for planner:** the generic overlay must include: "Use `##` and `###` markdown headings for sections. Never use `#` (h1) — the outer report already owns h1."
 
-**Why bad:** Unpredictable. A leftover test file or backup would silently contaminate data. Makes debugging harder when you cannot tell which years loaded.
+### Confidence: HIGH on least-invasive path. MEDIUM on "LLM won't emit h1 headings even with a negative constraint" — this is a known failure mode and should be covered by a regex assertion in a golden test.
 
-**Instead:** Explicit `_YEARS = [2025, 2026]`. Add new years consciously.
+---
 
-### Anti-Pattern 4: Separate Code Paths for Each Year
+## 7. Phase Ordering
 
-**What:** `if year == 2025: load_2025_data()` style branching.
+**Decision:** The proposed A → B → C → D → E ordering is correct, with one refinement and one dependency callout.
 
-**Why bad:** O(n) code for O(1) logic. Concat handles multi-year data in a single code path.
+### Recommended order
 
-**Instead:** List of paths, concat, filter, done.
+**Phase A: Persona data module**
+- Create `src/pitcher_narratives/personas.py` with `Persona` dataclass, `SHARED_WRITER_BASE` (extracted from `_WRITER_PROMPT`), `SCOUT` constant only, `PERSONAS` registry, `DEFAULT_PERSONA`, `build_writer_system_prompt`, `get_persona`.
+- Tests: unit test that `build_writer_system_prompt(SCOUT)` produces a string equivalent to today's `_WRITER_PROMPT` (byte-for-byte or semantically equivalent, per the milestone's scout-preservation gate).
+- No pipeline integration yet. Pipeline still uses `_WRITER_PROMPT` inline.
+- **Exit gate:** test suite still green; personas.py importable; `SHARED_WRITER_BASE + SCOUT.overlay == _WRITER_PROMPT` (or a documented delta).
 
-### Anti-Pattern 5: Making game_type Filtering Configurable
+**Phase B: Pipeline integration (scout parity)**
+- Modify `pipeline.py`: delete `_WRITER_PROMPT`, import from personas.py, add `persona` param to `make_pipeline_agents` with default SCOUT singleton, add `persona` kwarg to `_run_pipeline` and `generate_pipeline_streaming` with default `"scout"`.
+- Do NOT touch `cli.py` yet. Do NOT touch `analyst.py`.
+- Tests: existing pipeline tests still pass. Add a test that explicitly asserts `make_pipeline_agents("gemini", "high")` (no persona arg) and `make_pipeline_agents("gemini", "high", SCOUT)` produce writer agents with identical system prompts.
+- Add a golden-output regression test: run the pipeline against a fixture pitcher with `--persona scout` and verify the output diff against a pre-v1.10 baseline is within tolerance.
+- **Exit gate:** scout byte-parity regression test passes. `analyst.py` `pitcher-ask --pipeline` test still passes (confirms analyst.py's call site still works without modification).
 
-**What:** Adding a `game_types: list[str] = ["R"]` parameter to `load_pitcher_data()`.
+**Phase C: Analyst persona**
+- Add `ANALYST` to `personas.py` with its overlay string and a teaching-voice description.
+- No pipeline changes (the plumbing already routes persona by name).
+- Tests: golden output for `--persona analyst` (run one fixture pitcher, snapshot the output, verify the voice differs from scout, verify hallucination guard still clean, verify anchor check still clean).
+- Early hook for wiring: Phase C can be run without CLI wiring by using `generate_pipeline_streaming(ctx, persona="analyst")` directly in a test. This lets us validate the analyst persona before committing to CLI surface area.
+- **Exit gate:** analyst persona produces clean output against the hallucination guard; anchor check clean; tone-differs-from-scout golden matches.
 
-**Why bad:** For this project, the policy is clear and permanent: exclude spring training and exhibition. Making it configurable adds API surface with no current use case. If a future feature needs spring training data, it can call `pl.read_parquet()` directly.
+**Phase D: Generic persona (highest-risk phase)**
+- Add `GENERIC` to `personas.py` with its overlay string, including the "no h1 headings" constraint and the "use tables for summary" instruction.
+- **Anchor-check tolerance work happens here, not earlier:** add the one-line addendum to `ANCHOR_PROMPT` in `anchor.py` that tells the anchor agent to validate semantic content of markdown tables and headings, not their formatting. This is the single touch to `anchor.py` in the entire milestone.
+- **Hallucination-guard regression work happens here:** the generic persona's sectioned format makes it easier to hallucinate category labels ("## Putaway Pitch" with no supporting data from the specialists). Add targeted golden tests that check the generic capsule doesn't cite metrics or pitch behaviors that the specialists didn't mention.
+- If `build_writer_input` needs to surface additional values for the summary table (see section 4), that work happens here. Add to `build_writer_input` only if the table cannot be filled from existing specialist text.
+- **Exit gate:** generic persona produces clean output; no h1 headings in capsule; summary table renders; hallucination guard is clean; anchor check is clean (including table content); golden passes.
 
-**Instead:** Hardcode the exclusion in `_EXCLUDED_GAME_TYPES`. Simple, clear, not configurable.
+**Phase E: CLI wiring + --list-personas + docs**
+- Add `--persona` and `--list-personas` to `cli.parse_args`.
+- Thread `args.persona` into `generate_pipeline_streaming`.
+- Update README.md persona documentation under `pitcher-narratives` section (the flag table around README line 67-75).
+- Update METHODOLOGY.md to mention persona-aware writer prompts (line ~400 near the make_pipeline_agents description).
+- Tests: CLI integration tests for `--persona scout`, `--persona analyst`, `--persona generic`, `--list-personas`, invalid persona name → exit 2.
+- **Exit gate:** `pitcher-narratives -p 657277` (no persona flag) produces scout output byte-identical to pre-v1.10; `pitcher-narratives -p 657277 --persona generic` produces sectioned output; `pitcher-narratives --list-personas` lists the three personas.
 
-## Integration Points (Exhaustive Inventory)
+### Should CLI wiring come earlier?
+**No.** The default-argument strategy means the personas are reachable from the pipeline before the CLI knows about them. Running the pipeline via a test or a REPL with `persona="analyst"` is sufficient to validate Phases C and D without committing to CLI surface area. If Phase C or D reveals that the analyst/generic persona doesn't work and needs different plumbing, the CLI change hasn't shipped yet and there's nothing to roll back.
 
-Every location in the codebase that references year-specific files or would be affected by multi-year / game_type changes:
+This also provides a useful "escape hatch": if the generic persona fails hard in Phase D, Phase E can ship with only scout + analyst available via `--persona`, and generic stays behind a feature flag until later. That optionality is worth preserving until the last phase.
 
-| File | Line(s) | Current Code | Change Required |
-|------|---------|--------------|-----------------|
-| `data.py` | 34 | `PARQUET_PATH = DATA_DIR / "statcast_2026.parquet"` | Replace with `PARQUET_PATHS` list |
-| `data.py` | 39-44 | `_SEASON_CSVS` dict, `"2026-"` prefixed | Generate from `_YEARS` x `_SEASON_GRAINS` |
-| `data.py` | 45-50 | `_APPEARANCE_CSVS` dict, `"2026-"` prefixed | Generate from `_YEARS` x `_APPEARANCE_GRAINS` |
-| `data.py` | 82-99 | `_load_csv_with_dates(filename: str, ...)` | Accept `filenames: list[str]`, concat, filter |
-| `data.py` | 102-118 | `load_statcast()` reads single parquet | Read `PARQUET_PATHS`, concat, filter game_type |
-| `data.py` | 131-147 | `load_agg_csvs()` iterates single-file dicts | Iterate multi-file grain lists |
-| `data.py` | 179-202 | `compute_season_baseline()` | No structural change needed |
-| `data.py` | 205-230 | `compute_pitch_type_baseline()` | No structural change needed |
-| `engine.py` | 1563 | `pl.read_csv(AGGS_DIR / "2026-pitcher_type.csv")` | Use `load_full_agg("pitcher_type")` |
-| `scout.py` | 115 | `_load_csv("2026-pitcher_appearance.csv")` | Use `load_full_agg("pitcher_appearance")` |
-| `scout.py` | 116 | `_load_csv("2026-pitcher_type_appearance.csv")` | Use `load_full_agg("pitcher_type_appearance")` |
-| `scout.py` | 117 | `_load_csv("2026-pitcher_type.csv")` | Use `load_full_agg("pitcher_type")` |
-| `scout.py` | 118 | `_load_csv("2026-pitcher.csv")` | Use `load_full_agg("pitcher")` |
-| `scout.py` | 121-124 | `level == "MLB"` filter only | Game_type handled by `load_full_agg`; keep `level` filter |
-| `scout.py` | 277-284 | `PARQUET_PATH` import + single read | Use `PARQUET_PATHS`, concat, filter game_type |
-| `resolver.py` | 18 | `from pitcher_narratives.data import PARQUET_PATH` | Import `PARQUET_PATHS` |
-| `resolver.py` | 110 | `pl.read_parquet(PARQUET_PATH, ...)` | Concat from `PARQUET_PATHS` (no game_type filter) |
+### Dependency notes
+- Phase A blocks B (B imports from personas.py).
+- Phase B blocks C and D (C and D add overlays to personas.py but rely on the pipeline being persona-aware).
+- C and D are **independent** of each other and can run in parallel if the planner wants to split them across two sub-phases or two contributors. They share no code.
+- Phase E blocks on B, C, and D.
 
-**Total: 17 locations across 4 files.** context.py, analyst.py, report.py, cli.py, ask_cli.py, curator.py, scout_cli.py need zero changes.
+### What I'd add to the plan
+1. **A hard byte-parity test between Phase A and Phase B.** Without it, you can't tell whether scout parity broke during the prompt extraction. Add a test that constructs a scout writer agent via Phase B's factory and diffs its system_prompt against a snapshot of `_WRITER_PROMPT` stored in a fixture file.
+2. **An early spike in Phase A** to decide whether `SHARED_WRITER_BASE` is literally a substring of `_WRITER_PROMPT` or a rewrite. A substring is cheapest and safest; a rewrite risks silent scout regressions. Default to substring.
+3. **A hallucination-guard test fixture specific to the generic persona** because the sectioned format has never been exercised. Add a known-clean capsule and a known-dirty capsule (with fabricated `## Putaway Pitch` section) and assert the guard flags the dirty one. This validates the guard still works against the new format.
 
-## New Exports from data.py
+### Confidence: HIGH
+Dependency graph is mechanical. Phase D's risk flags are genuine and grounded in the anti-hallucination design of the pipeline.
 
-After changes, `data.py` should export these new items:
+---
 
-| Export | Type | Purpose | Consumers |
-|--------|------|---------|-----------|
-| `PARQUET_PATHS` | `list[Path]` | Multi-year parquet paths | resolver.py, scout.py |
-| `load_full_agg(grain)` | `function` | Load unfiltered multi-year agg CSV with game_type filter | engine.py, scout.py |
+## Files: New, Modified, and Don't-Touch
 
-Existing exports (`PitcherData`, `load_statcast`, `load_agg_csvs`, `load_pitcher_data`, `load_run_values`, `RV_DF_PATH`, etc.) keep their signatures unchanged. `load_pitcher_data(pitcher_id, window_days)` does not gain new parameters.
+### NEW
+| File | Responsibility |
+|---|---|
+| `src/pitcher_narratives/personas.py` | `Persona` dataclass, `SHARED_WRITER_BASE`, `SCOUT`/`ANALYST`/`GENERIC` constants, `PERSONAS` registry, `build_writer_system_prompt`, `get_persona`. |
+| `tests/test_personas.py` | Unit tests for persona composer, registry lookup, scout byte-parity snapshot. |
+| `tests/fixtures/writer_prompt_scout.txt` | Snapshot of pre-v1.10 `_WRITER_PROMPT` for scout parity test. |
 
-Internal additions (not exported):
-- `_YEARS: list[int]` -- year list
-- `_EXCLUDED_GAME_TYPES: frozenset[str]` -- game types to exclude
-- `_SEASON_GRAINS: list[str]` -- season-level CSV grain names
-- `_APPEARANCE_GRAINS: list[str]` -- appearance-level CSV grain names  
-- `_filter_game_type(df)` -- shared filter helper
+### MODIFIED
+| File | Changes |
+|---|---|
+| `src/pitcher_narratives/pipeline.py` | Delete `_WRITER_PROMPT`, import from personas.py, add `persona` param to `make_pipeline_agents`, add `persona` kwarg to `_run_pipeline` and `generate_pipeline_streaming`. |
+| `src/pitcher_narratives/cli.py` | Add `--persona` and `--list-personas` argparse args, thread `args.persona` into `generate_pipeline_streaming`. |
+| `src/pitcher_narratives/anchor.py` | **Phase D only.** One-line addendum to `ANCHOR_PROMPT` to tolerate tables and headings semantically. |
+| `tests/test_pipeline.py` | Add persona-parity tests, persona-threading tests. |
+| `tests/test_cli.py` | Add CLI arg tests for `--persona`. |
+| `README.md` | Document `--persona` flag in the `pitcher-narratives` section. |
+| `METHODOLOGY.md` | Mention persona-aware writer prompts in the pipeline architecture section. |
 
-## Suggested Build Order
+### DON'T TOUCH
+Explicit call-outs from the milestone context, verified against the codebase:
+- `src/pitcher_narratives/ask_cli.py` — Q&A CLI, milestone explicitly says untouched.
+- `src/pitcher_narratives/analyst.py` — Q&A agent. Calls `make_pipeline_agents(provider, thinking)` at line 618; our default-argument strategy preserves this call site.
+- `src/pitcher_narratives/scout.py` — Appearance scoring, unrelated to writer.
+- `src/pitcher_narratives/scout_cli.py` — Scout CLI, unrelated.
+- `src/pitcher_narratives/resolver.py` — Name resolver, unrelated.
+- `src/pitcher_narratives/data.py` — Data loading, unrelated.
+- `src/pitcher_narratives/engine.py` — Computation, unrelated.
+- `src/pitcher_narratives/context.py` — Context assembly, unrelated.
+- `src/pitcher_narratives/signals.py` — Shared by all personas; `KeySignals` and `render_key_signals` stay identical.
+- Specialist prompts in `pipeline.py` (`_STUFF_SPECIALIST_PROMPT`, `_LOCATION_SPECIALIST_PROMPT`, etc.) — personas are writer-only.
+- `_DATA_AUDITOR_PROMPT`, `_EXECUTIVE_SUMMARY_PROMPT` — both shared across personas.
+- Hallucination guard (`check_hallucinated_metrics` in pipeline.py) — shared, unchanged.
 
-Build order respects dependency flow: `data.py` is the foundation everything imports from.
+---
 
-| Step | What | Why This Order | Risk |
-|------|------|----------------|------|
-| 1 | `data.py`: Add `_YEARS`, `_EXCLUDED_GAME_TYPES`, `_filter_game_type`, `PARQUET_PATHS`, grain lists | Foundation constants everything else needs | Low -- additive, no existing behavior changes yet |
-| 2 | `data.py`: Update `_load_csv_with_dates()` to accept/concat multiple filenames | Internal helper used by `load_agg_csvs` and new `load_full_agg` | Medium -- changes internal API; `load_agg_csvs` must be updated in same step |
-| 3 | `data.py`: Update `load_statcast()` for multi-parquet + game_type filter | Feeds `PitcherData.statcast` and `classify_appearances` | Medium -- behavioral change; existing tests should verify |
-| 4 | `data.py`: Update `load_agg_csvs()` to use grain-based filename generation | Feeds baselines and all downstream agg data | Medium -- must match step 2's new `_load_csv_with_dates` signature |
-| 5 | `data.py`: Add `load_full_agg()` export | Needed by engine.py and scout.py before they can be updated | Low -- new function, no existing code changes |
-| 6 | `engine.py`: Replace line 1563 with `load_full_agg("pitcher_type")` | Single line change, depends on step 5 | Low |
-| 7 | `resolver.py`: Update to use `PARQUET_PATHS` | Depends on step 1; straightforward concat | Low |
-| 8 | `scout.py`: Replace hardcoded CSVs with `load_full_agg` calls + multi-parquet | Depends on step 5; most lines changed of any non-data.py file | Medium -- scout has its own baseline computation that must still work |
+## Function Signatures for Planner
 
-Steps 6, 7, 8 are independent of each other and can be done in parallel after step 5.
+### New (personas.py)
+```python
+@dataclass(frozen=True)
+class Persona:
+    name: str
+    display_name: str
+    overlay: str
+    description: str
 
-**Recommended phasing for the GSD roadmap:**
-- **Phase 1**: Steps 1-5 (all data.py changes). This is the foundation. Ship it and verify `load_pitcher_data` still works end-to-end.
-- **Phase 2**: Steps 6-8 (engine.py, resolver.py, scout.py updates). These are leaf consumers that can be done independently.
+SHARED_WRITER_BASE: str
+SCOUT: Persona
+ANALYST: Persona
+GENERIC: Persona
+PERSONAS: dict[str, Persona]
+DEFAULT_PERSONA: Persona  # = SCOUT
 
-## Verification Strategy
+def build_writer_system_prompt(persona: Persona) -> str: ...
+def get_persona(name: str) -> Persona: ...  # raises ValueError
+```
 
-After each phase, these checks confirm correctness:
+### Modified (pipeline.py)
+```python
+def make_pipeline_agents(
+    provider: str = "gemini",
+    thinking: ThinkingEffort = "high",
+    persona: Persona = DEFAULT_PERSONA,  # NEW, positional-compatible default
+) -> PipelineAgents: ...
 
-| Check | What It Validates |
-|-------|-------------------|
-| `load_pitcher_data(pitcher_id, 30)` returns data | Multi-year concat works, game_type filter did not strip all rows |
-| `PitcherData.statcast` has no `game_type == "S"` or `"E"` rows | Filter applied correctly |
-| `PitcherData.agg_csvs["pitcher"]` has rows from both 2025 and 2026 seasons | Multi-year CSV concat works |
-| `compute_season_baseline` returns one row per pitcher (not per season) | Grouping still correct across years |
-| `scout_appearances()` returns results | Scout's multi-year + game_type filter works |
-| `resolver.resolve("Cole")` still resolves | Multi-parquet name table works |
-| `compute_execution_metrics` includes xRV100 percentile | engine.py's `load_full_agg` call works |
+async def _run_pipeline(
+    ctx: PitcherContext,
+    *,
+    provider: str = "gemini",
+    thinking: ThinkingEffort = "high",
+    persona: str = "scout",  # NEW
+    _model_override: Any = None,
+) -> PipelineResult: ...
 
-## Scalability Considerations
+def generate_pipeline_streaming(
+    ctx: PitcherContext,
+    *,
+    provider: str = "gemini",
+    thinking: ThinkingEffort = "high",
+    persona: str = "scout",  # NEW
+    _model_override: Any = None,
+) -> PipelineResult: ...
+```
 
-| Concern | 2 years (now) | 5 years | 10 years |
-|---------|---------------|---------|----------|
-| Parquet read time | Negligible (2 files, ~300K rows total) | Add column selection at read time | Partitioned parquet or LazyFrame |
-| CSV concat | Fine (16 CSVs, small files) | Still fine | Consider converting aggs to parquet |
-| Memory (statcast) | ~300K rows, well within Polars comfort | ~750K rows, still fine | Filter columns at read time |
-| Name table size | ~2K unique pitchers | ~4K pitchers | Still fine, dict lookup is O(1) |
+### Unchanged (but called out for planner)
+```python
+# pipeline.py — UNCHANGED despite being in the writer path
+def build_writer_input(
+    ctx: PitcherContext,
+    stuff: str, location: str, runvalue: str, trends: str, game_shape: str,
+    *, key_signals: KeySignals | None = None,
+) -> str: ...
 
-For the 2-year scope of v1.6, plain eager concat of 2 parquet files and 16 CSVs is well within Polars' comfort zone. No lazy frames or column projection needed.
+# pipeline.py — UNCHANGED
+async def _run_anchor_revision_loop(
+    *, anchor_agent, writer_agent, synthesis, capsule, max_revisions, _model_override=None,
+) -> tuple[str, AnchorResult, int]: ...
+
+# anchor.py — UNCHANGED in Phases A-C; ONE-LINE prompt addendum in Phase D
+ANCHOR_PROMPT: str
+
+def build_revision_message(
+    synthesis: str, capsule: str, warnings: list[AnchorWarning],
+) -> UserPrompt: ...
+```
+
+---
+
+## Risk Register (for Planner)
+
+| Risk | Phase | Mitigation |
+|---|---|---|
+| Scout byte-parity broken during prompt extraction into `SHARED_WRITER_BASE + SCOUT.overlay` | A/B | Snapshot `_WRITER_PROMPT` to a fixture file; test asserts `build_writer_system_prompt(SCOUT) == fixture_text`. |
+| Anchor check false-positives on generic persona's summary table | D | One-line addendum to `ANCHOR_PROMPT` (tolerate semantic-not-formatting); golden test with a known-clean generic capsule. |
+| Hallucination guard false-negatives on generic persona's sectioned format | D | Targeted golden: known-clean capsule + known-dirty capsule (with fabricated section) to validate the guard still discriminates. |
+| Generic persona emits h1 headings that collide with CLI wrapper headings | D | Explicit negative constraint in the generic overlay + regex assertion in the golden test. |
+| `make_pipeline_agents` signature change breaks `analyst.py:618` | B | Default `persona=DEFAULT_PERSONA` in the signature. Verified: `analyst.py` calls with two positional args only. Test: run `pitcher-ask --pipeline` integration test after Phase B. |
+| Summary table needs values not surfaced by specialists | D | Append a "Summary Table Facts" block to `build_writer_input` pulled from `ctx` directly; all personas ignore it except generic. |
+| Persona name typo at CLI silently falls through | E | argparse `choices=sorted(PERSONAS.keys())` — invalid name exits 2 with a clear error. |
+
+---
 
 ## Sources
 
-- Direct code analysis of `data.py`, `engine.py`, `context.py`, `resolver.py`, `scout.py`, `analyst.py`, `cli.py`, `scout_cli.py` in the current repository (HIGH confidence -- primary source)
-- `PROJECT.md` for data schema documentation: game_type column values "R" (regular), "S" (spring training), "E" (exhibition) (HIGH confidence)
-- Polars `pl.concat()` for vertical DataFrame concatenation (HIGH confidence -- well-documented core API)
-- Polars `DataFrame.filter()` with `is_in()` for set-based filtering (HIGH confidence)
+All findings grounded in direct reads of the v1.10 codebase:
+- `src/pitcher_narratives/pipeline.py` (writer prompt at 408-477, `build_writer_input` at 782-808, `PipelineAgents` at 1097-1109, `make_pipeline_agents` at 1112-1162, `_run_anchor_revision_loop` at 1209-1276, `_run_pipeline` at 1279-1399, `generate_pipeline_streaming` at 1402-1428)
+- `src/pitcher_narratives/cli.py` (full file, 1-222)
+- `src/pitcher_narratives/anchor.py` (full file, 1-117)
+- `src/pitcher_narratives/config.py` (full file, 1-130)
+- `src/pitcher_narratives/signals.py` (full file, 1-111)
+- `src/pitcher_narratives/analyst.py` (line 618 — the load-bearing `make_pipeline_agents(provider, thinking)` call that pins the default-argument strategy)
+- `.planning/PROJECT.md` (v1.10 milestone goal and constraints)
+
+No external web sources consulted. No Context7 lookups required. All recommendations are grounded in existing code patterns (the `anchor.py` and `signals.py` modules serve as precedents for the proposed `personas.py` layout).
