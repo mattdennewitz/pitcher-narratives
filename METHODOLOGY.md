@@ -345,19 +345,36 @@ hallucination section.
 
 ## Caching and prompt cache breakpoints
 
-`pydantic_ai.CachePoint` is used in two places, both in `anchor.py`:
+`pydantic_ai.CachePoint` is used in two distinct layers. Each specialist
+input and each anchor-flavoured message is a `list[str | CachePoint]`
+rather than a plain string, which lets the pipeline declare cache
+boundaries explicitly.
 
-- `build_anchor_message(synthesis, capsule)` puts a `CachePoint`
-  between the synthesis and the capsule.
-- `build_revision_message(synthesis, capsule, warnings)` does the same:
-  synthesis, then `CachePoint`, then the current capsule plus the
-  formatted warning list.
+**Specialist inputs (5 places in `pipeline.py`).** Each of the five
+`_build_*_input` helpers — `_build_stuff_input`, `_build_location_input`,
+`_build_runvalue_input`, `_build_trend_input`, `_build_game_shape_input`
+— emits a list shaped like
+`[header + league baselines, CachePoint(), per-pitch data]`. The
+header prefix (role guidance, league baselines, S-variant tables,
+`NORMAL`/`OUTLIER` legend) is stable across reruns for the same
+pitcher, so the cache-friendly prefix is hoisted in front of the
+breakpoint while the variable pitch-level data trails behind it.
 
-The effect is that the synthesis half of each anchor-flavoured prompt
-is cacheable across the initial anchor check and every subsequent
-revision pass within a single run. Only the capsule / warnings tail
-changes each revision. On providers that honour cache breakpoints
-this can cut revision-pass latency and cost meaningfully.
+**Anchor messages (2 places in `anchor.py`).**
+`build_anchor_message(synthesis, capsule)` and
+`build_revision_message(synthesis, capsule, warnings)` both put a
+`CachePoint` between the synthesis (key signals + concatenated
+specialist outputs) and the capsule-plus-instructions tail. The effect
+is that the synthesis half is cacheable across the initial anchor
+check and every subsequent revision pass within a single run — only
+the capsule and the formatted warning list change each pass.
+
+`build_writer_input` is plain `str`, not a `UserPrompt` list, so the
+writer does not add a cache breakpoint of its own; its caching benefit
+comes from whatever automatic prefix caching the underlying provider
+offers. On providers that honour explicit `CachePoint` breakpoints,
+the specialist-prefix and anchor-synthesis hoists still cut latency
+and cost meaningfully on retries and same-pitcher reruns.
 
 ## Model table (from `config.py`)
 
