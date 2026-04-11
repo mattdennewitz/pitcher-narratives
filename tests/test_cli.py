@@ -198,6 +198,37 @@ def test_cli_anchor_check_in_output():
     assert "# Anchor Check" in result.stdout
 
 
+def test_cli_narrative_output_has_required_sections():
+    """Narrative CLI must produce all four required sections.
+
+    The narrative report format is:
+      1. # Scouting Report       (streamed writer capsule — 'report context')
+      2. # Executive Summary     (3 bullets from the summary agent)
+      3. # Stuff Analysis        (the stuff specialist's output)
+      4. # Data Audit            (audit flags or 'Clean — no issues found.')
+
+    This test locks the format in. Also verified: # Anchor Check is
+    present (separate test above) since it stays in the narrative
+    output as a debug/QA section.
+    """
+    result = subprocess.run(
+        [sys.executable, "-m", "pitcher_narratives.cli", "-p", "592155"],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        env=_test_env(PITCHER_NARRATIVES_TEST_MODEL="1"),
+    )
+    assert result.returncode == 0, f"stderr: {result.stderr}"
+    # Use "\n# Heading\n" pattern to avoid false matches on "## Heading"
+    # data subsections that may appear in the narrative prose.
+    stdout = "\n" + result.stdout  # prepend so leading headings match
+
+    assert "\n# Scouting Report\n" in stdout, "missing Scouting Report heading"
+    assert "\n# Executive Summary\n" in stdout, "missing Executive Summary heading"
+    assert "\n# Stuff Analysis\n" in stdout, "missing Stuff Analysis heading"
+    assert "\n# Data Audit\n" in stdout, "missing Data Audit heading"
+
+
 # ── Integration: --print-prompts ──
 
 

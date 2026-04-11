@@ -347,6 +347,239 @@ class TestGeneratePipelineStreaming:
         from pitcher_narratives.config import MAX_REVISIONS
         assert MAX_REVISIONS >= 1, "MAX_REVISIONS must allow at least one revision"
 
+
+# ── Anchor revision loop behavioral tests ────────────────────────────
+#
+# These tests exercise the extracted `_run_anchor_revision_loop` helper
+# with stateful AsyncMock agents that can return different outputs per
+# call. This is the only reliable way to test loop behavior — TestModel
+# returns the same thing every call, so it cannot verify that:
+#   (a) the loop actually iterates when the anchor returns warnings
+#   (b) the revised capsule (not the first draft) is what gets returned
+#
+# Both of these were regressions caught historically (see the UX-04
+# bug referenced in the old test_report.py that was deleted in v1.9).
+# They are hard gaps the v1.9 test-coverage review noted but couldn't
+# close without extracting the loop into a testable unit.
+
+
+class TestAnchorRevisionLoop:
+    """Behavioral tests for the anchor + writer revision loop.
+
+    Each test builds a fake anchor agent with a scripted list of
+    AnchorResult responses and a fake writer that returns a specific
+    revised capsule, then asserts on loop state afterward.
+    """
+
+    def _fake_anchor(self, *responses):
+        """Build an AsyncMock anchor whose .run() yields the given results in order.
+
+        Each entry should be an AnchorResult. The mock wraps each one in
+        an object with an `.output` attribute to match how the pipeline
+        code destructures `anchor_result.output`.
+        """
+        from unittest.mock import AsyncMock, MagicMock
+
+        wrapped = [MagicMock(output=r) for r in responses]
+        mock = MagicMock()
+        mock.run = AsyncMock(side_effect=wrapped)
+        return mock
+
+    def _fake_writer(self, *revision_texts):
+        """Build an AsyncMock writer whose .run() yields the given texts in order."""
+        from unittest.mock import AsyncMock, MagicMock
+
+        wrapped = [MagicMock(output=t) for t in revision_texts]
+        mock = MagicMock()
+        mock.run = AsyncMock(side_effect=wrapped)
+        return mock
+
+    def test_passes_first_check_no_revisions(self):
+        """Clean anchor on first pass → revision_count 0, original capsule returned."""
+        import asyncio
+
+        from pitcher_narratives.anchor import AnchorResult
+        from pitcher_narratives.pipeline import _run_anchor_revision_loop
+
+        anchor = self._fake_anchor(AnchorResult(warnings=[]))
+        writer = self._fake_writer()  # should never be called
+
+        capsule, final, count = asyncio.run(
+            _run_anchor_revision_loop(
+                anchor_agent=anchor,
+                writer_agent=writer,
+                synthesis="synth",
+                capsule="ORIGINAL_CAPSULE",
+                max_revisions=2,
+                _model_override=None,
+            )
+        )
+
+        assert capsule == "ORIGINAL_CAPSULE"
+        assert count == 0
+        assert final.is_clean
+        assert anchor.run.call_count == 1
+        assert writer.run.call_count == 0
+
+    def test_loop_iterates_when_anchor_dirty_then_clean(self):
+        """Anchor dirty on pass 1, clean on pass 2 → revision_count 1 and revised capsule returned.
+
+        This is the UX-04 regression test: verifies the loop actually
+        runs when the anchor flags warnings, and that the writer's
+        revised output (not the original) ends up as the final capsule.
+        """
+        import asyncio
+
+        from pitcher_narratives.anchor import AnchorResult, AnchorWarning
+        from pitcher_narratives.pipeline import _run_anchor_revision_loop
+
+        dirty = AnchorResult(
+            warnings=[
+                AnchorWarning(
+                    category="MISSED_SIGNAL",
+                    description="skipped the top concern",
+                )
+            ]
+        )
+        clean = AnchorResult(warnings=[])
+
+        anchor = self._fake_anchor(dirty, clean)
+        writer = self._fake_writer("REVISED_CAPSULE")
+
+        capsule, final, count = asyncio.run(
+            _run_anchor_revision_loop(
+                anchor_agent=anchor,
+                writer_agent=writer,
+                synthesis="synth",
+                capsule="ORIGINAL_CAPSULE",
+                max_revisions=2,
+                _model_override=None,
+            )
+        )
+
+        # The loop ran once
+        assert count == 1
+        # The REVISED capsule is what's returned, not the original
+        assert capsule == "REVISED_CAPSULE"
+        assert capsule != "ORIGINAL_CAPSULE"
+        # The final anchor check was clean
+        assert final.is_clean
+        # Exactly 2 anchor calls (dirty + clean) and 1 writer call (the revision)
+        assert anchor.run.call_count == 2
+        assert writer.run.call_count == 1
+
+    def test_loop_exhausts_max_revisions_and_surfaces_warnings(self):
+        """If anchor stays dirty for max_revisions+1 passes, surviving warnings are surfaced.
+
+        This verifies the `for/else` branch: after the loop exhausts
+        max_revisions without a clean pass, a final anchor check
+        captures the surviving warnings so the caller can include them
+        in PipelineResult.anchor_warnings.
+        """
+        import asyncio
+
+        from pitcher_narratives.anchor import AnchorResult, AnchorWarning
+        from pitcher_narratives.pipeline import _run_anchor_revision_loop
+
+        # Build a persistent dirty result
+        persistent_dirty = AnchorResult(
+            warnings=[
+                AnchorWarning(
+                    category="UNSUPPORTED",
+                    description="invented a metric",
+                )
+            ]
+        )
+
+        # 2 revisions allowed → 3 anchor calls (2 in-loop + 1 final exhaustion check)
+        anchor = self._fake_anchor(
+            persistent_dirty, persistent_dirty, persistent_dirty
+        )
+        writer = self._fake_writer("REV_1", "REV_2")
+
+        capsule, final, count = asyncio.run(
+            _run_anchor_revision_loop(
+                anchor_agent=anchor,
+                writer_agent=writer,
+                synthesis="synth",
+                capsule="ORIGINAL",
+                max_revisions=2,
+                _model_override=None,
+            )
+        )
+
+        # Both revisions ran
+        assert count == 2
+        # Final capsule is the second revision
+        assert capsule == "REV_2"
+        # Surviving warnings are on the final anchor result
+        assert not final.is_clean
+        assert len(final.warnings) == 1
+        assert final.warnings[0].category == "UNSUPPORTED"
+        # 3 anchor calls (2 in-loop + 1 exhaustion check), 2 writer calls
+        assert anchor.run.call_count == 3
+        assert writer.run.call_count == 2
+
+    def test_revised_capsule_is_passed_to_next_anchor_check(self):
+        """Each revision pass feeds its output back into the next anchor check.
+
+        Guards against a regression where the loop revises but then
+        checks the ORIGINAL capsule again instead of the revision —
+        which would create an infinite loop at the MAX_REVISIONS cap.
+        """
+        import asyncio
+        from unittest.mock import AsyncMock, MagicMock
+
+        from pitcher_narratives.anchor import AnchorResult, AnchorWarning
+        from pitcher_narratives.pipeline import _run_anchor_revision_loop
+
+        # Record the capsule passed to each anchor call so we can verify
+        # the second call received the REVISED capsule.
+        capsules_seen: list[str] = []
+
+        async def anchor_side_effect(**kwargs):
+            # The anchor message includes the capsule — extract it from
+            # the user_prompt kwarg which is a list[str | CachePoint].
+            prompt_parts = kwargs["user_prompt"]
+            joined = "\n".join(p for p in prompt_parts if isinstance(p, str))
+            capsules_seen.append(joined)
+            # First call: dirty. Second call: clean.
+            if len(capsules_seen) == 1:
+                return MagicMock(
+                    output=AnchorResult(
+                        warnings=[
+                            AnchorWarning(
+                                category="DIRECTION_ERROR",
+                                description="backwards",
+                            )
+                        ]
+                    )
+                )
+            return MagicMock(output=AnchorResult(warnings=[]))
+
+        anchor = MagicMock()
+        anchor.run = AsyncMock(side_effect=anchor_side_effect)
+        writer = self._fake_writer("REVISED_CAPSULE_TEXT")
+
+        capsule, final, count = asyncio.run(
+            _run_anchor_revision_loop(
+                anchor_agent=anchor,
+                writer_agent=writer,
+                synthesis="synth",
+                capsule="ORIGINAL_CAPSULE_TEXT",
+                max_revisions=2,
+                _model_override=None,
+            )
+        )
+
+        assert count == 1
+        assert capsule == "REVISED_CAPSULE_TEXT"
+        # First anchor call saw the original, second saw the revision.
+        assert "ORIGINAL_CAPSULE_TEXT" in capsules_seen[0]
+        assert "REVISED_CAPSULE_TEXT" in capsules_seen[1]
+        # And critically: the original must not appear in the second check
+        assert "ORIGINAL_CAPSULE_TEXT" not in capsules_seen[1]
+
     def test_specialist_outputs_populated(self, ctx):
         """All 5 specialist slots are non-empty strings."""
         test_model = TestModel()

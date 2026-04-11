@@ -307,6 +307,32 @@ handles that.
 - Plain prose, no bullet lists."""
 
 
+# Role-specific guidance injected into the Game Shape specialist's USER
+# message based on `ctx.role`. These blocks reinstate the SP/RP focus
+# that the old single-agent synthesizer had before v1.9 consolidation —
+# the multi-agent architecture implicitly covers these concerns, but
+# explicit role guidance keeps reliever reports from drifting into
+# starter-shaped analysis (and vice versa).
+
+_SP_GAME_SHAPE_GUIDANCE = """\
+## Role Focus: STARTER
+
+Additional focus for this starter:
+- TTO pass breakdown: which pitches gain or lose effectiveness by pass?
+- Pitch mix evolution across passes: is he leaning on something new late?
+- Platoon-specific TTO patterns (what does he throw vs LHB in pass 3?)
+- Stamina trajectory: does velocity, S+, or L+ hold, improve, or cliff?"""
+
+_RP_GAME_SHAPE_GUIDANCE = """\
+## Role Focus: RELIEVER
+
+Additional focus for this reliever:
+- Rest day impact on velocity, S+, and L+ (back-to-back vs rested — better or worse?)
+- Primary weapon identification: what is the put-away pitch? Cite its P+/S+/L+ triad
+- Pitch count efficiency: how many pitches per batter faced?
+- Platoon-specific strengths and vulnerabilities by handedness"""
+
+
 # ═══════════════════════════════════════════════════════════════════════
 # DATA AUDITOR PROMPT
 # ═══════════════════════════════════════════════════════════════════════
@@ -675,17 +701,41 @@ def _build_trend_input(ctx: PitcherContext) -> UserPrompt:
     ]
 
 
+def _role_game_shape_guidance(role: str) -> str | None:
+    """Return role-specific game shape guidance, or None if role is unknown.
+
+    Starter and reliever reports need different emphasis — starters care
+    about TTO progression and stamina, relievers care about rest-day
+    impact and put-away pitches. This guidance is injected into the Game
+    Shape specialist's user message so it biases the analysis toward
+    role-appropriate signals without hard-coding role branches into the
+    system prompt.
+    """
+    normalized = role.upper() if role else ""
+    if normalized in ("SP", "STARTER"):
+        return _SP_GAME_SHAPE_GUIDANCE
+    if normalized in ("RP", "RELIEVER"):
+        return _RP_GAME_SHAPE_GUIDANCE
+    return None
+
+
 def _build_game_shape_input(ctx: PitcherContext) -> UserPrompt:
     """Build input for the game shape specialist -- TTO, velocity arc, workload.
 
     Returns a UserPrompt list with a CachePoint between the header+baselines
-    prefix and the game shape data sections.
+    prefix and the game shape data sections. Role-specific guidance (SP or
+    RP) is injected into the prefix so it sits above the cache breakpoint
+    and biases the whole specialist analysis.
     """
     baselines = render_league_baselines(_pitch_types(ctx))
-    prefix_sections = [
+    prefix_sections: list[str] = [
         f"## {ctx.pitcher_name} ({ctx.throws}HP, {ctx.role})\n",
-        baselines,
     ]
+    role_guidance = _role_game_shape_guidance(ctx.role)
+    if role_guidance is not None:
+        prefix_sections.append(role_guidance)
+    prefix_sections.append(baselines)
+
     data_sections = [
         ctx._render_tto_section(),
         ctx._render_fastball_section(),
@@ -1156,6 +1206,76 @@ async def run_specialists(
     )
 
 
+async def _run_anchor_revision_loop(
+    *,
+    anchor_agent: "Agent[None, AnchorResult]",
+    writer_agent: "Agent[None, str]",
+    synthesis: str,
+    capsule: str,
+    max_revisions: int,
+    _model_override: Any = None,
+) -> tuple[str, AnchorResult, int]:
+    """Run the anchor check + writer revision loop to convergence.
+
+    Up to `max_revisions` passes: each iteration asks the anchor agent
+    whether the current `capsule` is faithful to the `synthesis`. If
+    clean, exit immediately. If the anchor returns warnings, the writer
+    is asked to revise (fresh prompt per pass, no history) and the loop
+    re-checks the new capsule.
+
+    If `max_revisions` is exhausted without a clean pass, a final anchor
+    check captures the surviving warnings so they bubble up in the
+    result — the caller will see them in `PipelineResult.anchor_warnings`.
+
+    Extracting this loop makes it unit-testable: the agents are injected
+    as parameters, so tests can pass stateful fakes that return dirty-
+    then-clean without needing to spin up the full pipeline.
+
+    Args:
+        anchor_agent: The anchor check agent (returns AnchorResult).
+        writer_agent: The writer agent used for revisions.
+        synthesis: The rendered key signals + concatenated specialist outputs.
+        capsule: The current writer capsule to check.
+        max_revisions: Maximum number of revision passes to attempt.
+        _model_override: Optional model override (for testing with TestModel).
+
+    Returns:
+        Tuple of (final_capsule, final_anchor_result, revision_count).
+        `final_capsule` is the capsule after any revisions (original if
+        anchor passed on the first check). `final_anchor_result` is
+        either the clean result that ended the loop early, or the final
+        check after exhausting max_revisions — surviving warnings live
+        in `final_anchor_result.warnings`. `revision_count` is the
+        number of revision passes actually run (0 = passed first try).
+    """
+    revision_count = 0
+
+    for _ in range(max_revisions):
+        anchor_result = await anchor_agent.run(
+            **agent_kwargs(build_anchor_message(synthesis, capsule), _model_override)
+        )
+        anchor_check = anchor_result.output
+
+        if anchor_check.is_clean:
+            return capsule, anchor_check, revision_count
+
+        revision_result = await writer_agent.run(
+            **agent_kwargs(
+                build_revision_message(synthesis, capsule, anchor_check.warnings),
+                _model_override,
+            )
+        )
+        capsule = revision_result.output
+        revision_count += 1
+
+    # Exhausted max_revisions without a clean pass — final check captures
+    # surviving warnings for the caller to surface.
+    final_result = await anchor_agent.run(
+        **agent_kwargs(build_anchor_message(synthesis, capsule), _model_override)
+    )
+    return capsule, final_result.output, revision_count
+
+
 async def _run_pipeline(
     ctx: PitcherContext,
     *,
@@ -1246,7 +1366,6 @@ async def _run_pipeline(
         summary_bullets = []
 
     # Phase 2.5: Anchor check + revision loop
-    revision_count = 0
     specialist_synthesis = (
         f"STUFF:\n{specialists.stuff}\n\n"
         f"LOCATION:\n{specialists.location}\n\n"
@@ -1260,26 +1379,14 @@ async def _run_pipeline(
         else specialist_synthesis
     )
 
-    for _ in range(MAX_REVISIONS):
-        anchor_result = await agents.anchor.run(
-            **agent_kwargs(build_anchor_message(synthesis, capsule), _model_override)
-        )
-        anchor_check = anchor_result.output
-
-        if anchor_check.is_clean:
-            break
-
-        revision_result = await agents.writer.run(
-            **agent_kwargs(build_revision_message(synthesis, capsule, anchor_check.warnings), _model_override)
-        )
-        capsule = revision_result.output
-        revision_count += 1
-    else:
-        # Exhausted MAX_REVISIONS without a clean pass — final check for surviving warnings
-        anchor_result = await agents.anchor.run(
-            **agent_kwargs(build_anchor_message(synthesis, capsule), _model_override)
-        )
-        anchor_check = anchor_result.output
+    capsule, anchor_check, revision_count = await _run_anchor_revision_loop(
+        anchor_agent=agents.anchor,
+        writer_agent=agents.writer,
+        synthesis=synthesis,
+        capsule=capsule,
+        max_revisions=MAX_REVISIONS,
+        _model_override=_model_override,
+    )
 
     return PipelineResult(
         narrative=capsule,

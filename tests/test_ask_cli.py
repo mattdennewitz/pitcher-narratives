@@ -143,6 +143,38 @@ def test_ask_cli_valid_question_exit_0():
     assert result.stdout.strip()  # Non-empty output
 
 
+def test_ask_cli_output_is_just_the_answer():
+    """Ask output must NOT contain narrative-CLI sections as top-level headings.
+
+    The ask CLI is focused Q&A — users want just the answer. The
+    Executive Summary, Data Audit, and Stuff Analysis sections belong
+    to the narrative CLI (`pitcher-narratives`), not here.
+
+    The assertions use `\\n# Heading\\n` patterns rather than bare
+    `# Heading` to avoid false matches against `## Heading` subsections
+    that appear inside the rendered pitcher context (which TestModel
+    echoes back from tool calls).
+    """
+    result = subprocess.run(
+        [sys.executable, "-m", "pitcher_narratives.ask_cli", "How is Cease pitching?"],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        env=_test_env(PITCHER_NARRATIVES_TEST_MODEL="1"),
+    )
+    assert result.returncode == 0
+    # The narrative CLI emits top-level H1 headings with a leading newline,
+    # e.g. print("\n\n# Executive Summary\n"). Match that exact pattern so
+    # we don't false-positive on H2 data sections.
+    assert "\n# Executive Summary\n" not in result.stdout
+    assert "\n# Data Audit\n" not in result.stdout
+    assert "\n# Stuff Analysis\n" not in result.stdout
+    # Also check they're not at the very start of stdout (no leading newline)
+    assert not result.stdout.startswith("# Executive Summary")
+    assert not result.stdout.startswith("# Data Audit")
+    assert not result.stdout.startswith("# Stuff Analysis")
+
+
 def test_ask_cli_not_found_exit_1():
     """Integration: Non-existent pitcher exits 1 with 'No pitcher found' message."""
     result = subprocess.run(

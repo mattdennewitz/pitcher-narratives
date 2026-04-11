@@ -161,11 +161,17 @@ def main() -> None:
         log.error("LLM call failed: %s", e)
         sys.exit(2)
 
-    # Executive summary
+    # Executive summary — always emit the heading to keep the narrative
+    # output format stable. If the summary agent failed to produce
+    # bullets (empty list, parsing failure, or TestModel in tests), we
+    # still show the section with a fallback message instead of silently
+    # dropping it.
+    print("\n\n# Executive Summary\n")
     if pipe_result.executive_summary:
-        print("\n\n# Executive Summary\n")
         for bullet in pipe_result.executive_summary:
             print(f"- {bullet}")
+    else:
+        print("_Summary unavailable — no bullets produced._")
 
     # Stuff analysis
     print(f"\n\n# Stuff Analysis\n\n{pipe_result.specialists.stuff}")

@@ -1,7 +1,12 @@
 """CLI entry point for pitcher Q&A.
 
 Parses a natural-language question, resolves the pitcher name,
-loads data, and streams an answer from the analyst agent.
+loads data, and streams an answer from the tool-calling analyst agent.
+
+The analyst agent is grounded in the pitcher's context and can call
+`get_pitcher_summary` and `get_pitch_detail` tools on demand to answer
+focused questions. Output is just the answer — no executive summary,
+no audit dump, no stuff analysis (those belong to the narrative CLI).
 """
 
 from __future__ import annotations
@@ -125,13 +130,27 @@ def main() -> None:
 
     ctx = assemble_pitcher_context(pitcher_data)
 
-    from pitcher_narratives.analyst import ask_question_pipeline
-    from pitcher_narratives.pipeline import write_pipeline_data_file
+    # Write prompt data for the analyst (tool-calling) path.
+    # Unlike write_pipeline_data_file, this is simple: the analyst uses
+    # tools dynamically at runtime, so the "prompt" is just the system
+    # instructions plus the user question plus the tool descriptions.
+    from pathlib import Path
 
+    from pitcher_narratives.analyst import (
+        ANALYST_INSTRUCTIONS,
+        ask_question_streaming,
+    )
+
+    data_sections = [
+        f"{'═' * 72}\nANALYST AGENT\n{'═' * 72}\n",
+        f"## System Prompt\n\n{ANALYST_INSTRUCTIONS}\n",
+        f"## User Question\n\n{args.question}\n",
+        "## Tool: get_pitcher_summary\n\n[Returns full pitcher context with league baselines]\n",
+        "## Tool: get_pitch_detail\n\n[Returns per-pitch detail on demand]\n",
+    ]
+    data_file = f"data-{pitcher_id}-{args.provider}-ask.md"
     try:
-        data_file, _data_text = write_pipeline_data_file(
-            ctx, pitcher_id, args.provider, question=args.question,
-        )
+        Path(data_file).write_text("\n".join(data_sections), encoding="utf-8")
     except OSError as e:
         log.error("Failed to write prompt data file: %s", e)
         sys.exit(1)
@@ -141,12 +160,14 @@ def main() -> None:
     # (~330ms) and is only used in the except clause below.
     from pydantic_ai.exceptions import AgentRunError
 
-    # The answer streams to stdout during this call
-    print("# Answer\n")
+    # Stream the answer to stdout. Output is just the answer — no
+    # Executive Summary / Data Audit / Stuff Analysis sections (the
+    # narrative CLI emits those; ask is focused Q&A).
     try:
-        pipeline_result = ask_question_pipeline(
+        ask_question_streaming(
             args.question,
             ctx,
+            pitcher_data,
             provider=args.provider,
             thinking=args.thinking,
             _model_override=model_override,
@@ -154,24 +175,6 @@ def main() -> None:
     except AgentRunError as e:
         log.error("LLM call failed: %s", e)
         sys.exit(2)
-
-    # Executive summary
-    if pipeline_result.executive_summary:
-        print("\n\n# Executive Summary\n")
-        for bullet in pipeline_result.executive_summary:
-            print(f"- {bullet}")
-
-    # Data audit
-    print("\n\n# Data Audit\n")
-    if pipeline_result.audit_flags:
-        for f in pipeline_result.audit_flags:
-            print(f"- **[{f.category}]** {f.specialist}: {f.claim}")
-            print(f"  - Data shows: {f.data_shows}")
-    else:
-        print("Clean — no issues found.")
-
-    # Stuff analysis
-    print(f"\n\n# Stuff Analysis\n\n{pipeline_result.stuff_summary}")
 
 
 if __name__ == "__main__":
