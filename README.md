@@ -1,248 +1,231 @@
 # Pitcher Narratives
 
-LLM-powered scouting reports for MLB pitchers. Given a pitcher ID, assembles pitch-level Statcast data and pre-computed Pitching+ aggregations into a structured context document, then sends it through a five-phase LLM pipeline with a self-correcting reflection loop to produce an analytical narrative, a social media hook, and fantasy baseball insights.
+Pitcher Narratives is a CLI that turns Statcast and Pitching+ data into
+LLM-written scouting reports for MLB pitchers. The report is grounded in
+pre-computed deltas and baselines so the model can focus on insight, not
+arithmetic — every metric arrives at the LLM pre-tagged with window-vs-season
+direction, z-score outlier flags, and small-sample caveats.
 
-Reports read like a scout wrote them — surfacing changes, adaptations, and execution trends rather than reciting numbers.
+The narrative that comes out of the pipeline reads like a scout wrote it:
+surfacing *changes, adaptations, and execution trends* for a single pitcher's
+most recent appearance relative to their recent window and season baseline.
 
-## Quick Start
+## Requirements
+
+- Python 3.14+ (pinned in `.python-version` and enforced by
+  `requires-python = ">=3.14"` in `pyproject.toml`)
+- [`uv`](https://github.com/astral-sh/uv) for dependency management
+- An API key for at least one supported provider, exported or placed in
+  a `.env` file at the project root (loaded automatically via
+  `python-dotenv`):
+  - `OPENAI_API_KEY` for `--provider openai`
+  - `ANTHROPIC_API_KEY` for `--provider claude`
+  - `GEMINI_API_KEY` for `--provider gemini`
+- Static data files at the project root:
+  - `statcast_2025.parquet`, `statcast_2026.parquet` — pitch-level
+    Statcast data
+  - `aggs/` — pre-computed Pitching+ CSVs for the 2025 and 2026 seasons
+    (per pitcher, per pitch type, per appearance, platoon splits, etc.)
+  - See `METHODOLOGY.md` for the full data-source breakdown.
+
+No network calls to Baseball Savant happen at runtime. Everything is
+served from these local files.
+
+## Install / quick start
 
 ```bash
-# Install
 uv sync
-
-# Set your API key
-export OPENAI_API_KEY=sk-...      # for OpenAI (default)
-export ANTHROPIC_API_KEY=sk-...   # for Claude
-export GEMINI_API_KEY=...         # for Gemini
-
-# Scout: find interesting appearances from today's games
-pitcher-scout -v
-
-# Curate: let the LLM pick the top stories
-pitcher-scout --curate
-
-# Generate a full report for a specific pitcher
-pitcher-narratives -p 573124 -v --provider claude
+uv run pitcher-narratives -p 657277 -w 5
 ```
 
-## Scout: Finding Interesting Appearances
-
-The scout scans all pitcher appearances in a date window and scores each one for "interestingness" — no LLM calls, just heuristic signal detection against season baselines.
-
-```
-pitcher-scout [-w DAYS] [-n TOP] [-v] [--min-score N]
-              [--curate] [--provider {openai,claude,gemini}]
-```
-
-| Flag | Description |
-|------|-------------|
-| `-w, --window` | Days to scan (default: 1 = most recent game date) |
-| `-n, --top` | Number of results (default: 20) |
-| `-v, --verbose` | Show signal details for each appearance |
-| `--min-score` | Minimum interest score to display |
-| `--curate` | Send results to an LLM to select the 3-5 best stories |
-| `--provider` | LLM provider for curation (default: `openai`) |
-
-### Signals Scored
-
-| Signal | Weight | What it catches |
-|--------|--------|-----------------|
-| `new_pitch` | 4.0 | Pitch type appearing that wasn't in the season repertoire |
-| `development_opportunity` | 3.5 | High S+ (>110) with low L+ (<80) — stuff without feel |
-| `velo_delta` | 3.0 | Fastball velo >= 1.5 mph from season average |
-| `splus_lplus_divergence` | 3.0 | S+ and L+ moving opposite directions (>= 10 pts each) |
-| `dropped_pitch` | 3.0 | Season pitch (>= 10% usage) not thrown at all |
-| `pplus_swing` | 2.5 | Overall P+ >= 15 pts from season average |
-| `walk_rate_pplus_contradiction` | 2.5 | Good P+ (>= 105) with poor L+ (< 85) |
-| `usage_shift` | 2.0 | Any pitch >= 8pp usage change from season |
-| `workload_flag` | 1.0 | 3+ consecutive days pitched |
-
-### Example: Scout Output
-
-```
-$ pitcher-scout -n 5 -v
-
-Score  Pitcher                   T  Date         #P  Signals
-─────  ───────────────────────── ─  ──────────  ───  ────────────────────────────────────────
- 18.0  Rogers, Trevor            L  2026-03-26   88  splus_lplus_divergence, usage_shift, ...
-       └─ splus_lplus_divergence (3.0): SI: S+ +25, L+ -93 (stuff/command split)
-       └─ usage_shift (2.0): CH usage up 14.4pp (29.5% vs 15.2% season)
-       └─ dropped_pitch (3.0): ST dropped (was 14.8% of season mix)
-       └─ dropped_pitch (3.0): SL dropped (was 10.4% of season mix)
-       └─ development_opportunity (3.5): CU: S+ 128 / L+ 70 (stuff without feel)
-       └─ development_opportunity (3.5): SI: S+ 128 / L+ 12 (stuff without feel)
- 16.5  Legumina, Casey           R  2026-03-26   29  pplus_swing, splus_lplus_divergence, ...
- 16.5  Gómez, Yoendrys           R  2026-03-26   28  pplus_swing, splus_lplus_divergence, ...
- 16.0  Seymour, Ian              L  2026-03-26   21  splus_lplus_divergence, usage_shift, ...
- 16.0  Backhus, Kyle             L  2026-03-26   20  pplus_swing, splus_lplus_divergence, ...
-```
-
-### Example: LLM Curation
-
-With `--curate`, the LLM selects the most compelling stories from the scored list using a signal hierarchy (Clean Breakout > Lab Project > Identity Crisis > Red Flag), explains each pick, and accounts for every pitcher it didn't select.
-
-## Narrative Builder: Full Scouting Reports
-
-Once you've identified an interesting appearance, generate a full report:
-
-```
-pitcher-narratives -p PITCHER [-w WINDOW] [-v] [--print-prompts]
-                   [--provider {openai,claude,gemini}]
-                   [--thinking {minimal,low,medium,high,xhigh}]
-```
-
-| Flag | Description |
-|------|-------------|
-| `-p, --pitcher` | MLB pitcher ID (required) |
-| `-w, --window` | Lookback window in days (default: 30) |
-| `-v, --verbose` | Show pitcher name, game dates, and pitch counts on stderr |
-| `--print-prompts` | Print all system/user prompts to stderr and exit |
-| `--provider` | LLM provider: `openai` (default), `claude`, `gemini` |
-| `--thinking` | Reasoning effort level (default: `medium`) |
-
-### Example: Narrative Output
-
-```
-$ pitcher-narratives -p 573124 --provider claude -v
-
-Rogers, Taylor (ID: 573124, LHP)
-Date         Pitches  Role
-──────────── ───────  ────
-2026-03-20        25  RP
-2026-03-24        25  RP
-2026-03-26        10  RP
-...
-Total            140  (8 appearances)
-
-Rogers' sweeper is doing real work — P+ 124, L+ 128, Chase% at 31.0%,
-xRV100 at the 74th percentile. The pitch has above-average shape and Rogers
-is landing it at the edges consistently enough to pull hitters out of the
-zone. That part of the arsenal is functioning. The problem is what happens
-when the sweeper isn't on the mound: a sinker with near-average raw stuff
-(S+ 96) that Rogers simply cannot locate, carrying an L+ of 55 and an
-xRV100 at the 4th percentile, is eating 30% of his pitches overall and
-38.9% against left-handed batters — exactly the matchup where he needs it
-most.
-
-That sinker is the reason Rogers' estimated pitch-per-batter rate sits
-around 7.0, well above the typical reliever range of 3.8–4.2... Right now
-Rogers is a sweeper-dependent reliever whose same-side package is
-compromised. If the sinker location moves toward league average, his LHB
-package becomes meaningfully more functional. If it doesn't, he's a matchup
-piece whose value is bounded by how often the sweeper can carry a
-half-inning.
-
----
-Taylor Rogers' sweeper is a legitimate weapon (P+ 124, 31% chase rate),
-but his sinker's 41-point gap between raw stuff and location grades is
-forcing him to throw 7 pitches per batter and making him nearly unusable
-against left-handed hitters.
-
----
-- Rogers' sweeper is carrying his entire fantasy case right now, posting a
-  P+ of 124 and a Chase% of 31.0%, which supports strikeout upside in short
-  stints but leaves him heavily matchup-dependent.
-- The sinker is a workload red flag — a 41-point gap between S+ and L+
-  signals severe location issues that have contributed to estimated
-  pitch-per-batter rates well above the typical reliever range.
-- A horizontal release point discrepancy on the sinker (1.94 ft vs 2.05 ft
-  on his other pitches) is worth monitoring for signs of a mechanical
-  adjustment that could change his WHIP and ERA trajectory.
-
-Passed anchor check
-```
-
-The reflection loop runs automatically. When the anchor check finds issues, the editor silently revises and the anchor re-checks (up to 2 passes). Stderr reports the outcome:
-
-```
-Passed anchor check                              # clean on first try
-Revised 1 time(s) -- anchor check passed         # revised and converged
-Revised 2 time(s) -- anchor check found issues:  # exhausted with warnings
-  [MISSED_SIGNAL] Key velocity drop not addressed
-```
-
-## Output
-
-Each report produces:
-
-1. **Narrative** (streamed to stdout) — 2-3 paragraph scouting capsule
-2. **Social hook** — one headline-length sentence, under 280 characters
-3. **Fantasy insights** — 3 Axios-style bullet points
-4. **Revision status** — stderr reports anchor check outcome and any surviving warnings
-5. **Data file** — `data-{pitcherid}-{provider}.md` with all prompts sent to the LLM
-
-Post-generation guards run automatically: the **editor-anchor reflection loop** verifies the narrative is faithful to the synthesis — flagging missed key signals, unsupported claims, directional errors, and overstated confidence. If issues are found, the editor silently revises and the anchor re-checks, up to 2 passes. A **metric hallucination guard** then scans for unknown or traditional metrics.
-
-## Architecture
-
-```
-pitcher-scout (triage)                   pitcher-narratives (full report)
-─────────────────────                    ────────────────────────────────
-Appearance-level CSVs + Statcast         Statcast parquet + 8 Pitching+ CSVs
-    │                                        │
-    ▼                                        ▼
-9 signal checkers (pure Python)          Computation Engine (9 analysis modules)
-    │                                        │
-    ▼                                        ▼
-Scored + ranked appearances              Context Assembly (~1000 tokens markdown)
-    │                                        │
-    ▼ (--curate only)                        ▼
-LLM Curator (select 3-5 stories)        Five-Phase LLM Pipeline
-                                             Phase 1: Synthesizer → structured findings
-                                             Phase 2: Editor → scouting capsule (streamed)
-                                             Phase 2.5: Anchor Check + Reflection Loop
-                                               ┌─ anchor returns CLEAN → proceed
-                                               └─ warnings found → editor revises silently
-                                                  → anchor re-checks (up to 2 passes)
-                                             Phase 3: Hook Writer → social headline
-                                             Phase 4: Fantasy Analyst → 3 bullet points
-                                             │
-                                             ▼
-                                         Hallucination Guard + Output
-```
-
-The pipeline is split by design: the scout runs without LLM calls (cheap, fast, scannable), and the narrative builder runs the full five-phase pipeline for the pitchers worth writing about. The anchor check (Phase 2.5) verifies the editor's capsule is faithful to the synthesis. If warnings are found, the editor revises using a fresh targeted prompt and the anchor re-checks — up to 2 revision passes. Only the final capsule flows to Phases 3 and 4, which derive from it and inherit the editor's plausibility filters and metric curation.
-
-## Providers
-
-| Provider | Model | Thinking | Notes |
-|----------|-------|----------|-------|
-| `openai` | gpt-5.4-mini | Standard `ThinkingEffort` levels | Default provider |
-| `claude` | claude-sonnet-4-6 | Standard `ThinkingEffort` levels | 16384 max_tokens for thinking budget |
-| `gemini` | gemini-3.1-pro-preview | `low`/`high` (mapped from CLI levels) | `GoogleModelSettings`, temperature=1.0 |
-
-## Project Structure
-
-```
-src/pitcher_narratives/
-    __init__.py
-    cli.py          # Narrative builder CLI entry point
-    scout_cli.py    # Scout CLI entry point
-    data.py         # Statcast + Pitching+ loading pipeline
-    engine.py       # Computation engine (all metrics, deltas, flags)
-    context.py      # PitcherContext assembly and to_prompt() rendering
-    report.py       # Five-phase LLM pipeline + reflection loop + hallucination guard
-    scout.py        # Appearance interest scoring (no LLM)
-    curator.py      # LLM-powered curation of scouted appearances
-tests/
-    test_data.py
-    test_engine.py
-    test_context.py
-    test_report.py
-    test_cli.py
-```
-
-## Development
+Or use the Makefile shortcut, which wraps the same command:
 
 ```bash
-uv sync                          # Install deps
-uv run pytest                    # Run tests
-uv run ruff check src/ tests/    # Lint
-uv run ty check                  # Type check
-make scout                       # Scout: top 25, score >= 5.0, verbose
-make curate                      # Scout + LLM curation
+make run   # runs: uv run pitcher-narratives -p 657277 -w 5
 ```
 
-## Methodology
+A successful run streams the scouting capsule to stdout and writes a
+side-effect file `data-{pitcher}-{provider}.md` containing the rendered
+pipeline prompts (useful for debugging or prompt inspection).
 
-See [METHODOLOGY.md](METHODOLOGY.md) for detailed documentation of data sources, computation pipeline, delta vocabulary, and the LLM prompt architecture.
+## The three CLIs
+
+The package installs three entry points via `[project.scripts]` in
+`pyproject.toml`:
+
+| Script | Source | Purpose |
+|---|---|---|
+| `pitcher-narratives` | `pitcher_narratives.cli:main` | Full scouting report |
+| `pitcher-scout` | `pitcher_narratives.scout_cli:main` | Appearance triage + scoring |
+| `pitcher-ask` | `pitcher_narratives.ask_cli:main` | Natural-language Q&A |
+
+### `pitcher-narratives`
+
+Runs the multi-agent specialist pipeline end-to-end for a single pitcher
+over a lookback window.
+
+| Flag | Type | Default | Notes |
+|---|---|---|---|
+| `-p`, `--pitcher` | int | *required* | MLB pitcher ID |
+| `-w`, `--window` | int | `30` | Lookback in days |
+| `-v`, `--verbose` | flag | off | Prints pitcher name, game dates, pitch counts to stderr before running |
+| `--print-prompts` | flag | off | Renders the pipeline prompts to stderr and exits without calling the LLM |
+| `--provider` | enum | `openai` | `openai` \| `claude` \| `gemini` |
+| `--thinking` | enum | `medium` | `minimal` \| `low` \| `medium` \| `high` \| `xhigh` |
+
+Example:
+
+```bash
+uv run pitcher-narratives -p 657277 -w 30 --provider openai --thinking high
+```
+
+Stdout is printed in exactly this order:
+
+1. `# Scouting Report` — the writer's capsule, streamed live.
+2. `# Executive Summary` — bullets from the summary agent (falls back
+   to `_Summary unavailable — no bullets produced._` if empty).
+3. `# Stuff Analysis` — the stuff specialist's clean output.
+4. `# Data Audit` — list of unresolved audit flags, or `Clean — no
+   issues found.`
+5. `# Anchor Check` — one of `Passed on first draft.`, `Revised N
+   time(s) — passed.`, or `Revised N time(s) — remaining issues:`
+   followed by the surviving warnings.
+6. `# Hallucination Check` — emitted only when the post-pipeline guard
+   finds unknown metrics or traditional outcome stats.
+
+Every run also writes `data-{pitcher}-{provider}.md` to the working
+directory with the rendered specialist and writer prompts.
+`--print-prompts` dumps that same content to stderr and exits without
+calling the model — useful when iterating on prompt wording.
+
+### `pitcher-scout`
+
+Cheap pre-filter that scans recent appearances, scores each one on a
+ten-signal heuristic (no LLM), and prints a ranked table. Optionally
+pipes the top results to a curator LLM.
+
+| Flag | Default | Notes |
+|---|---|---|
+| `-w`, `--window` | `1` | Days to scan (`1` = most recent game date only) |
+| `-n`, `--top` | `20` | Max results to display |
+| `--min-pitches` | `20` | Minimum pitches for an appearance to be scored |
+| `--min-score` | `0.0` | Minimum interest score to display |
+| `-v`, `--verbose` | off | Show per-signal detail under each row |
+| `--curate` | off | Send top results to an LLM for editorial selection |
+| `--provider` | `openai` | `openai` \| `claude` \| `gemini` (used for `--curate`) |
+
+Example:
+
+```bash
+uv run pitcher-scout -w 1 -n 25 --min-score 5.0 -v
+```
+
+The heuristic looks for velocity swings, P+/S+/L+ divergences, new or
+dropped pitches, usage shifts, development candidates, and reliever
+workload flags. See `METHODOLOGY.md` for the full signal table and
+weights. `--curate` sends the top results through `curator.py`, which
+asks the LLM to pick the 3–5 most compelling stories.
+
+### `pitcher-ask`
+
+Natural-language Q&A grounded in the same `PitcherContext` the narrative
+pipeline builds, served by a tool-calling analyst agent. The agent
+exposes exactly two tools — `get_pitcher_summary` (returns league
+baselines plus the full context render) and `get_pitch_detail` (returns
+focused per-pitch-type data).
+
+| Flag | Default | Notes |
+|---|---|---|
+| positional `question` | — | Natural-language question (quoted) |
+| `-w`, `--window` | `30` | Lookback in days |
+| `--provider` | **`gemini`** | `openai` \| `claude` \| `gemini` — note: `pitcher-ask` defaults to **gemini**, not openai |
+| `--thinking` | `medium` | `minimal` \| `low` \| `medium` \| `high` \| `xhigh` |
+
+Example:
+
+```bash
+uv run pitcher-ask "How is Cease's slider playing this month?"
+```
+
+The pitcher name is fuzzy-matched out of the question text via
+`resolver.py` (uses `rapidfuzz`). Output is just the streamed answer —
+no Executive Summary, Data Audit, Stuff Analysis, or Anchor Check
+sections. Those belong to the narrative CLI.
+
+## Pipeline at a glance
+
+`pitcher-narratives` runs the sole report-generation pipeline in
+`pipeline.py`, organised into five phases:
+
+- **Phase 1** — five specialist agents run in parallel: `stuff`,
+  `location`, `runvalue`, `trends`, `game_shape`.
+- **Phase 1.5** — per-specialist auditor runs in parallel, and any
+  flagged specialists are re-run with the audit corrections. The
+  writer never sees flawed prose.
+- **Phase 1.75** — a non-critical signal extractor reads the clean
+  specialist outputs and produces a `KeySignals` object (primary
+  findings + optional secondary findings).
+- **Phase 2** — the writer (streamed) and the executive summary agent
+  run in parallel from the same clean synthesis.
+- **Phase 2.5** — the anchor check validates the capsule against the
+  synthesis; unclean drafts are revised up to `MAX_REVISIONS = 3`
+  passes before any remaining warnings are reported.
+
+`METHODOLOGY.md` has the deep version: agent tiers, model settings,
+prompt structure, cache breakpoints, and the full anchor-check warning
+taxonomy.
+
+## Project layout
+
+```
+pitcher-narratives/
+├── src/pitcher_narratives/
+│   ├── __init__.py
+│   ├── analyst.py        # Q&A tool-calling agent (pitcher-ask)
+│   ├── anchor.py         # Anchor-check prompt + result models
+│   ├── ask_cli.py        # pitcher-ask entry point
+│   ├── cli.py            # pitcher-narratives entry point
+│   ├── config.py         # providers, model settings, thinking caps
+│   ├── context.py        # PitcherContext + to_prompt() renderer
+│   ├── curator.py        # LLM-powered scout curation (--curate)
+│   ├── data.py           # Statcast + Pitching+ loading pipeline
+│   ├── engine.py         # Computation engine (metrics, deltas, flags)
+│   ├── pipeline.py       # Multi-specialist pipeline (phases 1–2.5)
+│   ├── resolver.py       # Fuzzy pitcher name resolution
+│   ├── scout.py          # Appearance interest scoring (no LLM)
+│   ├── scout_cli.py      # pitcher-scout entry point
+│   └── signals.py        # KeySignals model + extractor prompt
+├── aggs/                 # Pitching+ CSVs (2025 and 2026)
+├── statcast_2025.parquet # Statcast pitch-level data, 2025
+├── statcast_2026.parquet # Statcast pitch-level data, 2026
+├── tests/                # pytest suite
+├── Makefile              # run / scout / curate shortcuts
+└── pyproject.toml
+```
+
+There is a single pipeline module. No legacy single-agent report path
+exists in the current tree.
+
+## Dev commands
+
+```bash
+uv sync                  # install / update deps
+uv run pytest            # run the test suite
+uv run ruff check        # lint
+uv run ty check src      # type-check
+```
+
+Makefile shortcuts (all three actually exist in the `Makefile`):
+
+```bash
+make run      # uv run pitcher-narratives -p 657277 -w 5
+make scout    # uv run pitcher-scout -n 25 --min-score 5.0 -v
+make curate   # uv run pitcher-scout -n 25 --min-score 5.0 --curate
+```
+
+## See also
+
+- [METHODOLOGY.md](./METHODOLOGY.md) — deep technical walkthrough of the
+  data sources, the computation engine, the context renderer, the five
+  pipeline phases, the anchor check, the hallucination guard, the model
+  tier table, and the Q&A analyst.
