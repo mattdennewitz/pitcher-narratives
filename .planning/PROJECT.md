@@ -83,19 +83,28 @@ The report must read like a scout wrote it — surfacing *changes, adaptations, 
 
 ### Active
 
-No active requirements — awaiting next milestone definition.
+Active requirements will be added after the v1.10 requirements-definition step completes.
 
-## Current State (v1.9 shipped)
+## Current Milestone: v1.10 Output Personas
 
-v1.9 Pipeline Consolidation shipped 2026-04-10. The old single-agent reporting path (report.py, ~850 lines) and its tests (test_report.py, ~635 lines) have been fully removed. The multi-agent specialist pipeline (pipeline.py) is now the sole report generation path.
+**Goal:** Let users pick the voice and output shape of the `pitcher-narratives` writer via a `--persona` flag, without changing the underlying multi-agent analysis pipeline or the `pitcher-ask` path.
 
-**What shipped:**
-- Deleted report.py and test_report.py (~1,485 lines removed)
-- Relocated hallucination guard (HallucinationReport, check_hallucinated_metrics, regex patterns) to pipeline.py
-- Rewrote cli.py and ask_cli.py to use pipeline.py exclusively, removing the `--pipeline` flag
-- Created standalone tests/test_hallucination_guard.py with 17 passing tests
-- Cleaned stale report.py references from anchor.py and config.py docstrings
-- Verified all import chains intact, zero orphaned references
+**Target features:**
+- Three personas shipped in v1.10 — `scout` (default, current voice preserved), `analyst` (newsletter for analytically-inclined fans, teaches as it analyzes), `generic` (typical-LLM sectioned format with a summary table).
+- Writer prompts use a shared base + per-persona overlay model. The shared base enforces the "always explain how the Pitching+ model works and the decisions it made" contract for every persona; overlays define voice, length target, and output shape.
+- `pitcher-narratives --persona {scout,analyst,generic}` with `scout` as the default — existing scripts keep working unchanged.
+- All personas share downstream infrastructure: five specialists, audit loop, signal extractor, anchor check + revision loop, hallucination guard, and the 3-bullet executive summary format.
+- `pitcher-ask` is untouched — this milestone is narrative-only.
+
+**Key constraints for planning:**
+- Scout persona must be a byte-identical-ish preservation of current behavior so users who never pass `--persona` see no regression.
+- Shared anchor check needs a tolerance pass for the `generic` persona's summary table (structural format the current anchor has never seen).
+- `generic` persona is the highest hallucination-guard risk — sectioned formats make it easier to pad with category labels that didn't come from the specialists.
+- No changes to `pitcher-ask`, `pitcher-scout`, resolver, analyst agent, data pipeline, engine, or context assembly.
+
+## Previous Milestone (v1.9 Pipeline Consolidation, shipped 2026-04-10)
+
+The old single-agent reporting path (report.py, ~850 lines) and its tests (test_report.py, ~635 lines) have been fully removed. The multi-agent specialist pipeline (pipeline.py) is now the sole report generation path. Hallucination guard relocated to pipeline.py; both CLIs rewritten to use the pipeline path exclusively; `--pipeline` flag removed. Full details in `.planning/MILESTONES.md`.
 
 **Pre-existing issues carried forward** (not caused by v1.9): tests/test_analyst.py has a broken import (_analyst_agent) and tests/test_pipeline.py has one pydantic-ai TestModel assertion error. Both predate v1.9.
 
@@ -196,4 +205,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-04-10 after v1.9 milestone shipped — Pipeline Consolidation*
+*Last updated: 2026-04-11 — v1.10 Output Personas milestone started*
