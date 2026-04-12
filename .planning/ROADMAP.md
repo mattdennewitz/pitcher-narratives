@@ -70,7 +70,9 @@ Plans:
   3. `check_hallucinated_metrics(text, persona="analyst")` does not false-positive on analyst vocabulary (`playability`, `tunneling gap`, `pitch tree`, `arsenal depth`)
   4. A TestModel-based analyst smoke test runs the pipeline and produces a non-empty narrative that passes the anchor check and hallucination guard
   5. `assert_analyst_shape(text)` validates word-count bounds and allowed structural elements
-**Plans**: TBD
+**Plans**: 1 plan
+Plans:
+- [ ] 07-01-PLAN.md — ANALYST persona constant, per-persona hallucination guard allowlist, analyst tests
 
 ### Phase 08: Generic Persona
 **Goal**: A GENERIC persona exists with a sectioned-with-summary-table format, validated against the shared anchor check and hallucination guard -- the only phase that may conditionally touch anchor.py
@@ -106,6 +108,6 @@ Plans:
 |-------|-----------|----------------|--------|-----------|
 | 05. Persona Module Scaffolding | v1.10 | 1/1 | Complete | 2026-04-12 |
 | 06. Pipeline Integration & Scout Parity Gate | v1.10 | 1/1 | Complete    | 2026-04-12 |
-| 07. Analyst Persona | v1.10 | 0/TBD | Not started | - |
+| 07. Analyst Persona | v1.10 | 0/1 | Not started | - |
 | 08. Generic Persona | v1.10 | 0/TBD | Not started | - |
 | 09. CLI Wiring | v1.10 | 0/TBD | Not started | - |
