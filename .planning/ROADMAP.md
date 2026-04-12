@@ -54,7 +54,9 @@
   3. `pitcher-ask --pipeline` (the `analyst.py:618` positional call) works without modification -- the new default argument preserves backward compatibility
   4. A TestModel-based scout smoke test runs the pipeline end-to-end and the composed writer prompt equals the frozen fixture
   5. All existing pipeline tests pass unchanged
-**Plans**: TBD
+**Plans**: 1 plan
+Plans:
+- [ ] 06-01-PLAN.md — Wire persona through pipeline factory + scout parity integration tests
 
 **NOTE: Phase-exit gate.** Phase 06 cannot be marked complete until `test_scout_composed_prompt_is_byte_identical_to_v19` passes through the full pipeline integration path. This is the milestone's hardest invariant -- scout byte-parity.
 
@@ -103,7 +105,7 @@
 | Phase | Milestone | Plans Complete | Status | Completed |
 |-------|-----------|----------------|--------|-----------|
 | 05. Persona Module Scaffolding | v1.10 | 1/1 | Complete | 2026-04-12 |
-| 06. Pipeline Integration & Scout Parity Gate | v1.10 | 0/TBD | Not started | - |
+| 06. Pipeline Integration & Scout Parity Gate | v1.10 | 0/1 | Not started | - |
 | 07. Analyst Persona | v1.10 | 0/TBD | Not started | - |
 | 08. Generic Persona | v1.10 | 0/TBD | Not started | - |
 | 09. CLI Wiring | v1.10 | 0/TBD | Not started | - |
