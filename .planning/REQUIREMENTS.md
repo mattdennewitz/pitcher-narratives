@@ -12,7 +12,7 @@ Let users pick the voice and output shape of the `pitcher-narratives` writer via
 
 ## Scope
 
-This milestone is **writer-layer-only**. It adds a new `personas.py` module, changes the writer agent construction in `pipeline.py`, and wires a CLI flag through `cli.py`. Every other module — specialists, auditor, signal extractor, anchor check infrastructure, hallucination guard regex, executive summary, data pipeline, engine, context assembly, resolver, analyst agent — stays behavioral as-is. The one possible exception is a single-line tolerance addendum to `ANCHOR_PROMPT` in `anchor.py`, applied in Phase D **only if** a synthetic-generic-capsule test produces false positives (see `research/SUMMARY.md` Disagreement 1).
+This milestone is **writer-layer-only**. It adds a new `personas.py` module, changes the writer agent construction in `pipeline.py`, and wires a CLI flag through `cli.py`. Every other module — specialists, auditor, signal extractor, anchor check infrastructure, hallucination guard regex, executive summary, data pipeline, engine, context assembly, resolver, analyst agent — stays behavioral as-is. The one possible exception is a single-line tolerance addendum to `ANCHOR_PROMPT` in `anchor.py`, applied in Phase 08 **only if** a synthetic-generic-capsule test produces false positives (see `research/SUMMARY.md` Disagreement 1).
 
 ---
 
@@ -35,7 +35,7 @@ This milestone is **writer-layer-only**. It adds a new `personas.py` module, cha
 ### VOICE — The Three Personas
 
 - [ ] **VOICE-01**: A `SCOUT` persona constant in `personas.py` whose overlay captures the current v1.9 scout voice (banned-word list, three-metric-maximum rule, 2-3 paragraph capsule, conversational lead, plausibility filters). Composing `build_writer_system_prompt(SCOUT)` produces a string byte-identical to the v1.9 `_WRITER_PROMPT`.
-- [ ] **VOICE-02**: An `ANALYST` persona constant in `personas.py` shipping the newsletter voice targeting 450–800 words for analytically-inclined fans. The overlay inherits from SCOUT's voice-quality rules via the `parent` field (or equivalent mechanism), adds teaching-vocabulary permissions (`playability`, `tunneling gap`, `pitch tree`, `arsenal depth`), sets a full-sentence depth requirement for the "explain the model" rule, and enforces a hard word-count ceiling so the agent wraps up before blowing the token budget.
+- [ ] **VOICE-02**: An `ANALYST` persona constant in `personas.py` shipping the newsletter voice targeting 450-800 words for analytically-inclined fans. The overlay inherits from SCOUT's voice-quality rules via the `parent` field (or equivalent mechanism), adds teaching-vocabulary permissions (`playability`, `tunneling gap`, `pitch tree`, `arsenal depth`), sets a full-sentence depth requirement for the "explain the model" rule, and enforces a hard word-count ceiling so the agent wraps up before blowing the token budget.
 - [ ] **VOICE-03**: A `GENERIC` persona constant in `personas.py` shipping the sectioned-with-summary-table format. The overlay fixes the section set in this order — `## Stuff`, `## Location`, `## Run Value & Execution`, `## Trend`, `## Game Shape`, `## Summary Table`. The summary table has exactly one row per populated `KeySignals` entry (not a fixed five). The overlay explicitly forbids `#` (h1) headings inside the capsule. The overlay inherits the analytical contract from the shared base and the factual-discipline rules from SCOUT's overlay (via `parent`).
 
 ### CLI — Command-Line Surface on `pitcher-narratives`
@@ -50,7 +50,7 @@ This milestone is **writer-layer-only**. It adds a new `personas.py` module, cha
 ### TEST — Regression and Shape-Assertion Coverage
 
 - [ ] **TEST-01**: A frozen fixture at `tests/fixtures/writer_prompt_scout.txt` contains the v1.9 `_WRITER_PROMPT` verbatim (same bytes, same line endings). The fixture is reviewer-friendly and diff-visible in PRs.
-- [ ] **TEST-02**: `tests/test_personas.py::test_scout_composed_prompt_is_byte_identical_to_v19` asserts `build_writer_system_prompt(SCOUT) == <fixture contents>`. This test is the phase-exit gate for Phase B.
+- [ ] **TEST-02**: `tests/test_personas.py::test_scout_composed_prompt_is_byte_identical_to_v19` asserts `build_writer_system_prompt(SCOUT) == <fixture contents>`. This test is the phase-exit gate for Phase 06.
 - [ ] **TEST-03**: `tests/test_personas.py::test_base_prompt_has_no_voice_words` asserts `SHARED_WRITER_BASE` does not contain the scout-specific voice words lifted into the SCOUT overlay (explicit banned-word list).
 - [ ] **TEST-04**: `tests/test_personas.py::test_base_prompt_has_explainer_section` asserts `SHARED_WRITER_BASE` contains the "EXPLAIN THE MODEL" instruction block.
 - [ ] **TEST-05**: `tests/test_personas.py` contains one `TestModel`-based smoke test per persona (scout, analyst, generic). Each test runs the pipeline end-to-end via `PITCHER_NARRATIVES_TEST_MODEL=1` without a real LLM call and asserts: the composed writer prompt starts with `SHARED_WRITER_BASE`, the narrative is non-empty, the anchor check runs to completion, and the hallucination guard does not fire.
@@ -73,7 +73,7 @@ The following features were considered for v1.10 and deferred, with reasoning:
 - **Per-persona `MAX_REVISIONS` cap.** Deferred — ship with the shared `MAX_REVISIONS = 3` for all three personas in v1.10. Revisit in a follow-up only if generic produces visibly more anchor revisions than scout.
 - **`anchor.py` persona-aware `build_anchor_message` branch.** Rejected — see `research/SUMMARY.md` Disagreement 1. A one-line `ANCHOR_PROMPT` tolerance addendum is applied in Phase D **only if** testing surfaces false positives on the generic persona.
 - **`EXPLAINER_MISSING` anchor `WarningCategory`.** Rejected — the anchor's job is fact-checking, not editorial enforcement. The `check_explainer_present` post-processor (PERSONA-11) handles this orthogonally.
-- **Persona rename (`generic` → `structured` or `sectioned`).** Deferred to v1.11 — evidence-driven rename based on user feedback, with `generic` kept as an alias if renamed.
+- **Persona rename (`generic` -> `structured` or `sectioned`).** Deferred to v1.11 — evidence-driven rename based on user feedback, with `generic` kept as an alias if renamed.
 
 ---
 
@@ -92,10 +92,35 @@ The following are explicitly **not** in v1.10 and will be rejected in review:
 
 ---
 
-## Traceability (Requirements → Phases)
+## Traceability (Requirements -> Phases)
 
-*This section is filled by the roadmapper in Step 10. Leave empty for now.*
-
-| REQ-ID | Phase |
-|--------|-------|
-| *(pending roadmap)* | — |
+| REQ-ID | Phase | Status | Notes |
+|--------|-------|--------|-------|
+| PERSONA-01 | Phase 05 | Pending | Persona frozen dataclass in personas.py |
+| PERSONA-02 | Phase 05 | Pending | PERSONAS registry + get_persona lookup |
+| PERSONA-03 | Phase 05 | Pending | DEFAULT_PERSONA = PERSONAS["scout"] |
+| PERSONA-04 | Phase 05 | Pending | SHARED_WRITER_BASE extraction |
+| PERSONA-05 | Phase 05 | Pending | build_writer_system_prompt composer |
+| PERSONA-06 | Phase 05 | Pending | "EXPLAIN THE MODEL" instruction in base |
+| PERSONA-07 | Phase 06 | Pending | _WRITER_PROMPT removed, writer built from composer |
+| PERSONA-08 | Phase 06 | Pending | make_pipeline_agents gains persona kwarg |
+| PERSONA-09 | Phase 06 | Pending | generate_pipeline_streaming / _run_pipeline gain persona kwarg |
+| PERSONA-10 | Phase 07 + 08 | Pending | Analyst allowlist (Phase 07), generic allowlist (Phase 08) |
+| PERSONA-11 | Phase 08 | Pending | check_explainer_present post-processor |
+| VOICE-01 | Phase 05 | Pending | SCOUT persona constant (byte-identical to v1.9) |
+| VOICE-02 | Phase 07 | Pending | ANALYST persona constant (newsletter voice) |
+| VOICE-03 | Phase 08 | Pending | GENERIC persona constant (sectioned + table) |
+| CLI-01 | Phase 09 | Pending | --persona flag on pitcher-narratives |
+| CLI-02 | Phase 09 | Pending | --list-personas flag |
+| CLI-03 | Phase 09 | Pending | --print-prompts uses composed prompt |
+| CLI-04 | Phase 09 | Pending | --verbose logs persona id |
+| CLI-05 | Phase 09 | Pending | No-flag and --persona scout are identical |
+| CLI-06 | Phase 09 | Pending | pitcher-ask and pitcher-scout reject --persona |
+| TEST-01 | Phase 05 | Pending | Frozen fixture writer_prompt_scout.txt |
+| TEST-02 | Phase 05 | Pending | Byte-identity test (phase-exit gate for Phase 06) |
+| TEST-03 | Phase 05 | Pending | Base prompt no-voice-words test |
+| TEST-04 | Phase 05 | Pending | Base prompt explainer-section test |
+| TEST-05 | Phase 06 + 07 + 08 | Pending | Scout smoke (06), analyst smoke (07), generic smoke (08) |
+| TEST-06 | Phase 06 + 07 + 08 | Pending | Scout shape (06), analyst shape (07), generic shape (08) |
+| TEST-07 | Phase 07 + 08 | Pending | Analyst guard vectors (07), generic guard vectors (08) |
+| TEST-08 | Phase 09 | Pending | pitcher-ask and pitcher-scout reject --persona |
