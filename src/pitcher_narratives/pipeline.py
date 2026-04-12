@@ -73,6 +73,12 @@ from pitcher_narratives.engine import (
     outlier_tag,
     render_league_baselines,
 )
+from pitcher_narratives.personas import (
+    Persona,
+    DEFAULT_PERSONA,
+    build_writer_system_prompt,
+    get_persona,
+)
 from pitcher_narratives.signals import (
     KeySignals,
     SIGNAL_EXTRACTOR_PROMPT,
@@ -399,82 +405,6 @@ class AuditResult(BaseModel):
     @property
     def is_clean(self) -> bool:
         return len(self.flags) == 0
-
-
-# ═══════════════════════════════════════════════════════════════════════
-# WRITER PROMPT
-# ═══════════════════════════════════════════════════════════════════════
-
-_WRITER_PROMPT = """\
-You are an elite, sabermetrically inclined baseball writer. You write \
-for front offices and data-driven fans.
-
-INPUT: Five specialist analyses of a pitcher's recent window:
-1. Stuff analysis — physical pitch characteristics and S+ grades
-2. Location analysis — P vs S location impact per pitch
-3. Run value decomposition — which outcomes drive each pitch's value
-4. Trend analysis — what has changed vs season baseline
-5. Game shape — how effectiveness changes within a game (TTO, velocity arc)
-
-Your job is to compose a single, unified 2-3 paragraph scouting capsule \
-from these building blocks. The specialists did the analysis; you do \
-the writing.
-
-CRITICAL: These are INGREDIENTS, not sections to preserve. You must:
-- Find the thread. What is the single most important story across \
-all five analyses? Maybe the stuff is fine but location is killing a \
-pitch. Maybe a velocity trend is changing the entire arsenal picture. \
-Maybe one pitch is carrying the whole profile.
-- Write as one voice. The reader should not be able to tell that five \
-separate analysts contributed. No section breaks, no "meanwhile," no \
-"turning to the location data."
-- Drop what's redundant. If stuff and run value both say the slider \
-is elite, say it once with the best evidence from either.
-- Prioritize the surprising. If three specialists agree on something \
-obvious, give it one sentence. If one specialist found something \
-the others didn't highlight, that's probably the lead.
-- Use the Key Signals. The Key Signals section contains cross-specialist \
-patterns identified by a signal extractor. Primary signals (Top \
-Improvement, Top Concern) are your narrative priorities — your lead \
-must address one. Secondary signals (Specialist Tension, Connected \
-Changes, etc.) are high-value if they serve the thread — use your \
-judgment on weight. You are not required to mention every secondary \
-signal.
-
-STRUCTURE:
-Paragraph 1 (The Setup): What is different about this pitcher right now. \
-Lead with what happened — the concrete change — not a theory.
-Paragraph 2+ (The Verdict): How the stuff plays in practice. Weave in \
-platoon splits where they matter. Clear-eyed conclusion.
-
-VOICE:
-- Write like an analyst talking to another analyst. Plain, specific, \
-conversational.
-- Vary sentence length. Short sentences land points.
-- Use scouting language: stuff, feel, finding a groove, getting tagged.
-- No clichés, no formulaic transitions, no "the data shows."
-- Never use: "degradation," "binary," "profiles as," "dominant," \
-"elite," "massive spike."
-- Start immediately with analysis. No introductory fluff.
-- At most three primary metrics carry the narrative.
-
-CONSTRAINTS:
-- Use ONLY data from the specialist analyses and the context provided. \
-Do not invent metrics.
-- DIRECTIONAL CONSISTENCY: If a specialist says a pitch is effective \
-(negative xRV100, S+ above 100, strong whiff rate), do not flip the \
-narrative to negative. If a specialist says a pitch is weak, do not \
-spin it as a strength. Preserve the direction of each specialist's \
-assessment.
-- If specialists contradict each other on a pitch, acknowledge the \
-tension rather than silently picking one side.
-- No bullet points, no headers, no tables. Prose only.
-- Scale confidence to sample size. Small windows get tentative language.
-- TEMPORAL GROUNDING: The data includes a "Temporal Context" section \
-with a prior-year relevance level. Follow it. When relevance is LOW, \
-prior-season workload does not drive narrative. When relevance is HIGH, \
-prior year is residual context but two seasons are NOT a continuous \
-timeline. Do not hallucinate cumulative fatigue across an offseason."""
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -1004,7 +934,7 @@ def _render_pipeline_data_sections(
     else:
         # Narrative pipeline: writer + anchor + executive summary
         sections.append(f"\n{sep}\nWRITER\n{sep}\n")
-        sections.append(f"## System Prompt\n\n{_WRITER_PROMPT}\n")
+        sections.append(f"## System Prompt\n\n{build_writer_system_prompt(DEFAULT_PERSONA)}\n")
         sections.append(
             "## User Message\n\n"
             "[Receives: key signals + all 5 specialist outputs]\n"
@@ -1112,6 +1042,7 @@ class PipelineAgents(NamedTuple):
 def make_pipeline_agents(
     provider: str = "gemini",
     thinking: ThinkingEffort = "high",
+    persona: Persona = DEFAULT_PERSONA,
 ) -> PipelineAgents:
     if provider not in PROVIDERS:
         raise ValueError(f"Unknown provider {provider!r}")
@@ -1150,7 +1081,7 @@ def make_pipeline_agents(
         runvalue=_mini_specialist(_RUNVALUE_SPECIALIST_PROMPT),
         trends=_mini_specialist_compact(_TREND_SPECIALIST_PROMPT),
         game_shape=_mini_specialist_compact(_GAME_SHAPE_SPECIALIST_PROMPT),
-        writer=_writer(_WRITER_PROMPT),
+        writer=_writer(build_writer_system_prompt(persona)),
         auditor=Agent(mini_model, output_type=AuditResult, system_prompt=_DATA_AUDITOR_PROMPT,
                       model_settings=checker_settings, retries=5, defer_model_check=True),
         anchor=Agent(mini_model, output_type=AnchorResult, system_prompt=ANCHOR_PROMPT,
@@ -1281,6 +1212,7 @@ async def _run_pipeline(
     *,
     provider: str = "gemini",
     thinking: ThinkingEffort = "high",
+    persona: str = "scout",
     _model_override: Any = None,
 ) -> PipelineResult:
     """Async core of the multi-agent pipeline.
@@ -1291,7 +1223,8 @@ async def _run_pipeline(
     Phase 2: Writer composes capsule from specialist outputs + key signals.
     Phase 2.5: Anchor check + revision loop.
     """
-    agents = make_pipeline_agents(provider, thinking)
+    persona_obj = get_persona(persona)
+    agents = make_pipeline_agents(provider, thinking, persona_obj)
 
     # Phase 1: Run specialists concurrently
     log.info("Running specialists...")
@@ -1404,6 +1337,7 @@ def generate_pipeline_streaming(
     *,
     provider: str = "gemini",
     thinking: ThinkingEffort = "high",
+    persona: str = "scout",
     _model_override: Any = None,
 ) -> PipelineResult:
     """Generate a report using the specialist→auditor→writer multi-agent pipeline.
@@ -1418,13 +1352,15 @@ def generate_pipeline_streaming(
         ctx: Assembled pitcher context.
         provider: LLM provider key.
         thinking: Thinking effort level.
+        persona: Persona id string (resolved to Persona object internally).
         _model_override: Optional model override for testing.
 
     Returns:
         PipelineResult with narrative, specialist outputs, and anchor warnings.
     """
     return asyncio.run(
-        _run_pipeline(ctx, provider=provider, thinking=thinking, _model_override=_model_override)
+        _run_pipeline(ctx, provider=provider, thinking=thinking,
+                      persona=persona, _model_override=_model_override)
     )
 
 
