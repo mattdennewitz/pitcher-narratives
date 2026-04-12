@@ -25,7 +25,7 @@
 **Milestone Goal:** Let users pick the voice and output shape of the `pitcher-narratives` writer via a `--persona` flag, without changing the underlying multi-agent analysis pipeline.
 
 - [x] **Phase 05: Persona Module Scaffolding** (1/1 plans) — completed 2026-04-12
-- [ ] **Phase 06: Pipeline Integration & Scout Parity Gate** - Wire persona through pipeline factory with scout-default; phase-exit gate on byte-parity
+- [x] **Phase 06: Pipeline Integration & Scout Parity Gate** - Wire persona through pipeline factory with scout-default; phase-exit gate on byte-parity (completed 2026-04-12)
 - [ ] **Phase 07: Analyst Persona** - Build newsletter voice overlay with teaching vocabulary and hallucination-guard allowlist
 - [ ] **Phase 08: Generic Persona** - Build sectioned-with-table format, validate against anchor check and hallucination guard (highest-risk phase)
 - [ ] **Phase 09: CLI Wiring** - Expose --persona and --list-personas on pitcher-narratives, guard other CLIs
@@ -56,7 +56,7 @@
   5. All existing pipeline tests pass unchanged
 **Plans**: 1 plan
 Plans:
-- [ ] 06-01-PLAN.md — Wire persona through pipeline factory + scout parity integration tests
+- [x] 06-01-PLAN.md — Wire persona through pipeline factory + scout parity integration tests
 
 **NOTE: Phase-exit gate.** Phase 06 cannot be marked complete until `test_scout_composed_prompt_is_byte_identical_to_v19` passes through the full pipeline integration path. This is the milestone's hardest invariant -- scout byte-parity.
 
@@ -105,7 +105,7 @@ Plans:
 | Phase | Milestone | Plans Complete | Status | Completed |
 |-------|-----------|----------------|--------|-----------|
 | 05. Persona Module Scaffolding | v1.10 | 1/1 | Complete | 2026-04-12 |
-| 06. Pipeline Integration & Scout Parity Gate | v1.10 | 0/1 | Not started | - |
+| 06. Pipeline Integration & Scout Parity Gate | v1.10 | 1/1 | Complete   | 2026-04-12 |
 | 07. Analyst Persona | v1.10 | 0/TBD | Not started | - |
 | 08. Generic Persona | v1.10 | 0/TBD | Not started | - |
 | 09. CLI Wiring | v1.10 | 0/TBD | Not started | - |

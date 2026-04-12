@@ -26,9 +26,9 @@ This milestone is **writer-layer-only**. It adds a new `personas.py` module, cha
 - [ ] **PERSONA-04**: A `SHARED_WRITER_BASE` string constant in `personas.py` is extracted from the v1.9 `_WRITER_PROMPT` with all scout-specific voice words lifted out into the scout overlay. The base contains the analytical contract only (directional consistency, KeySignals obligations, temporal grounding, "no outcome stats" guardrail).
 - [ ] **PERSONA-05**: A `build_writer_system_prompt(persona: Persona) -> str` composer function in `personas.py` concatenates `SHARED_WRITER_BASE` + the persona's overlay with `\n\n` as separator. When `persona.parent` is set, the parent's overlay is composed first, then the child's overlay is appended — supporting multi-level overlay inheritance.
 - [ ] **PERSONA-06**: `SHARED_WRITER_BASE` contains a named "EXPLAIN THE MODEL" instruction (present in every composed persona prompt by construction) that requires the writer to contextualize Pitching+ grades (S+ = stuff, L+ = location, P+ = combined) and the decisions the model made. The base has zero scout-specific voice words.
-- [ ] **PERSONA-07**: The `_WRITER_PROMPT` constant is removed from `pipeline.py`; the writer agent in `make_pipeline_agents` is built from `build_writer_system_prompt(persona)` instead.
-- [ ] **PERSONA-08**: `make_pipeline_agents(provider, thinking, persona: Persona = DEFAULT_PERSONA)` accepts an optional persona argument with a default that preserves the existing positional call at `analyst.py:618`.
-- [ ] **PERSONA-09**: `generate_pipeline_streaming(..., persona: str = "scout")` and `_run_pipeline(..., persona: str = "scout")` accept a string persona id and resolve it to a `Persona` object via `get_persona()` before passing to `make_pipeline_agents`.
+- [x] **PERSONA-07**: The `_WRITER_PROMPT` constant is removed from `pipeline.py`; the writer agent in `make_pipeline_agents` is built from `build_writer_system_prompt(persona)` instead.
+- [x] **PERSONA-08**: `make_pipeline_agents(provider, thinking, persona: Persona = DEFAULT_PERSONA)` accepts an optional persona argument with a default that preserves the existing positional call at `analyst.py:618`.
+- [x] **PERSONA-09**: `generate_pipeline_streaming(..., persona: str = "scout")` and `_run_pipeline(..., persona: str = "scout")` accept a string persona id and resolve it to a `Persona` object via `get_persona()` before passing to `make_pipeline_agents`.
 - [ ] **PERSONA-10**: `check_hallucinated_metrics(narrative: str, persona: str | None = None)` gains an optional `persona` parameter. When set, a `_PERSONA_KNOWN_METRICS` dict adds per-persona safe phrases (e.g. analyst newsletter vocabulary `playability`, `tunneling gap`, `pitch tree`, `arsenal depth`) to the allowlist for that run. Calls without the persona argument behave identically to v1.9.
 - [ ] **PERSONA-11**: A `check_explainer_present(capsule: str) -> bool` post-processor runs after the writer's capsule lands in `_run_pipeline`. When it returns `False`, the CLI logs a warning to stderr (non-fatal, informational) so operators see when a persona silently dropped the "explain the model" content. The check is a pragmatic keyword scan, not a new LLM call.
 
@@ -53,7 +53,7 @@ This milestone is **writer-layer-only**. It adds a new `personas.py` module, cha
 - [ ] **TEST-02**: `tests/test_personas.py::test_scout_composed_prompt_is_byte_identical_to_v19` asserts `build_writer_system_prompt(SCOUT) == <fixture contents>`. This test is the phase-exit gate for Phase 06.
 - [ ] **TEST-03**: `tests/test_personas.py::test_base_prompt_has_no_voice_words` asserts `SHARED_WRITER_BASE` does not contain the scout-specific voice words lifted into the SCOUT overlay (explicit banned-word list).
 - [ ] **TEST-04**: `tests/test_personas.py::test_base_prompt_has_explainer_section` asserts `SHARED_WRITER_BASE` contains the "EXPLAIN THE MODEL" instruction block.
-- [ ] **TEST-05**: `tests/test_personas.py` contains one `TestModel`-based smoke test per persona (scout, analyst, generic). Each test runs the pipeline end-to-end via `PITCHER_NARRATIVES_TEST_MODEL=1` without a real LLM call and asserts: the composed writer prompt starts with `SHARED_WRITER_BASE`, the narrative is non-empty, the anchor check runs to completion, and the hallucination guard does not fire.
+- [x] **TEST-05**: `tests/test_personas.py` contains one `TestModel`-based smoke test per persona (scout, analyst, generic). Each test runs the pipeline end-to-end via `PITCHER_NARRATIVES_TEST_MODEL=1` without a real LLM call and asserts: the composed writer prompt starts with `SHARED_WRITER_BASE`, the narrative is non-empty, the anchor check runs to completion, and the hallucination guard does not fire.
 - [ ] **TEST-06**: `tests/test_personas.py` contains three shape-assertion helpers — `assert_scout_shape(text)`, `assert_analyst_shape(text)`, `assert_generic_shape(text)` — that check word-count bounds, allowed structural elements, and banned elements per persona. The smoke tests from TEST-05 use them.
 - [ ] **TEST-07**: `tests/test_hallucination_guard.py` gains per-persona regression vectors — analyst newsletter vocabulary (`playability`, `tunneling gap`, etc.) does not false-positive when `persona="analyst"`, and a fabricated generic-persona section or invented metric in a table row is still caught by the guard.
 - [ ] **TEST-08**: `tests/test_ask_cli.py::test_ask_cli_does_not_accept_persona` and `tests/test_scout_cli.py::test_scout_cli_does_not_accept_persona` (or equivalent existing test module) assert the two other CLIs reject the flag with an argparse error.
@@ -102,9 +102,9 @@ The following are explicitly **not** in v1.10 and will be rejected in review:
 | PERSONA-04 | Phase 05 | Pending | SHARED_WRITER_BASE extraction |
 | PERSONA-05 | Phase 05 | Pending | build_writer_system_prompt composer |
 | PERSONA-06 | Phase 05 | Pending | "EXPLAIN THE MODEL" instruction in base |
-| PERSONA-07 | Phase 06 | Pending | _WRITER_PROMPT removed, writer built from composer |
-| PERSONA-08 | Phase 06 | Pending | make_pipeline_agents gains persona kwarg |
-| PERSONA-09 | Phase 06 | Pending | generate_pipeline_streaming / _run_pipeline gain persona kwarg |
+| PERSONA-07 | Phase 06 | Complete | _WRITER_PROMPT removed, writer built from composer |
+| PERSONA-08 | Phase 06 | Complete | make_pipeline_agents gains persona kwarg |
+| PERSONA-09 | Phase 06 | Complete | generate_pipeline_streaming / _run_pipeline gain persona kwarg |
 | PERSONA-10 | Phase 07 + 08 | Pending | Analyst allowlist (Phase 07), generic allowlist (Phase 08) |
 | PERSONA-11 | Phase 08 | Pending | check_explainer_present post-processor |
 | VOICE-01 | Phase 05 | Pending | SCOUT persona constant (byte-identical to v1.9) |
@@ -120,7 +120,7 @@ The following are explicitly **not** in v1.10 and will be rejected in review:
 | TEST-02 | Phase 05 | Pending | Byte-identity test (phase-exit gate for Phase 06) |
 | TEST-03 | Phase 05 | Pending | Base prompt no-voice-words test |
 | TEST-04 | Phase 05 | Pending | Base prompt explainer-section test |
-| TEST-05 | Phase 06 + 07 + 08 | Pending | Scout smoke (06), analyst smoke (07), generic smoke (08) |
+| TEST-05 | Phase 06 + 07 + 08 | Complete | Scout smoke (06), analyst smoke (07), generic smoke (08) |
 | TEST-06 | Phase 06 + 07 + 08 | Pending | Scout shape (06), analyst shape (07), generic shape (08) |
 | TEST-07 | Phase 07 + 08 | Pending | Analyst guard vectors (07), generic guard vectors (08) |
 | TEST-08 | Phase 09 | Pending | pitcher-ask and pitcher-scout reject --persona |
