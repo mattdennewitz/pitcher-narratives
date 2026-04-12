@@ -105,7 +105,7 @@ Plans:
 | Phase | Milestone | Plans Complete | Status | Completed |
 |-------|-----------|----------------|--------|-----------|
 | 05. Persona Module Scaffolding | v1.10 | 1/1 | Complete | 2026-04-12 |
-| 06. Pipeline Integration & Scout Parity Gate | v1.10 | 1/1 | Complete   | 2026-04-12 |
+| 06. Pipeline Integration & Scout Parity Gate | v1.10 | 1/1 | Complete    | 2026-04-12 |
 | 07. Analyst Persona | v1.10 | 0/TBD | Not started | - |
 | 08. Generic Persona | v1.10 | 0/TBD | Not started | - |
 | 09. CLI Wiring | v1.10 | 0/TBD | Not started | - |
