@@ -43,7 +43,9 @@
   3. `SHARED_WRITER_BASE` contains the "EXPLAIN THE MODEL" instruction and contains zero scout-specific voice words (both verified by passing tests)
   4. `get_persona("bogus")` raises `ValueError`; `get_persona("scout")` returns `DEFAULT_PERSONA`
   5. `test_scout_composed_prompt_is_byte_identical_to_v19`, `test_base_prompt_has_no_voice_words`, and `test_base_prompt_has_explainer_section` all pass green
-**Plans**: TBD
+**Plans:** 1 plan
+Plans:
+- [ ] 05-01-PLAN.md — Create personas.py module, frozen fixture, and contract tests
 
 ### Phase 06: Pipeline Integration & Scout Parity Gate
 **Goal**: The pipeline is persona-aware -- `make_pipeline_agents` accepts a persona argument, the old `_WRITER_PROMPT` constant is deleted from pipeline.py, and scout behavior is byte-identical to v1.9 through the full pipeline path
@@ -103,7 +105,7 @@
 
 | Phase | Milestone | Plans Complete | Status | Completed |
 |-------|-----------|----------------|--------|-----------|
-| 05. Persona Module Scaffolding | v1.10 | 0/TBD | Not started | - |
+| 05. Persona Module Scaffolding | v1.10 | 0/1 | Not started | - |
 | 06. Pipeline Integration & Scout Parity Gate | v1.10 | 0/TBD | Not started | - |
 | 07. Analyst Persona | v1.10 | 0/TBD | Not started | - |
 | 08. Generic Persona | v1.10 | 0/TBD | Not started | - |
