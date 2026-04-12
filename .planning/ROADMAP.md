@@ -26,4 +26,4 @@
 |-------|-----------|----------------|--------|-----------|
 | 23. Remove Old Pipeline | v1.9 | 2/2 | Complete | 2026-04-10 |
 | 24. Verification & Cleanup | v1.9 | 1/1 | Complete | 2026-04-10 |
-| 05. Persona Module Scaffolding | v1.10 | 1/? | In Progress | — |
+| 05. Persona Module Scaffolding | v1.10 | 1/? | Complete    | 2026-04-12 |
