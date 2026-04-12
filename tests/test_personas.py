@@ -8,11 +8,16 @@ import pytest
 from pitcher_narratives.personas import (
     Persona,
     PERSONAS,
+    SCOUT,
     DEFAULT_PERSONA,
     SHARED_WRITER_BASE,
     build_writer_system_prompt,
     get_persona,
 )
+from pitcher_narratives.pipeline import make_pipeline_agents, generate_pipeline_streaming, PipelineResult
+from pitcher_narratives.context import assemble_pitcher_context
+from pitcher_narratives.data import load_pitcher_data
+from pydantic_ai.models.test import TestModel
 
 _FIXTURE = Path(__file__).parent / "fixtures" / "writer_prompt_scout.txt"
 
@@ -121,3 +126,65 @@ def test_composed_prompt_starts_with_base():
     """The composed scout prompt begins with SHARED_WRITER_BASE."""
     composed = build_writer_system_prompt(PERSONAS["scout"])
     assert composed.startswith(SHARED_WRITER_BASE)
+
+
+# ── Pipeline integration tests (Phase 06: PERSONA-07, PERSONA-08, TEST-05) ──
+
+
+@pytest.fixture(scope="module")
+def ctx():
+    """Load pitcher data once per module for pipeline smoke tests."""
+    data = load_pitcher_data(592155, window_days=30)
+    return assemble_pitcher_context(data)
+
+
+class TestPipelinePersonaIntegration:
+    """Tests that the pipeline correctly wires persona through to the writer agent."""
+
+    def test_writer_prompt_deleted_from_pipeline(self):
+        """PERSONA-07: _WRITER_PROMPT no longer importable from pipeline."""
+        with pytest.raises(ImportError):
+            from pitcher_narratives.pipeline import _WRITER_PROMPT  # noqa: F401
+
+    def test_default_and_explicit_scout_produce_identical_writer_prompts(self):
+        """PERSONA-08: No-arg and explicit-SCOUT produce the same writer prompt."""
+        agents_default = make_pipeline_agents("gemini", "high")
+        agents_explicit = make_pipeline_agents("gemini", "high", SCOUT)
+        assert agents_default.writer._system_prompts == agents_explicit.writer._system_prompts
+
+    def test_writer_receives_composed_persona_prompt(self):
+        """PERSONA-07: Writer agent's system prompt is the full composed persona prompt."""
+        agents = make_pipeline_agents("gemini", "high")
+        expected = build_writer_system_prompt(SCOUT)
+        assert agents.writer._system_prompts == (expected,)
+
+    def test_writer_prompt_matches_frozen_fixture(self):
+        """PERSONA-07 + TEST-05: Writer prompt equals the frozen fixture byte-for-byte."""
+        agents = make_pipeline_agents("gemini", "high")
+        fixture = _FIXTURE.read_text()
+        assert agents.writer._system_prompts[0] == fixture
+
+
+def test_scout_pipeline_smoke(ctx):
+    """TEST-05 (scout): Full pipeline with TestModel produces non-empty narrative.
+
+    Verifies:
+    - Pipeline runs end-to-end without errors using TestModel
+    - Result is a PipelineResult with a non-empty narrative
+    - Writer agent received the correct composed scout prompt (matches fixture)
+    """
+    test_model = TestModel()
+    result = generate_pipeline_streaming(
+        ctx,
+        provider="gemini",
+        thinking="high",
+        persona="scout",
+        _model_override=test_model,
+    )
+    assert isinstance(result, PipelineResult)
+    assert len(result.narrative) > 0
+
+    # Verify the writer prompt matches the frozen fixture
+    fixture = _FIXTURE.read_text()
+    expected = build_writer_system_prompt(SCOUT)
+    assert expected == fixture
