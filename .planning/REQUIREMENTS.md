@@ -36,7 +36,7 @@ This milestone is **writer-layer-only**. It adds a new `personas.py` module, cha
 
 - [ ] **VOICE-01**: A `SCOUT` persona constant in `personas.py` whose overlay captures the current v1.9 scout voice (banned-word list, three-metric-maximum rule, 2-3 paragraph capsule, conversational lead, plausibility filters). Composing `build_writer_system_prompt(SCOUT)` produces the canonical v1.10 composed scout prompt (SHARED_WRITER_BASE + scout overlay) that is byte-identical to the frozen fixture at `tests/fixtures/writer_prompt_scout.txt`. (Resolution 1: the fixture captures the composed v1.10 prompt, not the raw v1.9 `_WRITER_PROMPT`, because PERSONA-06's "EXPLAIN THE MODEL" section is new content added to the shared base.)
 - [x] **VOICE-02**: An `ANALYST` persona constant in `personas.py` shipping the newsletter voice targeting 450-800 words for analytically-inclined fans. The overlay inherits from SCOUT's voice-quality rules via the `parent` field (or equivalent mechanism), adds teaching-vocabulary permissions (`playability`, `tunneling gap`, `pitch tree`, `arsenal depth`), sets a full-sentence depth requirement for the "explain the model" rule, and enforces a hard word-count ceiling so the agent wraps up before blowing the token budget.
-- [ ] **VOICE-03**: A `GENERIC` persona constant in `personas.py` shipping the sectioned-with-summary-table format. The overlay fixes the section set in this order — `## Stuff`, `## Location`, `## Run Value & Execution`, `## Trend`, `## Game Shape`, `## Summary Table`. The summary table has exactly one row per populated `KeySignals` entry (not a fixed five). The overlay explicitly forbids `#` (h1) headings inside the capsule. The overlay inherits the analytical contract from the shared base and the factual-discipline rules from SCOUT's overlay (via `parent`).
+- [x] **VOICE-03**: A `GENERIC` persona constant in `personas.py` shipping the sectioned-with-summary-table format. The overlay fixes the section set in this order — `## Stuff`, `## Location`, `## Run Value & Execution`, `## Trend`, `## Game Shape`, `## Summary Table`. The summary table has exactly one row per populated `KeySignals` entry (not a fixed five). The overlay explicitly forbids `#` (h1) headings inside the capsule. The overlay inherits the analytical contract from the shared base and the factual-discipline rules from SCOUT's overlay (via `parent`).
 
 ### CLI — Command-Line Surface on `pitcher-narratives`
 
@@ -109,7 +109,7 @@ The following are explicitly **not** in v1.10 and will be rejected in review:
 | PERSONA-11 | Phase 08 | Pending | check_explainer_present post-processor |
 | VOICE-01 | Phase 05 | Pending | SCOUT persona constant (byte-identical to v1.9) |
 | VOICE-02 | Phase 07 | Complete | ANALYST persona constant (newsletter voice) |
-| VOICE-03 | Phase 08 | Pending | GENERIC persona constant (sectioned + table) |
+| VOICE-03 | Phase 08 | Complete | GENERIC persona constant (sectioned + table) |
 | CLI-01 | Phase 09 | Pending | --persona flag on pitcher-narratives |
 | CLI-02 | Phase 09 | Pending | --list-personas flag |
 | CLI-03 | Phase 09 | Pending | --print-prompts uses composed prompt |
