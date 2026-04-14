@@ -1470,6 +1470,12 @@ _PERSONA_KNOWN_METRICS: dict[str, frozenset[str]] = {
         "pitch tree",
         "arsenal depth",
     }),
+    # Generic overlay vocabulary is covered by _KNOWN_METRICS (S+, L+,
+    # P+, Pitching+, Stuff+, Location+). Empty frozenset satisfies
+    # PERSONA-10 (the key exists) and reserves the slot for future
+    # regex evolution. Per the per-persona allowlist contract, adding
+    # entries here is additive-only and cannot break other personas.
+    "generic": frozenset(),
 }
 
 _METRIC_PATTERN = re.compile(
