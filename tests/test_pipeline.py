@@ -35,6 +35,7 @@ from pitcher_narratives.pipeline import (
     _build_trend_input,
     _flatten_prompt,
     audit_and_revise_specialists,
+    check_explainer_present,
     generate_pipeline_streaming,
     make_pipeline_agents,
 )
@@ -849,3 +850,93 @@ class TestGameShapeSpecialistReceivesYoyData:
         output = _flatten_prompt(_build_game_shape_input(ctx))
         assert "Workload" in output
         assert "48.0 IP" in output
+
+
+# ── check_explainer_present unit tests (Phase 08: PERSONA-11) ──
+
+
+class TestCheckExplainerPresent:
+    """Unit tests for the Pitching+ explainer post-processor."""
+
+    def test_check_explainer_present_detects_plus_family(self):
+        """PERSONA-11: Each Pitching+ family keyword individually returns True."""
+        from pitcher_narratives.pipeline import check_explainer_present
+        for keyword in ("S+", "L+", "P+", "Pitching+", "Stuff+", "Location+"):
+            text = f"The model graded this pitch {keyword} 112 above average."
+            assert check_explainer_present(text) is True, (
+                f"Expected keyword {keyword!r} to be detected in capsule"
+            )
+
+    def test_check_explainer_present_absent(self):
+        """PERSONA-11: Capsule with no explainer keywords returns False."""
+        from pitcher_narratives.pipeline import check_explainer_present
+        text = (
+            "The slider has been sharp lately. The curveball is giving "
+            "him trouble, particularly against right-handers."
+        )
+        assert check_explainer_present(text) is False
+
+    def test_check_explainer_present_rejects_empty(self):
+        """PERSONA-11: Empty capsule raises ValueError."""
+        from pitcher_narratives.pipeline import check_explainer_present
+        with pytest.raises(ValueError, match="empty"):
+            check_explainer_present("")
+
+    def test_check_explainer_present_rejects_non_string(self):
+        """PERSONA-11: Non-string input raises TypeError."""
+        from pitcher_narratives.pipeline import check_explainer_present
+        with pytest.raises(TypeError, match="must be str"):
+            check_explainer_present(None)  # type: ignore[arg-type]
+        with pytest.raises(TypeError, match="must be str"):
+            check_explainer_present(42)  # type: ignore[arg-type]
+        with pytest.raises(TypeError, match="must be str"):
+            check_explainer_present(b"bytes")  # type: ignore[arg-type]
+
+    def test_check_explainer_present_exported(self):
+        """PERSONA-11: Function is in pipeline.__all__."""
+        import pitcher_narratives.pipeline as p
+        assert "check_explainer_present" in p.__all__
+
+
+# ── Pipeline explainer-check integration (Phase 08: PERSONA-11) ──
+
+
+def test_run_pipeline_logs_warning_when_capsule_missing_explainer(caplog):
+    """PERSONA-11: _run_pipeline logs a warning when check_explainer_present returns False.
+
+    TestModel produces a canned placeholder capsule that does NOT
+    contain any Pitching+ keywords, so the explainer check returns
+    False and a warning is logged at WARNING level.
+    """
+    import logging
+    from pitcher_narratives.context import assemble_pitcher_context
+    from pitcher_narratives.data import load_pitcher_data
+    from pitcher_narratives.pipeline import generate_pipeline_streaming
+    from pydantic_ai.models.test import TestModel
+
+    data = load_pitcher_data(592155, window_days=30)
+    ctx = assemble_pitcher_context(data)
+
+    with caplog.at_level(logging.WARNING, logger="pitcher_narratives.pipeline"):
+        generate_pipeline_streaming(
+            ctx,
+            provider="gemini",
+            thinking="high",
+            persona="scout",
+            _model_override=TestModel(),
+        )
+
+    # Find the explainer-missing warning in caplog
+    explainer_warnings = [
+        r for r in caplog.records
+        if "capsule is missing model explanation content" in r.getMessage()
+    ]
+    assert len(explainer_warnings) >= 1, (
+        f"Expected at least one explainer-missing warning, "
+        f"got records: {[r.getMessage() for r in caplog.records]}"
+    )
+    # The warning's formatted message includes the persona id in brackets
+    warning_msg = explainer_warnings[0].getMessage()
+    assert "[scout]" in warning_msg, (
+        f"Expected '[scout]' in warning message, got: {warning_msg!r}"
+    )
