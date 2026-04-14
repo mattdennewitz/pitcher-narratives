@@ -7,6 +7,7 @@ from dataclasses import dataclass
 __all__ = [
     "ANALYST",
     "GENERIC",
+    "SCOUT",
     "Persona",
     "PERSONAS",
     "DEFAULT_PERSONA",

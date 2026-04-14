@@ -255,7 +255,9 @@ def main() -> None:
         log.warning("Pipeline produced empty narrative — skipping hallucination check")
         return
 
-    hallucination_report = check_hallucinated_metrics(pipe_result.narrative)
+    hallucination_report = check_hallucinated_metrics(
+        pipe_result.narrative, persona=args.persona
+    )
 
     if hallucination_report.is_clean:
         log.info("Hallucination check passed (no unknown metrics or outcome stats).")
