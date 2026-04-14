@@ -26,7 +26,7 @@
 
 - [x] **Phase 05: Persona Module Scaffolding** (1/1 plans) — completed 2026-04-12
 - [x] **Phase 06: Pipeline Integration & Scout Parity Gate** - Wire persona through pipeline factory with scout-default; phase-exit gate on byte-parity (completed 2026-04-12)
-- [ ] **Phase 07: Analyst Persona** - Build newsletter voice overlay with teaching vocabulary and hallucination-guard allowlist
+- [x] **Phase 07: Analyst Persona** - Build newsletter voice overlay with teaching vocabulary and hallucination-guard allowlist (completed 2026-04-14)
 - [ ] **Phase 08: Generic Persona** - Build sectioned-with-table format, validate against anchor check and hallucination guard (highest-risk phase)
 - [ ] **Phase 09: CLI Wiring** - Expose --persona and --list-personas on pitcher-narratives, guard other CLIs
 
@@ -108,6 +108,6 @@ Plans:
 |-------|-----------|----------------|--------|-----------|
 | 05. Persona Module Scaffolding | v1.10 | 1/1 | Complete | 2026-04-12 |
 | 06. Pipeline Integration & Scout Parity Gate | v1.10 | 1/1 | Complete    | 2026-04-12 |
-| 07. Analyst Persona | v1.10 | 0/1 | Not started | - |
+| 07. Analyst Persona | v1.10 | 0/1 | Complete    | 2026-04-14 |
 | 08. Generic Persona | v1.10 | 0/TBD | Not started | - |
 | 09. CLI Wiring | v1.10 | 0/TBD | Not started | - |
