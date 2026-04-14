@@ -83,7 +83,8 @@ The report must read like a scout wrote it — surfacing *changes, adaptations, 
 
 ### Active
 
-Active requirements will be added after the v1.10 requirements-definition step completes.
+- ANALYST persona: newsletter voice (450-800 words), `parent="scout"`, per-persona hallucination guard allowlist — v1.10, validated Phase 07
+- VOICE-02 (analyst overlay), PERSONA-10 (per-persona allowlist), TEST-05/06/07 (analyst smoke, shape assertion, guard vectors) — validated Phase 07
 
 ## Current Milestone: v1.10 Output Personas
 
@@ -205,4 +206,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-04-11 — v1.10 Output Personas milestone started*
+*Last updated: 2026-04-14 — Phase 07 complete: ANALYST persona added to v1.10 persona system*
