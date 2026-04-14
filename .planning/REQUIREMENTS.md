@@ -40,11 +40,11 @@ This milestone is **writer-layer-only**. It adds a new `personas.py` module, cha
 
 ### CLI — Command-Line Surface on `pitcher-narratives`
 
-- [ ] **CLI-01**: `pitcher-narratives` accepts `--persona {scout,analyst,generic}` with `default="scout"`, `type=str.lower` (case-normalized), and `choices=sorted(PERSONAS.keys())`. Invalid values exit 2 with an argparse error naming the valid choices.
-- [ ] **CLI-02**: `pitcher-narratives` accepts `--list-personas` as an `action="store_true"` flag that prints the registry (id, display_name, description) to stdout and exits 0 without calling the LLM or loading pitcher data.
-- [ ] **CLI-03**: `pitcher-narratives --print-prompts` renders the composed writer prompt for the selected persona — it reads from `build_writer_system_prompt(get_persona(args.persona))` instead of the deleted `_WRITER_PROMPT` constant.
-- [ ] **CLI-04**: `pitcher-narratives -v/--verbose` logs `persona=<id>` to stderr alongside the existing pitcher name, game dates, and pitch counts.
-- [ ] **CLI-05**: `pitcher-narratives -p X -w Y` (no `--persona` flag) and `pitcher-narratives --persona scout -p X -w Y` are observationally identical — they resolve to the same `args.persona` string, the same composed writer prompt, and the same LLM agent instance.
+- [x] **CLI-01**: `pitcher-narratives` accepts `--persona {scout,analyst,generic}` with `default="scout"`, `type=str.lower` (case-normalized), and `choices=sorted(PERSONAS.keys())`. Invalid values exit 2 with an argparse error naming the valid choices.
+- [x] **CLI-02**: `pitcher-narratives` accepts `--list-personas` as an `action="store_true"` flag that prints the registry (id, display_name, description) to stdout and exits 0 without calling the LLM or loading pitcher data.
+- [x] **CLI-03**: `pitcher-narratives --print-prompts` renders the composed writer prompt for the selected persona — it reads from `build_writer_system_prompt(get_persona(args.persona))` instead of the deleted `_WRITER_PROMPT` constant.
+- [x] **CLI-04**: `pitcher-narratives -v/--verbose` logs `persona=<id>` to stderr alongside the existing pitcher name, game dates, and pitch counts.
+- [x] **CLI-05**: `pitcher-narratives -p X -w Y` (no `--persona` flag) and `pitcher-narratives --persona scout -p X -w Y` are observationally identical — they resolve to the same `args.persona` string, the same composed writer prompt, and the same LLM agent instance.
 - [x] **CLI-06**: `pitcher-ask` and `pitcher-scout` do **not** accept `--persona`; attempting to pass the flag exits 2 with an argparse error. This guards against accidental copy-paste.
 
 ### TEST — Regression and Shape-Assertion Coverage
@@ -110,11 +110,11 @@ The following are explicitly **not** in v1.10 and will be rejected in review:
 | VOICE-01 | Phase 05 | Pending | SCOUT persona constant (byte-identical to v1.9) |
 | VOICE-02 | Phase 07 | Complete | ANALYST persona constant (newsletter voice) |
 | VOICE-03 | Phase 08 | Complete | GENERIC persona constant (sectioned + table) |
-| CLI-01 | Phase 09 | Pending | --persona flag on pitcher-narratives |
-| CLI-02 | Phase 09 | Pending | --list-personas flag |
-| CLI-03 | Phase 09 | Pending | --print-prompts uses composed prompt |
-| CLI-04 | Phase 09 | Pending | --verbose logs persona id |
-| CLI-05 | Phase 09 | Pending | No-flag and --persona scout are identical |
+| CLI-01 | Phase 09 | Complete | --persona flag on pitcher-narratives |
+| CLI-02 | Phase 09 | Complete | --list-personas flag |
+| CLI-03 | Phase 09 | Complete | --print-prompts uses composed prompt |
+| CLI-04 | Phase 09 | Complete | --verbose logs persona id |
+| CLI-05 | Phase 09 | Complete | No-flag and --persona scout are identical |
 | CLI-06 | Phase 09 | Complete | pitcher-ask and pitcher-scout reject --persona |
 | TEST-01 | Phase 05 | Pending | Frozen fixture writer_prompt_scout.txt |
 | TEST-02 | Phase 05 | Pending | Byte-identity test (phase-exit gate for Phase 06) |

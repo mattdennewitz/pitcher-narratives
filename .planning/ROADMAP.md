@@ -28,7 +28,7 @@
 - [x] **Phase 06: Pipeline Integration & Scout Parity Gate** - Wire persona through pipeline factory with scout-default; phase-exit gate on byte-parity (completed 2026-04-12)
 - [x] **Phase 07: Analyst Persona** - Build newsletter voice overlay with teaching vocabulary and hallucination-guard allowlist (completed 2026-04-14)
 - [x] **Phase 08: Generic Persona** - Build sectioned-with-table format, validate against anchor check and hallucination guard (highest-risk phase) (completed 2026-04-14)
-- [ ] **Phase 09: CLI Wiring** - Expose --persona and --list-personas on pitcher-narratives, guard other CLIs
+- [x] **Phase 09: CLI Wiring** - Expose --persona and --list-personas on pitcher-narratives, guard other CLIs (completed 2026-04-14)
 
 ## Phase Details
 
@@ -103,7 +103,7 @@ Plans:
   5. `pitcher-narratives -v --persona analyst -p 656302 -w 10` logs `persona=analyst` to stderr alongside existing verbose output
 **Plans**: 2 plans
 Plans:
-- [ ] 09-01-PLAN.md — Add --persona and --list-personas to pitcher-narratives; thread through pipeline + print-prompts + verbose logging; CLI tests
+- [x] 09-01-PLAN.md — Add --persona and --list-personas to pitcher-narratives; thread through pipeline + print-prompts + verbose logging; CLI tests
 - [x] 09-02-PLAN.md — Scope-guard tests: pitcher-ask and pitcher-scout reject --persona (new tests/test_scout_cli.py)
 
 ## Progress
@@ -116,4 +116,4 @@ Plans:
 | 06. Pipeline Integration & Scout Parity Gate | v1.10 | 1/1 | Complete    | 2026-04-12 |
 | 07. Analyst Persona | v1.10 | 0/1 | Complete    | 2026-04-14 |
 | 08. Generic Persona | v1.10 | 0/2 | Complete    | 2026-04-14 |
-| 09. CLI Wiring | v1.10 | 1/2 | In Progress|  |
+| 09. CLI Wiring | v1.10 | 2/2 | Complete   | 2026-04-14 |
