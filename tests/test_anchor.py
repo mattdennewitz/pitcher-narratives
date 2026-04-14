@@ -145,82 +145,31 @@ def test_revision_message_handles_empty_warnings():
     assert "Current Capsule" in joined
 
 
-# ── Anchor tolerance for generic sectioned + table format (Phase 08) ──
+# ── Anchor tolerance for generic sectioned + table format ──
 
 
-@pytest.mark.xfail(
-    reason=(
-        "TestModel always returns a canned AnchorResult with non-empty warnings "
-        "regardless of prompt content (RESEARCH.md Pitfall 4). The is_clean "
-        "assertion documents the behavioral invariant; actual validation requires "
-        "a manual real-LLM smoke run. The addendum was applied because the test "
-        "cannot pass with TestModel: 'Summary tables in a fixed section format "
-        "are intentional structure, not narrative violations.'"
-    ),
-    strict=False,
-)
-def test_anchor_tolerates_generic_summary_table():
-    """Gate test for the conditional ANCHOR_PROMPT addendum.
+def test_anchor_prompt_contains_summary_table_addendum():
+    """Literal-string regression guard on the ANCHOR_PROMPT addendum.
 
-    A synthetic generic capsule (six ## sections + one summary table)
-    should pass the anchor check without UNSUPPORTED/OVERSTATED false
-    positives on the structural elements (headings, table cells).
+    The generic persona's fixed section + summary table format would
+    otherwise trip OVERSTATED/UNSUPPORTED warnings from the anchor agent.
+    A one-sentence addendum teaches the anchor to treat intentional
+    structure as non-violation. Accidental deletion of that sentence
+    during a future prompt edit must fail CI.
 
-    Caveat (RESEARCH.md Pitfall 4): TestModel returns a canned
-    AnchorResult with non-empty warnings, so this test is marked xfail.
-    The one-sentence addendum has been applied to ANCHOR_PROMPT as a
-    low-regret safety measure:
-      "Summary tables in a fixed section format are intentional
-       structure, not narrative violations."
-
-    Behavioral validation of the addendum requires a manual real-LLM
-    smoke run, which is out-of-scope for automated CI.
+    Behavioral validation with a real LLM is out of scope for automated
+    tests (TestModel returns canned AnchorResult regardless of prompt).
+    This check locks the prompt text; end-to-end verification happens
+    via manual smoke runs.
     """
-    from pydantic_ai import Agent
-    from pydantic_ai.models.test import TestModel
+    from pitcher_narratives.anchor import ANCHOR_PROMPT
 
-    from pitcher_narratives.anchor import (
-        ANCHOR_PROMPT,
-        AnchorResult,
-        build_anchor_message,
+    addendum = (
+        "Summary tables in a fixed section format are intentional "
+        "structure, not narrative violations."
     )
-
-    synthesis = (
-        "## Key Signals\n"
-        "- Top Improvement: Slider S+ jumped to 112 from season 98\n"
-        "- Top Concern: Fastball L+ dropped to 94 from 102\n\n"
-        "STUFF:\nSlider S+ 112 driven by vertical break gains.\n\n"
-        "LOCATION:\nFastball L+ 94 — command slipped arm-side.\n\n"
-        "RUN VALUE:\nArsenal xRV100 -0.5; slider is the driver.\n\n"
-        "TRENDS:\nVelocity stable; Pitching+ up 4 points from season.\n\n"
-        "GAME SHAPE:\nThird-time-through gap manageable."
-    )
-    synthetic_capsule = (
-        "## Stuff\n"
-        "The slider graded S+ 112 — the model credited vertical break.\n\n"
-        "## Location\n"
-        "Fastball L+ 94, below league average due to arm-side misses.\n\n"
-        "## Run Value & Execution\n"
-        "xRV100 of -0.5 shows the arsenal saves runs overall.\n\n"
-        "## Trend\n"
-        "Velocity stable; Pitching+ up 4 points from season baseline.\n\n"
-        "## Game Shape\n"
-        "Third-time-through gap manageable on current workload.\n\n"
-        "## Summary Table\n"
-        "| Signal | Key Finding | Grade |\n"
-        "|---|---|---|\n"
-        "| Top Improvement | Slider vertical break gain | S+ 112 |\n"
-        "| Top Concern | Fastball command slipped | L+ 94 |\n"
-    )
-
-    agent = Agent(
-        model=TestModel(),
-        system_prompt=ANCHOR_PROMPT,
-        output_type=AnchorResult,
-    )
-    result = agent.run_sync(build_anchor_message(synthesis, synthetic_capsule))
-    assert result.output.is_clean, (
-        f"Anchor flagged false positives on generic capsule structure: "
-        f"{result.output.warnings}. "
-        f"Apply the summary-table addendum to ANCHOR_PROMPT."
+    assert addendum in ANCHOR_PROMPT, (
+        "ANCHOR_PROMPT is missing the summary-table tolerance addendum. "
+        "This sentence prevents the anchor from flagging the generic "
+        "persona's summary table as an UNSUPPORTED narrative violation."
     )
