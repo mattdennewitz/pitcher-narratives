@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING
 from dotenv import load_dotenv
 
 from pitcher_narratives.config import API_KEYS, setup_logging
+from pitcher_narratives.personas import PERSONAS
 
 if TYPE_CHECKING:
     from pitcher_narratives.data import PitcherData
@@ -25,7 +26,9 @@ log = logging.getLogger("pitcher_narratives")
 def parse_args() -> argparse.Namespace:
     """Parse command-line arguments for pitcher scouting reports."""
     parser = argparse.ArgumentParser(description="Generate pitcher scouting reports from Statcast data")
-    parser.add_argument("-p", "--pitcher", type=int, required=True, help="MLB pitcher ID (e.g., 592155)")
+    # Note: required=False so `--list-personas` works standalone.
+    # main() re-asserts that -p is present when --list-personas is not used.
+    parser.add_argument("-p", "--pitcher", type=int, required=False, help="MLB pitcher ID (e.g., 592155)")
     parser.add_argument(
         "-w",
         "--window",
@@ -56,7 +59,37 @@ def parse_args() -> argparse.Namespace:
         default="medium",
         help="Thinking/reasoning effort level (default: medium)",
     )
+    parser.add_argument(
+        "--persona",
+        type=str.lower,
+        choices=sorted(PERSONAS.keys()),
+        default="scout",
+        help="Writer persona to use (default: scout)",
+    )
+    parser.add_argument(
+        "--list-personas",
+        action="store_true",
+        help="List available personas (id, display name, description) and exit",
+    )
     return parser.parse_args()
+
+
+def _print_personas() -> None:
+    """Print all personas (id, display_name, description) to stdout, sorted by id.
+
+    Per 09-CONTEXT.md: plain text, one block per persona, blank line between,
+    4-space indent for display_name and description. Called for --list-personas
+    and exits 0 without loading pitcher data or the LLM.
+    """
+    items = sorted(PERSONAS.items(), key=lambda kv: kv[0])
+    blocks = []
+    for persona_id, persona in items:
+        blocks.append(
+            f"{persona_id}\n"
+            f"    {persona.display_name}\n"
+            f"    {persona.description}"
+        )
+    print("\n\n".join(blocks))
 
 
 def _print_verbose_summary(data: PitcherData) -> None:
@@ -76,6 +109,22 @@ def main() -> None:
     """Entry point: load pitcher data, assemble context, generate report."""
     load_dotenv()
     args = parse_args()
+
+    # --list-personas short-circuits BEFORE setup_logging, data loading,
+    # and API key check. No LLM, no data file, no network.
+    if args.list_personas:
+        _print_personas()
+        sys.exit(0)
+
+    # Now that --list-personas is out of the way, enforce -p/--pitcher.
+    # parse_args() has required=False so --list-personas works standalone.
+    if args.pitcher is None:
+        print(
+            "pitcher-narratives: error: -p/--pitcher is required",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+
     setup_logging()
 
     # Lazy imports: polars is heavy (~90ms) and only referenced in the
@@ -101,6 +150,7 @@ def main() -> None:
         sys.exit(1)
 
     if args.verbose:
+        log.info("persona=%s", args.persona)
         _print_verbose_summary(pitcher_data)
 
     # Support test mode: use TestModel when env var is set
@@ -132,7 +182,9 @@ def main() -> None:
     ctx = assemble_pitcher_context(pitcher_data)
 
     try:
-        data_file, data_text = write_pipeline_data_file(ctx, args.pitcher, args.provider)
+        data_file, data_text = write_pipeline_data_file(
+            ctx, args.pitcher, args.provider, persona=args.persona
+        )
     except OSError as e:
         log.error("Failed to write prompt data file: %s", e)
         sys.exit(1)
@@ -155,6 +207,7 @@ def main() -> None:
             ctx,
             provider=args.provider,
             thinking=args.thinking,
+            persona=args.persona,
             _model_override=model_override,
         )
     except AgentRunError as e:

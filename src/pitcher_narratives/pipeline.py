@@ -880,13 +880,19 @@ def _render_pipeline_data_sections(
     ctx: PitcherContext,
     *,
     question: str | None = None,
+    persona: str = "scout",
 ) -> list[str]:
     """Render all pipeline prompt sections as a list of strings.
 
     Pure rendering helper — no I/O. Used by write_pipeline_data_file and
     by callers that want the rendered text without a disk roundtrip
     (e.g. cli.py --print-prompts).
+
+    The persona arg controls which composed writer prompt is rendered in
+    the WRITER section (narrative pipeline only — the ask pipeline uses
+    the ANSWERER and is persona-agnostic).
     """
+    persona_obj = get_persona(persona)
     sep = "═" * 72
     sections: list[str] = []
 
@@ -935,7 +941,7 @@ def _render_pipeline_data_sections(
     else:
         # Narrative pipeline: writer + anchor + executive summary
         sections.append(f"\n{sep}\nWRITER\n{sep}\n")
-        sections.append(f"## System Prompt\n\n{build_writer_system_prompt(DEFAULT_PERSONA)}\n")
+        sections.append(f"## System Prompt\n\n{build_writer_system_prompt(persona_obj)}\n")
         sections.append(
             "## User Message\n\n"
             "[Receives: key signals + all 5 specialist outputs]\n"
@@ -964,6 +970,7 @@ def write_pipeline_data_file(
     provider: str,
     *,
     question: str | None = None,
+    persona: str = "scout",
 ) -> tuple[str, str]:
     """Write all pipeline prompts to a data file for end-to-end tracing.
 
@@ -976,6 +983,9 @@ def write_pipeline_data_file(
         pitcher_id: MLB pitcher ID for the filename.
         provider: LLM provider key for the filename.
         question: If provided, includes the ask-pipeline answerer phase.
+        persona: Persona id string (default "scout"); controls which
+            composed writer prompt is rendered in the WRITER section.
+            Ignored on the ask path (question is not None).
 
     Returns:
         Tuple of (filename, rendered_text). Callers that need to display
@@ -988,7 +998,9 @@ def write_pipeline_data_file(
     """
     from pathlib import Path
 
-    sections = _render_pipeline_data_sections(ctx, question=question)
+    sections = _render_pipeline_data_sections(
+        ctx, question=question, persona=persona
+    )
     text = "\n".join(sections)
 
     mode = "ask" if question else "pipeline"

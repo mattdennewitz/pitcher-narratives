@@ -54,11 +54,18 @@ def test_verbose_flag_set(monkeypatch):
 
 
 def test_pitcher_required(monkeypatch):
-    """CLI-01: Missing -p flag causes SystemExit (argparse error)."""
+    """CLI-01: Missing -p flag causes main() SystemExit with code 2.
+
+    Note: argparse allows -p to be absent (required=False) so that
+    --list-personas can run standalone. main() re-asserts the -p
+    requirement for the normal pipeline path and exits 2.
+    """
     monkeypatch.setattr(sys, "argv", ["main.py"])
-    with pytest.raises(SystemExit) as exc_info:
-        parse_args()
-    assert exc_info.value.code == 2
+    args = parse_args()
+    # parse_args no longer raises — pitcher is None when omitted.
+    assert args.pitcher is None
+    # main() exits 2 with a clear error message (verified by
+    # test_cli_no_args_shows_help integration test).
 
 
 # ── Unit: --persona parsing ──
@@ -168,7 +175,12 @@ def test_cli_custom_window():
 
 
 def test_cli_no_args_shows_help():
-    """Integration: No args shows usage and exits 2."""
+    """Integration: No args exits 2 with -p/--pitcher required error.
+
+    argparse is configured with required=False on -p so --list-personas
+    can run standalone; main() re-asserts the requirement and exits 2
+    with a clear error message.
+    """
     result = subprocess.run(
         [sys.executable, "-m", "pitcher_narratives.cli"],
         capture_output=True,
@@ -176,7 +188,8 @@ def test_cli_no_args_shows_help():
         timeout=60,
     )
     assert result.returncode == 2
-    assert "usage:" in result.stderr.lower()
+    # Custom message from main() (argparse-style wording minus the usage line)
+    assert "-p/--pitcher is required" in result.stderr
 
 
 def test_cli_produces_report():
