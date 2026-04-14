@@ -328,3 +328,253 @@ def test_cli_print_prompts_dumps_prompts_and_bypasses_api_key(tmp_path):
     assert "SPECIALIST 1: STUFF" in result.stderr
     assert "WRITER" in result.stderr
     assert "ANCHOR CHECK" in result.stderr
+
+
+# ── Integration: --list-personas ──
+
+
+def test_cli_list_personas_exits_0_without_data():
+    """CLI-02: --list-personas exits 0, bypasses data loading and LLM.
+
+    Uses _test_env() with no API key and no PITCHER_NARRATIVES_TEST_MODEL —
+    proves the short-circuit is early enough that neither the preflight
+    API-key check nor the TestModel path are reached.
+    """
+    result = subprocess.run(
+        [sys.executable, "-m", "pitcher_narratives.cli", "--list-personas"],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        env=_test_env(),  # No API key, no TEST_MODEL — proves LLM bypass
+    )
+    assert result.returncode == 0, f"stderr: {result.stderr}"
+    assert "analyst" in result.stdout
+    assert "generic" in result.stdout
+    assert "scout" in result.stdout
+    # Alphabetical order
+    assert (
+        result.stdout.index("analyst")
+        < result.stdout.index("generic")
+        < result.stdout.index("scout")
+    )
+    # Data loader never ran — no pitcher summary lines landed on stderr.
+    assert "Booser" not in result.stderr
+
+
+def test_cli_list_personas_contains_display_names_and_descriptions():
+    """CLI-02: --list-personas output contains display_name and description."""
+    result = subprocess.run(
+        [sys.executable, "-m", "pitcher_narratives.cli", "--list-personas"],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        env=_test_env(),
+    )
+    assert result.returncode == 0
+    assert "Newsletter" in result.stdout  # analyst description substring
+    assert "Front-office" in result.stdout  # scout description substring
+    assert "Structured breakdown" in result.stdout  # generic description
+
+
+# ── Integration: --persona selection ──
+
+
+def test_cli_persona_analyst_exits_0():
+    """CLI-01: --persona analyst with TestModel completes successfully."""
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pitcher_narratives.cli",
+            "-p",
+            "592155",
+            "--persona",
+            "analyst",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        env=_test_env(PITCHER_NARRATIVES_TEST_MODEL="1"),
+    )
+    assert result.returncode == 0, f"stderr: {result.stderr}"
+    assert len(result.stdout.strip()) > 0
+
+
+def test_cli_persona_uppercase_normalizes():
+    """CLI-01: --persona SCOUT normalizes via type=str.lower and runs."""
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pitcher_narratives.cli",
+            "-p",
+            "592155",
+            "--persona",
+            "SCOUT",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        env=_test_env(PITCHER_NARRATIVES_TEST_MODEL="1"),
+    )
+    assert result.returncode == 0, f"stderr: {result.stderr}"
+
+
+def test_cli_invalid_persona_exits_2():
+    """CLI-01: --persona bogus exits 2 with choices listed in stderr."""
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pitcher_narratives.cli",
+            "-p",
+            "592155",
+            "--persona",
+            "bogus",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        env=_test_env(PITCHER_NARRATIVES_TEST_MODEL="1"),
+    )
+    assert result.returncode == 2
+    # argparse lists valid choices in its error message.
+    assert "scout" in result.stderr
+    assert "analyst" in result.stderr
+    assert "generic" in result.stderr
+
+
+def test_cli_persona_scout_and_no_flag_are_identical():
+    """CLI-05: --persona scout and no --persona flag both exit 0.
+
+    Observational equivalence: since TestModel output is canned,
+    deeper output equality is fragile. We assert both runs exit 0
+    and both stdouts are non-empty. Prompt-level equivalence is
+    locked by the unit tests (test_persona_default) and by
+    test_cli_print_prompts_uses_selected_persona.
+    """
+    run_args = {
+        "capture_output": True,
+        "text": True,
+        "timeout": 60,
+        "env": _test_env(PITCHER_NARRATIVES_TEST_MODEL="1"),
+    }
+    no_flag = subprocess.run(
+        [sys.executable, "-m", "pitcher_narratives.cli", "-p", "592155"],
+        **run_args,
+    )
+    with_scout = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pitcher_narratives.cli",
+            "-p",
+            "592155",
+            "--persona",
+            "scout",
+        ],
+        **run_args,
+    )
+    assert no_flag.returncode == 0, f"stderr: {no_flag.stderr}"
+    assert with_scout.returncode == 0, f"stderr: {with_scout.stderr}"
+    assert no_flag.stdout.strip()
+    assert with_scout.stdout.strip()
+
+
+# ── Integration: verbose persona logging ──
+
+
+def test_cli_verbose_logs_persona():
+    """CLI-04: -v logs persona=<id> to stderr."""
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pitcher_narratives.cli",
+            "-p",
+            "592155",
+            "-v",
+            "--persona",
+            "analyst",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        env=_test_env(PITCHER_NARRATIVES_TEST_MODEL="1"),
+    )
+    assert result.returncode == 0, f"stderr: {result.stderr}"
+    assert "persona=analyst" in result.stderr
+
+
+def test_cli_no_verbose_no_persona_log():
+    """CLI-04: without -v, stderr does NOT contain the persona= log line."""
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pitcher_narratives.cli",
+            "-p",
+            "592155",
+            "--persona",
+            "analyst",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        env=_test_env(PITCHER_NARRATIVES_TEST_MODEL="1"),
+    )
+    assert result.returncode == 0, f"stderr: {result.stderr}"
+    assert "persona=analyst" not in result.stderr
+
+
+# ── Integration: --print-prompts renders the selected persona ──
+
+
+def test_cli_print_prompts_uses_selected_persona(tmp_path):
+    """CLI-03: --print-prompts renders the SELECTED persona's writer prompt."""
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pitcher_narratives.cli",
+            "-p",
+            "592155",
+            "--persona",
+            "analyst",
+            "--print-prompts",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        cwd=tmp_path,
+        env=_test_env(),  # --print-prompts bypasses API-key check
+    )
+    assert result.returncode == 0, f"stderr: {result.stderr}"
+    # Analyst overlay uniquely mentions "newsletter" voice.
+    assert "newsletter" in result.stderr.lower()
+    # Sanity: generic-only structural marker must NOT appear.
+    assert "## Summary Table" not in result.stderr
+
+
+def test_cli_print_prompts_uses_generic_persona(tmp_path):
+    """CLI-03: --print-prompts --persona generic renders the generic overlay."""
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pitcher_narratives.cli",
+            "-p",
+            "592155",
+            "--persona",
+            "generic",
+            "--print-prompts",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        cwd=tmp_path,
+        env=_test_env(),
+    )
+    assert result.returncode == 0, f"stderr: {result.stderr}"
+    # Generic overlay's unique structural marker.
+    assert "## Summary Table" in result.stderr
