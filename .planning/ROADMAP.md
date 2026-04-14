@@ -84,7 +84,10 @@ Plans:
   3. `check_explainer_present(capsule)` post-processor runs after the writer's capsule and logs a warning to stderr when the "explain the model" content is missing
   4. A TestModel-based generic smoke test runs the pipeline and `assert_generic_shape(text)` validates exactly one markdown table, correct row count tied to KeySignals, allowed section set, and no h1 headings
   5. Hallucination guard regression: a known-dirty capsule (fabricated section or invented metric in a table row) is correctly flagged
-**Plans**: TBD
+**Plans**: 2 plans
+Plans:
+- [ ] 08-01-PLAN.md — GENERIC persona constant, per-persona hallucination allowlist extension, generic tests
+- [ ] 08-02-PLAN.md — check_explainer_present post-processor + wiring, conditional anchor-tolerance addendum
 
 **NOTE: Highest-risk phase.** Phase 08 is the only phase that *may* touch `anchor.py` (a conditional one-line addendum to `ANCHOR_PROMPT` if the generic persona's summary table produces false positives). Phase 08 also owns the `check_explainer_present` post-processor (PERSONA-11) and the hallucination guard's per-persona allowlist wiring for the generic persona. Phases 05-07 and 09 must NOT touch `anchor.py`.
 
@@ -109,5 +112,5 @@ Plans:
 | 05. Persona Module Scaffolding | v1.10 | 1/1 | Complete | 2026-04-12 |
 | 06. Pipeline Integration & Scout Parity Gate | v1.10 | 1/1 | Complete    | 2026-04-12 |
 | 07. Analyst Persona | v1.10 | 0/1 | Complete    | 2026-04-14 |
-| 08. Generic Persona | v1.10 | 0/TBD | Not started | - |
+| 08. Generic Persona | v1.10 | 0/2 | Not started | - |
 | 09. CLI Wiring | v1.10 | 0/TBD | Not started | - |
