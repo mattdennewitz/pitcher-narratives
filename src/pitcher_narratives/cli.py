@@ -75,11 +75,11 @@ def parse_args() -> argparse.Namespace:
 
 
 def _print_personas() -> None:
-    """Print all personas (id, display_name, description) to stdout, sorted by id.
+    """Print all personas to stdout, sorted by id.
 
-    Per 09-CONTEXT.md: plain text, one block per persona, blank line between,
-    4-space indent for display_name and description. Called for --list-personas
-    and exits 0 without loading pitcher data or the LLM.
+    Plain text output — one block per persona (id line, 4-space-indented
+    display_name, 4-space-indented description), blank line between blocks.
+    Pipe-friendly (no color codes).
     """
     items = sorted(PERSONAS.items(), key=lambda kv: kv[0])
     blocks = []
@@ -116,8 +116,6 @@ def main() -> None:
         _print_personas()
         sys.exit(0)
 
-    # Now that --list-personas is out of the way, enforce -p/--pitcher.
-    # parse_args() has required=False so --list-personas works standalone.
     if args.pitcher is None:
         print(
             "pitcher-narratives: error: -p/--pitcher is required",
