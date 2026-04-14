@@ -257,3 +257,32 @@ def test_ask_cli_thinking_flag():
         env=_test_env(PITCHER_NARRATIVES_TEST_MODEL="1"),
     )
     assert result.returncode == 0
+
+
+# ══════════════════════════════════════════════════════════════════════
+# CLI-06 / TEST-08: scope guard — pitcher-ask must NOT accept --persona
+# ══════════════════════════════════════════════════════════════════════
+
+
+def test_ask_cli_does_not_accept_persona():
+    """TEST-08: --persona on pitcher-ask exits 2 (argparse rejection).
+
+    v1.10 is writer-layer-only: the narrative CLI gets --persona; the
+    Q&A CLI does not. Argparse's default behavior rejects unknown flags
+    with exit 2 and an "unrecognized arguments" message. This test
+    guards against accidental copy-paste of the flag definition into
+    ask_cli.py.
+    """
+    result = subprocess.run(
+        [
+            sys.executable, "-m", "pitcher_narratives.ask_cli",
+            "--persona", "scout", "How is Cease pitching?",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        env=_test_env(PITCHER_NARRATIVES_TEST_MODEL="1"),
+    )
+    assert result.returncode == 2
+    # Argparse emits "unrecognized arguments: --persona ..." on stderr.
+    assert "--persona" in result.stderr or "unrecognized" in result.stderr
