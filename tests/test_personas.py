@@ -6,7 +6,8 @@ from pathlib import Path
 import pytest
 
 from pitcher_narratives.personas import (
-    ANALYST,  # NEW
+    ANALYST,
+    GENERIC,
     Persona,
     PERSONAS,
     SCOUT,
@@ -117,11 +118,12 @@ def test_all_exports_importable():
     assert get_persona is not None
 
 
-def test_registry_contains_scout_and_analyst():
-    """After Phase 07 the registry contains scout and analyst personas."""
-    assert len(PERSONAS) == 2
+def test_registry_contains_all_three():
+    """After Phase 08 the registry contains scout, analyst, and generic personas."""
+    assert len(PERSONAS) == 3
     assert "scout" in PERSONAS
     assert "analyst" in PERSONAS
+    assert "generic" in PERSONAS
 
 
 def test_composed_prompt_starts_with_base():
@@ -321,3 +323,232 @@ def test_analyst_pipeline_smoke(ctx):
     expected = build_writer_system_prompt(ANALYST)
     assert expected.startswith(SHARED_WRITER_BASE)
     assert "Write like an analyst talking to another analyst" in expected
+
+
+# ── Generic persona unit tests (Phase 08: VOICE-03) ──
+
+
+def test_generic_has_expected_fields():
+    """VOICE-03: GENERIC persona has correct id, parent, length_target, and display_name."""
+    generic = PERSONAS["generic"]
+    assert generic.id == "generic"
+    assert generic.display_name == "Generic"
+    assert generic.parent == "scout"
+    assert generic.length_target == (300, 500)
+    assert "structured" in generic.description.lower() or "section" in generic.description.lower()
+
+
+def test_generic_composed_prompt_includes_base_and_scout():
+    """VOICE-03: Composed generic prompt contains SHARED_WRITER_BASE and scout overlay."""
+    composed = build_writer_system_prompt(GENERIC)
+    assert composed.startswith(SHARED_WRITER_BASE)
+    # Scout overlay content inherited via parent="scout"
+    assert "Write like an analyst talking to another analyst" in composed
+    # Generic overlay content
+    assert "## Stuff" in composed
+    assert "## Summary Table" in composed
+    assert "Signal | Key Finding | Grade" in composed
+
+
+def test_generic_overlay_fixes_section_order():
+    """VOICE-03: Generic overlay lists the six sections in the fixed order."""
+    overlay = GENERIC.overlay
+    expected_order = (
+        "## Stuff",
+        "## Location",
+        "## Run Value & Execution",
+        "## Trend",
+        "## Game Shape",
+        "## Summary Table",
+    )
+    positions = [overlay.find(section) for section in expected_order]
+    assert all(p >= 0 for p in positions), f"Missing section(s): {[s for s, p in zip(expected_order, positions) if p < 0]}"
+    assert positions == sorted(positions), f"Sections out of order: {list(zip(expected_order, positions))}"
+
+
+def test_generic_overlay_forbids_h1():
+    """VOICE-03: Generic overlay explicitly forbids h1 (single #) headings."""
+    overlay = GENERIC.overlay
+    assert "FORBIDDEN: Markdown h1 headings" in overlay
+
+
+def test_generic_overlay_has_override_language():
+    """VOICE-03: Generic overlay explicitly overrides scout's no-headers/no-tables rule."""
+    overlay = GENERIC.overlay
+    # Override clause must exist to counteract inherited scout rule
+    assert "STRUCTURE OVERRIDE" in overlay or "override" in overlay.lower()
+
+
+def test_generic_overlay_has_hard_word_limit():
+    """VOICE-03: Generic overlay enforces hard 500-word ceiling."""
+    overlay = GENERIC.overlay
+    assert "500 words" in overlay
+    assert "HARD LIMIT" in overlay
+
+
+# ── Generic shape assertion helper (Phase 08: TEST-06) ──
+
+
+import re as _re
+
+_GENERIC_SECTIONS = (
+    "## Stuff",
+    "## Location",
+    "## Run Value & Execution",
+    "## Trend",
+    "## Game Shape",
+    "## Summary Table",
+)
+
+_TABLE_SEPARATOR_RE = _re.compile(r"^\s*\|[\s\-|:]+\|\s*$")
+
+
+def assert_generic_shape(text: str, *, populated_signal_count: int | None = None) -> None:
+    """TEST-06: Validate generic persona output shape.
+
+    Checks structural constraints:
+    - No h1 headings (single `#` lines, excluding `##`).
+    - All six allowed sections present in overlay-fixed order.
+    - Exactly one markdown table (detected by separator line).
+    - Table data row count equals populated_signal_count when provided.
+
+    Args:
+        text: Narrative text to validate.
+        populated_signal_count: If given, asserts the table's data-row
+            count equals this number. Omit on TestModel output.
+
+    Raises:
+        AssertionError: If structural constraints are violated.
+    """
+    lines = text.strip().splitlines()
+
+    # No h1 headings (line starting with "# " but not "## ")
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("#") and not stripped.startswith("##"):
+            raise AssertionError(
+                f"Generic output must not contain h1 headings: {stripped[:60]!r}"
+            )
+
+    # Allowed section set present, in order
+    section_positions = [(s, text.find(s)) for s in _GENERIC_SECTIONS]
+    missing = [s for s, pos in section_positions if pos == -1]
+    if missing:
+        raise AssertionError(f"Generic output missing sections: {missing}")
+    positions = [pos for _, pos in section_positions]
+    if positions != sorted(positions):
+        raise AssertionError(
+            "Generic output sections are out of order. "
+            f"Expected order: {list(_GENERIC_SECTIONS)}"
+        )
+
+    # Exactly one markdown table (separator line is the fingerprint)
+    separator_lines = [l for l in lines if _TABLE_SEPARATOR_RE.match(l)]
+    if len(separator_lines) != 1:
+        raise AssertionError(
+            f"Generic output must contain exactly one summary table, "
+            f"found {len(separator_lines)} table separator lines"
+        )
+
+    # Row count check (only when caller provides the expected count)
+    if populated_signal_count is not None:
+        sep_idx = lines.index(separator_lines[0])
+        data_rows = 0
+        for line in lines[sep_idx + 1:]:
+            stripped = line.strip()
+            if not stripped or not stripped.startswith("|"):
+                break
+            data_rows += 1
+        if data_rows != populated_signal_count:
+            raise AssertionError(
+                f"Generic summary table has {data_rows} data rows, "
+                f"expected {populated_signal_count} (one per populated KeySignals entry)"
+            )
+
+
+def _valid_generic_capsule(num_rows: int = 2) -> str:
+    """Build a synthetic well-formed generic capsule for shape-helper tests."""
+    rows = "\n".join(
+        f"| Top Improvement | Row {i} finding | S+ 11{i} |" for i in range(num_rows)
+    )
+    return (
+        "## Stuff\nThe slider graded S+ 112 above league average.\n\n"
+        "## Location\nFastball L+ 94 below league average.\n\n"
+        "## Run Value & Execution\nThe arsenal produces -0.5 xRV100.\n\n"
+        "## Trend\nVelocity stable vs season baseline.\n\n"
+        "## Game Shape\nThird-time-through gap manageable.\n\n"
+        "## Summary Table\n"
+        "| Signal | Key Finding | Grade |\n"
+        "|---|---|---|\n"
+        f"{rows}\n"
+    )
+
+
+def test_assert_generic_shape_accepts_valid_capsule():
+    """TEST-06: Shape helper accepts a well-formed synthetic generic capsule."""
+    assert_generic_shape(_valid_generic_capsule(num_rows=2))  # Should not raise
+
+
+def test_assert_generic_shape_rejects_h1():
+    """TEST-06: Shape helper catches h1 headings."""
+    bad = "# Scouting Report\n" + _valid_generic_capsule(num_rows=2)
+    with pytest.raises(AssertionError, match="h1"):
+        assert_generic_shape(bad)
+
+
+def test_assert_generic_shape_rejects_missing_section():
+    """TEST-06: Shape helper catches missing sections."""
+    bad = _valid_generic_capsule(num_rows=2).replace("## Trend\nVelocity stable vs season baseline.\n\n", "")
+    with pytest.raises(AssertionError, match="missing sections"):
+        assert_generic_shape(bad)
+
+
+def test_assert_generic_shape_rejects_multiple_tables():
+    """TEST-06: Shape helper catches multiple markdown tables."""
+    bad = _valid_generic_capsule(num_rows=2) + "\n| A | B |\n|---|---|\n| x | y |\n"
+    with pytest.raises(AssertionError, match="exactly one summary table"):
+        assert_generic_shape(bad)
+
+
+def test_assert_generic_shape_rejects_wrong_row_count():
+    """TEST-06: Shape helper catches row-count mismatch when count provided."""
+    capsule_with_2_rows = _valid_generic_capsule(num_rows=2)
+    with pytest.raises(AssertionError, match="data rows"):
+        assert_generic_shape(capsule_with_2_rows, populated_signal_count=5)
+
+
+# ── Generic pipeline smoke test (Phase 08: TEST-05) ──
+
+
+def test_generic_pipeline_smoke(ctx):
+    """TEST-05 (generic): Full pipeline with TestModel produces non-empty narrative.
+
+    Verifies:
+    - Pipeline runs end-to-end with persona='generic' using TestModel
+    - Result is a PipelineResult with a non-empty narrative
+    - Composed generic prompt starts with SHARED_WRITER_BASE
+    - Composed generic prompt includes scout overlay (via parent inheritance)
+    - Composed generic prompt includes generic overlay section markers
+
+    Note: This test does NOT call assert_generic_shape on the TestModel
+    output. TestModel returns a canned placeholder, not sectioned output.
+    The shape helper is validated against handcrafted synthetic capsules
+    in the test_assert_generic_shape_* tests above.
+    """
+    test_model = TestModel()
+    result = generate_pipeline_streaming(
+        ctx,
+        provider="gemini",
+        thinking="high",
+        persona="generic",
+        _model_override=test_model,
+    )
+    assert isinstance(result, PipelineResult)
+    assert len(result.narrative) > 0
+
+    # Verify the composed prompt includes base + scout + generic content
+    expected = build_writer_system_prompt(GENERIC)
+    assert expected.startswith(SHARED_WRITER_BASE)
+    assert "Write like an analyst talking to another analyst" in expected
+    assert "## Stuff" in expected
+    assert "## Summary Table" in expected

@@ -216,3 +216,63 @@ def test_no_persona_backward_compat():
     assert result.unknown_metrics == []
     assert "ERA" in result.outcome_stat_warnings
     assert not result.is_clean
+
+
+# ── Per-persona regression vectors (Phase 08: TEST-07, generic portion) ──
+
+
+def test_generic_persona_key_in_allowlist():
+    """PERSONA-10 (generic): _PERSONA_KNOWN_METRICS has a 'generic' frozenset entry."""
+    from pitcher_narratives.pipeline import _PERSONA_KNOWN_METRICS
+    assert "generic" in _PERSONA_KNOWN_METRICS
+    assert isinstance(_PERSONA_KNOWN_METRICS["generic"], frozenset)
+
+
+def test_generic_synthetic_capsule_clean():
+    """TEST-07 (generic): synthetic generic capsule (sections + table) passes clean."""
+    text = (
+        "## Stuff\nThe slider graded S+ 112; the model credited vertical break.\n\n"
+        "## Location\nFastball L+ 94 below league average.\n\n"
+        "## Run Value & Execution\nxRV100 of -0.5 shows the arsenal saves runs.\n\n"
+        "## Trend\nVelocity stable; Pitching+ up 4 points.\n\n"
+        "## Game Shape\nThird-time-through gap manageable.\n\n"
+        "## Summary Table\n"
+        "| Signal | Key Finding | Grade |\n"
+        "|---|---|---|\n"
+        "| Top Improvement | Slider vertical break gain | S+ 112 |\n"
+        "| Top Concern | Fastball command slipped | L+ 94 |\n"
+    )
+    result = check_hallucinated_metrics(text, persona="generic")
+    assert result.is_clean, (
+        f"Generic synthetic capsule flagged: "
+        f"unknown={result.unknown_metrics}, warnings={result.outcome_stat_warnings}"
+    )
+
+
+def test_generic_table_row_invented_metric_flagged():
+    """TEST-07 (generic): invented metric inside a table row is still caught."""
+    text = (
+        "## Summary Table\n"
+        "| Signal | Key Finding | Grade |\n"
+        "|---|---|---|\n"
+        "| Top Improvement | xDominance score up on slider | xDominance 128 |\n"
+    )
+    result = check_hallucinated_metrics(text, persona="generic")
+    assert "xDominance" in result.unknown_metrics
+    assert not result.is_clean
+
+
+def test_generic_fabricated_section_metric_flagged():
+    """TEST-07 (generic): invented metric inside a section (not table) is still caught."""
+    text = "## Stuff\nHis xFakeMetric of 95 is notable."
+    result = check_hallucinated_metrics(text, persona="generic")
+    assert "xFakeMetric" in result.unknown_metrics
+    assert not result.is_clean
+
+
+def test_generic_persona_does_not_suppress_real_unknowns():
+    """TEST-07 (generic): per-persona allowlist only covers generic vocab, not fabricated metrics."""
+    text = "## Stuff\nHis xMadeUpMetric score is 95 and S+ is 110."
+    result = check_hallucinated_metrics(text, persona="generic")
+    assert "xMadeUpMetric" in result.unknown_metrics
+    assert not result.is_clean
