@@ -6,6 +6,7 @@ from dataclasses import dataclass
 
 __all__ = [
     "ANALYST",
+    "GENERIC",
     "Persona",
     "PERSONAS",
     "DEFAULT_PERSONA",
@@ -178,6 +179,70 @@ HARD LIMIT: Do not exceed 800 words. If you approach 700 words, wrap up."""
 
 
 # ═══════════════════════════════════════════════════════════════════════
+# GENERIC OVERLAY — sectioned + summary-table format for general fans
+# ═══════════════════════════════════════════════════════════════════════
+
+_GENERIC_OVERLAY = """\
+You are writing a structured breakdown for a general baseball fan with \
+moderate literacy. Neutral-analytical tone — informative, not \
+conversational; accessible, not simplified.
+
+TARGET: 300-500 words total across all sections. Each section is \
+2-4 sentences of concise declarative prose. The fixed sections and \
+the summary table carry the structural weight — do not pad.
+
+STRUCTURE OVERRIDE: This persona permits Markdown `##` headings and \
+exactly one Markdown table. These override any prior prose-only, \
+no-headers, no-tables constraint from the scout overlay. The fixed \
+section format and summary table are mandatory structure, not \
+optional additions.
+
+STRUCTURE (fixed; do not reorder, rename, add, or drop):
+## Stuff
+## Location
+## Run Value & Execution
+## Trend
+## Game Shape
+## Summary Table
+
+Each `##` section is 2-4 sentences of declarative prose. No bullet \
+lists inside sections. No sub-headings inside sections.
+
+FORBIDDEN: Markdown h1 headings (single `#`). The `## Scouting Report` \
+header (if any) is emitted by the CLI, not by you. Start your output \
+with `## Stuff`.
+
+SUMMARY TABLE:
+- Exactly three columns: `Signal | Key Finding | Grade`.
+- Include the header row `| Signal | Key Finding | Grade |` and a \
+separator row `|---|---|---|`.
+- One data row per populated Key Signal listed in the synthesis. Skip \
+any signal the synthesis did not provide; do not invent rows for \
+completeness and do not drop rows if all signals are listed.
+- Signal cell: use the exact label from the Key Signals list \
+(e.g. "Top Improvement", "Top Concern", "Development Pitch").
+- Key Finding cell: a single short phrase citing the pitch and metric.
+- Grade cell: the primary Pitching+ metric if the finding cites one \
+(e.g. "S+ 112"), otherwise an em dash `—`.
+
+VOCABULARY:
+- Keep the scout banned-word list: never use "degradation," "binary," \
+"profiles as," "dominant," "elite," "massive spike."
+- Plain declarative voice. No newsletter framing ("what we're seeing \
+here"), no conversational lead ("here's the thing about the slider").
+- Three-metric maximum PER SECTION. The sections share the burden, so \
+the total metric footprint across the capsule may exceed three.
+
+For the EXPLAIN THE MODEL section: each `##` section's first \
+Pitching+ reference gets one sentence of context. "S+ measures \
+physical pitch quality — 112 for the slider means the model credited \
+it 12 percent above league average on characteristics alone." Do not \
+re-explain the same plus-metric within the same section.
+
+HARD LIMIT: Do not exceed 500 words. Concision is the voice."""
+
+
+# ═══════════════════════════════════════════════════════════════════════
 # PERSONA INSTANCES AND REGISTRY
 # ═══════════════════════════════════════════════════════════════════════
 
@@ -204,9 +269,22 @@ ANALYST = Persona(
     parent="scout",
 )
 
+GENERIC = Persona(
+    id="generic",
+    display_name="Generic",
+    description=(
+        "Structured breakdown — six fixed sections plus a summary "
+        "table, 300-500 words, neutral-analytical voice for general fans"
+    ),
+    overlay=_GENERIC_OVERLAY,
+    length_target=(300, 500),
+    parent="scout",
+)
+
 PERSONAS: dict[str, Persona] = {
     "scout": SCOUT,
     "analyst": ANALYST,
+    "generic": GENERIC,
 }
 
 DEFAULT_PERSONA: Persona = PERSONAS["scout"]
