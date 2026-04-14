@@ -96,18 +96,18 @@ The following are explicitly **not** in v1.10 and will be rejected in review:
 
 | REQ-ID | Phase | Status | Notes |
 |--------|-------|--------|-------|
-| PERSONA-01 | Phase 05 | Pending | Persona frozen dataclass in personas.py |
-| PERSONA-02 | Phase 05 | Pending | PERSONAS registry + get_persona lookup |
-| PERSONA-03 | Phase 05 | Pending | DEFAULT_PERSONA = PERSONAS["scout"] |
-| PERSONA-04 | Phase 05 | Pending | SHARED_WRITER_BASE extraction |
-| PERSONA-05 | Phase 05 | Pending | build_writer_system_prompt composer |
-| PERSONA-06 | Phase 05 | Pending | "EXPLAIN THE MODEL" instruction in base |
+| PERSONA-01 | Phase 05 | Complete | Persona frozen dataclass in personas.py |
+| PERSONA-02 | Phase 05 | Complete | PERSONAS registry + get_persona lookup |
+| PERSONA-03 | Phase 05 | Complete | DEFAULT_PERSONA = PERSONAS["scout"] |
+| PERSONA-04 | Phase 05 | Complete | SHARED_WRITER_BASE extraction |
+| PERSONA-05 | Phase 05 | Complete | build_writer_system_prompt composer |
+| PERSONA-06 | Phase 05 | Complete | "EXPLAIN THE MODEL" instruction in base |
 | PERSONA-07 | Phase 06 | Complete | _WRITER_PROMPT removed, writer built from composer |
 | PERSONA-08 | Phase 06 | Complete | make_pipeline_agents gains persona kwarg |
 | PERSONA-09 | Phase 06 | Complete | generate_pipeline_streaming / _run_pipeline gain persona kwarg |
 | PERSONA-10 | Phase 07 + 08 | Complete | Analyst allowlist (Phase 07), generic allowlist (Phase 08) |
 | PERSONA-11 | Phase 08 | Complete | check_explainer_present post-processor |
-| VOICE-01 | Phase 05 | Pending | SCOUT persona constant (byte-identical to v1.9) |
+| VOICE-01 | Phase 05 | Complete | SCOUT persona constant (byte-identical to v1.9) |
 | VOICE-02 | Phase 07 | Complete | ANALYST persona constant (newsletter voice) |
 | VOICE-03 | Phase 08 | Complete | GENERIC persona constant (sectioned + table) |
 | CLI-01 | Phase 09 | Complete | --persona flag on pitcher-narratives |
@@ -116,10 +116,10 @@ The following are explicitly **not** in v1.10 and will be rejected in review:
 | CLI-04 | Phase 09 | Complete | --verbose logs persona id |
 | CLI-05 | Phase 09 | Complete | No-flag and --persona scout are identical |
 | CLI-06 | Phase 09 | Complete | pitcher-ask and pitcher-scout reject --persona |
-| TEST-01 | Phase 05 | Pending | Frozen fixture writer_prompt_scout.txt |
-| TEST-02 | Phase 05 | Pending | Byte-identity test (phase-exit gate for Phase 06) |
-| TEST-03 | Phase 05 | Pending | Base prompt no-voice-words test |
-| TEST-04 | Phase 05 | Pending | Base prompt explainer-section test |
+| TEST-01 | Phase 05 | Complete | Frozen fixture writer_prompt_scout.txt |
+| TEST-02 | Phase 05 | Complete | Byte-identity test (phase-exit gate for Phase 06) |
+| TEST-03 | Phase 05 | Complete | Base prompt no-voice-words test |
+| TEST-04 | Phase 05 | Complete | Base prompt explainer-section test |
 | TEST-05 | Phase 06 + 07 + 08 | Complete | Scout smoke (06), analyst smoke (07), generic smoke (08) |
 | TEST-06 | Phase 06 + 07 + 08 | Complete | Scout shape (06), analyst shape (07), generic shape (08) |
 | TEST-07 | Phase 07 + 08 | Complete | Analyst guard vectors (07), generic guard vectors (08) |
