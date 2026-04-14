@@ -72,7 +72,7 @@ Plans:
   5. `assert_analyst_shape(text)` validates word-count bounds and allowed structural elements
 **Plans**: 1 plan
 Plans:
-- [ ] 07-01-PLAN.md — ANALYST persona constant, per-persona hallucination guard allowlist, analyst tests
+- [x] 07-01-PLAN.md — ANALYST persona constant, per-persona hallucination guard allowlist, analyst tests
 
 ### Phase 08: Generic Persona
 **Goal**: A GENERIC persona exists with a sectioned-with-summary-table format, validated against the shared anchor check and hallucination guard -- the only phase that may conditionally touch anchor.py

@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.10
 milestone_name: Output Personas
-status: completed
-stopped_at: Completed 06-01-PLAN.md
-last_updated: "2026-04-12T17:14:29.858Z"
-last_activity: 2026-04-12
+status: executing
+stopped_at: Completed 07-01-PLAN.md
+last_updated: "2026-04-14T00:16:11Z"
+last_activity: 2026-04-14
 progress:
   total_phases: 5
-  completed_phases: 2
-  total_plans: 2
-  completed_plans: 2
-  percent: 40
+  completed_phases: 3
+  total_plans: 3
+  completed_plans: 3
+  percent: 60
 ---
 
 # Project State
@@ -21,16 +21,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-12)
 
 **Core value:** Scout-voice scouting reports via multi-agent specialist pipeline
-**Current focus:** Phase 06 — pipeline-integration-scout-parity-gate (complete)
+**Current focus:** Phase 08 — generic-persona
 
 ## Current Position
 
-Phase: 07
-Plan: Not started
-Status: Phase 06 complete, ready for Phase 07
-Last activity: 2026-04-12
+Phase: 07 (analyst-persona) — COMPLETE
+Plan: 1 of 1 — COMPLETE
+Status: Phase 07 complete, ready for Phase 08
+Last activity: 2026-04-14
 
-Progress: [████░░░░░░] 40%
+Progress: [██████░░░░] 60%
 
 ## Accumulated Context
 
@@ -45,6 +45,9 @@ Progress: [████░░░░░░] 40%
 - Phase 08 (generic) is highest-risk: may touch anchor.py, owns hallucination guard wiring
 - Persona object at factory, string at entry points: analyst.py passes Persona directly, CLI callers pass string
 - DEFAULT_PERSONA used in _render_pipeline_data_sections (data file display not persona-parameterized)
+- ANALYST uses parent='scout': teaching voice inherits scout discipline via overlay composition
+- Per-persona allowlist in pipeline.py (_PERSONA_KNOWN_METRICS), not Persona dataclass -- guard stays independent
+- check_hallucinated_metrics persona arg defaults to None -- zero existing call sites need updating
 
 ### Pending Todos
 
@@ -65,6 +68,6 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-04-12
-Stopped at: Completed 06-01-PLAN.md
+Last session: 2026-04-14
+Stopped at: Completed 07-01-PLAN.md
 Resume file: None
