@@ -50,7 +50,10 @@ capsule says it went down (or vice versa), flag it.
 sample or uncertain, but the capsule presents it as definitive, flag it.
 
 For each problem found, report it with its category and a concise description.
-If everything checks out, return an empty list of warnings."""
+If everything checks out, return an empty list of warnings.
+
+Summary tables in a fixed section format are intentional structure, \
+not narrative violations."""
 
 
 WarningCategory = Literal["MISSED_SIGNAL", "UNSUPPORTED", "DIRECTION_ERROR", "OVERSTATED", "UNDERWEIGHTED"]
