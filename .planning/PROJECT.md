@@ -87,7 +87,8 @@ The report must read like a scout wrote it — surfacing *changes, adaptations, 
 - GENERIC persona: sectioned (Stuff/Location/Run Value & Execution/Trend/Game Shape/Summary Table) + summary table, 300-500 words, STRUCTURE OVERRIDE clause — v1.10, validated Phase 08
 - `check_explainer_present` post-processor: cross-persona quality gate, stderr warning when model explanation keywords absent — v1.10, validated Phase 08
 - `ANCHOR_PROMPT` addendum: one-sentence tolerance for summary tables in fixed section format — v1.10, validated Phase 08
-- VOICE-02 (analyst), VOICE-03 (generic), PERSONA-10 (per-persona allowlist), PERSONA-11 (explainer check), TEST-05/06/07 (smoke/shape/guard) — validated Phases 07–08
+- `pitcher-narratives --persona {scout,analyst,generic}` with `--list-personas`, case-normalized, default=scout; `pitcher-ask`/`pitcher-scout` reject the flag — v1.10, validated Phase 09
+- VOICE-02 (analyst), VOICE-03 (generic), PERSONA-10 (per-persona allowlist), PERSONA-11 (explainer check), TEST-05/06/07 (smoke/shape/guard), CLI-01..06 + TEST-08 (CLI surface) — all validated across Phases 07–09
 
 ## Current Milestone: v1.10 Output Personas
 
@@ -209,4 +210,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-04-14 — Phase 08 complete: GENERIC persona added, all three v1.10 personas implemented*
+*Last updated: 2026-04-14 — Phase 09 complete: v1.10 Output Personas milestone fully implemented (all phases shipped)*
