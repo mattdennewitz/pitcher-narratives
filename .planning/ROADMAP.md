@@ -116,4 +116,4 @@ Plans:
 | 06. Pipeline Integration & Scout Parity Gate | v1.10 | 1/1 | Complete    | 2026-04-12 |
 | 07. Analyst Persona | v1.10 | 0/1 | Complete    | 2026-04-14 |
 | 08. Generic Persona | v1.10 | 0/2 | Complete    | 2026-04-14 |
-| 09. CLI Wiring | v1.10 | 2/2 | Complete   | 2026-04-14 |
+| 09. CLI Wiring | v1.10 | 2/2 | Complete    | 2026-04-14 |
