@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.10
 milestone_name: Output Personas
-status: completed
-stopped_at: Completed 08-02-PLAN.md
-last_updated: "2026-04-14T01:46:28.551Z"
-last_activity: 2026-04-14
+status: executing
+stopped_at: Completed 09-02-PLAN.md
+last_updated: "2026-04-14T02:17:04.784Z"
+last_activity: 2026-04-14 -- Phase 09 execution started
 progress:
   total_phases: 5
   completed_phases: 4
-  total_plans: 5
-  completed_plans: 5
-  percent: 60
+  total_plans: 7
+  completed_plans: 6
+  percent: 86
 ---
 
 # Project State
@@ -21,16 +21,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-12)
 
 **Core value:** Scout-voice scouting reports via multi-agent specialist pipeline
-**Current focus:** Phase 08 — generic-persona
+**Current focus:** Phase 09 — cli-wiring
 
 ## Current Position
 
-Phase: 09
-Plan: Not started
-Status: Phase 07 complete, ready for Phase 08
-Last activity: 2026-04-14
+Phase: 09 (cli-wiring) — EXECUTING
+Plan: 1 of 2
+Status: Executing Phase 09
+Last activity: 2026-04-14 -- Phase 09 execution started
 
-Progress: [██████░░░░] 60%
+Progress: [█████████░] 86%
 
 ## Accumulated Context
 
@@ -53,6 +53,8 @@ Progress: [██████░░░░] 60%
 - [Phase 08-generic-persona]: assert_generic_shape populated_signal_count optional: TestModel output is canned, not sectioned; shape validation only applies to real LLM output
 - [Phase 08-generic-persona]: ANCHOR_PROMPT addendum applied (Step C): TestModel always returns non-empty AnchorResult; anchor-tolerance test marked xfail(strict=False) per Pitfall 4
 - [Phase 08-generic-persona]: check_explainer_present runs for all personas uniformly via Phase 2.25 non-fatal quality gate in _run_pipeline
+- [Phase 09-cli-wiring]: 09-02: No CLI code changes — argparse default behavior (exit 2 on unrecognized flags) verified by scope-guard tests, not reimplemented
+- [Phase 09-cli-wiring]: 09-02: Created tests/test_scout_cli.py from scratch with 5 parse_args smoke tests + rejection test — scout_cli was previously uncovered; baseline coverage added to avoid orphan rejection test
 
 ### Pending Todos
 
@@ -73,6 +75,6 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-04-14T01:31:02.721Z
-Stopped at: Completed 08-02-PLAN.md
+Last session: 2026-04-14T02:16:43.087Z
+Stopped at: Completed 09-02-PLAN.md
 Resume file: None

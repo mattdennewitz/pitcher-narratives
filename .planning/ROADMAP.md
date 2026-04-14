@@ -101,7 +101,10 @@ Plans:
   3. `pitcher-narratives --persona bogus` exits 2 with an argparse error naming valid choices; `--persona SCOUT` (uppercase) normalizes to `scout` and succeeds
   4. `pitcher-ask --persona scout` and `pitcher-scout --persona scout` both exit 2 with argparse errors
   5. `pitcher-narratives -v --persona analyst -p 656302 -w 10` logs `persona=analyst` to stderr alongside existing verbose output
-**Plans**: TBD
+**Plans**: 2 plans
+Plans:
+- [ ] 09-01-PLAN.md — Add --persona and --list-personas to pitcher-narratives; thread through pipeline + print-prompts + verbose logging; CLI tests
+- [x] 09-02-PLAN.md — Scope-guard tests: pitcher-ask and pitcher-scout reject --persona (new tests/test_scout_cli.py)
 
 ## Progress
 
@@ -113,4 +116,4 @@ Plans:
 | 06. Pipeline Integration & Scout Parity Gate | v1.10 | 1/1 | Complete    | 2026-04-12 |
 | 07. Analyst Persona | v1.10 | 0/1 | Complete    | 2026-04-14 |
 | 08. Generic Persona | v1.10 | 0/2 | Complete    | 2026-04-14 |
-| 09. CLI Wiring | v1.10 | 0/TBD | Not started | - |
+| 09. CLI Wiring | v1.10 | 1/2 | In Progress|  |
