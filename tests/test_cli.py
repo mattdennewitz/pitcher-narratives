@@ -61,6 +61,58 @@ def test_pitcher_required(monkeypatch):
     assert exc_info.value.code == 2
 
 
+# ── Unit: --persona parsing ──
+
+
+def test_persona_default(monkeypatch):
+    """CLI-01/CLI-05: --persona defaults to 'scout' when omitted."""
+    monkeypatch.setattr(sys, "argv", ["main.py", "-p", "592155"])
+    args = parse_args()
+    assert args.persona == "scout"
+
+
+def test_persona_flag_accepted(monkeypatch):
+    """CLI-01: --persona analyst parses into args.persona."""
+    monkeypatch.setattr(
+        sys, "argv", ["main.py", "-p", "592155", "--persona", "analyst"]
+    )
+    args = parse_args()
+    assert args.persona == "analyst"
+
+
+def test_persona_case_normalization(monkeypatch):
+    """CLI-01: --persona SCOUT normalizes to 'scout' via type=str.lower."""
+    monkeypatch.setattr(
+        sys, "argv", ["main.py", "-p", "592155", "--persona", "SCOUT"]
+    )
+    args = parse_args()
+    assert args.persona == "scout"
+
+
+def test_persona_invalid_exits_2(monkeypatch):
+    """CLI-01: --persona bogus is rejected by argparse with exit code 2."""
+    monkeypatch.setattr(
+        sys, "argv", ["main.py", "-p", "592155", "--persona", "bogus"]
+    )
+    with pytest.raises(SystemExit) as exc_info:
+        parse_args()
+    assert exc_info.value.code == 2
+
+
+def test_list_personas_flag_default(monkeypatch):
+    """CLI-02: --list-personas defaults to False when omitted."""
+    monkeypatch.setattr(sys, "argv", ["main.py", "-p", "592155"])
+    args = parse_args()
+    assert args.list_personas is False
+
+
+def test_list_personas_flag_set(monkeypatch):
+    """CLI-02: --list-personas sets list_personas True (no -p required)."""
+    monkeypatch.setattr(sys, "argv", ["main.py", "--list-personas"])
+    args = parse_args()
+    assert args.list_personas is True
+
+
 def _test_env(**extra: str) -> dict[str, str]:
     """Build a clean subprocess environment with optional overrides.
 
