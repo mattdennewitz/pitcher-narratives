@@ -3,14 +3,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from types import MappingProxyType
 
 __all__ = [
     "ANALYST",
-    "GENERIC",
-    "SCOUT",
-    "Persona",
-    "PERSONAS",
     "DEFAULT_PERSONA",
+    "GENERIC",
+    "PERSONAS",
+    "Persona",
+    "SCOUT",
     "SHARED_WRITER_BASE",
     "build_writer_system_prompt",
     "get_persona",
@@ -19,14 +20,27 @@ __all__ = [
 
 @dataclass(frozen=True)
 class Persona:
-    """Immutable persona configuration for the writer agent."""
-
     id: str
     display_name: str
     description: str
     overlay: str
-    length_target: tuple[int, int]  # (min_words, max_words)
-    parent: str | None = None  # persona id for overlay inheritance
+    length_target: tuple[int, int]
+    parent: str | None = None
+
+    def __post_init__(self) -> None:
+        min_words, max_words = self.length_target
+        if min_words <= 0 or max_words <= 0:
+            raise ValueError(
+                f"Persona {self.id!r} length_target must be positive, "
+                f"got {self.length_target}"
+            )
+        if min_words > max_words:
+            raise ValueError(
+                f"Persona {self.id!r} length_target min must be <= max, "
+                f"got {self.length_target}"
+            )
+        if not self.overlay:
+            raise ValueError(f"Persona {self.id!r} overlay must be non-empty")
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -282,22 +296,38 @@ GENERIC = Persona(
     parent="scout",
 )
 
-PERSONAS: dict[str, Persona] = {
+_PERSONAS_INTERNAL: dict[str, Persona] = {
     "scout": SCOUT,
     "analyst": ANALYST,
     "generic": GENERIC,
 }
 
+# Import-time invariant check: id field must match registry key and any
+# parent reference must resolve to a registered persona.
+for _pid, _persona in _PERSONAS_INTERNAL.items():
+    if _persona.id != _pid:
+        raise ValueError(
+            f"Registry key {_pid!r} does not match persona.id {_persona.id!r}"
+        )
+    if _persona.parent is not None and _persona.parent not in _PERSONAS_INTERNAL:
+        raise ValueError(
+            f"Persona {_pid!r} references unknown parent {_persona.parent!r}"
+        )
+del _pid, _persona
+
+# PERSONAS is published as a read-only view so external code cannot mutate
+# the registry (which would break DEFAULT_PERSONA identity and invariants).
+PERSONAS: MappingProxyType[str, Persona] = MappingProxyType(_PERSONAS_INTERNAL)
+
 DEFAULT_PERSONA: Persona = PERSONAS["scout"]
 
 
-# ═══════════════════════════════════════════════════════════════════════
-# PUBLIC API
-# ═══════════════════════════════════════════════════════════════════════
-
-
 def get_persona(persona_id: str) -> Persona:
-    """Look up a persona by id. Raises ValueError for unknown ids."""
+    """Resolve a persona id to its Persona instance.
+
+    Raises ValueError (not KeyError) so callers see a uniform error contract
+    with a helpful message listing valid ids.
+    """
     try:
         return PERSONAS[persona_id]
     except KeyError:
@@ -306,14 +336,13 @@ def get_persona(persona_id: str) -> Persona:
 
 
 def build_writer_system_prompt(persona: Persona) -> str:
-    """Compose the full writer system prompt from base + persona overlay(s).
+    """Compose SHARED_WRITER_BASE + parent overlay (if any) + persona overlay.
 
-    When persona.parent is set, the parent's overlay is composed first,
-    then the child's overlay is appended.
+    Parent references are resolved via get_persona so the error contract is
+    consistent with direct lookups.
     """
     parts = [SHARED_WRITER_BASE]
     if persona.parent is not None:
-        parent = PERSONAS[persona.parent]
-        parts.append(parent.overlay)
+        parts.append(get_persona(persona.parent).overlay)
     parts.append(persona.overlay)
     return "\n\n".join(parts)
