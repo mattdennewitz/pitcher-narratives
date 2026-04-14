@@ -89,7 +89,8 @@ __all__ = [
     "AuditFlag", "AuditResult", "ExecutiveSummary", "HallucinationReport",
     "KeySignals", "PipelineAgents", "PipelineResult",
     "UserPrompt", "audit_and_revise_specialists", "build_writer_input",
-    "check_hallucinated_metrics", "generate_pipeline_streaming",
+    "check_explainer_present", "check_hallucinated_metrics",
+    "generate_pipeline_streaming",
     "make_pipeline_agents", "run_specialists",
     "write_pipeline_data_file",
 ]
@@ -1298,6 +1299,15 @@ async def _run_pipeline(
         log.warning("Executive summary agent failed, skipping.", exc_info=True)
         summary_bullets = []
 
+    # Phase 2.25: EXPLAIN THE MODEL post-processor (non-fatal quality gate)
+    # Runs for all personas — a persona that silently drops Pitching+
+    # context produces a warning but does not fail the pipeline.
+    if not check_explainer_present(capsule):
+        log.warning(
+            "[%s] capsule is missing model explanation content",
+            persona,
+        )
+
     # Phase 2.5: Anchor check + revision loop
     specialist_synthesis = (
         f"STUFF:\n{specialists.stuff}\n\n"
@@ -1566,3 +1576,44 @@ def check_hallucinated_metrics(
         unknown_metrics=unknown,
         outcome_stat_warnings=outcome_warnings,
     )
+
+
+_EXPLAINER_KEYWORDS: frozenset[str] = frozenset({
+    "S+", "L+", "P+", "Pitching+", "Stuff+", "Location+",
+})
+
+
+def check_explainer_present(capsule: str) -> bool:
+    """Check whether the capsule contains Pitching+ model explanation content.
+
+    Pragmatic keyword scan (not an LLM call). Returns True when any of
+    the Pitching+ family tokens appears in the capsule — a proxy for
+    "the writer referenced the grading framework." A False return
+    triggers a non-fatal stderr warning in the pipeline so operators
+    can see when a persona silently dropped the EXPLAIN THE MODEL
+    content.
+
+    Runs on the pre-revision capsule only. Post-revision explainer
+    drift (the anchor revision loop can rewrite the capsule) is a
+    deferred concern and would require a second check after the loop.
+
+    Args:
+        capsule: The writer agent's narrative output.
+
+    Returns:
+        True if any explainer keyword is present, False otherwise.
+
+    Raises:
+        TypeError: If capsule is not a str.
+        ValueError: If capsule is empty (pipeline failure, not clean).
+    """
+    if not isinstance(capsule, str):
+        raise TypeError(
+            f"capsule must be str, got {type(capsule).__name__}"
+        )
+    if not capsule:
+        raise ValueError(
+            "capsule is empty — cannot check for explainer content"
+        )
+
+    return any(keyword in capsule for keyword in _EXPLAINER_KEYWORDS)
