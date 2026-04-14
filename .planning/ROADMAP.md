@@ -86,8 +86,8 @@ Plans:
   5. Hallucination guard regression: a known-dirty capsule (fabricated section or invented metric in a table row) is correctly flagged
 **Plans**: 2 plans
 Plans:
-- [ ] 08-01-PLAN.md — GENERIC persona constant, per-persona hallucination allowlist extension, generic tests
-- [ ] 08-02-PLAN.md — check_explainer_present post-processor + wiring, conditional anchor-tolerance addendum
+- [x] 08-01-PLAN.md — GENERIC persona constant, per-persona hallucination allowlist extension, generic tests
+- [x] 08-02-PLAN.md — check_explainer_present post-processor + wiring, conditional anchor-tolerance addendum
 
 **NOTE: Highest-risk phase.** Phase 08 is the only phase that *may* touch `anchor.py` (a conditional one-line addendum to `ANCHOR_PROMPT` if the generic persona's summary table produces false positives). Phase 08 also owns the `check_explainer_present` post-processor (PERSONA-11) and the hallucination guard's per-persona allowlist wiring for the generic persona. Phases 05-07 and 09 must NOT touch `anchor.py`.
 

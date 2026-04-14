@@ -30,7 +30,7 @@ This milestone is **writer-layer-only**. It adds a new `personas.py` module, cha
 - [x] **PERSONA-08**: `make_pipeline_agents(provider, thinking, persona: Persona = DEFAULT_PERSONA)` accepts an optional persona argument with a default that preserves the existing positional call at `analyst.py:618`.
 - [x] **PERSONA-09**: `generate_pipeline_streaming(..., persona: str = "scout")` and `_run_pipeline(..., persona: str = "scout")` accept a string persona id and resolve it to a `Persona` object via `get_persona()` before passing to `make_pipeline_agents`.
 - [x] **PERSONA-10**: `check_hallucinated_metrics(narrative: str, persona: str | None = None)` gains an optional `persona` parameter. When set, a `_PERSONA_KNOWN_METRICS` dict adds per-persona safe phrases (e.g. analyst newsletter vocabulary `playability`, `tunneling gap`, `pitch tree`, `arsenal depth`) to the allowlist for that run. Calls without the persona argument behave identically to v1.9.
-- [ ] **PERSONA-11**: A `check_explainer_present(capsule: str) -> bool` post-processor runs after the writer's capsule lands in `_run_pipeline`. When it returns `False`, the CLI logs a warning to stderr (non-fatal, informational) so operators see when a persona silently dropped the "explain the model" content. The check is a pragmatic keyword scan, not a new LLM call.
+- [x] **PERSONA-11**: A `check_explainer_present(capsule: str) -> bool` post-processor runs after the writer's capsule lands in `_run_pipeline`. When it returns `False`, the CLI logs a warning to stderr (non-fatal, informational) so operators see when a persona silently dropped the "explain the model" content. The check is a pragmatic keyword scan, not a new LLM call.
 
 ### VOICE — The Three Personas
 
@@ -106,7 +106,7 @@ The following are explicitly **not** in v1.10 and will be rejected in review:
 | PERSONA-08 | Phase 06 | Complete | make_pipeline_agents gains persona kwarg |
 | PERSONA-09 | Phase 06 | Complete | generate_pipeline_streaming / _run_pipeline gain persona kwarg |
 | PERSONA-10 | Phase 07 + 08 | Complete | Analyst allowlist (Phase 07), generic allowlist (Phase 08) |
-| PERSONA-11 | Phase 08 | Pending | check_explainer_present post-processor |
+| PERSONA-11 | Phase 08 | Complete | check_explainer_present post-processor |
 | VOICE-01 | Phase 05 | Pending | SCOUT persona constant (byte-identical to v1.9) |
 | VOICE-02 | Phase 07 | Complete | ANALYST persona constant (newsletter voice) |
 | VOICE-03 | Phase 08 | Complete | GENERIC persona constant (sectioned + table) |
