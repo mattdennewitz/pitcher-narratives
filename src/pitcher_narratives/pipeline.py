@@ -1460,6 +1460,18 @@ _TRADITIONAL_STATS = frozenset(
     }
 )
 
+# Per-persona teaching vocabulary that should not be flagged as unknown.
+# Each persona adds domain-specific terms that are safe in that persona's
+# voice but not part of the standard _KNOWN_METRICS set.
+_PERSONA_KNOWN_METRICS: dict[str, frozenset[str]] = {
+    "analyst": frozenset({
+        "playability",
+        "tunneling gap",
+        "pitch tree",
+        "arsenal depth",
+    }),
+}
+
 _METRIC_PATTERN = re.compile(
     r"\b("
     # xMetric pattern (xBA, xWhiff, xwOBA, xRV100, x_whiff, etc.)
@@ -1499,7 +1511,10 @@ _TRADITIONAL_PATTERN = re.compile(
 )
 
 
-def check_hallucinated_metrics(report_text: str) -> HallucinationReport:
+def check_hallucinated_metrics(
+    report_text: str,
+    persona: str | None = None,
+) -> HallucinationReport:
     """Find metric-like and traditional stat terms in report text.
 
     Scans the LLM output for patterns that look like advanced baseball
@@ -1511,6 +1526,9 @@ def check_hallucinated_metrics(report_text: str) -> HallucinationReport:
         report_text: The LLM-generated report text. Must be a non-empty
             string — an empty narrative is a pipeline failure, not a
             "clean" report, so the caller should check before invoking.
+        persona: Optional persona id. When set, per-persona vocabulary from
+            _PERSONA_KNOWN_METRICS is added to the allowlist for this check.
+            Calls without this argument behave identically to v1.9.
 
     Returns:
         HallucinationReport with unknown_metrics and outcome_stat_warnings.
@@ -1532,7 +1550,8 @@ def check_hallucinated_metrics(report_text: str) -> HallucinationReport:
         )
 
     found = set(_METRIC_PATTERN.findall(report_text))
-    unknown = sorted(found - _KNOWN_METRICS - _TRADITIONAL_STATS)
+    persona_known = _PERSONA_KNOWN_METRICS.get(persona, frozenset()) if persona else frozenset()
+    unknown = sorted(found - _KNOWN_METRICS - _TRADITIONAL_STATS - persona_known)
 
     traditional_found = set(_TRADITIONAL_PATTERN.findall(report_text))
     outcome_warnings = sorted(traditional_found & _TRADITIONAL_STATS)
