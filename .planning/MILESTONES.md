@@ -1,5 +1,21 @@
 # Milestones
 
+## v1.10 Output Personas (Shipped: 2026-04-14)
+
+**Phases completed:** 5 phases, 7 plans, 17 tasks
+
+**Key accomplishments:**
+
+- Persona frozen dataclass, SHARED_WRITER_BASE extraction from v1.9 _WRITER_PROMPT, SCOUT overlay with byte-identity fixture gate, and 13 contract tests
+- Persona-aware pipeline factory with _WRITER_PROMPT deleted, scout byte-parity verified through full pipeline path via TestModel smoke test
+- ANALYST persona with newsletter overlay (450-800 words, teaching voice), per-persona hallucination guard allowlist, and full analyst test coverage (smoke test, shape assertion, guard regression vectors)
+- GENERIC persona with six-section fixed format and summary table overlay (300-500 words, parent="scout"), per-persona allowlist entry, and full test suite including assert_generic_shape helper and guard regression vectors
+- PERSONA-11 quality gate: check_explainer_present keyword scan wired into _run_pipeline as Phase 2.25, plus anchor-tolerance gate test with summary-table addendum for generic sectioned output.
+- Exposes v1.10 personas on `pitcher-narratives` via `--persona {scout,analyst,generic}` and `--list-personas`, threads `args.persona` through `write_pipeline_data_file` and `generate_pipeline_streaming`, and logs `persona=<id>` under `-v`. Fifteen new CLI tests (6 unit + 9 integration) mechanically lock CLI-01 through CLI-05.
+- Lock in argparse rejection of `--persona` on `pitcher-ask` and `pitcher-scout` via negative tests — no CLI code changes, argparse's default "unrecognized arguments → exit 2" behavior verified by subprocess assertions.
+
+---
+
 ## v1.9 Pipeline Consolidation (Shipped: 2026-04-10)
 
 **Phases completed:** 2 phases, 3 plans, 6 tasks

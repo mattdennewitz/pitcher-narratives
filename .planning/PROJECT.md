@@ -81,37 +81,31 @@ The report must read like a scout wrote it — surfacing *changes, adaptations, 
 - ✓ anchor.py remains intact (shared by pipeline.py) — v1.9
 - ✓ All CLI features (--verbose, --print-prompts, automatic hallucination check) route through pipeline.py — v1.9
 
+- ✓ `Persona` frozen dataclass + `PERSONAS` registry + `get_persona()` lookup + `DEFAULT_PERSONA` module constant — v1.10
+- ✓ `SHARED_WRITER_BASE` with "EXPLAIN THE MODEL" contract (zero scout-specific voice words), per-persona overlays composed via `build_writer_system_prompt()` — v1.10
+- ✓ Scout persona byte-identical through pipeline (fixture + byte-identity gate test) — v1.10
+- ✓ Analyst persona: newsletter voice, 450-800 words, `parent="scout"`, teaching vocabulary allowlisted — v1.10
+- ✓ Generic persona: sectioned (6 fixed sections + summary table), 300-500 words, STRUCTURE OVERRIDE clause — v1.10
+- ✓ Per-persona hallucination-guard allowlist (`_PERSONA_KNOWN_METRICS`) — v1.10
+- ✓ `check_explainer_present` cross-persona quality gate logs stderr warning when explainer keywords absent — v1.10
+- ✓ `ANCHOR_PROMPT` one-sentence tolerance addendum for summary-table format — v1.10
+- ✓ `pitcher-narratives --persona {scout,analyst,generic}` + `--list-personas` flags, case-normalized (`type=str.lower`), default=scout — v1.10
+- ✓ `pitcher-ask` and `pitcher-scout` reject `--persona` (argparse default) — v1.10
+- ✓ `--print-prompts` renders selected persona prompt; `-v` logs `persona=<id>` to stderr — v1.10
+
 ### Active
 
-- ANALYST persona: newsletter voice (450-800 words), `parent="scout"`, per-persona hallucination guard allowlist — v1.10, validated Phase 07
-- GENERIC persona: sectioned (Stuff/Location/Run Value & Execution/Trend/Game Shape/Summary Table) + summary table, 300-500 words, STRUCTURE OVERRIDE clause — v1.10, validated Phase 08
-- `check_explainer_present` post-processor: cross-persona quality gate, stderr warning when model explanation keywords absent — v1.10, validated Phase 08
-- `ANCHOR_PROMPT` addendum: one-sentence tolerance for summary tables in fixed section format — v1.10, validated Phase 08
-- `pitcher-narratives --persona {scout,analyst,generic}` with `--list-personas`, case-normalized, default=scout; `pitcher-ask`/`pitcher-scout` reject the flag — v1.10, validated Phase 09
-- VOICE-02 (analyst), VOICE-03 (generic), PERSONA-10 (per-persona allowlist), PERSONA-11 (explainer check), TEST-05/06/07 (smoke/shape/guard), CLI-01..06 + TEST-08 (CLI surface) — all validated across Phases 07–09
+None — v1.10 shipped all planned requirements. Next milestone TBD.
 
-## Current Milestone: v1.10 Output Personas
+## Previous Milestone: v1.10 Output Personas (shipped 2026-04-14)
 
-**Goal:** Let users pick the voice and output shape of the `pitcher-narratives` writer via a `--persona` flag, without changing the underlying multi-agent analysis pipeline or the `pitcher-ask` path.
+Shipped three writer personas — scout (preserved byte-identical from v1.9), analyst (newsletter voice for analytically-inclined fans), and generic (sectioned format with summary table). Users select via `pitcher-narratives --persona {scout,analyst,generic}` with `--list-personas` for discovery; other CLIs reject the flag. Underlying pipeline (specialists, audit loop, anchor check, signal extractor, executive summary) is untouched and shared across all three personas. Quality gates: byte-identity test for scout, per-persona hallucination allowlist, `check_explainer_present` post-processor, shape assertion helpers, and 20+ regression vectors. All 26 milestone requirements validated. Full details in `.planning/MILESTONES.md` and `.planning/milestones/v1.10-ROADMAP.md`.
 
-**Target features:**
-- Three personas shipped in v1.10 — `scout` (default, current voice preserved), `analyst` (newsletter for analytically-inclined fans, teaches as it analyzes), `generic` (typical-LLM sectioned format with a summary table).
-- Writer prompts use a shared base + per-persona overlay model. The shared base enforces the "always explain how the Pitching+ model works and the decisions it made" contract for every persona; overlays define voice, length target, and output shape.
-- `pitcher-narratives --persona {scout,analyst,generic}` with `scout` as the default — existing scripts keep working unchanged.
-- All personas share downstream infrastructure: five specialists, audit loop, signal extractor, anchor check + revision loop, hallucination guard, and the 3-bullet executive summary format.
-- `pitcher-ask` is untouched — this milestone is narrative-only.
-
-**Key constraints for planning:**
-- Scout persona must be a byte-identical-ish preservation of current behavior so users who never pass `--persona` see no regression.
-- Shared anchor check needs a tolerance pass for the `generic` persona's summary table (structural format the current anchor has never seen).
-- `generic` persona is the highest hallucination-guard risk — sectioned formats make it easier to pad with category labels that didn't come from the specialists.
-- No changes to `pitcher-ask`, `pitcher-scout`, resolver, analyst agent, data pipeline, engine, or context assembly.
-
-## Previous Milestone (v1.9 Pipeline Consolidation, shipped 2026-04-10)
+## Prior Milestone (v1.9 Pipeline Consolidation, shipped 2026-04-10)
 
 The old single-agent reporting path (report.py, ~850 lines) and its tests (test_report.py, ~635 lines) have been fully removed. The multi-agent specialist pipeline (pipeline.py) is now the sole report generation path. Hallucination guard relocated to pipeline.py; both CLIs rewritten to use the pipeline path exclusively; `--pipeline` flag removed. Full details in `.planning/MILESTONES.md`.
 
-**Pre-existing issues carried forward** (not caused by v1.9): tests/test_analyst.py has a broken import (_analyst_agent) and tests/test_pipeline.py has one pydantic-ai TestModel assertion error. Both predate v1.9.
+**Pre-existing issues carried forward** (not caused by v1.9 or v1.10): tests/test_analyst.py has a broken import (_analyst_agent) and tests/test_pipeline.py has one pydantic-ai TestModel assertion error. Both predate v1.9 and remain deferred.
 
 ### Out of Scope
 
@@ -191,6 +185,15 @@ The old single-agent reporting path (report.py, ~850 lines) and its tests (test_
 | Centralize all data access through data.py | Game type filtering + multi-year applied consistently everywhere | ✓ Good |
 | Relocate hallucination guard to pipeline.py (not separate module) | Single consumer, simpler import graph, co-located with its sole user | ✓ Good |
 | Delete report.py entirely (not deprecate) | pipeline.py is strictly better; no migration path needed; removal simplifies the codebase | ✓ Good |
+| Persona as frozen dataclass + string concatenation (not pydantic BaseModel or Jinja templates) | Simplest mechanism, no runtime validation overhead, overlay inheritance via `parent` field | ✓ Good |
+| Byte-identity fixture gate for scout | Guarantees zero regression for default users; makes refactor-detection mechanical | ✓ Good |
+| `parent="scout"` for analyst and generic | Inherits factual discipline (banned-word list, directional consistency) for free; keeps overlays focused on voice-differentiation | ✓ Good |
+| Per-persona allowlist via `_PERSONA_KNOWN_METRICS` dict (not regex branching) | Additive, backward-compatible; v1.9 call sites unchanged; extensible to future personas | ✓ Good |
+| `check_explainer_present` as post-processor (not anchor warning category) | Anchor's job is fact-checking, not editorial enforcement; keeps concerns separate | ✓ Good |
+| Test-first anchor tolerance addendum (apply only if test fails) | Minimized surface-area change to shared anchor; addendum was applied defensively due to TestModel quirks but documented | — Pending real-LLM validation |
+| `type=str.lower` + `choices=sorted(PERSONAS.keys())` on --persona | Case-forgiving UX with argparse native validation; choices always reflect registry | ✓ Good |
+| `--list-personas` short-circuits before data/LLM | Useful without pitcher ID, fast inspection, safe for piping | ✓ Good |
+| No --persona on pitcher-ask / pitcher-scout | Q&A and scoring are different UX paradigms; prevents copy-paste confusion | ✓ Good |
 
 ## Evolution
 
@@ -210,4 +213,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-04-14 — Phase 09 complete: v1.10 Output Personas milestone fully implemented (all phases shipped)*
+*Last updated: 2026-04-14 after v1.10 Output Personas milestone complete*
