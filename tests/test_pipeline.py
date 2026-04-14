@@ -940,3 +940,53 @@ def test_run_pipeline_logs_warning_when_capsule_missing_explainer(caplog):
     assert "[scout]" in warning_msg, (
         f"Expected '[scout]' in warning message, got: {warning_msg!r}"
     )
+
+
+def test_check_explainer_present_happy_path_is_silent(caplog, monkeypatch):
+    """PERSONA-11 positive path: no warning when capsule contains explainer keywords.
+
+    Guards against a bug that always-logs the warning (which would pass
+    the negative test above but silently inform every run).
+    """
+    import logging
+
+    from pitcher_narratives import pipeline as pipeline_mod
+    from pitcher_narratives.pipeline import check_explainer_present
+
+    # Direct unit-level check: happy path returns True.
+    assert check_explainer_present(
+        "The slider graded S+ 112 on the Pitching+ model."
+    )
+
+    # And at the integration level: patch check_explainer_present at its
+    # call site in _run_pipeline so the pipeline sees it as always-True.
+    # That isolates us from TestModel output content.
+    monkeypatch.setattr(
+        pipeline_mod, "check_explainer_present", lambda capsule: True
+    )
+
+    from pitcher_narratives.context import assemble_pitcher_context
+    from pitcher_narratives.data import load_pitcher_data
+    from pydantic_ai.models.test import TestModel
+
+    data = load_pitcher_data(592155, window_days=30)
+    ctx = assemble_pitcher_context(data)
+
+    with caplog.at_level(logging.WARNING, logger="pitcher_narratives.pipeline"):
+        pipeline_mod.generate_pipeline_streaming(
+            ctx,
+            provider="gemini",
+            thinking="high",
+            persona="scout",
+            _model_override=TestModel(),
+        )
+
+    explainer_warnings = [
+        r for r in caplog.records
+        if "capsule is missing model explanation content" in r.getMessage()
+    ]
+    assert not explainer_warnings, (
+        f"Expected zero explainer-missing warnings on happy path, "
+        f"got {len(explainer_warnings)}: "
+        f"{[r.getMessage() for r in explainer_warnings]}"
+    )

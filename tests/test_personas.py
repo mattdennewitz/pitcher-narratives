@@ -22,6 +22,8 @@ from pitcher_narratives.data import load_pitcher_data
 from pydantic_ai.models.test import TestModel
 
 _FIXTURE = Path(__file__).parent / "fixtures" / "writer_prompt_scout.txt"
+_FIXTURE_ANALYST = Path(__file__).parent / "fixtures" / "writer_prompt_analyst.txt"
+_FIXTURE_GENERIC = Path(__file__).parent / "fixtures" / "writer_prompt_generic.txt"
 
 # Scout-specific voice words that must NOT appear in SHARED_WRITER_BASE.
 # These words belong in the scout overlay only.
@@ -40,6 +42,60 @@ def test_persona_is_frozen_dataclass():
     assert dataclasses.is_dataclass(persona)
     with pytest.raises(dataclasses.FrozenInstanceError):
         persona.id = "changed"
+
+
+def test_persona_rejects_empty_overlay():
+    """Construction fails fast when overlay is empty."""
+    with pytest.raises(ValueError, match="overlay must be non-empty"):
+        Persona(
+            id="bad",
+            display_name="Bad",
+            description="bad",
+            overlay="",
+            length_target=(100, 200),
+        )
+
+
+def test_persona_rejects_inverted_length_target():
+    """Construction fails when length_target min > max."""
+    with pytest.raises(ValueError, match="min must be <= max"):
+        Persona(
+            id="bad",
+            display_name="Bad",
+            description="bad",
+            overlay="ok",
+            length_target=(500, 100),
+        )
+
+
+def test_persona_rejects_non_positive_length_target():
+    """Construction fails when length_target contains zero or negative values."""
+    with pytest.raises(ValueError, match="must be positive"):
+        Persona(
+            id="bad",
+            display_name="Bad",
+            description="bad",
+            overlay="ok",
+            length_target=(0, 100),
+        )
+
+
+def test_personas_registry_is_read_only():
+    """PERSONAS is exposed as a MappingProxyType — external mutation fails."""
+    with pytest.raises(TypeError):
+        PERSONAS["bogus"] = PERSONAS["scout"]  # type: ignore[index]
+
+
+def test_all_registered_personas_satisfy_invariants():
+    """Every persona in PERSONAS has id matching its key and valid parent ref."""
+    for pid, persona in PERSONAS.items():
+        assert persona.id == pid, (
+            f"Registry key {pid!r} does not match persona.id {persona.id!r}"
+        )
+        if persona.parent is not None:
+            assert persona.parent in PERSONAS, (
+                f"Persona {pid!r} references unknown parent {persona.parent!r}"
+            )
 
 
 def test_scout_has_expected_fields():
@@ -83,6 +139,52 @@ def test_scout_composed_prompt_is_byte_identical_to_v19():
     assert actual == expected, (
         f"Scout composed prompt differs from fixture. "
         f"Lengths: {len(actual)} vs {len(expected)}"
+    )
+
+
+def test_analyst_composed_prompt_is_byte_identical_to_fixture():
+    """Composed analyst prompt matches the frozen fixture byte-for-byte.
+
+    Guards against accidental whitespace drift, overlay reordering, or
+    parent-chain regressions in the analyst persona.
+    """
+    assert _FIXTURE_ANALYST.exists(), f"Fixture not found at {_FIXTURE_ANALYST}"
+    expected = _FIXTURE_ANALYST.read_text()
+    actual = build_writer_system_prompt(PERSONAS["analyst"])
+    assert actual == expected, (
+        f"Analyst composed prompt differs from fixture. "
+        f"Lengths: {len(actual)} vs {len(expected)}"
+    )
+
+
+def test_generic_composed_prompt_is_byte_identical_to_fixture():
+    """Composed generic prompt matches the frozen fixture byte-for-byte.
+
+    Guards against accidental whitespace drift, overlay reordering, or
+    parent-chain regressions in the generic persona.
+    """
+    assert _FIXTURE_GENERIC.exists(), f"Fixture not found at {_FIXTURE_GENERIC}"
+    expected = _FIXTURE_GENERIC.read_text()
+    actual = build_writer_system_prompt(PERSONAS["generic"])
+    assert actual == expected, (
+        f"Generic composed prompt differs from fixture. "
+        f"Lengths: {len(actual)} vs {len(expected)}"
+    )
+
+
+def test_all_three_personas_produce_distinct_composed_prompts():
+    """The three personas must not accidentally produce identical prompts.
+
+    Catches overlay-collision bugs where a refactor leaves two personas
+    pointing at the same overlay string (or an inheritance chain that
+    short-circuits a child overlay).
+    """
+    composed = {
+        pid: build_writer_system_prompt(p) for pid, p in PERSONAS.items()
+    }
+    assert len(set(composed.values())) == len(composed), (
+        f"Personas produced non-distinct composed prompts: "
+        f"{[pid for pid in composed]}"
     )
 
 

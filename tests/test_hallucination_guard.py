@@ -276,3 +276,39 @@ def test_generic_persona_does_not_suppress_real_unknowns():
     result = check_hallucinated_metrics(text, persona="generic")
     assert "xMadeUpMetric" in result.unknown_metrics
     assert not result.is_clean
+
+
+def test_persona_known_metrics_keys_are_registered_personas():
+    """Every key in _PERSONA_KNOWN_METRICS must be a valid persona id.
+
+    Catches typos like 'analsyt' vs 'analyst' that would silently disable
+    the per-persona allowlist for the real persona.
+    """
+    from pitcher_narratives.personas import PERSONAS
+    from pitcher_narratives.pipeline import _PERSONA_KNOWN_METRICS
+
+    unknown_keys = set(_PERSONA_KNOWN_METRICS.keys()) - set(PERSONAS.keys())
+    assert not unknown_keys, (
+        f"_PERSONA_KNOWN_METRICS has keys not in PERSONAS: {unknown_keys}"
+    )
+
+
+def test_unknown_persona_logs_debug_and_returns_empty_allowlist(caplog):
+    """Unknown persona id triggers a debug log and falls back to empty allowlist.
+
+    Tests the graceful-miss path for programmatic callers (CLI is guarded
+    by argparse choices). A typo should not crash — it should log and
+    treat the persona as having no allowlist.
+    """
+    import logging
+
+    with caplog.at_level(logging.DEBUG, logger="pitcher_narratives.pipeline"):
+        result = check_hallucinated_metrics(
+            "His P+ is 110.", persona="analsyt"
+        )
+    assert result.is_clean
+    assert any(
+        "no persona-specific metric allowlist" in rec.message
+        and "analsyt" in rec.message
+        for rec in caplog.records
+    )
