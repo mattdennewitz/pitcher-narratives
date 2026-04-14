@@ -1311,16 +1311,17 @@ async def _run_pipeline(
         log.warning("Executive summary agent failed, skipping.", exc_info=True)
         summary_bullets = []
 
-    # Phase 2.25: EXPLAIN THE MODEL post-processor (non-fatal quality gate)
+    # EXPLAIN THE MODEL post-processor (non-fatal quality gate).
     # Runs for all personas — a persona that silently drops Pitching+
     # context produces a warning but does not fail the pipeline.
-    if not check_explainer_present(capsule):
+    pre_revision_explainer_ok = check_explainer_present(capsule)
+    if not pre_revision_explainer_ok:
         log.warning(
             "[%s] capsule is missing model explanation content",
             persona,
         )
 
-    # Phase 2.5: Anchor check + revision loop
+    # Anchor check + revision loop
     specialist_synthesis = (
         f"STUFF:\n{specialists.stuff}\n\n"
         f"LOCATION:\n{specialists.location}\n\n"
@@ -1342,6 +1343,15 @@ async def _run_pipeline(
         max_revisions=MAX_REVISIONS,
         _model_override=_model_override,
     )
+
+    # Re-check explainer after revision loop. The anchor revision can rewrite
+    # the capsule entirely, potentially dropping Pitching+ context that was
+    # present before. Warn again only if state changed, to avoid duplicate logs.
+    if revision_count > 0 and pre_revision_explainer_ok and not check_explainer_present(capsule):
+        log.warning(
+            "[%s] anchor revision removed model explanation content from capsule",
+            persona,
+        )
 
     return PipelineResult(
         narrative=capsule,
@@ -1492,11 +1502,6 @@ _PERSONA_KNOWN_METRICS: dict[str, frozenset[str]] = {
         "pitch tree",
         "arsenal depth",
     }),
-    # Generic overlay vocabulary is covered by _KNOWN_METRICS (S+, L+,
-    # P+, Pitching+, Stuff+, Location+). Empty frozenset satisfies
-    # PERSONA-10 (the key exists) and reserves the slot for future
-    # regex evolution. Per the per-persona allowlist contract, adding
-    # entries here is additive-only and cannot break other personas.
     "generic": frozenset(),
 }
 
@@ -1556,7 +1561,7 @@ def check_hallucinated_metrics(
             "clean" report, so the caller should check before invoking.
         persona: Optional persona id. When set, per-persona vocabulary from
             _PERSONA_KNOWN_METRICS is added to the allowlist for this check.
-            Calls without this argument behave identically to v1.9.
+            When None, only _KNOWN_METRICS and _TRADITIONAL_STATS are consulted.
 
     Returns:
         HallucinationReport with unknown_metrics and outcome_stat_warnings.
@@ -1578,7 +1583,15 @@ def check_hallucinated_metrics(
         )
 
     found = set(_METRIC_PATTERN.findall(report_text))
-    persona_known = _PERSONA_KNOWN_METRICS.get(persona, frozenset()) if persona else frozenset()
+    if persona:
+        if persona not in _PERSONA_KNOWN_METRICS:
+            log.debug(
+                "no persona-specific metric allowlist for %r (typo or unregistered persona?)",
+                persona,
+            )
+        persona_known = _PERSONA_KNOWN_METRICS.get(persona, frozenset())
+    else:
+        persona_known = frozenset()
     unknown = sorted(found - _KNOWN_METRICS - _TRADITIONAL_STATS - persona_known)
 
     traditional_found = set(_TRADITIONAL_PATTERN.findall(report_text))
@@ -1603,11 +1616,8 @@ def check_explainer_present(capsule: str) -> bool:
     "the writer referenced the grading framework." A False return
     triggers a non-fatal stderr warning in the pipeline so operators
     can see when a persona silently dropped the EXPLAIN THE MODEL
-    content.
-
-    Runs on the pre-revision capsule only. Post-revision explainer
-    drift (the anchor revision loop can rewrite the capsule) is a
-    deferred concern and would require a second check after the loop.
+    content. Called both before and after the anchor revision loop so
+    explainer drift introduced during revision is also surfaced.
 
     Args:
         capsule: The writer agent's narrative output.
