@@ -165,3 +165,54 @@ def test_hallucination_guard_hardhit_pct_still_known():
     result = check_hallucinated_metrics(text)
     assert result.unknown_metrics == []
     assert result.is_clean
+
+
+# -- Per-persona regression vectors (Phase 07: TEST-07, analyst portion) --
+
+
+def test_analyst_vocab_not_flagged_with_persona():
+    """TEST-07: Analyst vocabulary terms are not flagged when persona='analyst'."""
+    text = (
+        "The playability of this slider comes down to the tunneling gap "
+        "created by his pitch tree. The arsenal depth gives him four "
+        "viable options."
+    )
+    result = check_hallucinated_metrics(text, persona="analyst")
+    assert result.is_clean, (
+        f"Analyst vocabulary flagged with persona='analyst': "
+        f"unknown={result.unknown_metrics}, warnings={result.outcome_stat_warnings}"
+    )
+
+
+def test_analyst_vocab_without_persona_still_clean():
+    """TEST-07: Analyst vocabulary terms don't match _METRIC_PATTERN anyway.
+
+    This confirms the terms are plain English that the regex does not catch.
+    The per-persona allowlist is a safety net for forward compatibility.
+    """
+    text = (
+        "The playability and tunneling gap are key. "
+        "His pitch tree and arsenal depth look solid."
+    )
+    result = check_hallucinated_metrics(text)
+    assert result.is_clean, (
+        f"Analyst vocabulary flagged without persona: "
+        f"unknown={result.unknown_metrics}"
+    )
+
+
+def test_analyst_persona_does_not_suppress_real_unknowns():
+    """TEST-07: Per-persona allowlist only covers persona vocabulary, not fabricated metrics."""
+    text = "His xDominance score and playability are both impressive."
+    result = check_hallucinated_metrics(text, persona="analyst")
+    assert "xDominance" in result.unknown_metrics
+    assert not result.is_clean
+
+
+def test_no_persona_backward_compat():
+    """PERSONA-10: Calls without persona arg produce identical results to v1.9 behavior."""
+    text = "His P+ of 112 and xWhiff of 0.35 suggest elite stuff. ERA of 3.50."
+    result = check_hallucinated_metrics(text)
+    assert result.unknown_metrics == []
+    assert "ERA" in result.outcome_stat_warnings
+    assert not result.is_clean

@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from pitcher_narratives.personas import (
+    ANALYST,  # NEW
     Persona,
     PERSONAS,
     SCOUT,
@@ -116,10 +117,11 @@ def test_all_exports_importable():
     assert get_persona is not None
 
 
-def test_registry_contains_only_scout():
-    """At Phase 05 the registry contains only the scout persona."""
-    assert len(PERSONAS) == 1
+def test_registry_contains_scout_and_analyst():
+    """After Phase 07 the registry contains scout and analyst personas."""
+    assert len(PERSONAS) == 2
     assert "scout" in PERSONAS
+    assert "analyst" in PERSONAS
 
 
 def test_composed_prompt_starts_with_base():
@@ -188,3 +190,134 @@ def test_scout_pipeline_smoke(ctx):
     fixture = _FIXTURE.read_text()
     expected = build_writer_system_prompt(SCOUT)
     assert expected == fixture
+
+
+# -- Analyst persona unit tests (Phase 07: VOICE-02) --
+
+
+def test_analyst_has_expected_fields():
+    """VOICE-02: ANALYST persona has correct id, parent, length_target, and display_name."""
+    analyst = PERSONAS["analyst"]
+    assert analyst.id == "analyst"
+    assert analyst.display_name == "Analyst"
+    assert analyst.parent == "scout"
+    assert analyst.length_target == (450, 800)
+    assert "newsletter" in analyst.description.lower() or "teaching" in analyst.description.lower()
+
+
+def test_analyst_composed_prompt_includes_base_and_scout():
+    """VOICE-02: Composed analyst prompt contains SHARED_WRITER_BASE and scout overlay."""
+    composed = build_writer_system_prompt(ANALYST)
+    assert composed.startswith(SHARED_WRITER_BASE)
+    # Scout overlay content inherited via parent="scout"
+    assert "Write like an analyst talking to another analyst" in composed
+    # Analyst overlay content
+    assert "newsletter" in composed.lower()
+    assert "450-800 words" in composed
+
+
+def test_analyst_overlay_has_teaching_vocabulary():
+    """VOICE-02: Analyst overlay permits teaching vocabulary."""
+    overlay = ANALYST.overlay
+    for term in ("playability", "tunneling gap", "pitch tree", "arsenal depth"):
+        assert term in overlay, f"Teaching vocabulary term {term!r} missing from analyst overlay"
+
+
+def test_analyst_overlay_has_hard_word_limit():
+    """VOICE-02: Analyst overlay enforces hard 800-word ceiling."""
+    overlay = ANALYST.overlay
+    assert "800 words" in overlay
+    assert "HARD LIMIT" in overlay
+
+
+# -- Analyst shape assertion helper (Phase 07: TEST-06) --
+
+
+def assert_analyst_shape(text: str) -> None:
+    """TEST-06: Validate analyst persona output shape.
+
+    Checks structural constraints enforceable on any text (including
+    TestModel synthetic output). Word-count validation against the
+    450-800 target only applies to real LLM output, not TestModel.
+
+    Args:
+        text: The narrative text to validate.
+
+    Raises:
+        AssertionError: If structural constraints are violated.
+    """
+    # No tables (pipe-delimited rows)
+    lines = text.strip().splitlines()
+    table_lines = [l for l in lines if l.strip().count("|") >= 2]
+    assert len(table_lines) == 0, (
+        f"Analyst output should not contain tables, found {len(table_lines)} table-like lines"
+    )
+
+    # No bullet lists
+    for line in lines:
+        stripped = line.strip()
+        assert not stripped.startswith("- "), (
+            f"Analyst output should not contain bullet lists: {stripped[:60]}"
+        )
+        assert not stripped.startswith("* "), (
+            f"Analyst output should not contain bullet lists: {stripped[:60]}"
+        )
+
+    # No h1 headings (## is also banned for analyst per overlay, but h1 is the hard constraint)
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("#"):
+            assert not stripped.startswith("# ") or stripped.startswith("## "), (
+                f"Analyst output should not contain h1 headings: {stripped[:60]}"
+            )
+
+
+def test_assert_analyst_shape_rejects_table():
+    """TEST-06: Shape helper catches tables."""
+    with pytest.raises(AssertionError, match="table"):
+        assert_analyst_shape("| Pitch | S+ | L+ |\n| Slider | 110 | 95 |")
+
+
+def test_assert_analyst_shape_rejects_bullets():
+    """TEST-06: Shape helper catches bullet lists."""
+    with pytest.raises(AssertionError, match="bullet"):
+        assert_analyst_shape("Key findings:\n- The slider improved\n- The curve declined")
+
+
+def test_assert_analyst_shape_accepts_clean_prose():
+    """TEST-06: Shape helper accepts clean narrative prose."""
+    prose = (
+        "The slider has been the story of this window. S+ jumped to 128, "
+        "driven almost entirely by vertical break gains. That is a significant "
+        "move for a pitch that was already above average."
+    )
+    assert_analyst_shape(prose)  # Should not raise
+
+
+# -- Analyst pipeline smoke test (Phase 07: TEST-05) --
+
+
+def test_analyst_pipeline_smoke(ctx):
+    """TEST-05 (analyst): Full pipeline with TestModel produces non-empty narrative.
+
+    Verifies:
+    - Pipeline runs end-to-end with persona='analyst' using TestModel
+    - Result is a PipelineResult with a non-empty narrative
+    - Composed analyst prompt starts with SHARED_WRITER_BASE
+    - Composed analyst prompt includes scout overlay (via parent inheritance)
+    """
+    test_model = TestModel()
+    result = generate_pipeline_streaming(
+        ctx,
+        provider="gemini",
+        thinking="high",
+        persona="analyst",
+        _model_override=test_model,
+    )
+    assert isinstance(result, PipelineResult)
+    assert len(result.narrative) > 0
+
+    # Verify the composed prompt includes base and scout overlay
+    expected = build_writer_system_prompt(ANALYST)
+    assert expected.startswith(SHARED_WRITER_BASE)
+    assert "Write like an analyst talking to another analyst" in expected
