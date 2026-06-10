@@ -95,6 +95,9 @@ _USAGE_THRESHOLD = 5.0
 _MOVEMENT_THRESHOLD = 0.5
 """Inches below which movement delta is 'Steady'."""
 
+_FEET_TO_INCHES = 12.0
+"""Raw Statcast pfx_x/pfx_z are in feet; all reported movement is inches."""
+
 _MIN_PITCHES = 10
 """Minimum pitches for per-type analysis; below this flag small_sample=True."""
 
@@ -272,13 +275,13 @@ def compute_league_baselines() -> list[LeagueBaseline]:
                 pitch_name=row["pitch_name"],
                 n_pitches=row["n"],
                 avg_velo=float(row["avg_velo"]),
-                avg_pfx_x=float(row["avg_pfx_x"]),
-                avg_pfx_z=float(row["avg_pfx_z"]),
+                avg_pfx_x=float(row["avg_pfx_x"]) * _FEET_TO_INCHES,
+                avg_pfx_z=float(row["avg_pfx_z"]) * _FEET_TO_INCHES,
                 zone_pct=float(row["zone_pct"]),
                 chase_pct=float(row["chase_pct"]),
                 velo_std=float(row["velo_std"]) if row["velo_std"] is not None else 0.0,
-                pfx_x_std=float(row["pfx_x_std"]) if row["pfx_x_std"] is not None else 0.0,
-                pfx_z_std=float(row["pfx_z_std"]) if row["pfx_z_std"] is not None else 0.0,
+                pfx_x_std=float(row["pfx_x_std"]) * _FEET_TO_INCHES if row["pfx_x_std"] is not None else 0.0,
+                pfx_z_std=float(row["pfx_z_std"]) * _FEET_TO_INCHES if row["pfx_z_std"] is not None else 0.0,
                 avg_s_plus=s_data.get("avg_s_plus"),
                 avg_xswing_s=s_data.get("avg_xswing_s"),
                 avg_xwhiff_s=s_data.get("avg_xwhiff_s"),
@@ -1353,10 +1356,10 @@ def compute_fastball_summary(data: PitcherData) -> FastballSummary | None:
     )
 
     # ── Movement ──────────────────────────────────────────────────
-    season_pfx_x = _float(fb_statcast["pfx_x"].mean())
-    season_pfx_z = _float(fb_statcast["pfx_z"].mean())
-    window_pfx_x = _float(window_fb["pfx_x"].mean())
-    window_pfx_z = _float(window_fb["pfx_z"].mean())
+    season_pfx_x = _float(fb_statcast["pfx_x"].mean()) * _FEET_TO_INCHES
+    season_pfx_z = _float(fb_statcast["pfx_z"].mean()) * _FEET_TO_INCHES
+    window_pfx_x = _float(window_fb["pfx_x"].mean()) * _FEET_TO_INCHES
+    window_pfx_z = _float(window_fb["pfx_z"].mean()) * _FEET_TO_INCHES
 
     if cold_start:
         pfx_x_delta_str = _COLD_START_STRING
@@ -1541,10 +1544,10 @@ def compute_arsenal_summary(data: PitcherData) -> list[PitchTypeSummary]:
         season_velo = _float(pt_season["release_speed"].mean())
         window_velo = _float(pt_window["release_speed"].mean()) if n_window > 0 else season_velo
 
-        season_pfx_x = _float(pt_season["pfx_x"].mean())
-        window_pfx_x = _float(pt_window["pfx_x"].mean()) if n_window > 0 else season_pfx_x
-        season_pfx_z = _float(pt_season["pfx_z"].mean())
-        window_pfx_z = _float(pt_window["pfx_z"].mean()) if n_window > 0 else season_pfx_z
+        season_pfx_x = _float(pt_season["pfx_x"].mean()) * _FEET_TO_INCHES
+        window_pfx_x = _float(pt_window["pfx_x"].mean()) * _FEET_TO_INCHES if n_window > 0 else season_pfx_x
+        season_pfx_z = _float(pt_season["pfx_z"].mean()) * _FEET_TO_INCHES
+        window_pfx_z = _float(pt_window["pfx_z"].mean()) * _FEET_TO_INCHES if n_window > 0 else season_pfx_z
 
         if cold_start:
             velo_delta_str = _COLD_START_STRING

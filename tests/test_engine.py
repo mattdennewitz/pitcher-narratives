@@ -44,6 +44,7 @@ from pitcher_narratives.engine import (
     compute_arsenal_summary,
     compute_arsenal_trends,
     compute_component_attribution,
+    compute_league_baselines,
     compute_cross_season_summary,
     compute_execution_metrics,
     compute_fastball_summary,
@@ -1324,3 +1325,32 @@ def test_arsenal_trends_pitch_names():
     for trend in [*result.added, *result.dropped, *result.continued]:
         assert trend.pitch_name, f"pitch_name should not be empty for {trend.pitch_type}"
         assert isinstance(trend.pitch_name, str)
+
+
+# ── Movement units (inches, not raw Statcast feet) ───────────────────
+
+
+def test_league_baseline_movement_in_inches():
+    """League FF vertical movement lands in the inch range (~16), not feet (~1.3)."""
+    baselines = compute_league_baselines()
+    ff = next(b for b in baselines if b.pitch_type == "FF")
+    assert 10.0 < ff.avg_pfx_z < 25.0
+    assert 0.5 < ff.pfx_z_std < 6.0
+
+
+def test_fastball_summary_movement_in_inches():
+    """Fastball summary movement values are inches (Booser FC ride ~3-4 in)."""
+    data = load_pitcher_data(TEST_PITCHER, window_days=30)
+    summary = compute_fastball_summary(data)
+    assert summary is not None
+    assert abs(summary.season_pfx_z) > 1.0 or abs(summary.season_pfx_x) > 1.0
+    assert -30.0 < summary.season_pfx_x < 30.0
+    assert abs(summary.season_pfx_x) + abs(summary.season_pfx_z) > 3.0
+
+
+def test_arsenal_summary_movement_in_inches():
+    """Arsenal per-type movement values are inches, not feet."""
+    data = load_pitcher_data(TEST_PITCHER, window_days=30)
+    arsenal = compute_arsenal_summary(data)
+    ff = next(p for p in arsenal if p.pitch_type == "FF")
+    assert 10.0 < ff.season_pfx_z < 25.0

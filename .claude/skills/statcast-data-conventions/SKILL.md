@@ -9,7 +9,7 @@ Facts verified empirically against this repo's parquet files. When a fact below 
 
 ## Units and columns
 
-- `pfx_x`/`pfx_z` are in **FEET** (raw range ±2.5). Multiply by 12 for inches. Several legacy render strings in `engine.py`/`analyst.py` label these values "in" while passing feet — do not propagate that bug; convert explicitly (see `shape.py` `_FEET_TO_INCHES`).
+- `pfx_x`/`pfx_z` are in **FEET** in the raw parquet (range ±2.5). Multiply by 12 for inches. The engine converts at aggregation (`_FEET_TO_INCHES` in `engine.py` and `shape.py`), so `LeagueBaseline` and all summary dataclasses store **inches** — but any new computation reading raw frames must convert explicitly.
 - `pfx_z` is **induced** vertical break (gravity removed, "ride"), not total drop. Label it accordingly.
 - `effective_speed` exists in the parquet — Statcast's extension-adjusted perceived velocity. Don't recompute it from `release_extension` unless it's null.
 - `arm_angle`: 0° = sidearm, 90° = straight over the top. Hand-symmetric — no L/R mirroring needed.
