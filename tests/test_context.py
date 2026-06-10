@@ -6,6 +6,7 @@ from pydantic import BaseModel
 from pitcher_narratives.context import assemble_pitcher_context
 from pitcher_narratives.data import load_pitcher_data
 from pitcher_narratives.engine import HardHitRate, ReleasePointMetrics
+from pitcher_narratives.shape import PitchShapeProfile
 
 TEST_PITCHER = 592155  # Booser, Cam
 
@@ -327,3 +328,32 @@ def test_yoy_section_renders_cross_season_summary():
     assert "P+" in section
     assert "S+" in section
     assert "L+" in section
+
+
+# ── Pitch shape vs arm slot in context ───────────────────────────────
+
+
+def test_pitch_shape_in_context(ctx):
+    """assemble_pitcher_context has a non-None pitch_shape field of type PitchShapeProfile."""
+    assert ctx.pitch_shape is not None
+    assert isinstance(ctx.pitch_shape, PitchShapeProfile)
+
+
+def test_to_prompt_has_pitch_shape_section(ctx):
+    """to_prompt() output contains the 'Pitch Shape vs Arm Slot' section header."""
+    prompt = ctx.to_prompt()
+    assert "Pitch Shape vs Arm Slot" in prompt
+
+
+def test_to_prompt_pitch_shape_explains_dead_zone(ctx):
+    """Pitch shape section self-documents what DEAD ZONE means for the LLM."""
+    prompt = ctx.to_prompt()
+    assert "DEAD ZONE" in prompt
+
+
+def test_to_prompt_pitch_shape_has_arm_angle(ctx):
+    """Pitch shape section reports the arm angle in degrees."""
+    prompt = ctx.to_prompt()
+    start = prompt.index("Pitch Shape vs Arm Slot")
+    section = prompt[start : prompt.index("\n## ", start)]
+    assert "deg" in section

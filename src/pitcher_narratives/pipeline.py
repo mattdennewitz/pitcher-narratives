@@ -79,6 +79,7 @@ from pitcher_narratives.personas import (
     build_writer_system_prompt,
     get_persona,
 )
+from pitcher_narratives.shape import render_pitch_shape
 from pitcher_narratives.signals import (
     KeySignals,
     SIGNAL_EXTRACTOR_PROMPT,
@@ -172,6 +173,18 @@ average but S+ is extreme, say so honestly rather than fabricating an \
 explanation. "The model sees something in the movement interaction \
 that the raw averages don't capture" is more honest than inventing \
 a story about velocity.
+- ARM SLOT CONTEXT: When a "Pitch Shape vs Arm Slot" section is \
+present, it compares each pitch's movement to the league expectation \
+for the same arm angle. These tags are pre-computed -- trust them and \
+weave them into the mechanism. A fastball tagged DEAD ZONE has \
+exactly the shape hitters' eyes predict from the release slot; cite \
+this when explaining a mediocre S+ or weak xWhiff_S despite NORMAL \
+velocity and movement ("given his arm angle, the fastball's movement \
+profile is dead zone"). Movement well above or below slot expectation \
+is deception the raw movement averages hide -- ride that beats the \
+slot expectation plays up, and extra sink or run from a high slot \
+surprises hitters. When the section is present, every fastball \
+paragraph MUST reference its slot context.
 
 OUTPUT FORMAT:
 - For each pitch type, explain why the S+ grade is what it is by \
@@ -506,6 +519,11 @@ def _build_stuff_input(ctx: PitcherContext) -> UserPrompt:
         b = baseline_lookup.get(im.pitch_type)
         comparisons = format_s_variant_comparisons(b, im.xswing_s, im.xwhiff_s, im.xrv100_s)
         data_lines.append(f"- {im.pitch_name} ({im.pitch_type}): {', '.join(comparisons)}")
+
+    # Arm-slot shape context (movement vs slot expectation, dead zone tags)
+    shape_section = render_pitch_shape(ctx.pitch_shape)
+    if shape_section:
+        data_lines.append("\n" + shape_section)
 
     # Cross-season context (when available)
     if ctx.cross_season_summary is not None or ctx.arsenal_trend is not None:

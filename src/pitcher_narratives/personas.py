@@ -86,6 +86,10 @@ spin it as a strength. Preserve the direction of each specialist's \
 assessment.
 - If specialists contradict each other on a pitch, acknowledge the \
 tension rather than silently picking one side.
+- Surface arm slot shape insight. When a specialist ties a pitch's \
+movement to its arm slot (a DEAD ZONE fastball, ride above slot \
+expectation), that is high-value mechanism evidence -- work it into \
+the narrative rather than dropping it.
 - Scale confidence to sample size. Small windows get tentative language.
 - TEMPORAL GROUNDING: The data includes a "Temporal Context" section \
 with a prior-year relevance level. Follow it. When relevance is LOW, \

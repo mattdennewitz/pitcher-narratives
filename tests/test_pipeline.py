@@ -30,6 +30,7 @@ from pitcher_narratives.pipeline import (
     PipelineAgents,
     PipelineResult,
     SpecialistOutputs,
+    _STUFF_SPECIALIST_PROMPT,
     _build_game_shape_input,
     _build_stuff_input,
     _build_trend_input,
@@ -990,3 +991,38 @@ def test_check_explainer_present_happy_path_is_silent(caplog, monkeypatch):
         f"got {len(explainer_warnings)}: "
         f"{[r.getMessage() for r in explainer_warnings]}"
     )
+
+
+# ── Pitch shape in stuff specialist input ─────────────────────────────
+
+
+class TestPitchShapeInStuffInput:
+    def test_contains_pitch_shape_section(self, ctx):
+        """Stuff specialist input includes the Pitch Shape vs Arm Slot section."""
+        output = _flatten(_build_stuff_input(ctx))
+        assert "Pitch Shape vs Arm Slot" in output
+
+    def test_contains_shape_classification(self, ctx):
+        """Shape tags (dead zone / slot expectation) reach the stuff specialist."""
+        output = _flatten(_build_stuff_input(ctx))
+        assert "slot expectation" in output
+
+    def test_omitted_when_no_shape_data(self, ctx):
+        """No shape profile -> no empty section in the specialist input."""
+        bare = ctx.model_copy(update={"pitch_shape": None})
+        output = _flatten(_build_stuff_input(bare))
+        assert "Pitch Shape vs Arm Slot" not in output
+
+
+class TestStuffPromptArmSlotRule:
+    def test_prompt_explains_dead_zone(self):
+        """Stuff specialist prompt defines the DEAD ZONE concept."""
+        assert "DEAD ZONE" in _STUFF_SPECIALIST_PROMPT
+
+    def test_prompt_references_shape_section(self):
+        """Stuff specialist prompt points at the Pitch Shape vs Arm Slot section."""
+        assert "Pitch Shape vs Arm Slot" in _STUFF_SPECIALIST_PROMPT
+
+    def test_prompt_requires_slot_context_on_fastballs(self):
+        """Prompt makes arm-slot context mandatory for fastball paragraphs."""
+        assert "arm angle" in _STUFF_SPECIALIST_PROMPT

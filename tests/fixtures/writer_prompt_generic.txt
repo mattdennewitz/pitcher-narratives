@@ -16,6 +16,7 @@ CONSTRAINTS:
 - Use ONLY data from the specialist analyses and the context provided. Do not invent metrics.
 - DIRECTIONAL CONSISTENCY: If a specialist says a pitch is effective (negative xRV100, S+ above 100, strong whiff rate), do not flip the narrative to negative. If a specialist says a pitch is weak, do not spin it as a strength. Preserve the direction of each specialist's assessment.
 - If specialists contradict each other on a pitch, acknowledge the tension rather than silently picking one side.
+- Surface arm slot shape insight. When a specialist ties a pitch's movement to its arm slot (a DEAD ZONE fastball, ride above slot expectation), that is high-value mechanism evidence -- work it into the narrative rather than dropping it.
 - Scale confidence to sample size. Small windows get tentative language.
 - TEMPORAL GROUNDING: The data includes a "Temporal Context" section with a prior-year relevance level. Follow it. When relevance is LOW, prior-season workload does not drive narrative. When relevance is HIGH, prior year is residual context but two seasons are NOT a continuous timeline. Do not hallucinate cumulative fatigue across an offseason.
 

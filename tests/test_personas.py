@@ -654,3 +654,12 @@ def test_generic_pipeline_smoke(ctx):
     assert "Write like an analyst talking to another analyst" in expected
     assert "## Stuff" in expected
     assert "## Summary Table" in expected
+
+
+# ── Arm-slot insight in writer base ──────────────────────────────────
+
+
+def test_shared_base_surfaces_arm_slot_insight():
+    """SHARED_WRITER_BASE instructs the writer to keep arm-slot shape insight."""
+    assert "arm slot" in SHARED_WRITER_BASE.lower()
+    assert "DEAD ZONE" in SHARED_WRITER_BASE

@@ -44,6 +44,11 @@ from pitcher_narratives.engine import (
     compute_velocity_arc,
     compute_workload_context,
 )
+from pitcher_narratives.shape import (
+    PitchShapeProfile,
+    compute_pitch_shape,
+    render_pitch_shape,
+)
 
 __all__ = ["PitcherContext", "assemble_pitcher_context"]
 
@@ -88,6 +93,9 @@ class PitcherContext(BaseModel):
     arsenal_trend: ArsenalTrends | None = None
     """Year-over-year per-pitch-type arsenal changes (added/dropped/continued)."""
 
+    pitch_shape: PitchShapeProfile | None = None
+    """Movement vs arm-slot expectation (dead zone / deceptive shape traits)."""
+
     def to_prompt(self) -> str:
         """Render as prompt-ready markdown under 2,000 tokens."""
         sections: list[str] = []
@@ -121,6 +129,9 @@ class PitcherContext(BaseModel):
 
         # Release point mechanics
         sections.append(self._render_release_point_section())
+
+        # Pitch shape vs arm slot (dead zone / deceptive movement)
+        sections.append(self._render_pitch_shape_section())
 
         # Contact quality (hard-hit rate)
         sections.append(self._render_hard_hit_section())
@@ -524,6 +535,10 @@ class PitcherContext(BaseModel):
 
         return "\n".join(lines)
 
+    def _render_pitch_shape_section(self) -> str:
+        """Render movement-vs-arm-slot residuals with shape classification."""
+        return render_pitch_shape(self.pitch_shape)
+
     def _render_hard_hit_section(self) -> str:
         """Render contact quality section with hard-hit rate."""
         hhr = self.hard_hit_rate
@@ -653,6 +668,7 @@ def assemble_pitcher_context(data: PitcherData) -> PitcherContext:
     tto = compute_tto_analysis(data)
     cross_season_summary = compute_cross_season_summary(data)
     arsenal_trend = compute_arsenal_trends(data)
+    pitch_shape = compute_pitch_shape(data)
 
     # Determine role from most recent appearance
     most_recent = data.appearances.sort("game_date", descending=True).row(0, named=True)
@@ -678,4 +694,5 @@ def assemble_pitcher_context(data: PitcherData) -> PitcherContext:
         tto=tto,
         cross_season_summary=cross_season_summary,
         arsenal_trend=arsenal_trend,
+        pitch_shape=pitch_shape,
     )
