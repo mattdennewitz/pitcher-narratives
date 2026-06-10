@@ -11,6 +11,7 @@ build/
 aggs
 *~
 data-*.md
-.claude
+.claude/*
+!.claude/skills/
 .DS_Store
 stderr*.txt
