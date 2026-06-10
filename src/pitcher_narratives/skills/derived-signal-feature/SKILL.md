@@ -1,6 +1,7 @@
 ---
 name: derived-signal-feature
 description: Use when adding a new pre-computed insight, metric, signal, classification, or tag that must reach the LLM-written narrative in this repo — or when a report "should mention X" and X is derivable from the data.
+audience: builder
 ---
 
 # Adding a Derived Signal End-to-End

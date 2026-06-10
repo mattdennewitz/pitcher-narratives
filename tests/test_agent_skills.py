@@ -8,7 +8,7 @@ instructions, bodies on demand).
 
 from pydantic_ai_skills import SkillsToolset, discover_skills
 
-from pitcher_narratives.agent_skills import SKILLS_DIR, skill_toolset
+from pitcher_narratives.agent_skills import SKILLS_DIR, runtime_skill_names, skill_toolset
 from pitcher_narratives.analyst import _make_qa_agent
 from pitcher_narratives.pipeline import make_pipeline_agents
 
@@ -43,6 +43,26 @@ def test_skill_toolset_exposes_load_skill():
     tool_names = set(skill_toolset().tools.keys())
     assert "load_skill" in tool_names
     assert "list_skills" in tool_names
+
+
+# ── Audience filtering (runtime vs builder) ───────────────────────────
+
+
+def test_runtime_skills_include_only_runtime_audience():
+    """Runtime-tagged skills load into agents; builder-tagged ones do not."""
+    names = set(runtime_skill_names())
+    assert "statcast-data-conventions" in names
+    assert "pitching-plus-conventions" in names
+    # builder-facing skills must NOT reach runtime narrative agents
+    assert "derived-signal-feature" not in names
+    assert "pipeline-agent-testing" not in names
+
+
+def test_runtime_toolset_excludes_builder_skill_body():
+    """load_skill on the runtime toolset cannot return a builder skill."""
+    from pydantic_ai_skills import discover_skills as _discover
+    loaded = {s.name for s in _discover(SKILLS_DIR) if s.name in runtime_skill_names()}
+    assert "derived-signal-feature" not in loaded
 
 
 # ── QA agent wiring ───────────────────────────────────────────────────

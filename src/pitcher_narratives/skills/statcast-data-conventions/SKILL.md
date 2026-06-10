@@ -1,6 +1,7 @@
 ---
 name: statcast-data-conventions
 description: Use when reading or computing from the Statcast parquet files or data.statcast in this repo — movement (pfx_x/pfx_z), arm_angle, release or effective speed, handedness pooling, league baselines, or writing tests that assert on measured data values.
+audience: runtime
 ---
 
 # Statcast Data Conventions
