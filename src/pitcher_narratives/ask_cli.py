@@ -50,7 +50,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--provider",
-        choices=["openai", "claude", "gemini"],
+        choices=["gemini", "claude"],
         default="gemini",
         help="LLM provider (default: gemini)",
     )

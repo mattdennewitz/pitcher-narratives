@@ -86,7 +86,7 @@ def _format_appearances_for_llm(appearances: list[ScoredAppearance]) -> str:
 def curate_appearances(
     appearances: list[ScoredAppearance],
     *,
-    provider: str = "openai",
+    provider: str = "gemini",
 ) -> None:
     """Send scored appearances to an LLM for curation and stream the output.
 

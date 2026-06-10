@@ -53,6 +53,20 @@ def test_verbose_flag_set(monkeypatch):
     assert args.verbose is True
 
 
+def test_provider_default_is_gemini(monkeypatch):
+    """Provider defaults to gemini (OpenAI removed)."""
+    monkeypatch.setattr(sys, "argv", ["main.py", "-p", "592155"])
+    args = parse_args()
+    assert args.provider == "gemini"
+
+
+def test_provider_openai_rejected(monkeypatch):
+    """--provider openai is no longer a valid choice."""
+    monkeypatch.setattr(sys, "argv", ["main.py", "-p", "592155", "--provider", "openai"])
+    with pytest.raises(SystemExit):
+        parse_args()
+
+
 def test_pitcher_required(monkeypatch):
     """CLI-01: Missing -p flag causes main() SystemExit with code 2.
 
@@ -124,14 +138,14 @@ def _test_env(**extra: str) -> dict[str, str]:
     """Build a clean subprocess environment with optional overrides.
 
     Starts from os.environ so PATH and other essentials are preserved,
-    then removes ANTHROPIC_API_KEY (tests shouldn't hit the real API)
-    and applies any extra key-value pairs.
+    then empties every provider API key (tests shouldn't hit the real
+    API) and applies any extra key-value pairs.
     """
-    strip = {"ANTHROPIC_API_KEY", "OPENAI_API_KEY"}
+    strip = {"ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY"}
     env = {k: v for k, v in os.environ.items() if k not in strip}
     # Set empty keys so load_dotenv() won't fill them from .env
-    env.setdefault("ANTHROPIC_API_KEY", "")
-    env.setdefault("OPENAI_API_KEY", "")
+    for key in strip:
+        env.setdefault(key, "")
     env.update(extra)
     return env
 

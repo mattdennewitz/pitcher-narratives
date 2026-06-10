@@ -31,13 +31,11 @@ __all__ = [
 ]
 
 PROVIDERS = {
-    "openai": "openai:gpt-5.4",
     "claude": "anthropic:claude-sonnet-4-6",
     "gemini": "google-gla:gemini-3.1-pro-preview",
 }
 
 MINI_PROVIDERS = {
-    "openai": "openai:gpt-5.4-mini",
     "claude": "anthropic:claude-haiku-4-5",
     "gemini": "google-gla:gemini-flash-latest",
 }
@@ -57,7 +55,6 @@ MAX_REVISIONS = 3
 """Maximum number of editor revision passes before accepting the capsule."""
 
 API_KEYS = {
-    "openai": "OPENAI_API_KEY",
     "claude": "ANTHROPIC_API_KEY",
     "gemini": "GEMINI_API_KEY",
 }
@@ -75,7 +72,7 @@ def make_model_settings(
 
     Args:
         mini: True when targeting a mini-tier model. Disables thinking for
-              providers where mini models don't support it (OpenAI, Claude).
+              providers where mini models don't support it (Claude).
     """
     if provider == "gemini":
         gemini_level = "high" if thinking in ("high", "xhigh") else "low"
@@ -90,16 +87,7 @@ def make_model_settings(
         if mini or max_tokens <= TOKEN_BUDGET_MEDIUM:
             return ModelSettings(temperature=1, max_tokens=max_tokens)
         return ModelSettings(thinking=thinking, temperature=1, max_tokens=max_tokens)
-    else:
-        # OpenAI: gpt-5.4-mini doesn't support reasoning_effort via chat
-        # completions API, and small max_tokens choke the model when reasoning
-        # tokens count against the cap.
-        kwargs: dict[str, Any] = {"temperature": temperature}
-        if not mini:
-            kwargs["thinking"] = thinking
-        if max_tokens > TOKEN_BUDGET_MEDIUM:
-            kwargs["max_tokens"] = max_tokens
-        return ModelSettings(**kwargs)
+    raise ValueError(f"Unknown provider {provider!r}; expected 'gemini' or 'claude'")
 
 
 def cap_thinking(thinking: ThinkingEffort, ceiling: ThinkingEffort) -> ThinkingEffort:

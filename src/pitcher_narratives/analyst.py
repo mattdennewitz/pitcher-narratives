@@ -437,7 +437,7 @@ def _make_qa_agent(
     """Create (or return cached) QA agent for the given provider and thinking level.
 
     Args:
-        provider: LLM provider key ('openai', 'claude', or 'gemini').
+        provider: LLM provider key ('gemini' or 'claude').
         thinking: Thinking effort level.
 
     Returns:
@@ -490,7 +490,7 @@ def ask_question_streaming(
         question: The user's question in natural language.
         context: Assembled PitcherContext for the pitcher.
         data: Loaded PitcherData for the pitcher.
-        provider: LLM provider key ('openai', 'claude', or 'gemini').
+        provider: LLM provider key ('gemini' or 'claude').
         thinking: Thinking effort level.
         _model_override: Optional model override for testing (e.g., TestModel).
 

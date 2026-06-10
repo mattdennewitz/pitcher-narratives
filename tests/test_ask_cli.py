@@ -50,9 +50,9 @@ def test_parse_question_positional(monkeypatch):
 
 def test_parse_provider_flag(monkeypatch):
     """parse_args captures --provider flag."""
-    monkeypatch.setattr(sys, "argv", ["ask_cli", "--provider", "openai", "Q?"])
+    monkeypatch.setattr(sys, "argv", ["ask_cli", "--provider", "claude", "Q?"])
     args = parse_args()
-    assert args.provider == "openai"
+    assert args.provider == "claude"
 
 
 def test_parse_thinking_flag(monkeypatch):
@@ -230,11 +230,11 @@ def test_ask_cli_missing_api_key_exit_1():
 
 
 def test_ask_cli_provider_flag():
-    """Integration: --provider openai accepted with test model, exits 0."""
+    """Integration: --provider claude accepted with test model, exits 0."""
     result = subprocess.run(
         [
             sys.executable, "-m", "pitcher_narratives.ask_cli",
-            "--provider", "openai", "How is Cease pitching?",
+            "--provider", "claude", "How is Cease pitching?",
         ],
         capture_output=True,
         text=True,
