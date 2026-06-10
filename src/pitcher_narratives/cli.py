@@ -156,7 +156,10 @@ def main() -> None:
     if os.environ.get("PITCHER_NARRATIVES_TEST_MODEL"):
         from pydantic_ai.models.test import TestModel
 
-        model_override = TestModel()
+        # call_tools=[] so the deterministic test model does not blindly
+        # invoke agents' reference tools (e.g. the skills toolset's
+        # load_skill), which would fail on placeholder arguments.
+        model_override = TestModel(call_tools=[])
 
     # Pre-flight API key check — fail fast before writing files or hitting
     # the LLM. --print-prompts intentionally bypasses this check because it

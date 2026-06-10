@@ -79,6 +79,7 @@ from pitcher_narratives.personas import (
     build_writer_system_prompt,
     get_persona,
 )
+from pitcher_narratives.agent_skills import skill_toolset
 from pitcher_narratives.shape import render_pitch_shape
 from pitcher_narratives.signals import (
     KeySignals,
@@ -1090,21 +1091,27 @@ def make_pipeline_agents(
     checker_settings = make_model_settings(provider, cap_thinking(thinking, "low"), 0.1, max_tokens=TOKEN_BUDGET_SMALL, mini=True)
     summary_settings = make_model_settings(provider, cap_thinking(thinking, "medium"), 0.3, max_tokens=TOKEN_BUDGET_SMALL, mini=True)
 
+    # Prose agents carry the shared skills toolset so they can consult
+    # project skills (e.g. statcast-data-conventions) on demand. The
+    # library injects skill names/descriptions into instructions, not
+    # system_prompt, so frozen writer-prompt fixtures stay byte-identical.
+    skills = [skill_toolset()]
+
     def _specialist(prompt: str) -> Agent[None, str]:
         return Agent(model, output_type=str, system_prompt=prompt,
-                     model_settings=stuff_settings, defer_model_check=True)
+                     model_settings=stuff_settings, toolsets=skills, defer_model_check=True)
 
     def _mini_specialist(prompt: str) -> Agent[None, str]:
         return Agent(mini_model, output_type=str, system_prompt=prompt,
-                     model_settings=mini_specialist_settings, defer_model_check=True)
+                     model_settings=mini_specialist_settings, toolsets=skills, defer_model_check=True)
 
     def _mini_specialist_compact(prompt: str) -> Agent[None, str]:
         return Agent(mini_model, output_type=str, system_prompt=prompt,
-                     model_settings=mini_specialist_compact_settings, defer_model_check=True)
+                     model_settings=mini_specialist_compact_settings, toolsets=skills, defer_model_check=True)
 
     def _writer(prompt: str) -> Agent[None, str]:
         return Agent(model, output_type=str, system_prompt=prompt,
-                     model_settings=writer_settings, defer_model_check=True)
+                     model_settings=writer_settings, toolsets=skills, defer_model_check=True)
 
     return PipelineAgents(
         stuff=_specialist(_STUFF_SPECIALIST_PROMPT),

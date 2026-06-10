@@ -1,93 +1,72 @@
-"""Tests for runtime agent skill loading.
+"""Tests for runtime agent skill loading via pydantic-ai-skills.
 
-Covers SKILL.md discovery and frontmatter parsing from .claude/skills/,
-the skill catalog rendered into agent instructions, the read_skill tool
-contract, and QA agent wiring.
+The repo's .claude/skills/ SKILL.md files are exposed to runtime
+pydantic-ai agents through a shared SkillsToolset (progressive
+disclosure: names+descriptions in instructions, bodies on demand).
 """
 
-from pitcher_narratives.agent_skills import (
-    AgentSkill,
-    list_skills,
-    read_skill,
-    render_skill_catalog,
-)
+from pydantic_ai_skills import SkillsToolset, discover_skills
+
+from pitcher_narratives.agent_skills import SKILLS_DIR, skill_toolset
 from pitcher_narratives.analyst import _make_qa_agent
+from pitcher_narratives.pipeline import make_pipeline_agents
 
 
-# ── Discovery and parsing ─────────────────────────────────────────────
+def _toolsets(agent) -> list:
+    """All toolsets attached to an agent (pydantic-ai private accessor)."""
+    return list(getattr(agent, "_user_toolsets", []))
 
 
-def test_list_skills_finds_project_skills():
-    """Skills in .claude/skills/ are discovered by directory name."""
-    skills = list_skills()
-    assert "statcast-data-conventions" in skills
-    assert isinstance(skills["statcast-data-conventions"], AgentSkill)
+# ── Discovery ─────────────────────────────────────────────────────────
 
 
-def test_skill_has_description_from_frontmatter():
-    """The description field is parsed out of the YAML frontmatter."""
-    skill = list_skills()["statcast-data-conventions"]
-    assert skill.description.startswith("Use when")
+def test_repo_skills_are_discovered():
+    """The project's two committed skills are found under .claude/skills/."""
+    names = {s.name for s in discover_skills(str(SKILLS_DIR))}
+    assert "statcast-data-conventions" in names
+    assert "derived-signal-feature" in names
 
 
-def test_skill_body_excludes_frontmatter():
-    """The body starts at the markdown content, not the YAML block."""
-    skill = list_skills()["statcast-data-conventions"]
-    assert not skill.body.startswith("---")
-    assert "description:" not in skill.body
-    assert "# Statcast Data Conventions" in skill.body
+def test_skill_toolset_is_skillstoolset():
+    """The shared toolset is the library's SkillsToolset."""
+    assert isinstance(skill_toolset(), SkillsToolset)
 
 
-# ── Catalog rendering ─────────────────────────────────────────────────
+def test_skill_toolset_is_shared_singleton():
+    """One registry instance is reused across all agents."""
+    assert skill_toolset() is skill_toolset()
 
 
-def test_catalog_lists_all_skills():
-    """Catalog contains each skill name and its description."""
-    catalog = render_skill_catalog()
-    assert "statcast-data-conventions" in catalog
-    assert "Use when" in catalog
-
-
-def test_catalog_empty_when_no_skills(tmp_path, monkeypatch):
-    """Missing skills directory yields an empty catalog, not an error."""
-    import pitcher_narratives.agent_skills as mod
-
-    monkeypatch.setattr(mod, "SKILLS_DIR", tmp_path / "nope")
-    mod._skills_cache = None
-    try:
-        assert render_skill_catalog() == ""
-    finally:
-        mod._skills_cache = None
-
-
-# ── read_skill tool contract ──────────────────────────────────────────
-
-
-def test_read_skill_returns_body():
-    """Known skill name returns the skill body."""
-    result = read_skill("statcast-data-conventions")
-    assert "# Statcast Data Conventions" in result
-
-
-def test_read_skill_unknown_name_lists_available():
-    """Unknown skill returns a helpful message naming valid skills."""
-    result = read_skill("not-a-skill")
-    assert "statcast-data-conventions" in result
-    assert "# " not in result
+def test_skill_toolset_exposes_load_skill():
+    """The library's load_skill tool is present on the toolset."""
+    tool_names = set(skill_toolset().tools.keys())
+    assert "load_skill" in tool_names
+    assert "list_skills" in tool_names
 
 
 # ── QA agent wiring ───────────────────────────────────────────────────
 
 
-def test_qa_agent_has_read_skill_tool():
-    """The QA agent registers read_skill alongside its data tools."""
+def test_qa_agent_has_skill_toolset():
+    """The Q&A agent carries the shared skills toolset."""
     agent = _make_qa_agent()
-    tool_names = set(agent._function_toolset.tools.keys())
-    assert "read_skill" in tool_names
+    assert skill_toolset() in _toolsets(agent)
 
 
-def test_qa_agent_instructions_include_catalog():
-    """QA agent instructions carry the skill catalog."""
-    agent = _make_qa_agent()
-    instructions = agent._instructions
-    assert "statcast-data-conventions" in str(instructions)
+# ── Narrative engine wiring ───────────────────────────────────────────
+
+
+def test_pipeline_prose_agents_have_skill_toolset():
+    """Every prose specialist and the writer carry the skills toolset."""
+    agents = make_pipeline_agents()
+    for name in ("stuff", "location", "runvalue", "trends", "game_shape", "writer"):
+        agent = getattr(agents, name)
+        assert skill_toolset() in _toolsets(agent), f"{name} missing skills toolset"
+
+
+def test_pipeline_structured_agents_have_no_skill_toolset():
+    """Structured-output agents stay tool-free (skills are prose-only)."""
+    agents = make_pipeline_agents()
+    for name in ("auditor", "anchor", "signal_extractor"):
+        agent = getattr(agents, name)
+        assert skill_toolset() not in _toolsets(agent), f"{name} should not carry skills"

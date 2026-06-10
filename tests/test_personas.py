@@ -279,7 +279,7 @@ def test_scout_pipeline_smoke(ctx):
     - Result is a PipelineResult with a non-empty narrative
     - Writer agent received the correct composed scout prompt (matches fixture)
     """
-    test_model = TestModel()
+    test_model = TestModel(call_tools=[])
     result = generate_pipeline_streaming(
         ctx,
         provider="gemini",
@@ -410,7 +410,7 @@ def test_analyst_pipeline_smoke(ctx):
     - Composed analyst prompt starts with SHARED_WRITER_BASE
     - Composed analyst prompt includes scout overlay (via parent inheritance)
     """
-    test_model = TestModel()
+    test_model = TestModel(call_tools=[])
     result = generate_pipeline_streaming(
         ctx,
         provider="gemini",
@@ -637,7 +637,7 @@ def test_generic_pipeline_smoke(ctx):
     The shape helper is validated against handcrafted synthetic capsules
     in the test_assert_generic_shape_* tests above.
     """
-    test_model = TestModel()
+    test_model = TestModel(call_tools=[])
     result = generate_pipeline_streaming(
         ctx,
         provider="gemini",

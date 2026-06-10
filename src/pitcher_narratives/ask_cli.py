@@ -99,7 +99,10 @@ def main() -> None:
     if os.environ.get("PITCHER_NARRATIVES_TEST_MODEL"):
         from pydantic_ai.models.test import TestModel
 
-        model_override = TestModel()
+        # call_tools=[] so the deterministic test model does not blindly
+        # invoke agents' reference tools (e.g. the skills toolset's
+        # load_skill), which would fail on placeholder arguments.
+        model_override = TestModel(call_tools=[])
 
     # Pre-flight API key check -- fail fast instead of hanging on missing key
     if model_override is None and not os.environ.get(API_KEYS[args.provider]):

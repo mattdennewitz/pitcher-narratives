@@ -291,7 +291,7 @@ class TestAuditAndReviseSpecialists:
         """Audit loop degrades gracefully on LLM errors."""
         # TestModel should work without errors — this just verifies the
         # try/except path doesn't break the return type
-        test_model = TestModel()
+        test_model = TestModel(call_tools=[])
 
         async def _run():
             from pydantic_ai import Agent
@@ -322,7 +322,7 @@ class TestAuditAndReviseSpecialists:
 class TestGeneratePipelineStreaming:
     def test_returns_pipeline_result(self, ctx, capsys):
         """Full pipeline runs with TestModel and returns valid PipelineResult."""
-        test_model = TestModel()
+        test_model = TestModel(call_tools=[])
         result = generate_pipeline_streaming(
             ctx, provider="gemini", thinking="high", _model_override=test_model,
         )
@@ -584,7 +584,7 @@ class TestAnchorRevisionLoop:
 
     def test_specialist_outputs_populated(self, ctx):
         """All 5 specialist slots are non-empty strings."""
-        test_model = TestModel()
+        test_model = TestModel(call_tools=[])
         result = generate_pipeline_streaming(
             ctx, provider="gemini", thinking="high", _model_override=test_model,
         )
@@ -601,7 +601,7 @@ class TestAnchorRevisionLoop:
 class TestPipelineKeySignals:
     def test_pipeline_result_includes_key_signals(self, ctx):
         """Full pipeline produces key_signals in result."""
-        test_model = TestModel()
+        test_model = TestModel(call_tools=[])
         result = generate_pipeline_streaming(
             ctx, provider="gemini", thinking="high", _model_override=test_model,
         )
@@ -924,7 +924,7 @@ def test_run_pipeline_logs_warning_when_capsule_missing_explainer(caplog):
             provider="gemini",
             thinking="high",
             persona="scout",
-            _model_override=TestModel(),
+            _model_override=TestModel(call_tools=[]),
         )
 
     # Find the explainer-missing warning in caplog
@@ -979,7 +979,7 @@ def test_check_explainer_present_happy_path_is_silent(caplog, monkeypatch):
             provider="gemini",
             thinking="high",
             persona="scout",
-            _model_override=TestModel(),
+            _model_override=TestModel(call_tools=[]),
         )
 
     explainer_warnings = [
