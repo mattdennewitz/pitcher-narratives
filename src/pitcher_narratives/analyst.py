@@ -15,6 +15,7 @@ from typing import Any
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.settings import ThinkingEffort
 
+from pitcher_narratives.agent_skills import read_skill, render_skill_catalog
 from pitcher_narratives.config import PROVIDERS, TOKEN_BUDGET_LARGE, agent_kwargs, make_model_settings
 from pitcher_narratives.context import PitcherContext
 from pitcher_narratives.data import PitcherData
@@ -455,13 +456,16 @@ def _make_qa_agent(
     model = PROVIDERS[provider]
     settings = make_model_settings(provider, thinking, 0.3, max_tokens=TOKEN_BUDGET_LARGE)
 
+    catalog = render_skill_catalog()
+    instructions = f"{ANALYST_INSTRUCTIONS}\n\n{catalog}" if catalog else ANALYST_INSTRUCTIONS
+
     agent: Agent[QADeps, str] = Agent(
         model,
         deps_type=QADeps,
         output_type=str,
-        instructions=ANALYST_INSTRUCTIONS,
+        instructions=instructions,
         model_settings=settings,
-        tools=[get_pitcher_summary, get_pitch_detail],
+        tools=[get_pitcher_summary, get_pitch_detail, read_skill],
         defer_model_check=True,
     )
     _qa_agent_cache[key] = agent
