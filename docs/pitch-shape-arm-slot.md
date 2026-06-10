@@ -58,13 +58,16 @@ The table captures the physical gradient cleanly: four-seam ride rises
 from ~12 in at a 10° (sidearm) slot to ~20 in at 70° (over the top),
 while arm-side run falls from ~12 in to ~2 in over the same range.
 
+Each bucket also stores the **between-pitcher SD** — the spread of
+per-pitcher mean shapes within the slot (computed over pitchers with ≥5
+pitches in the cell). This is the denominator that turns a raw-inch
+residual into a z-score; see Classification below.
+
 **Why 10° buckets?** The FF gradient is roughly 1–2 in of ride per 10°
-of arm angle. A 10° bucket therefore bounds the worst-case
-discretization bias at ~1 in — half the 2 in classification threshold —
-while keeping nearly every pitch type's slot range above the 200-pitch
-floor. Narrower buckets halve the bias but push rare pitch types below
-the sample floor; wider buckets let bucket-edge bias approach the
-decision threshold.
+of arm angle, so a 10° bucket bounds the worst-case discretization bias
+at ~1 in while keeping nearly every pitch type's slot range above the
+200-pitch floor. Narrower buckets halve the bias but push rare pitch
+types below the sample floor.
 
 ### 2. Interpolation (`_interpolate_expectation`)
 
@@ -86,26 +89,32 @@ For each pitch type the pitcher throws:
   fewer than 10 arm-angle pitches are skipped.
 - Computes mean arm angle, observed ride, and observed arm-side run
   (inches, mirrored).
-- Looks up the interpolated league expectation at that exact arm angle
-  and takes residuals: `observed − expected` on each axis.
+- Looks up the interpolated league expectation **and SD** at that exact
+  arm angle, takes residuals (`observed − expected`) on each axis, and
+  standardizes them into z-scores (`residual / between-pitcher SD`).
 
 ### 4. Classification (`_classify_shape`)
 
-Deterministic tags from the residuals, with a 2 in threshold per axis:
+Decisions use **z-scores**, not raw inches, so the bands scale with how
+much pitchers actually vary at that slot. This matters: between-pitcher
+SD is ≈2.0 in (ride) / ≈2.9 in (run) for four-seamers, so a flat ±2-inch
+band is roughly ±1 SD and tagged ~46% of fastballs DEAD ZONE — a coin
+flip, not a signal. The z-score bands cut that to ~21%.
 
-| Condition | Tag |
+| Condition (`z` = residual ÷ slot SD) | Tag |
 |-----------|-----|
-| Fastball (FF/SI/FC), both residuals < 2 in | `DEAD ZONE -- movement matches slot expectation; hitters see what the arm angle predicts` |
-| Ride residual ≥ +2 in | `Ride above slot expectation (+X.X in)` |
-| Ride residual ≤ −2 in | `Sinks below slot expectation (−X.X in)` |
-| Run residual ≥ +2 in | `More arm-side run than slot suggests (+X.X in)` |
-| Run residual ≤ −2 in | `More cut/glove-side than slot suggests (−X.X in)` |
-| Non-fastball, both residuals < 2 in | `In line with slot expectation` |
+| Fastball (FF/SI/FC), \|run z\| < 0.5 **and** \|ride z\| < 0.5 | `DEAD ZONE -- movement matches slot expectation; hitters see what the arm angle predicts` |
+| Ride z ≥ +1.5 | `Ride above slot expectation (+X.X in, +Y.Y SD)` |
+| Ride z ≤ −1.5 | `Sinks below slot expectation (−X.X in, −Y.Y SD)` |
+| Run z ≥ +1.5 | `More arm-side run than slot suggests (+X.X in, +Y.Y SD)` |
+| Run z ≤ −1.5 | `More cut/glove-side than slot suggests (−X.X in, −Y.Y SD)` |
+| Otherwise | `In line with slot expectation` |
 
-Both-axis flags combine ("Sinks below slot expectation (−4.8 in); more
-cut/glove-side than slot suggests (−2.3 in)"). The dead-zone concept is
-reserved for fastballs — a slider matching its slot expectation is
-merely unremarkable, not a liability.
+Displayed magnitudes stay in inches (scout-readable) with the z appended
+so the reader can weight it. The 0.5–1.5 SD "gray zone" is neither dead
+zone nor a flagged trait — deliberately, to avoid over-claiming. Both-axis
+flags combine. The dead-zone concept is reserved for fastballs — a slider
+matching its slot expectation is merely unremarkable, not a liability.
 
 ## How it reaches the narrative
 

@@ -45,48 +45,56 @@ def test_arm_angle_bucket_negative():
 
 
 def test_classify_dead_zone_fastball():
-    """Fastball with both residuals under 2 inches is DEAD ZONE."""
-    tag = _classify_shape(0.5, -0.8, is_fastball=True)
+    """Fastball within 0.5 SD on both axes is DEAD ZONE."""
+    tag = _classify_shape(0.5, -0.8, run_z=0.2, ride_z=-0.3, is_fastball=True)
     assert tag.startswith("DEAD ZONE")
 
 
 def test_classify_ride_above_slot():
-    """Fastball with +3.2 in ride residual flags ride above expectation."""
-    tag = _classify_shape(0.0, 3.2, is_fastball=True)
+    """Fastball with ride 1.8 SD above expectation flags ride, showing in + SD."""
+    tag = _classify_shape(0.0, 3.2, run_z=0.0, ride_z=1.8, is_fastball=True)
     assert "ride" in tag.lower()
     assert "+3.2" in tag
+    assert "1.8 SD" in tag
 
 
 def test_classify_sink_below_slot():
-    """Fastball with -2.5 in ride residual flags sink below expectation."""
-    tag = _classify_shape(0.0, -2.5, is_fastball=True)
+    """Fastball with ride 1.7 SD below expectation flags sink."""
+    tag = _classify_shape(0.0, -2.5, run_z=0.0, ride_z=-1.7, is_fastball=True)
     assert "sink" in tag.lower()
 
 
 def test_classify_extra_run():
-    """+3.0 in run residual flags more arm-side run than slot suggests."""
-    tag = _classify_shape(3.0, 0.0, is_fastball=True)
+    """Run 1.8 SD above expectation flags more arm-side run than slot suggests."""
+    tag = _classify_shape(3.0, 0.0, run_z=1.8, ride_z=0.0, is_fastball=True)
     assert "run" in tag.lower()
 
 
 def test_classify_both_axes():
-    """Residuals notable on both axes are both mentioned."""
-    tag = _classify_shape(3.0, 3.0, is_fastball=True)
+    """Residuals notable (>=1.5 SD) on both axes are both mentioned."""
+    tag = _classify_shape(3.0, 3.0, run_z=1.8, ride_z=1.8, is_fastball=True)
     assert "run" in tag.lower()
     assert "ride" in tag.lower()
 
 
 def test_classify_non_fastball_neutral():
     """Non-fastball matching slot expectation is in line, never DEAD ZONE."""
-    tag = _classify_shape(0.5, 0.5, is_fastball=False)
+    tag = _classify_shape(0.5, 0.5, run_z=0.2, ride_z=0.2, is_fastball=False)
     assert "DEAD ZONE" not in tag
     assert "in line" in tag.lower()
 
 
-def test_classify_threshold_below_two_inches_is_neutral():
-    """Residuals at 1.9 in stay neutral; the flag threshold is 2.0 in."""
-    tag = _classify_shape(1.9, -1.9, is_fastball=False)
+def test_classify_gray_zone_not_dead_zone():
+    """A fastball 0.9 SD off slot is neither DEAD ZONE nor flagged."""
+    tag = _classify_shape(0.0, 1.8, run_z=0.0, ride_z=0.9, is_fastball=True)
+    assert "DEAD ZONE" not in tag
     assert "in line" in tag.lower()
+
+
+def test_classify_dead_zone_requires_both_axes_within_half_sd():
+    """A fastball within 0.5 SD on ride but 0.6 SD on run is not DEAD ZONE."""
+    tag = _classify_shape(1.7, 0.5, run_z=0.6, ride_z=0.2, is_fastball=True)
+    assert "DEAD ZONE" not in tag
 
 
 # ── League slot expectations ──────────────────────────────────────────
@@ -174,52 +182,75 @@ def test_profile_fastball_flag(profile):
 
 
 def _synthetic_table() -> dict[tuple[str, int], SlotExpectation]:
-    """Two adjacent FF buckets with a known linear gradient."""
+    """Two adjacent FF buckets with a known linear gradient in mean and SD."""
     return {
         ("FF", 30): SlotExpectation(
             pitch_type="FF", bucket=30, n_pitches=1000,
             exp_arm_side_run_in=8.0, exp_ride_in=15.0,
-            std_arm_side_run_in=2.0, std_ride_in=2.0,
+            std_arm_side_run_in=3.0, std_ride_in=2.0,
         ),
         ("FF", 40): SlotExpectation(
             pitch_type="FF", bucket=40, n_pitches=1000,
             exp_arm_side_run_in=6.0, exp_ride_in=17.0,
-            std_arm_side_run_in=2.0, std_ride_in=2.0,
+            std_arm_side_run_in=3.0, std_ride_in=4.0,
         ),
     }
 
 
 def test_interpolate_midpoint_between_centers():
-    """Angle midway between bucket centers (40.0) blends both means equally."""
-    run, ride = _interpolate_expectation(_synthetic_table(), "FF", 40.0)
+    """Angle midway between bucket centers (40.0) blends mean and SD equally."""
+    run, ride, sd_run, sd_ride = _interpolate_expectation(_synthetic_table(), "FF", 40.0)
     assert run == pytest.approx(7.0)
     assert ride == pytest.approx(16.0)
+    assert sd_ride == pytest.approx(3.0)  # between 2.0 and 4.0
 
 
 def test_interpolate_at_center_returns_bucket_mean():
-    """Angle at a bucket center (35.0) returns that bucket's means exactly."""
-    run, ride = _interpolate_expectation(_synthetic_table(), "FF", 35.0)
+    """Angle at a bucket center (35.0) returns that bucket's means and SD."""
+    run, ride, sd_run, sd_ride = _interpolate_expectation(_synthetic_table(), "FF", 35.0)
     assert run == pytest.approx(8.0)
     assert ride == pytest.approx(15.0)
+    assert sd_ride == pytest.approx(2.0)
 
 
 def test_interpolate_continuous_across_bucket_boundary():
     """Expectations barely move across the 40-degree bucket edge (no step)."""
     table = _synthetic_table()
-    _, ride_below = _interpolate_expectation(table, "FF", 39.9)
-    _, ride_above = _interpolate_expectation(table, "FF", 40.1)
+    _, ride_below, _, _ = _interpolate_expectation(table, "FF", 39.9)
+    _, ride_above, _, _ = _interpolate_expectation(table, "FF", 40.1)
     assert abs(ride_above - ride_below) < 0.1
 
 
 def test_interpolate_missing_neighbor_falls_back_to_nearest():
-    """With only one bucket in the table, its means are used as-is."""
+    """With only one bucket in the table, its means and SD are used as-is."""
     table = _synthetic_table()
     del table[("FF", 40)]
-    run, ride = _interpolate_expectation(table, "FF", 39.9)
+    run, ride, sd_run, sd_ride = _interpolate_expectation(table, "FF", 39.9)
     assert run == pytest.approx(8.0)
     assert ride == pytest.approx(15.0)
+    assert sd_ride == pytest.approx(2.0)
 
 
 def test_interpolate_no_data_returns_none():
     """Pitch type absent from the table yields None."""
     assert _interpolate_expectation({}, "FF", 35.0) is None
+
+
+# ── Between-pitcher SD and z-scores ───────────────────────────────────
+
+
+def test_slot_expectations_std_is_between_pitcher(expectations):
+    """FF SD is the between-pitcher spread (~2 in ride), not pitch-level (~2.6)."""
+    e = expectations[("FF", 40)]
+    assert 1.0 < e.std_ride_in < 3.0
+    assert 2.0 < e.std_arm_side_run_in < 4.0
+
+
+def test_profile_entries_carry_z_scores(profile):
+    """Each entry exposes residual z-scores consistent with residual / slot SD."""
+    ff = next(e for e in profile.entries if e.pitch_type == "FF")
+    assert isinstance(ff.ride_z, float)
+    assert isinstance(ff.run_z, float)
+    # z has the same sign as the residual and a sane magnitude
+    assert (ff.ride_z >= 0) == (ff.ride_residual_in >= 0)
+    assert abs(ff.ride_z) < 6.0
