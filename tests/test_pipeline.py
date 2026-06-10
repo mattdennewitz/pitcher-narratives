@@ -1023,6 +1023,12 @@ class TestStuffPromptArmSlotRule:
         """Stuff specialist prompt points at the Pitch Shape vs Arm Slot section."""
         assert "Pitch Shape vs Arm Slot" in _STUFF_SPECIALIST_PROMPT
 
-    def test_prompt_requires_slot_context_on_fastballs(self):
-        """Prompt makes arm-slot context mandatory for fastball paragraphs."""
+    def test_prompt_mentions_arm_angle(self):
+        """Prompt ties pitch shape to the arm angle."""
         assert "arm angle" in _STUFF_SPECIALIST_PROMPT
+
+    def test_prompt_does_not_force_causal_attribution(self):
+        """Dead-zone is framed as a risk factor, not a mandatory explanation."""
+        p = _STUFF_SPECIALIST_PROMPT
+        assert "MUST reference its slot context" not in p
+        assert "not a verdict" in p.lower() or "risk factor" in p.lower()

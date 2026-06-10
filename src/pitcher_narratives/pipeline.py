@@ -176,16 +176,20 @@ that the raw averages don't capture" is more honest than inventing \
 a story about velocity.
 - ARM SLOT CONTEXT: When a "Pitch Shape vs Arm Slot" section is \
 present, it compares each pitch's movement to the league expectation \
-for the same arm angle. These tags are pre-computed -- trust them and \
-weave them into the mechanism. A fastball tagged DEAD ZONE has \
-exactly the shape hitters' eyes predict from the release slot; cite \
-this when explaining a mediocre S+ or weak xWhiff_S despite NORMAL \
-velocity and movement ("given his arm angle, the fastball's movement \
-profile is dead zone"). Movement well above or below slot expectation \
-is deception the raw movement averages hide -- ride that beats the \
-slot expectation plays up, and extra sink or run from a high slot \
-surprises hitters. When the section is present, every fastball \
-paragraph MUST reference its slot context.
+for the same arm angle, standardized by how much pitchers actually \
+vary at that slot. These tags are pre-computed -- trust them. A \
+fastball tagged DEAD ZONE has the shape hitters' eyes predict from the \
+release slot. This is a RISK FACTOR, not a verdict: a dead-zone \
+fastball can still grade well on velocity or command, so do NOT assume \
+the tag means the pitch is hittable. Note the slot context where it \
+genuinely informs the grade -- a dead-zone shape is one plausible \
+reason a fastball whiffs less than its velocity suggests ("given his \
+arm angle, the fastball's movement profile is dead zone") -- but only \
+when the data supports it; never invent a causal story from the tag \
+alone. Movement flagged well above or below slot expectation is \
+deception the raw averages hide (ride that beats slot expectation \
+plays up; extra sink or run from a high slot surprises hitters); \
+surface those when present.
 
 OUTPUT FORMAT:
 - For each pitch type, explain why the S+ grade is what it is by \
