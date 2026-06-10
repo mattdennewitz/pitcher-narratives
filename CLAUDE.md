@@ -1,4 +1,3 @@
-<!-- GSD:project-start source:PROJECT.md -->
 ## Project
 
 **Pitcher Narratives**
@@ -12,9 +11,7 @@ A CLI tool that generates LLM-written scouting reports for MLB pitchers. Given a
 - **Tech stack**: Python, polars, pydantic-ai, Claude — already in pyproject.toml
 - **Data format**: Static parquet + CSV files, no live API calls to Baseball Savant
 - **Python version**: 3.14+
-<!-- GSD:project-end -->
 
-<!-- GSD:stack-start source:codebase/STACK.md -->
 ## Technology Stack
 
 ## Languages
@@ -83,9 +80,7 @@ A CLI tool that generates LLM-written scouting reports for MLB pitchers. Given a
 - No application logic implemented yet
 - No tests, no linting config, no CI/CD
 - Dependencies suggest intended use: AI-powered data analysis/narrative generation using polars for data processing and pydantic-ai for LLM orchestration
-<!-- GSD:stack-end -->
 
-<!-- GSD:conventions-start source:CONVENTIONS.md -->
 ## Conventions
 
 ## Project Status
@@ -134,9 +129,7 @@ A CLI tool that generates LLM-written scouting reports for MLB pitchers. Given a
 - All project metadata is in `pyproject.toml`
 - No `[tool.*]` sections configured yet -- all tooling configuration should go here (not in separate config files)
 ## Entry Point
-<!-- GSD:conventions-end -->
 
-<!-- GSD:architecture-start source:ARCHITECTURE.md -->
 ## Architecture
 
 ## Pattern Overview
@@ -179,26 +172,3 @@ A CLI tool that generates LLM-written scouting reports for MLB pitchers. Given a
 - Polars raises `polars.exceptions.PolarsError` subtypes for data issues
 - Pydantic raises `ValidationError` for schema violations
 ## Cross-Cutting Concerns
-<!-- GSD:architecture-end -->
-
-<!-- GSD:workflow-start source:GSD defaults -->
-## GSD Workflow Enforcement
-
-Before using Edit, Write, or other file-changing tools, start work through a GSD command so planning artifacts and execution context stay in sync.
-
-Use these entry points:
-- `/gsd:quick` for small fixes, doc updates, and ad-hoc tasks
-- `/gsd:debug` for investigation and bug fixing
-- `/gsd:execute-phase` for planned phase work
-
-Do not make direct repo edits outside a GSD workflow unless the user explicitly asks to bypass it.
-<!-- GSD:workflow-end -->
-
-
-
-<!-- GSD:profile-start -->
-## Developer Profile
-
-> Profile not yet configured. Run `/gsd:profile-user` to generate your developer profile.
-> This section is managed by `generate-claude-profile` -- do not edit manually.
-<!-- GSD:profile-end -->
