@@ -1,8 +1,9 @@
 """Tests for runtime agent skill loading via pydantic-ai-skills.
 
-The repo's .claude/skills/ SKILL.md files are exposed to runtime
-pydantic-ai agents through a shared SkillsToolset (progressive
-disclosure: names+descriptions in instructions, bodies on demand).
+The package's bundled SKILL.md files (src/pitcher_narratives/skills/)
+are exposed to runtime pydantic-ai agents through a shared
+SkillsToolset (progressive disclosure: names+descriptions in
+instructions, bodies on demand).
 """
 
 from pydantic_ai_skills import SkillsToolset, discover_skills
@@ -21,7 +22,7 @@ def _toolsets(agent) -> list:
 
 
 def test_repo_skills_are_discovered():
-    """The project's two committed skills are found under .claude/skills/."""
+    """The project's two committed skills are found under the package skills dir."""
     names = {s.name for s in discover_skills(str(SKILLS_DIR))}
     assert "statcast-data-conventions" in names
     assert "derived-signal-feature" in names

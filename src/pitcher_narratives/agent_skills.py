@@ -1,11 +1,11 @@
 """Runtime skill loading for pydantic-ai agents via pydantic-ai-skills.
 
-Exposes the repo's .claude/skills/ SKILL.md files to runtime agents as
-a single shared SkillsToolset. The library handles progressive
+Exposes the package's bundled SKILL.md files to runtime agents as a
+single shared SkillsToolset. The library handles progressive
 disclosure: skill names and descriptions are injected into the agent's
 instructions, and full bodies load on demand through its load_skill
-tool. These are the same SKILL.md files Claude Code reads during
-development -- authored once, consumed by both.
+tool. Skills are application code -- they ship inside the package next
+to this module.
 """
 
 from __future__ import annotations
@@ -16,8 +16,8 @@ from pydantic_ai_skills import SkillsToolset
 
 __all__ = ["SKILLS_DIR", "skill_toolset"]
 
-SKILLS_DIR = Path(__file__).resolve().parent.parent.parent / ".claude" / "skills"
-"""Repo-root .claude/skills/ -- the same files Claude Code discovers."""
+SKILLS_DIR = Path(__file__).resolve().parent / "skills"
+"""Bundled skills directory inside the package (application code)."""
 
 _skill_toolset: SkillsToolset | None = None
 
