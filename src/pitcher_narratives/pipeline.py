@@ -116,6 +116,12 @@ def _render_user_prompt(parts: UserPrompt) -> str:
     )
 
 
+_PROVIDER_MAX_CONCURRENCY: dict[str, int] = {"deepseek": 1}
+"""Per-provider cap on simultaneous pipeline LLM calls. OpenRouter rate
+limits turn 5-way specialist bursts into all-null response bodies that
+pydantic-ai 1.72 cannot parse; serializing DeepSeek calls avoids it."""
+
+
 # ═══════════════════════════════════════════════════════════════════════
 # SPECIALIST PROMPTS
 # ═══════════════════════════════════════════════════════════════════════
@@ -814,6 +820,7 @@ async def audit_and_revise_specialists(
     auditor: "Agent[None, AuditResult]",
     ctx: PitcherContext,
     _model_override: Any = None,
+    max_concurrency: int | None = None,
 ) -> tuple["SpecialistOutputs", list[AuditFlag]]:
     """Audit each specialist's output independently, revise any with flags.
 
@@ -833,13 +840,21 @@ async def audit_and_revise_specialists(
         name: _get_specialist_input_text(name, ctx) for name in specialist_names
     }
 
+    semaphore = asyncio.Semaphore(max_concurrency) if max_concurrency else None
+
+    async def _limited(coro):
+        if semaphore is None:
+            return await coro
+        async with semaphore:
+            return await coro
+
     # Phase 1.5a: Audit all 5 in parallel
     async def _audit_one(name: str) -> tuple[str, AuditResult]:
         try:
             audit_input = _build_specialist_audit_input(
                 ground_truths[name], outputs[name],
             )
-            result = await auditor.run(**agent_kwargs(audit_input, _model_override))
+            result = await _limited(auditor.run(**agent_kwargs(audit_input, _model_override)))
             return name, result.output
         except Exception:
             log.error("Audit failed for %s specialist.", name, exc_info=True)
@@ -872,7 +887,7 @@ async def audit_and_revise_specialists(
                 ground_truths[name], outputs[name], flags,
             )
             agent = specialist_agents[name]
-            result = await agent.run(**agent_kwargs(revision_input, _model_override))
+            result = await _limited(agent.run(**agent_kwargs(revision_input, _model_override)))
             return name, result.output
         except Exception:
             log.warning("Revision failed for %s specialist, keeping original.", name, exc_info=True)
@@ -1147,8 +1162,15 @@ async def run_specialists(
     game_shape_agent: Agent[None, str],
     ctx: PitcherContext,
     _model_override: Any = None,
+    max_concurrency: int | None = None,
 ) -> SpecialistOutputs:
-    """Run all 5 specialists concurrently."""
+    """Run all 5 specialists concurrently.
+
+    Args:
+        max_concurrency: Cap on simultaneous LLM calls. Providers with
+            tight rate limits (OpenRouter) return all-null response
+            bodies under 5-way bursts; capping serializes the calls.
+    """
     inputs = {
         "stuff": (stuff_agent, _build_stuff_input(ctx)),
         "location": (location_agent, _build_location_input(ctx)),
@@ -1157,8 +1179,14 @@ async def run_specialists(
         "game_shape": (game_shape_agent, _build_game_shape_input(ctx)),
     }
 
+    semaphore = asyncio.Semaphore(max_concurrency) if max_concurrency else None
+
     async def _run(agent: Agent[None, str], prompt: str | UserPrompt) -> str:
-        result = await agent.run(**agent_kwargs(prompt, _model_override))
+        if semaphore is not None:
+            async with semaphore:
+                result = await agent.run(**agent_kwargs(prompt, _model_override))
+        else:
+            result = await agent.run(**agent_kwargs(prompt, _model_override))
         return result.output
 
     tasks = {
@@ -1270,9 +1298,11 @@ async def _run_pipeline(
 
     # Phase 1: Run specialists concurrently
     log.info("Running specialists...")
+    max_concurrency = _PROVIDER_MAX_CONCURRENCY.get(provider)
     raw_specialists = await run_specialists(
         agents.stuff, agents.location, agents.runvalue, agents.trends,
         agents.game_shape, ctx, _model_override,
+        max_concurrency=max_concurrency,
     )
     log.info("Specialists complete.")
 
@@ -1285,6 +1315,7 @@ async def _run_pipeline(
     }
     specialists, audit_flags = await audit_and_revise_specialists(
         raw_specialists, specialist_agents, agents.auditor, ctx, _model_override,
+        max_concurrency=max_concurrency,
     )
 
     # Phase 1.75: Extract key signals from clean specialist outputs

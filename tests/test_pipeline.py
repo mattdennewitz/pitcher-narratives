@@ -39,6 +39,7 @@ from pitcher_narratives.pipeline import (
     check_explainer_present,
     generate_pipeline_streaming,
     make_pipeline_agents,
+    run_specialists,
 )
 from pitcher_narratives.signals import KeySignals
 
@@ -1032,3 +1033,50 @@ class TestStuffPromptArmSlotRule:
         p = _STUFF_SPECIALIST_PROMPT
         assert "MUST reference its slot context" not in p
         assert "not a verdict" in p.lower() or "risk factor" in p.lower()
+
+
+# ── Provider concurrency limiting ─────────────────────────────────────
+
+
+class _CountingAgent:
+    """Stub agent recording peak concurrent .run() calls."""
+
+    def __init__(self, tracker: dict):
+        self._t = tracker
+
+    async def run(self, **kwargs):
+        import asyncio as _aio
+
+        self._t["live"] += 1
+        self._t["peak"] = max(self._t["peak"], self._t["live"])
+        await _aio.sleep(0.01)
+        self._t["live"] -= 1
+
+        class _R:
+            output = "text"
+
+        return _R()
+
+
+def test_run_specialists_respects_max_concurrency(ctx):
+    """max_concurrency=1 serializes specialist calls (OpenRouter rate limits)."""
+    tracker = {"live": 0, "peak": 0}
+    agent = _CountingAgent(tracker)
+    asyncio.run(run_specialists(agent, agent, agent, agent, agent, ctx, max_concurrency=1))
+    assert tracker["peak"] == 1
+
+
+def test_run_specialists_unlimited_by_default(ctx):
+    """Without a cap, specialists still fan out concurrently."""
+    tracker = {"live": 0, "peak": 0}
+    agent = _CountingAgent(tracker)
+    asyncio.run(run_specialists(agent, agent, agent, agent, agent, ctx))
+    assert tracker["peak"] > 1
+
+
+def test_deepseek_concurrency_capped():
+    """DeepSeek (OpenRouter) is capped: 5-way bursts trip rate limits and
+    come back as all-null response bodies pydantic-ai 1.72 cannot parse."""
+    from pitcher_narratives.pipeline import _PROVIDER_MAX_CONCURRENCY
+
+    assert _PROVIDER_MAX_CONCURRENCY.get("deepseek") == 1
