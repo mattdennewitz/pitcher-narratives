@@ -1134,8 +1134,11 @@ def make_pipeline_agents(
                      model_settings=mini_specialist_compact_settings, toolsets=skills, defer_model_check=True)
 
     def _writer(prompt: str) -> Agent[None, str]:
+        # retries=3: a single malformed skills tool call (observed from
+        # DeepSeek) must not kill the streaming writer phase.
         return Agent(model, output_type=str, system_prompt=prompt,
-                     model_settings=writer_settings, toolsets=skills, defer_model_check=True)
+                     model_settings=writer_settings, toolsets=skills, retries=3,
+                     defer_model_check=True)
 
     def _structured(output_model: Any) -> Any:
         """Output type for structured agents, provider-aware.
