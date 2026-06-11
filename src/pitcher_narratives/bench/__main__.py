@@ -18,7 +18,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-from pitcher_narratives.bench.judge import judge_text, judges_for
+from pitcher_narratives.bench.judge import JUDGE_MODELS, judge_text, judges_for
 from pitcher_narratives.bench.rubric import AGENT_RUBRIC, CAPSULE_RUBRIC
 from pitcher_narratives.bench.runner import run_provider
 from pitcher_narratives.bench.scorecard import JudgedRecord, aggregate, render_report
@@ -38,8 +38,10 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--judges",
-        default="panel",
-        help="'panel' (each output judged by every other provider) or a single provider name",
+        default="deepseek",
+        help="Judge: a non-contestant model key (default: deepseek = DeepSeek v4 Pro "
+             "via OpenRouter, high effort), a contestant provider name, or 'panel' "
+             "(each output judged by every other contestant)",
     )
     parser.add_argument("--thinking", default="medium", help="Thinking effort for contestants")
     parser.add_argument("--persona", default="scout", help="Writer persona")
@@ -61,7 +63,7 @@ def main() -> None:
     if unknown:
         print(f"Unknown providers: {', '.join(unknown)}", file=sys.stderr)
         sys.exit(2)
-    if args.judges != "panel" and args.judges not in PROVIDERS:
+    if args.judges != "panel" and args.judges not in PROVIDERS and args.judges not in JUDGE_MODELS:
         print(f"Unknown judge: {args.judges}", file=sys.stderr)
         sys.exit(2)
 

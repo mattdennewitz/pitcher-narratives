@@ -1,9 +1,9 @@
 """LLM judge: scores one output against a rubric with structured output.
 
-Panel logic lives here: by default every configured provider judges
-every output EXCEPT its own author (cancels self-preference bias). With
-two providers this degenerates to cross-judging; with one provider the
-author judges itself (stated in the report).
+The default judge is a NON-CONTESTANT model (DeepSeek v4 Pro via
+OpenRouter, high reasoning effort), which eliminates self-preference
+bias entirely. 'panel' mode remains available: every contestant judges
+every output except its own author.
 """
 
 from __future__ import annotations
@@ -11,6 +11,7 @@ from __future__ import annotations
 import logging
 
 from pydantic_ai import Agent
+from pydantic_ai.models.openrouter import OpenRouterModelSettings
 from pydantic_ai.settings import ModelSettings
 
 from pitcher_narratives.bench.rubric import (
@@ -20,21 +21,27 @@ from pitcher_narratives.bench.rubric import (
 )
 from pitcher_narratives.config import PROVIDERS
 
-__all__ = ["judge_text", "judges_for", "make_judge_agent"]
+__all__ = ["JUDGE_MODELS", "judge_text", "judges_for", "make_judge_agent"]
 
 log = logging.getLogger("pitcher_narratives.bench")
 
-_JUDGE_MAX_TOKENS = 4096
+JUDGE_MODELS = {
+    "deepseek": "openrouter:deepseek/deepseek-v4-pro",
+}
+"""Non-contestant judge models (keys usable with --judges). Requires
+OPENROUTER_API_KEY."""
+
+_JUDGE_MAX_TOKENS = 16384
 _JUDGE_TEMPERATURE = 0.2
-"""Low temperature, no extended thinking: judging should be near-deterministic."""
+"""Low temperature: judging should be near-deterministic."""
 
 
 def judges_for(author: str, providers: list[str], judge_mode: str) -> list[str]:
-    """Select which providers judge an output authored by `author`.
+    """Select which judges score an output authored by `author`.
 
     judge_mode 'panel': every provider except the author; falls back to
     the author itself when it is the only provider. Any other value
-    names a single fixed judge.
+    names a single fixed judge (a contestant or a JUDGE_MODELS key).
     """
     if judge_mode != "panel":
         return [judge_mode]
@@ -42,13 +49,27 @@ def judges_for(author: str, providers: list[str], judge_mode: str) -> list[str]:
     return panel if panel else [author]
 
 
-def make_judge_agent(provider: str, rubric: list[RubricDimension]) -> Agent[None, JudgedOutput]:
-    """Build a structured-output judge agent for the given provider."""
-    if provider not in PROVIDERS:
-        raise ValueError(f"Unknown judge provider {provider!r}; expected one of {', '.join(PROVIDERS)}")
-    settings = ModelSettings(temperature=_JUDGE_TEMPERATURE, max_tokens=_JUDGE_MAX_TOKENS)
+def make_judge_agent(judge: str, rubric: list[RubricDimension]) -> Agent[None, JudgedOutput]:
+    """Build a structured-output judge agent.
+
+    `judge` is either a JUDGE_MODELS key (non-contestant, preferred) or
+    a contestant provider key from PROVIDERS.
+    """
+    if judge in JUDGE_MODELS:
+        model = JUDGE_MODELS[judge]
+        settings: ModelSettings = OpenRouterModelSettings(
+            temperature=_JUDGE_TEMPERATURE,
+            max_tokens=_JUDGE_MAX_TOKENS,
+            openrouter_reasoning={"effort": "high"},
+        )
+    elif judge in PROVIDERS:
+        model = PROVIDERS[judge]
+        settings = ModelSettings(temperature=_JUDGE_TEMPERATURE, max_tokens=_JUDGE_MAX_TOKENS)
+    else:
+        valid = ", ".join([*JUDGE_MODELS, *PROVIDERS])
+        raise ValueError(f"Unknown judge {judge!r}; expected one of {valid}")
     return Agent(
-        PROVIDERS[provider],
+        model,
         output_type=JudgedOutput,
         system_prompt=build_judge_prompt(rubric),
         model_settings=settings,
