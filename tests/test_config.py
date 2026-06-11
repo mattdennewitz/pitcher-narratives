@@ -43,27 +43,3 @@ def test_unknown_provider_raises():
     """Unknown providers raise instead of silently falling through."""
     with pytest.raises(ValueError):
         make_model_settings("openai", "high", 0.3)
-
-
-def test_deepseek_provider_registered():
-    """DeepSeek is a full pipeline contestant via OpenRouter."""
-    from pitcher_narratives.config import API_KEYS, MINI_PROVIDERS, PROVIDERS
-
-    assert PROVIDERS["deepseek"] == "openrouter:deepseek/deepseek-v4-pro"
-    assert MINI_PROVIDERS["deepseek"] == "openrouter:deepseek/deepseek-v4-flash"
-    assert API_KEYS["deepseek"] == "OPENROUTER_API_KEY"
-
-
-def test_deepseek_settings_map_thinking_to_reasoning_effort():
-    """Non-mini DeepSeek gets OpenRouter reasoning effort from thinking level."""
-    settings = make_model_settings("deepseek", "high", 0.3, max_tokens=TOKEN_BUDGET_LARGE)
-    assert settings.get("openrouter_reasoning", {}).get("effort") == "high"
-    assert settings["max_tokens"] > TOKEN_BUDGET_LARGE  # reasoning headroom
-    assert settings["temperature"] == 0.3
-
-
-def test_deepseek_mini_plain_settings():
-    """Mini DeepSeek (v4-flash) runs without reasoning config."""
-    settings = make_model_settings("deepseek", "high", 0.3, max_tokens=TOKEN_BUDGET_SMALL, mini=True)
-    assert "openrouter_reasoning" not in settings
-    assert settings["max_tokens"] == TOKEN_BUDGET_SMALL

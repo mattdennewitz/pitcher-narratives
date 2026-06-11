@@ -1058,28 +1058,12 @@ class _CountingAgent:
         return _R()
 
 
-def test_run_specialists_respects_max_concurrency(ctx):
-    """max_concurrency=1 serializes specialist calls (OpenRouter rate limits)."""
-    tracker = {"live": 0, "peak": 0}
-    agent = _CountingAgent(tracker)
-    asyncio.run(run_specialists(agent, agent, agent, agent, agent, ctx, max_concurrency=1))
-    assert tracker["peak"] == 1
-
-
-def test_run_specialists_unlimited_by_default(ctx):
-    """Without a cap, specialists still fan out concurrently."""
+def test_run_specialists_fan_out_concurrently(ctx):
+    """Specialists fan out concurrently rather than running serially."""
     tracker = {"live": 0, "peak": 0}
     agent = _CountingAgent(tracker)
     asyncio.run(run_specialists(agent, agent, agent, agent, agent, ctx))
     assert tracker["peak"] > 1
-
-
-def test_deepseek_concurrency_capped():
-    """DeepSeek (OpenRouter) is capped: 5-way bursts trip rate limits and
-    come back as all-null response bodies pydantic-ai 1.72 cannot parse."""
-    from pitcher_narratives.pipeline import _PROVIDER_MAX_CONCURRENCY
-
-    assert _PROVIDER_MAX_CONCURRENCY.get("deepseek") == 1
 
 
 class _ExplodingAuditor:
@@ -1099,23 +1083,3 @@ def test_audit_failure_degrades_to_unaudited(ctx):
     ))
     assert clean == outputs
     assert flags == []
-
-
-def test_deepseek_structured_agents_use_prompted_output():
-    """OpenRouter models emit structured results as JSON text rather than
-    reliably calling output tools; DeepSeek's structured agents use
-    PromptedOutput while other providers keep tool mode."""
-    ds = make_pipeline_agents("deepseek", "medium")
-    for name in ("auditor", "anchor", "signal_extractor"):
-        agent = getattr(ds, name)
-        assert "Prompted" in type(agent._output_schema).__name__, name
-    gm = make_pipeline_agents("gemini", "medium")
-    assert "Prompted" not in type(gm.auditor._output_schema).__name__
-
-
-def test_deepseek_settings_have_generous_timeout():
-    """Serialized reasoning calls run long; avoid httpx default timeouts."""
-    from pitcher_narratives.config import make_model_settings
-
-    settings = make_model_settings("deepseek", "medium", 0.3, max_tokens=4096)
-    assert settings.get("timeout", 0) >= 300

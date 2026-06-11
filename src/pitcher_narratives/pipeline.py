@@ -45,7 +45,6 @@ from typing import Any, NamedTuple
 
 from pydantic import BaseModel
 from pydantic_ai import Agent, CachePoint
-from pydantic_ai.output import PromptedOutput
 from pydantic_ai.settings import ThinkingEffort
 
 from pitcher_narratives.anchor import (
@@ -115,12 +114,6 @@ def _render_user_prompt(parts: UserPrompt) -> str:
         "  -- [cache breakpoint] --" if isinstance(p, CachePoint) else p
         for p in parts
     )
-
-
-_PROVIDER_MAX_CONCURRENCY: dict[str, int] = {"deepseek": 1}
-"""Per-provider cap on simultaneous pipeline LLM calls. OpenRouter rate
-limits turn 5-way specialist bursts into all-null response bodies that
-pydantic-ai 1.72 cannot parse; serializing DeepSeek calls avoids it."""
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -821,7 +814,6 @@ async def audit_and_revise_specialists(
     auditor: "Agent[None, AuditResult]",
     ctx: PitcherContext,
     _model_override: Any = None,
-    max_concurrency: int | None = None,
 ) -> tuple["SpecialistOutputs", list[AuditFlag]]:
     """Audit each specialist's output independently, revise any with flags.
 
@@ -841,14 +833,6 @@ async def audit_and_revise_specialists(
         name: _get_specialist_input_text(name, ctx) for name in specialist_names
     }
 
-    semaphore = asyncio.Semaphore(max_concurrency) if max_concurrency else None
-
-    async def _limited(coro):
-        if semaphore is None:
-            return await coro
-        async with semaphore:
-            return await coro
-
     # Phase 1.5a: Audit all 5 in parallel. The audit is an enhancement,
     # not core: a failed audit call (provider error, rate limit) degrades
     # to passing that specialist through un-audited rather than killing
@@ -858,7 +842,7 @@ async def audit_and_revise_specialists(
             audit_input = _build_specialist_audit_input(
                 ground_truths[name], outputs[name],
             )
-            result = await _limited(auditor.run(**agent_kwargs(audit_input, _model_override)))
+            result = await auditor.run(**agent_kwargs(audit_input, _model_override))
             return name, result.output
         except Exception:
             log.error("Audit failed for %s specialist; passing through un-audited.",
@@ -892,7 +876,7 @@ async def audit_and_revise_specialists(
                 ground_truths[name], outputs[name], flags,
             )
             agent = specialist_agents[name]
-            result = await _limited(agent.run(**agent_kwargs(revision_input, _model_override)))
+            result = await agent.run(**agent_kwargs(revision_input, _model_override))
             return name, result.output
         except Exception:
             log.warning("Revision failed for %s specialist, keeping original.", name, exc_info=True)
@@ -1134,22 +1118,11 @@ def make_pipeline_agents(
                      model_settings=mini_specialist_compact_settings, toolsets=skills, defer_model_check=True)
 
     def _writer(prompt: str) -> Agent[None, str]:
-        # retries=3: a single malformed skills tool call (observed from
-        # DeepSeek) must not kill the streaming writer phase.
+        # retries=3: a single malformed skills tool call must not kill
+        # the streaming writer phase.
         return Agent(model, output_type=str, system_prompt=prompt,
                      model_settings=writer_settings, toolsets=skills, retries=3,
                      defer_model_check=True)
-
-    def _structured(output_model: Any) -> Any:
-        """Output type for structured agents, provider-aware.
-
-        OpenRouter-served models (DeepSeek) emit structured results as
-        JSON text instead of reliably calling output tools, so they use
-        PromptedOutput (schema in prompt, JSON parsed from the reply).
-        """
-        if PROVIDERS[provider].startswith("openrouter:"):
-            return PromptedOutput(output_model)
-        return output_model
 
     return PipelineAgents(
         stuff=_specialist(_STUFF_SPECIALIST_PROMPT),
@@ -1158,13 +1131,13 @@ def make_pipeline_agents(
         trends=_mini_specialist_compact(_TREND_SPECIALIST_PROMPT),
         game_shape=_mini_specialist_compact(_GAME_SHAPE_SPECIALIST_PROMPT),
         writer=_writer(build_writer_system_prompt(persona)),
-        auditor=Agent(mini_model, output_type=_structured(AuditResult), system_prompt=_DATA_AUDITOR_PROMPT,
+        auditor=Agent(mini_model, output_type=AuditResult, system_prompt=_DATA_AUDITOR_PROMPT,
                       model_settings=checker_settings, retries=5, defer_model_check=True),
-        anchor=Agent(mini_model, output_type=_structured(AnchorResult), system_prompt=ANCHOR_PROMPT,
+        anchor=Agent(mini_model, output_type=AnchorResult, system_prompt=ANCHOR_PROMPT,
                      model_settings=checker_settings, retries=3, defer_model_check=True),
         summary=Agent(mini_model, output_type=str, system_prompt=_EXECUTIVE_SUMMARY_PROMPT,
                       model_settings=summary_settings, defer_model_check=True),
-        signal_extractor=Agent(mini_model, output_type=_structured(KeySignals), system_prompt=SIGNAL_EXTRACTOR_PROMPT,
+        signal_extractor=Agent(mini_model, output_type=KeySignals, system_prompt=SIGNAL_EXTRACTOR_PROMPT,
                                model_settings=summary_settings, retries=3, defer_model_check=True),
     )
 
@@ -1181,15 +1154,8 @@ async def run_specialists(
     game_shape_agent: Agent[None, str],
     ctx: PitcherContext,
     _model_override: Any = None,
-    max_concurrency: int | None = None,
 ) -> SpecialistOutputs:
-    """Run all 5 specialists concurrently.
-
-    Args:
-        max_concurrency: Cap on simultaneous LLM calls. Providers with
-            tight rate limits (OpenRouter) return all-null response
-            bodies under 5-way bursts; capping serializes the calls.
-    """
+    """Run all 5 specialists concurrently."""
     inputs = {
         "stuff": (stuff_agent, _build_stuff_input(ctx)),
         "location": (location_agent, _build_location_input(ctx)),
@@ -1198,14 +1164,8 @@ async def run_specialists(
         "game_shape": (game_shape_agent, _build_game_shape_input(ctx)),
     }
 
-    semaphore = asyncio.Semaphore(max_concurrency) if max_concurrency else None
-
     async def _run(agent: Agent[None, str], prompt: str | UserPrompt) -> str:
-        if semaphore is not None:
-            async with semaphore:
-                result = await agent.run(**agent_kwargs(prompt, _model_override))
-        else:
-            result = await agent.run(**agent_kwargs(prompt, _model_override))
+        result = await agent.run(**agent_kwargs(prompt, _model_override))
         return result.output
 
     tasks = {
@@ -1317,11 +1277,9 @@ async def _run_pipeline(
 
     # Phase 1: Run specialists concurrently
     log.info("Running specialists...")
-    max_concurrency = _PROVIDER_MAX_CONCURRENCY.get(provider)
     raw_specialists = await run_specialists(
         agents.stuff, agents.location, agents.runvalue, agents.trends,
         agents.game_shape, ctx, _model_override,
-        max_concurrency=max_concurrency,
     )
     log.info("Specialists complete.")
 
@@ -1334,7 +1292,6 @@ async def _run_pipeline(
     }
     specialists, audit_flags = await audit_and_revise_specialists(
         raw_specialists, specialist_agents, agents.auditor, ctx, _model_override,
-        max_concurrency=max_concurrency,
     )
 
     # Phase 1.75: Extract key signals from clean specialist outputs
