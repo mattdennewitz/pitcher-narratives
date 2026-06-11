@@ -73,5 +73,12 @@ def skill_toolset() -> SkillsToolset:
     """
     global _skill_toolset
     if _skill_toolset is None:
-        _skill_toolset = SkillsToolset(directories=_runtime_skill_dirs())
+        # Scripts/resources tools are excluded: no skill ships either,
+        # and a model hallucinating run_skill_script(...) raises through
+        # the toolset and aborts the whole agent run (observed with
+        # DeepSeek). Only discovery (list) and bodies (load) are offered.
+        _skill_toolset = SkillsToolset(
+            directories=_runtime_skill_dirs(),
+            exclude_tools=["run_skill_script", "read_skill_resource"],
+        )
     return _skill_toolset

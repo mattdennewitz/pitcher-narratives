@@ -45,6 +45,15 @@ def test_skill_toolset_exposes_load_skill():
     assert "list_skills" in tool_names
 
 
+def test_skill_toolset_excludes_script_and_resource_tools():
+    """No skill ships scripts or resources, and a model hallucinating
+    run_skill_script('...') raises through the toolset and kills the
+    whole pipeline run (observed with DeepSeek). Don't offer the tools."""
+    tool_names = set(skill_toolset().tools.keys())
+    assert "run_skill_script" not in tool_names
+    assert "read_skill_resource" not in tool_names
+
+
 # ── Audience filtering (runtime vs builder) ───────────────────────────
 
 
