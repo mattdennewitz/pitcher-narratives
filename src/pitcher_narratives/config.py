@@ -13,6 +13,7 @@ from typing import Any
 import logfire
 
 from pydantic_ai.models.google import GoogleModelSettings
+from pydantic_ai.models.openrouter import OpenRouterModelSettings
 from pydantic_ai.settings import ModelSettings, ThinkingEffort
 
 __all__ = [
@@ -33,11 +34,13 @@ __all__ = [
 PROVIDERS = {
     "claude": "anthropic:claude-sonnet-4-6",
     "gemini": "google-gla:gemini-3.1-pro-preview",
+    "deepseek": "openrouter:deepseek/deepseek-v4-pro",
 }
 
 MINI_PROVIDERS = {
     "claude": "anthropic:claude-haiku-4-5",
     "gemini": "google-gla:gemini-flash-latest",
+    "deepseek": "openrouter:deepseek/deepseek-v4-flash",
 }
 
 THINKING_LEVELS: list[ThinkingEffort] = ["minimal", "low", "medium", "high", "xhigh"]
@@ -54,13 +57,14 @@ TOKEN_BUDGET_LARGE = 4096
 MAX_REVISIONS = 3
 """Maximum number of editor revision passes before accepting the capsule."""
 
-_CLAUDE_THINKING_HEADROOM = 8192
-"""Extra max_tokens for Claude when extended thinking is enabled, since
-the thinking budget is spent from the same cap as the response text."""
+_THINKING_HEADROOM = 8192
+"""Extra max_tokens when extended thinking/reasoning is enabled (Claude,
+DeepSeek): the thinking budget is spent from the same cap as the response."""
 
 API_KEYS = {
     "claude": "ANTHROPIC_API_KEY",
     "gemini": "GEMINI_API_KEY",
+    "deepseek": "OPENROUTER_API_KEY",
 }
 
 
@@ -96,9 +100,21 @@ def make_model_settings(
         return ModelSettings(
             thinking=thinking,
             temperature=1,
-            max_tokens=max_tokens + _CLAUDE_THINKING_HEADROOM,
+            max_tokens=max_tokens + _THINKING_HEADROOM,
         )
-    raise ValueError(f"Unknown provider {provider!r}; expected 'gemini' or 'claude'")
+    elif provider == "deepseek":
+        # DeepSeek via OpenRouter: reasoning effort for the full-size
+        # model, plain settings for v4-flash (mini). Reasoning tokens
+        # share the max_tokens cap, so headroom-extend like Claude.
+        if mini:
+            return OpenRouterModelSettings(temperature=temperature, max_tokens=max_tokens)
+        effort = "high" if thinking in ("high", "xhigh") else ("low" if thinking in ("minimal", "low") else "medium")
+        return OpenRouterModelSettings(
+            temperature=temperature,
+            max_tokens=max_tokens + _THINKING_HEADROOM,
+            openrouter_reasoning={"effort": effort},
+        )
+    raise ValueError(f"Unknown provider {provider!r}; expected one of 'gemini', 'claude', 'deepseek'")
 
 
 def cap_thinking(thinking: ThinkingEffort, ceiling: ThinkingEffort) -> ThinkingEffort:

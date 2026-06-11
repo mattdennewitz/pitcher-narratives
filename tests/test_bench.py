@@ -232,8 +232,21 @@ def test_run_provider_captures_all_tiers():
 def test_parse_args_defaults(monkeypatch):
     import sys
 
+    from pitcher_narratives.config import PROVIDERS
+
     monkeypatch.setattr(sys, "argv", ["bench", "-p", "693433"])
     args = parse_args()
     assert args.pitcher == 693433
-    assert set(args.providers.split(",")) == {"gemini", "claude"}
+    assert set(args.providers.split(",")) == set(PROVIDERS)
     assert args.judges == "deepseek"
+
+
+def test_contestant_judge_uses_tool_output():
+    """Contestant-provider judges (e.g. claude) keep tool-mode structured
+    output; PromptedOutput is only for OpenRouter reasoning models that
+    emit JSON as text."""
+    agent = make_judge_agent("claude", AGENT_RUBRIC)
+    assert "claude" in str(agent.model)
+    assert "Prompted" not in type(agent._output_schema).__name__
+    settings = agent.model_settings or {}
+    assert "openrouter_reasoning" not in settings

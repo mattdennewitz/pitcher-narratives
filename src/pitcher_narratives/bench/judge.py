@@ -32,8 +32,9 @@ log = logging.getLogger("pitcher_narratives.bench")
 JUDGE_MODELS = {
     "deepseek": "openrouter:deepseek/deepseek-v4-pro",
 }
-"""Non-contestant judge models (keys usable with --judges). Requires
-OPENROUTER_API_KEY."""
+"""Judge-only model keys usable with --judges (requires
+OPENROUTER_API_KEY). Contestant providers (PROVIDERS keys) are also
+valid judges -- prefer one that is not in the run's contestant list."""
 
 _JUDGE_MAX_TOKENS = 16384
 _JUDGE_TEMPERATURE = 0.2
@@ -90,15 +91,18 @@ def make_judge_agent(judge: str, rubric: list[RubricDimension]) -> Agent[None, J
     output_type: object = JudgedOutput
     if judge in JUDGE_MODELS:
         model = JUDGE_MODELS[judge]
-        settings: ModelSettings = OpenRouterModelSettings(
-            temperature=_JUDGE_TEMPERATURE,
-            max_tokens=_JUDGE_MAX_TOKENS,
-            openrouter_reasoning={"effort": "high"},
-        )
-        # Reasoning models on OpenRouter emit the result as JSON text
-        # rather than reliably calling an output tool; PromptedOutput
-        # puts the schema in the prompt and parses the JSON response.
-        output_type = PromptedOutput(JudgedOutput)
+        if model.startswith("openrouter:"):
+            settings: ModelSettings = OpenRouterModelSettings(
+                temperature=_JUDGE_TEMPERATURE,
+                max_tokens=_JUDGE_MAX_TOKENS,
+                openrouter_reasoning={"effort": "high"},
+            )
+            # Reasoning models on OpenRouter emit the result as JSON text
+            # rather than reliably calling an output tool; PromptedOutput
+            # puts the schema in the prompt and parses the JSON response.
+            output_type = PromptedOutput(JudgedOutput)
+        else:
+            settings = ModelSettings(temperature=_JUDGE_TEMPERATURE, max_tokens=_JUDGE_MAX_TOKENS)
     elif judge in PROVIDERS:
         model = PROVIDERS[judge]
         settings = ModelSettings(temperature=_JUDGE_TEMPERATURE, max_tokens=_JUDGE_MAX_TOKENS)
