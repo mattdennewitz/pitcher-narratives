@@ -45,6 +45,7 @@ from typing import Any, NamedTuple
 
 from pydantic import BaseModel
 from pydantic_ai import Agent, CachePoint
+from pydantic_ai.output import PromptedOutput
 from pydantic_ai.settings import ThinkingEffort
 
 from pitcher_narratives.anchor import (
@@ -1136,6 +1137,17 @@ def make_pipeline_agents(
         return Agent(model, output_type=str, system_prompt=prompt,
                      model_settings=writer_settings, toolsets=skills, defer_model_check=True)
 
+    def _structured(output_model: Any) -> Any:
+        """Output type for structured agents, provider-aware.
+
+        OpenRouter-served models (DeepSeek) emit structured results as
+        JSON text instead of reliably calling output tools, so they use
+        PromptedOutput (schema in prompt, JSON parsed from the reply).
+        """
+        if PROVIDERS[provider].startswith("openrouter:"):
+            return PromptedOutput(output_model)
+        return output_model
+
     return PipelineAgents(
         stuff=_specialist(_STUFF_SPECIALIST_PROMPT),
         location=_mini_specialist(_LOCATION_SPECIALIST_PROMPT),
@@ -1143,13 +1155,13 @@ def make_pipeline_agents(
         trends=_mini_specialist_compact(_TREND_SPECIALIST_PROMPT),
         game_shape=_mini_specialist_compact(_GAME_SHAPE_SPECIALIST_PROMPT),
         writer=_writer(build_writer_system_prompt(persona)),
-        auditor=Agent(mini_model, output_type=AuditResult, system_prompt=_DATA_AUDITOR_PROMPT,
+        auditor=Agent(mini_model, output_type=_structured(AuditResult), system_prompt=_DATA_AUDITOR_PROMPT,
                       model_settings=checker_settings, retries=5, defer_model_check=True),
-        anchor=Agent(mini_model, output_type=AnchorResult, system_prompt=ANCHOR_PROMPT,
-                     model_settings=checker_settings, defer_model_check=True),
+        anchor=Agent(mini_model, output_type=_structured(AnchorResult), system_prompt=ANCHOR_PROMPT,
+                     model_settings=checker_settings, retries=3, defer_model_check=True),
         summary=Agent(mini_model, output_type=str, system_prompt=_EXECUTIVE_SUMMARY_PROMPT,
                       model_settings=summary_settings, defer_model_check=True),
-        signal_extractor=Agent(mini_model, output_type=KeySignals, system_prompt=SIGNAL_EXTRACTOR_PROMPT,
+        signal_extractor=Agent(mini_model, output_type=_structured(KeySignals), system_prompt=SIGNAL_EXTRACTOR_PROMPT,
                                model_settings=summary_settings, retries=3, defer_model_check=True),
     )
 

@@ -1099,3 +1099,23 @@ def test_audit_failure_degrades_to_unaudited(ctx):
     ))
     assert clean == outputs
     assert flags == []
+
+
+def test_deepseek_structured_agents_use_prompted_output():
+    """OpenRouter models emit structured results as JSON text rather than
+    reliably calling output tools; DeepSeek's structured agents use
+    PromptedOutput while other providers keep tool mode."""
+    ds = make_pipeline_agents("deepseek", "medium")
+    for name in ("auditor", "anchor", "signal_extractor"):
+        agent = getattr(ds, name)
+        assert "Prompted" in type(agent._output_schema).__name__, name
+    gm = make_pipeline_agents("gemini", "medium")
+    assert "Prompted" not in type(gm.auditor._output_schema).__name__
+
+
+def test_deepseek_settings_have_generous_timeout():
+    """Serialized reasoning calls run long; avoid httpx default timeouts."""
+    from pitcher_narratives.config import make_model_settings
+
+    settings = make_model_settings("deepseek", "medium", 0.3, max_tokens=4096)
+    assert settings.get("timeout", 0) >= 300

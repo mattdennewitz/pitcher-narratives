@@ -57,6 +57,10 @@ TOKEN_BUDGET_LARGE = 4096
 MAX_REVISIONS = 3
 """Maximum number of editor revision passes before accepting the capsule."""
 
+_OPENROUTER_TIMEOUT_S = 300
+"""Request timeout for OpenRouter calls: serialized reasoning requests on
+large prompts routinely outlive httpx defaults."""
+
 _THINKING_HEADROOM = 8192
 """Extra max_tokens when extended thinking/reasoning is enabled (Claude,
 DeepSeek): the thinking budget is spent from the same cap as the response."""
@@ -107,12 +111,15 @@ def make_model_settings(
         # model, plain settings for v4-flash (mini). Reasoning tokens
         # share the max_tokens cap, so headroom-extend like Claude.
         if mini:
-            return OpenRouterModelSettings(temperature=temperature, max_tokens=max_tokens)
+            return OpenRouterModelSettings(
+                temperature=temperature, max_tokens=max_tokens, timeout=_OPENROUTER_TIMEOUT_S,
+            )
         effort = "high" if thinking in ("high", "xhigh") else ("low" if thinking in ("minimal", "low") else "medium")
         return OpenRouterModelSettings(
             temperature=temperature,
             max_tokens=max_tokens + _THINKING_HEADROOM,
             openrouter_reasoning={"effort": effort},
+            timeout=_OPENROUTER_TIMEOUT_S,
         )
     raise ValueError(f"Unknown provider {provider!r}; expected one of 'gemini', 'claude', 'deepseek'")
 
