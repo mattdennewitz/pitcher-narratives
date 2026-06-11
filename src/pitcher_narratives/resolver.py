@@ -200,10 +200,15 @@ def _fuzzy_last_name_match(
     Returns:
         ResolveResult if a match is found, None otherwise.
     """
+    # Plain ratio, not WRatio: WRatio's partial-match component scores a
+    # short last name embedded anywhere inside a longer garbage query
+    # (e.g. 'tapia' inside 'zzzznotapitcher' -> 72), turning nonsense
+    # into a confident fuzzy hit. Plain ratio keeps genuine typos
+    # (skubol->skubal 83) while garbage falls below the cutoff.
     fuzzy_last = process.extract(
         query_last,
         unique_last_names,
-        scorer=fuzz.WRatio,
+        scorer=fuzz.ratio,
         limit=_MAX_CANDIDATES,
         score_cutoff=_SCORE_CUTOFF,
     )
