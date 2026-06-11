@@ -18,7 +18,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-from pitcher_narratives.bench.judge import JUDGE_MODELS, judge_text, judges_for
+from pitcher_narratives.bench.judge import JUDGE_MODELS, _with_retry, judge_text, judges_for
 from pitcher_narratives.bench.rubric import AGENT_RUBRIC, CAPSULE_RUBRIC
 from pitcher_narratives.bench.runner import run_provider
 from pitcher_narratives.bench.scorecard import JudgedRecord, aggregate, render_report
@@ -81,6 +81,17 @@ def main() -> None:
             persona=args.persona,
             window_days=args.window,
         )
+        if not run.ok:
+            # One retry: provider failures observed so far are transient
+            # network timeouts, not deterministic errors.
+            print(f"=== {provider} failed ({run.error}); retrying once ===", file=sys.stderr)
+            run = run_provider(
+                args.pitcher,
+                provider=provider,
+                thinking=args.thinking,
+                persona=args.persona,
+                window_days=args.window,
+            )
         runs.append(run)
         pdir = run_dir / provider
         pdir.mkdir(exist_ok=True)
@@ -93,26 +104,35 @@ def main() -> None:
     if not ok_runs:
         print("All provider runs failed; nothing to judge.", file=sys.stderr)
         sys.exit(1)
-    ground_truth = ok_runs[0].ground_truth
-    (run_dir / "ground_truth.md").write_text(ground_truth)
+    (run_dir / "ground_truth.md").write_text(ok_runs[0].ground_truth)
+    for run in ok_runs:
+        gt_dir = run_dir / run.provider / "ground_truths"
+        gt_dir.mkdir(exist_ok=True)
+        for tier, gt_text in run.ground_truths.items():
+            (gt_dir / f"{tier.replace(':', '_')}.md").write_text(gt_text)
 
     # ── Judge ─────────────────────────────────────────────────────
+    # exec_summary is captured but not judged: the specialist rubric's
+    # mechanism/citation dimensions do not fit a bullet list.
     records: list[JudgedRecord] = []
     for run in ok_runs:
         for tier, text in run.outputs.items():
+            if tier == "exec_summary":
+                continue
             rubric = CAPSULE_RUBRIC if tier == "capsule" else AGENT_RUBRIC
             for judge in judges_for(run.provider, providers, args.judges):
                 print(f"Judging {run.provider}/{tier} with {judge}...", file=sys.stderr)
                 try:
-                    judged = judge_text(
-                        ground_truth=ground_truth,
+                    judged = _with_retry(lambda: judge_text(
+                        ground_truth=run.ground_truths[tier],
                         output_text=text,
                         tier_label=tier,
                         rubric=rubric,
                         judge_provider=judge,
-                    )
+                    ))
                 except Exception as exc:  # noqa: BLE001 -- drop a failed judge, keep the bench
-                    print(f"  judge failed ({type(exc).__name__}); dropped", file=sys.stderr)
+                    print(f"  judge failed after retries ({type(exc).__name__}: {str(exc)[:120]}); dropped",
+                          file=sys.stderr)
                     continue
                 records.append(JudgedRecord(
                     provider=run.provider, tier=tier, judge=judge, judged=judged,

@@ -15,7 +15,16 @@ from dataclasses import dataclass, field
 
 from pitcher_narratives.context import assemble_pitcher_context
 from pitcher_narratives.data import load_pitcher_data
-from pitcher_narratives.pipeline import generate_pipeline_streaming
+from pitcher_narratives.pipeline import (
+    _build_game_shape_input,
+    _build_location_input,
+    _build_runvalue_input,
+    _build_stuff_input,
+    _build_trend_input,
+    _flatten_prompt,
+    build_writer_input,
+    generate_pipeline_streaming,
+)
 
 __all__ = ["CapturedRun", "run_provider"]
 
@@ -31,10 +40,14 @@ class CapturedRun:
     error: str | None
     wall_s: float
     ground_truth: str
-    """The pitcher context document the agents wrote from."""
+    """The pitcher context document (generic reference)."""
 
     outputs: dict[str, str] = field(default_factory=dict)
     """tier key ('specialist:stuff', ..., 'capsule') -> text."""
+
+    ground_truths: dict[str, str] = field(default_factory=dict)
+    """tier key -> the exact input that tier's author received. Judging
+    grounding against anything else marks provided data as 'invented'."""
 
     pitcher_name: str = ""
 
@@ -89,6 +102,28 @@ def run_provider(
     if result.executive_summary:
         outputs["exec_summary"] = "\n".join(f"- {b}" for b in result.executive_summary)
 
+    # Per-tier ground truth = the exact input that tier's author saw.
+    # Specialist inputs are deterministic functions of ctx; the writer's
+    # input is composed from THIS run's specialist outputs + key signals.
+    writer_input = build_writer_input(
+        ctx,
+        result.specialists.stuff,
+        result.specialists.location,
+        result.specialists.runvalue,
+        result.specialists.trends,
+        result.specialists.game_shape,
+        key_signals=result.key_signals,
+    )
+    ground_truths = {
+        "specialist:stuff": _flatten_prompt(_build_stuff_input(ctx)),
+        "specialist:location": _flatten_prompt(_build_location_input(ctx)),
+        "specialist:runvalue": _flatten_prompt(_build_runvalue_input(ctx)),
+        "specialist:trends": _flatten_prompt(_build_trend_input(ctx)),
+        "specialist:game_shape": _flatten_prompt(_build_game_shape_input(ctx)),
+        "capsule": writer_input,
+        "exec_summary": writer_input,
+    }
+
     return CapturedRun(
         provider=provider,
         ok=True,
@@ -96,5 +131,6 @@ def run_provider(
         wall_s=wall_s,
         ground_truth=ground_truth,
         outputs=outputs,
+        ground_truths=ground_truths,
         pitcher_name=data.pitcher_name,
     )

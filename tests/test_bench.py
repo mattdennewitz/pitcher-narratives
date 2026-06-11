@@ -123,6 +123,42 @@ def test_make_judge_agent_deepseek_high_effort():
     assert settings.get("openrouter_reasoning", {}).get("effort") == "high"
 
 
+def test_deepseek_judge_uses_prompted_output():
+    """OpenRouter judges use PromptedOutput: reasoning models emit the
+    output as JSON text rather than reliably calling an output tool."""
+    agent = make_judge_agent("deepseek", AGENT_RUBRIC)
+    assert "Prompted" in type(agent._output_schema).__name__
+
+
+def test_judge_retry_backs_off_on_api_errors():
+    """Transient API errors (rate limits) retry with backoff before dropping."""
+    from pitcher_narratives.bench.judge import _with_retry
+
+    calls = {"n": 0}
+    sleeps: list[float] = []
+
+    def flaky():
+        calls["n"] += 1
+        if calls["n"] < 3:
+            raise RuntimeError("429 too many requests")
+        return "ok"
+
+    assert _with_retry(flaky, attempts=3, backoffs=(1, 2), _sleep=sleeps.append) == "ok"
+    assert calls["n"] == 3
+    assert sleeps == [1, 2]
+
+
+def test_judge_retry_raises_after_exhaustion():
+    """After all attempts fail, the last error propagates (caller drops the judge)."""
+    from pitcher_narratives.bench.judge import _with_retry
+
+    def always_fails():
+        raise RuntimeError("boom")
+
+    with pytest.raises(RuntimeError):
+        _with_retry(always_fails, attempts=2, backoffs=(0,), _sleep=lambda s: None)
+
+
 # ── Scorecard aggregation ─────────────────────────────────────────────
 
 
@@ -178,11 +214,16 @@ def test_run_provider_captures_all_tiers():
     assert captured.ok
     assert captured.error is None
     assert captured.wall_s >= 0
-    assert "Scouting Context" in captured.ground_truth
     for key in ("specialist:stuff", "specialist:location", "specialist:runvalue",
                 "specialist:trends", "specialist:game_shape", "capsule"):
         assert key in captured.outputs, f"missing {key}"
         assert captured.outputs[key]
+        assert captured.ground_truths.get(key), f"missing ground truth for {key}"
+    # Each tier is judged against ITS author's actual input, not the
+    # generic context doc -- otherwise the judge calls provided data
+    # 'invented' and grounding scores are artifacts.
+    assert "Arsenal Physical Profile" in captured.ground_truths["specialist:stuff"]
+    assert "Specialist Analysis" in captured.ground_truths["capsule"]
 
 
 # ── CLI ───────────────────────────────────────────────────────────────
