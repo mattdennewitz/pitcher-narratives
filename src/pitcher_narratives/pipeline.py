@@ -848,7 +848,10 @@ async def audit_and_revise_specialists(
         async with semaphore:
             return await coro
 
-    # Phase 1.5a: Audit all 5 in parallel
+    # Phase 1.5a: Audit all 5 in parallel. The audit is an enhancement,
+    # not core: a failed audit call (provider error, rate limit) degrades
+    # to passing that specialist through un-audited rather than killing
+    # the whole pipeline run.
     async def _audit_one(name: str) -> tuple[str, AuditResult]:
         try:
             audit_input = _build_specialist_audit_input(
@@ -857,8 +860,9 @@ async def audit_and_revise_specialists(
             result = await _limited(auditor.run(**agent_kwargs(audit_input, _model_override)))
             return name, result.output
         except Exception:
-            log.error("Audit failed for %s specialist.", name, exc_info=True)
-            raise
+            log.error("Audit failed for %s specialist; passing through un-audited.",
+                      name, exc_info=True)
+            return name, AuditResult(is_clean=True, flags=[])
 
     audit_tasks = [_audit_one(name) for name in specialist_names]
     audit_results = await asyncio.gather(*audit_tasks)

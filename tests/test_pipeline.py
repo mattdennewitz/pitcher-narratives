@@ -1080,3 +1080,22 @@ def test_deepseek_concurrency_capped():
     from pitcher_narratives.pipeline import _PROVIDER_MAX_CONCURRENCY
 
     assert _PROVIDER_MAX_CONCURRENCY.get("deepseek") == 1
+
+
+class _ExplodingAuditor:
+    """Stub auditor whose every run raises (e.g. provider error body)."""
+
+    async def run(self, **kwargs):
+        raise RuntimeError("all-null response body")
+
+
+def test_audit_failure_degrades_to_unaudited(ctx):
+    """A failing auditor must not kill the pipeline: the specialist's
+    original text passes through un-audited with no flags."""
+    outputs = SpecialistOutputs(stuff="s", location="l", runvalue="r",
+                                trends="t", game_shape="g")
+    clean, flags = asyncio.run(audit_and_revise_specialists(
+        outputs, {}, _ExplodingAuditor(), ctx,
+    ))
+    assert clean == outputs
+    assert flags == []
