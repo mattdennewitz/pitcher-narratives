@@ -54,6 +54,10 @@ TOKEN_BUDGET_LARGE = 4096
 MAX_REVISIONS = 3
 """Maximum number of editor revision passes before accepting the capsule."""
 
+_CLAUDE_THINKING_HEADROOM = 8192
+"""Extra max_tokens for Claude when extended thinking is enabled, since
+the thinking budget is spent from the same cap as the response text."""
+
 API_KEYS = {
     "claude": "ANTHROPIC_API_KEY",
     "gemini": "GEMINI_API_KEY",
@@ -86,7 +90,14 @@ def make_model_settings(
         # would exceed max_tokens) and for mini models (Haiku).
         if mini or max_tokens <= TOKEN_BUDGET_MEDIUM:
             return ModelSettings(temperature=1, max_tokens=max_tokens)
-        return ModelSettings(thinking=thinking, temperature=1, max_tokens=max_tokens)
+        # Anthropic's thinking budget counts against max_tokens, so the
+        # requested cap must be headroom-extended or thinking can exhaust
+        # it before any response text is generated.
+        return ModelSettings(
+            thinking=thinking,
+            temperature=1,
+            max_tokens=max_tokens + _CLAUDE_THINKING_HEADROOM,
+        )
     raise ValueError(f"Unknown provider {provider!r}; expected 'gemini' or 'claude'")
 
 
