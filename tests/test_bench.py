@@ -9,7 +9,7 @@ import pytest
 from pydantic import ValidationError
 from pydantic_ai.models.test import TestModel
 
-from pitcher_narratives.bench.judge import judges_for
+from pitcher_narratives.bench.judge import JUDGE_MODELS, judges_for, make_judge_agent
 from pitcher_narratives.bench.rubric import (
     AGENT_RUBRIC,
     CAPSULE_RUBRIC,
@@ -103,6 +103,26 @@ def test_panel_with_one_provider_falls_back_to_self():
     assert judges_for("gemini", ["gemini"], "panel") == ["gemini"]
 
 
+def test_deepseek_judge_is_registered():
+    """The default judge is DeepSeek v4 Pro via OpenRouter — a
+    non-contestant, so self-preference bias cannot arise."""
+    assert "deepseek" in JUDGE_MODELS
+    assert JUDGE_MODELS["deepseek"] == "openrouter:deepseek/deepseek-v4-pro"
+
+
+def test_make_judge_agent_resolves_deepseek():
+    """make_judge_agent accepts the non-contestant judge key."""
+    agent = make_judge_agent("deepseek", AGENT_RUBRIC)
+    assert "deepseek-v4-pro" in str(agent.model)
+
+
+def test_make_judge_agent_deepseek_high_effort():
+    """The DeepSeek judge requests high reasoning effort."""
+    agent = make_judge_agent("deepseek", AGENT_RUBRIC)
+    settings = agent.model_settings or {}
+    assert settings.get("openrouter_reasoning", {}).get("effort") == "high"
+
+
 # ── Scorecard aggregation ─────────────────────────────────────────────
 
 
@@ -145,8 +165,8 @@ def test_render_report_contains_providers_and_dimensions():
 
 
 @pytest.mark.skipif(
-    not __import__("pitcher_narratives.data", fromlist=["PARQUET_PATH"]).PARQUET_PATH.exists(),
-    reason="statcast parquet files not present in DATA_DIR",
+    not __import__("pitcher_narratives.data", fromlist=["statcast_parquet_path"]).statcast_parquet_path(2026).exists(),
+    reason="statcast parquet files not present (set STATCAST_PATH)",
 )
 def test_run_provider_captures_all_tiers():
     """A provider run captures 5 specialists + exec summary + capsule and
@@ -175,4 +195,4 @@ def test_parse_args_defaults(monkeypatch):
     args = parse_args()
     assert args.pitcher == 693433
     assert set(args.providers.split(",")) == {"gemini", "claude"}
-    assert args.judges == "panel"
+    assert args.judges == "deepseek"

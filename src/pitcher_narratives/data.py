@@ -31,15 +31,31 @@ __all__ = [
     "load_pitcher_data",
     "load_run_values",
     "load_statcast",
+    "statcast_dir",
+    "statcast_parquet_path",
 ]
 
 _DEFAULT_DATA_DIR = Path(__file__).resolve().parent.parent.parent
 _data_dir_override = os.environ.get("PITCHER_NARRATIVES_DATA_DIR")
 DATA_DIR = Path(_data_dir_override) if _data_dir_override else _DEFAULT_DATA_DIR
 _YEARS: list[int] = [2025, 2026]
-PARQUET_PATH = DATA_DIR / f"statcast_{_YEARS[-1]}.parquet"
 AGGS_DIR = DATA_DIR / "aggs"
 RV_DF_PATH = AGGS_DIR / "RV_df.csv"
+
+
+def statcast_dir() -> Path:
+    """Directory holding the per-year Statcast parquet files.
+
+    Resolved lazily (not at import) so STATCAST_PATH supplied via .env
+    through load_dotenv() in CLI entry points is honored.
+    """
+    override = os.environ.get("STATCAST_PATH")
+    return Path(override) if override else DATA_DIR / "statcast"
+
+
+def statcast_parquet_path(year: int) -> Path:
+    """Path to one season's Statcast parquet: <statcast_dir>/<year>.parquet."""
+    return statcast_dir() / f"{year}.parquet"
 
 # CSV grain names -- filenames derived as f"{year}-{grain}.csv"
 _SEASON_GRAINS = ("pitcher", "pitcher_type", "pitcher_type_platoon", "team")
@@ -146,7 +162,7 @@ def load_statcast(pitcher_id: int) -> pl.DataFrame:
     """
     frames: list[pl.DataFrame] = []
     for year in _YEARS:
-        path = DATA_DIR / f"statcast_{year}.parquet"
+        path = statcast_parquet_path(year)
         if not path.exists():
             continue
         df = pl.read_parquet(path)
@@ -227,7 +243,7 @@ def load_all_statcast(columns: list[str] | None = None) -> pl.DataFrame:
     """
     frames: list[pl.DataFrame] = []
     for year in _YEARS:
-        path = DATA_DIR / f"statcast_{year}.parquet"
+        path = statcast_parquet_path(year)
         if not path.exists():
             continue
         read_cols = columns

@@ -18,6 +18,8 @@ from pitcher_narratives.data import (
     load_full_agg,
     load_pitcher_data,
     load_statcast,
+    statcast_dir,
+    statcast_parquet_path,
 )
 
 TEST_PITCHER = 592155  # Booser, Cam -- 1 regular-season RP appearance
@@ -221,11 +223,11 @@ def test_no_hardcoded_year_in_csv_dicts():
 
 def test_years_constant_drives_paths():
     """DFND-02/MYLD-01: _YEARS includes both years and drives path generation."""
-    from pitcher_narratives.data import PARQUET_PATH, _YEARS
+    from pitcher_narratives.data import _YEARS, statcast_parquet_path
 
     assert isinstance(_YEARS, list)
     assert _YEARS == [2025, 2026]
-    assert str(PARQUET_PATH).endswith(f"statcast_{_YEARS[-1]}.parquet")
+    assert statcast_parquet_path(_YEARS[-1]).name == f"{_YEARS[-1]}.parquet"
 
 
 def test_season_in_id_cols():
@@ -249,12 +251,12 @@ def test_load_statcast_multi_year(tmp_path, monkeypatch):
     df_2025 = pl.DataFrame(cols)
     df_2026 = pl.DataFrame({**cols, "game_year": [2026, 2026, 2026]})
 
-    df_2025.write_parquet(tmp_path / "statcast_2025.parquet")
-    df_2026.write_parquet(tmp_path / "statcast_2026.parquet")
+    df_2025.write_parquet(tmp_path / "2025.parquet")
+    df_2026.write_parquet(tmp_path / "2026.parquet")
 
     import pitcher_narratives.data as data_mod
 
-    monkeypatch.setattr(data_mod, "DATA_DIR", tmp_path)
+    monkeypatch.setenv("STATCAST_PATH", str(tmp_path))
     monkeypatch.setattr(data_mod, "AGGS_DIR", tmp_path / "aggs")
     monkeypatch.setattr(data_mod, "_YEARS", [2025, 2026])
 
@@ -425,12 +427,12 @@ def test_load_all_statcast_multi_year(tmp_path, monkeypatch):
     df_2025 = pl.DataFrame(cols)
     df_2026 = pl.DataFrame({**cols, "game_year": [2026, 2026]})
 
-    df_2025.write_parquet(tmp_path / "statcast_2025.parquet")
-    df_2026.write_parquet(tmp_path / "statcast_2026.parquet")
+    df_2025.write_parquet(tmp_path / "2025.parquet")
+    df_2026.write_parquet(tmp_path / "2026.parquet")
 
     import pitcher_narratives.data as data_mod
 
-    monkeypatch.setattr(data_mod, "DATA_DIR", tmp_path)
+    monkeypatch.setenv("STATCAST_PATH", str(tmp_path))
     monkeypatch.setattr(data_mod, "_YEARS", [2025, 2026])
 
     result = load_all_statcast()
@@ -448,12 +450,12 @@ def test_load_all_statcast_missing_year(tmp_path, monkeypatch):
         "inning": [1],
     }
     df_2026 = pl.DataFrame(cols)
-    df_2026.write_parquet(tmp_path / "statcast_2026.parquet")
+    df_2026.write_parquet(tmp_path / "2026.parquet")
     # No 2025 file created
 
     import pitcher_narratives.data as data_mod
 
-    monkeypatch.setattr(data_mod, "DATA_DIR", tmp_path)
+    monkeypatch.setenv("STATCAST_PATH", str(tmp_path))
     monkeypatch.setattr(data_mod, "_YEARS", [2025, 2026])
 
     result = load_all_statcast()
@@ -620,3 +622,34 @@ def test_prior_baseline_schema_preserved():
     assert "P+" in data.prior_season_baseline.columns
     assert "season" in data.prior_pitch_type_baseline.columns
     assert "P+" in data.prior_pitch_type_baseline.columns
+
+
+# ── Statcast path resolution (STATCAST_PATH env var) ─────────────────
+
+
+def test_statcast_dir_defaults_to_statcast_subdir(monkeypatch):
+    """Without STATCAST_PATH, parquet files live in DATA_DIR/statcast/."""
+    from pitcher_narratives import data as data_mod
+
+    monkeypatch.delenv("STATCAST_PATH", raising=False)
+    assert statcast_dir() == data_mod.DATA_DIR / "statcast"
+
+
+def test_statcast_dir_honors_env_var(monkeypatch):
+    """STATCAST_PATH overrides the parquet directory."""
+    monkeypatch.setenv("STATCAST_PATH", "/tmp/elsewhere")
+    assert str(statcast_dir()) == "/tmp/elsewhere"
+
+
+def test_statcast_parquet_path_is_year_named(monkeypatch):
+    """Parquet files are named <year>.parquet inside the statcast dir."""
+    monkeypatch.delenv("STATCAST_PATH", raising=False)
+    p = statcast_parquet_path(2026)
+    assert p.name == "2026.parquet"
+    assert p.parent == statcast_dir()
+
+
+def test_load_statcast_reads_from_statcast_dir():
+    """Integration: pitcher loads from the relocated parquet files."""
+    df = load_statcast(592155)
+    assert not df.is_empty()

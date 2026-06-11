@@ -1,7 +1,7 @@
 """Tests for pitcher name resolution module.
 
 Covers RESOLVE-01 (name matching) and RESOLVE-02 (disambiguation).
-Tests run against the real statcast_2026.parquet file.
+Tests run against the real Statcast parquet files (see STATCAST_PATH).
 """
 
 from pitcher_narratives.resolver import ResolveResult, resolve
