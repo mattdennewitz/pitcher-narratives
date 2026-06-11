@@ -24,7 +24,7 @@ Facts verified empirically against this repo's parquet files. When a fact below 
 
 ## Coverage and quality
 
-- `arm_angle` nulls: ~8.5% in the 2025 file, ~58% in the 2026 file (early-season tracking gaps). Nulls cluster by park/outage — always check the null rate for *your* pitcher before per-pitcher use.
+- `arm_angle` nulls: ~8.5% in the 2025 file, ~21% in the 2026 file (worse early in a season; was ~58% in April). Nulls cluster by park/outage — always check the null rate for *your* pitcher before per-pitcher use.
 - `arm_angle` has garbage outliers (observed min −134°). Filter to `is_between(-90, 95)` for league aggregations.
 - `pfx_*` nulls ~3%; `mean()` skips them.
 - Multi-year loads concatenate with `diagonal_relaxed`: a column missing from one year's file silently fills null. Check per-year coverage when a column's null rate surprises you.
@@ -35,7 +35,8 @@ Facts verified empirically against this repo's parquet files. When a fact below 
 ## Probe recipe
 
 ```python
-df = pl.scan_parquet("statcast_2026.parquet").select(cols).collect()
+from pitcher_narratives.data import statcast_parquet_path  # honors STATCAST_PATH
+df = pl.scan_parquet(statcast_parquet_path(2026)).select(cols).collect()
 df["col"].min(), df["col"].max()          # units (feet vs inches ranges)
 df.group_by("p_throws").agg(pl.col("pfx_x").mean())  # sign/mirroring
 df["col"].null_count() / len(df)          # coverage
