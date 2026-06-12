@@ -13,72 +13,72 @@ from pitcher_narratives.cli import parse_args
 
 def test_parse_pitcher_flag(monkeypatch):
     """CLI-01: -p flag accepted and parsed as int."""
-    monkeypatch.setattr(sys, "argv", ["main.py", "-p", "592155"])
+    monkeypatch.setattr(sys, "argv", ["main.py", "report", "-p", "592155"])
     args = parse_args()
     assert args.pitcher == 592155
 
 
 def test_parse_pitcher_long_flag(monkeypatch):
     """CLI-01: --pitcher long flag works."""
-    monkeypatch.setattr(sys, "argv", ["main.py", "--pitcher", "592155"])
+    monkeypatch.setattr(sys, "argv", ["main.py", "report", "--pitcher", "592155"])
     args = parse_args()
     assert args.pitcher == 592155
 
 
 def test_window_default(monkeypatch):
     """CLI-02: -w defaults to 30 when omitted."""
-    monkeypatch.setattr(sys, "argv", ["main.py", "-p", "592155"])
+    monkeypatch.setattr(sys, "argv", ["main.py", "report", "-p", "592155"])
     args = parse_args()
     assert args.window == 30
 
 
 def test_window_custom(monkeypatch):
     """CLI-02: -w flag overrides default."""
-    monkeypatch.setattr(sys, "argv", ["main.py", "-p", "592155", "-w", "14"])
+    monkeypatch.setattr(sys, "argv", ["main.py", "report", "-p", "592155", "-w", "14"])
     args = parse_args()
     assert args.window == 14
 
 
 def test_verbose_flag_default(monkeypatch):
     """CLI: -v flag defaults to False when omitted."""
-    monkeypatch.setattr(sys, "argv", ["main.py", "-p", "592155"])
+    monkeypatch.setattr(sys, "argv", ["main.py", "report", "-p", "592155"])
     args = parse_args()
     assert args.verbose is False
 
 
 def test_verbose_flag_set(monkeypatch):
     """CLI: -v flag sets verbose to True."""
-    monkeypatch.setattr(sys, "argv", ["main.py", "-p", "592155", "-v"])
+    monkeypatch.setattr(sys, "argv", ["main.py", "report", "-p", "592155", "-v"])
     args = parse_args()
     assert args.verbose is True
 
 
 def test_provider_default_is_gemini(monkeypatch):
     """Provider defaults to gemini (OpenAI removed)."""
-    monkeypatch.setattr(sys, "argv", ["main.py", "-p", "592155"])
+    monkeypatch.setattr(sys, "argv", ["main.py", "report", "-p", "592155"])
     args = parse_args()
     assert args.provider == "gemini"
 
 
 def test_provider_openai_rejected(monkeypatch):
     """--provider openai is no longer a valid choice."""
-    monkeypatch.setattr(sys, "argv", ["main.py", "-p", "592155", "--provider", "openai"])
+    monkeypatch.setattr(sys, "argv", ["main.py", "report", "-p", "592155", "--provider", "openai"])
     with pytest.raises(SystemExit):
         parse_args()
 
 
 def test_pitcher_required(monkeypatch):
-    """CLI-01: Missing -p flag causes main() SystemExit with code 2.
+    """CLI-01: Missing -p flag under 'report' subcommand leaves pitcher as None.
 
     Note: argparse allows -p to be absent (required=False) so that
-    --list-personas can run standalone. main() re-asserts the -p
-    requirement for the normal pipeline path and exits 2.
+    --list-personas can run standalone. _run_report_command() re-asserts
+    the -p requirement for the normal pipeline path and exits 2.
     """
-    monkeypatch.setattr(sys, "argv", ["main.py"])
+    monkeypatch.setattr(sys, "argv", ["main.py", "report"])
     args = parse_args()
-    # parse_args no longer raises — pitcher is None when omitted.
+    # parse_args does not raise — pitcher is None when omitted under report.
     assert args.pitcher is None
-    # main() exits 2 with a clear error message (verified by
+    # _run_report_command() exits 2 with a clear error message (verified by
     # test_cli_no_args_shows_help integration test).
 
 
@@ -87,7 +87,7 @@ def test_pitcher_required(monkeypatch):
 
 def test_persona_default(monkeypatch):
     """CLI-01/CLI-05: --persona defaults to 'scout' when omitted."""
-    monkeypatch.setattr(sys, "argv", ["main.py", "-p", "592155"])
+    monkeypatch.setattr(sys, "argv", ["main.py", "report", "-p", "592155"])
     args = parse_args()
     assert args.persona == "scout"
 
@@ -95,7 +95,7 @@ def test_persona_default(monkeypatch):
 def test_persona_flag_accepted(monkeypatch):
     """CLI-01: --persona analyst parses into args.persona."""
     monkeypatch.setattr(
-        sys, "argv", ["main.py", "-p", "592155", "--persona", "analyst"]
+        sys, "argv", ["main.py", "report", "-p", "592155", "--persona", "analyst"]
     )
     args = parse_args()
     assert args.persona == "analyst"
@@ -104,7 +104,7 @@ def test_persona_flag_accepted(monkeypatch):
 def test_persona_case_normalization(monkeypatch):
     """CLI-01: --persona SCOUT normalizes to 'scout' via type=str.lower."""
     monkeypatch.setattr(
-        sys, "argv", ["main.py", "-p", "592155", "--persona", "SCOUT"]
+        sys, "argv", ["main.py", "report", "-p", "592155", "--persona", "SCOUT"]
     )
     args = parse_args()
     assert args.persona == "scout"
@@ -113,7 +113,7 @@ def test_persona_case_normalization(monkeypatch):
 def test_persona_invalid_exits_2(monkeypatch):
     """CLI-01: --persona bogus is rejected by argparse with exit code 2."""
     monkeypatch.setattr(
-        sys, "argv", ["main.py", "-p", "592155", "--persona", "bogus"]
+        sys, "argv", ["main.py", "report", "-p", "592155", "--persona", "bogus"]
     )
     with pytest.raises(SystemExit) as exc_info:
         parse_args()
@@ -122,14 +122,14 @@ def test_persona_invalid_exits_2(monkeypatch):
 
 def test_list_personas_flag_default(monkeypatch):
     """CLI-02: --list-personas defaults to False when omitted."""
-    monkeypatch.setattr(sys, "argv", ["main.py", "-p", "592155"])
+    monkeypatch.setattr(sys, "argv", ["main.py", "report", "-p", "592155"])
     args = parse_args()
     assert args.list_personas is False
 
 
 def test_list_personas_flag_set(monkeypatch):
     """CLI-02: --list-personas sets list_personas True (no -p required)."""
-    monkeypatch.setattr(sys, "argv", ["main.py", "--list-personas"])
+    monkeypatch.setattr(sys, "argv", ["main.py", "report", "--list-personas"])
     args = parse_args()
     assert args.list_personas is True
 
@@ -153,7 +153,7 @@ def _test_env(**extra: str) -> dict[str, str]:
 def test_cli_valid_pitcher_exit_0():
     """Integration: Valid pitcher ID with test model exits 0 and produces output."""
     result = subprocess.run(
-        [sys.executable, "-m", "pitcher_narratives.cli", "-p", "592155"],
+        [sys.executable, "-m", "pitcher_narratives.cli", "report", "-p", "592155"],
         capture_output=True,
         text=True,
         timeout=60,
@@ -166,7 +166,7 @@ def test_cli_valid_pitcher_exit_0():
 def test_cli_invalid_pitcher_exit_1():
     """Integration: Invalid pitcher ID exits 1 with error message."""
     result = subprocess.run(
-        [sys.executable, "-m", "pitcher_narratives.cli", "-p", "9999999"],
+        [sys.executable, "-m", "pitcher_narratives.cli", "report", "-p", "9999999"],
         capture_output=True,
         text=True,
         timeout=60,
@@ -179,7 +179,7 @@ def test_cli_invalid_pitcher_exit_1():
 def test_cli_custom_window():
     """Integration: -w flag changes lookback window (pipeline completes)."""
     result = subprocess.run(
-        [sys.executable, "-m", "pitcher_narratives.cli", "-p", "592155", "-w", "7"],
+        [sys.executable, "-m", "pitcher_narratives.cli", "report", "-p", "592155", "-w", "7"],
         capture_output=True,
         text=True,
         timeout=60,
@@ -189,11 +189,10 @@ def test_cli_custom_window():
 
 
 def test_cli_no_args_shows_help():
-    """Integration: No args exits 2 with -p/--pitcher required error.
+    """Integration: No args exits 2 with subcommand-required error.
 
-    argparse is configured with required=False on -p so --list-personas
-    can run standalone; main() re-asserts the requirement and exits 2
-    with a clear error message.
+    With subparsers required=True, argparse exits 2 when no subcommand
+    is given. The error message indicates that a subcommand is required.
     """
     result = subprocess.run(
         [sys.executable, "-m", "pitcher_narratives.cli"],
@@ -202,14 +201,14 @@ def test_cli_no_args_shows_help():
         timeout=60,
     )
     assert result.returncode == 2
-    # Custom message from main() (argparse-style wording minus the usage line)
-    assert "-p/--pitcher is required" in result.stderr
+    # argparse emits a usage error when the required subcommand is absent.
+    assert result.stderr.strip()
 
 
 def test_cli_produces_report():
     """Integration: Test model produces non-empty prose report output."""
     result = subprocess.run(
-        [sys.executable, "-m", "pitcher_narratives.cli", "-p", "592155"],
+        [sys.executable, "-m", "pitcher_narratives.cli", "report", "-p", "592155"],
         capture_output=True,
         text=True,
         timeout=60,
@@ -222,7 +221,7 @@ def test_cli_produces_report():
 def test_cli_verbose_shows_pitcher_info():
     """Integration: -v flag shows pitcher name and game dates on stderr."""
     result = subprocess.run(
-        [sys.executable, "-m", "pitcher_narratives.cli", "-p", "592155", "-v"],
+        [sys.executable, "-m", "pitcher_narratives.cli", "report", "-p", "592155", "-v"],
         capture_output=True,
         text=True,
         timeout=60,
@@ -238,7 +237,7 @@ def test_cli_verbose_shows_pitcher_info():
 def test_cli_no_verbose_no_pitcher_info():
     """Integration: Without -v, stderr does not contain pitcher summary."""
     result = subprocess.run(
-        [sys.executable, "-m", "pitcher_narratives.cli", "-p", "592155"],
+        [sys.executable, "-m", "pitcher_narratives.cli", "report", "-p", "592155"],
         capture_output=True,
         text=True,
         timeout=60,
@@ -251,7 +250,7 @@ def test_cli_no_verbose_no_pitcher_info():
 def test_cli_missing_api_key():
     """Integration: Missing API key without test model exits 1."""
     result = subprocess.run(
-        [sys.executable, "-m", "pitcher_narratives.cli", "-p", "592155"],
+        [sys.executable, "-m", "pitcher_narratives.cli", "report", "-p", "592155"],
         capture_output=True,
         text=True,
         timeout=60,
@@ -267,7 +266,7 @@ def test_cli_missing_api_key():
 def test_cli_anchor_check_in_output():
     """Integration: Anchor check section appears in stdout output."""
     result = subprocess.run(
-        [sys.executable, "-m", "pitcher_narratives.cli", "-p", "592155"],
+        [sys.executable, "-m", "pitcher_narratives.cli", "report", "-p", "592155"],
         capture_output=True,
         text=True,
         timeout=60,
@@ -291,7 +290,7 @@ def test_cli_narrative_output_has_required_sections():
     output as a debug/QA section.
     """
     result = subprocess.run(
-        [sys.executable, "-m", "pitcher_narratives.cli", "-p", "592155"],
+        [sys.executable, "-m", "pitcher_narratives.cli", "report", "-p", "592155"],
         capture_output=True,
         text=True,
         timeout=60,
@@ -322,6 +321,7 @@ def test_cli_print_prompts_dumps_prompts_and_bypasses_api_key(tmp_path):
             sys.executable,
             "-m",
             "pitcher_narratives.cli",
+            "report",
             "-p",
             "592155",
             "--print-prompts",
@@ -355,7 +355,7 @@ def test_cli_list_personas_exits_0_without_data():
     API-key check nor the TestModel path are reached.
     """
     result = subprocess.run(
-        [sys.executable, "-m", "pitcher_narratives.cli", "--list-personas"],
+        [sys.executable, "-m", "pitcher_narratives.cli", "report", "--list-personas"],
         capture_output=True,
         text=True,
         timeout=30,
@@ -378,7 +378,7 @@ def test_cli_list_personas_exits_0_without_data():
 def test_cli_list_personas_contains_display_names_and_descriptions():
     """CLI-02: --list-personas output contains display_name and description."""
     result = subprocess.run(
-        [sys.executable, "-m", "pitcher_narratives.cli", "--list-personas"],
+        [sys.executable, "-m", "pitcher_narratives.cli", "report", "--list-personas"],
         capture_output=True,
         text=True,
         timeout=30,
@@ -400,6 +400,7 @@ def test_cli_persona_analyst_exits_0():
             sys.executable,
             "-m",
             "pitcher_narratives.cli",
+            "report",
             "-p",
             "592155",
             "--persona",
@@ -421,6 +422,7 @@ def test_cli_persona_uppercase_normalizes():
             sys.executable,
             "-m",
             "pitcher_narratives.cli",
+            "report",
             "-p",
             "592155",
             "--persona",
@@ -441,6 +443,7 @@ def test_cli_invalid_persona_exits_2():
             sys.executable,
             "-m",
             "pitcher_narratives.cli",
+            "report",
             "-p",
             "592155",
             "--persona",
@@ -474,7 +477,7 @@ def test_cli_persona_scout_and_no_flag_are_identical():
         "env": _test_env(PITCHER_NARRATIVES_TEST_MODEL="1"),
     }
     no_flag = subprocess.run(
-        [sys.executable, "-m", "pitcher_narratives.cli", "-p", "592155"],
+        [sys.executable, "-m", "pitcher_narratives.cli", "report", "-p", "592155"],
         **run_args,
     )
     with_scout = subprocess.run(
@@ -482,6 +485,7 @@ def test_cli_persona_scout_and_no_flag_are_identical():
             sys.executable,
             "-m",
             "pitcher_narratives.cli",
+            "report",
             "-p",
             "592155",
             "--persona",
@@ -505,6 +509,7 @@ def test_cli_verbose_logs_persona():
             sys.executable,
             "-m",
             "pitcher_narratives.cli",
+            "report",
             "-p",
             "592155",
             "-v",
@@ -527,6 +532,7 @@ def test_cli_no_verbose_no_persona_log():
             sys.executable,
             "-m",
             "pitcher_narratives.cli",
+            "report",
             "-p",
             "592155",
             "--persona",
@@ -551,6 +557,7 @@ def test_cli_print_prompts_uses_selected_persona(tmp_path):
             sys.executable,
             "-m",
             "pitcher_narratives.cli",
+            "report",
             "-p",
             "592155",
             "--persona",
@@ -577,6 +584,7 @@ def test_cli_print_prompts_uses_generic_persona(tmp_path):
             sys.executable,
             "-m",
             "pitcher_narratives.cli",
+            "report",
             "-p",
             "592155",
             "--persona",
@@ -592,3 +600,34 @@ def test_cli_print_prompts_uses_generic_persona(tmp_path):
     assert result.returncode == 0, f"stderr: {result.stderr}"
     # Generic overlay's unique structural marker.
     assert "## Summary Table" in result.stderr
+
+
+# ── Subcommand routing ──────────────────────────────────────────────
+
+
+def test_bare_invocation_errors(monkeypatch, capsys):
+    """Without a subcommand, argparse exits with a usage error."""
+    monkeypatch.setattr(sys, "argv", ["cli"])
+    with pytest.raises(SystemExit) as exc:
+        parse_args()
+    assert exc.value.code == 2
+
+
+def test_report_subcommand_parses(monkeypatch):
+    monkeypatch.setattr(sys, "argv", ["cli", "report", "-p", "123"])
+    args = parse_args()
+    assert args.command == "report"
+    assert args.pitcher == 123
+    assert args.window == 30
+
+
+def test_morning_subcommand_defaults(monkeypatch):
+    monkeypatch.setattr(sys, "argv", ["cli", "morning"])
+    args = parse_args()
+    assert args.command == "morning"
+    assert args.window == 1
+    assert args.candidates == 25
+    assert args.min_pitches == 20
+    assert args.provider == "gemini"
+    assert args.persona == "scout"
+    assert args.out == "morning-runs"

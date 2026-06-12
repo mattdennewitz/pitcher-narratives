@@ -24,53 +24,98 @@ log = logging.getLogger("pitcher_narratives")
 
 
 def parse_args() -> argparse.Namespace:
-    """Parse command-line arguments for pitcher scouting reports."""
-    parser = argparse.ArgumentParser(description="Generate pitcher scouting reports from Statcast data")
+    """Parse command-line arguments (subcommands: report, morning)."""
+    parser = argparse.ArgumentParser(
+        description="Pitcher scouting reports and morning digests from Statcast data",
+    )
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    report = sub.add_parser("report", help="Generate one pitcher's scouting report")
     # Note: required=False so `--list-personas` works standalone.
-    # main() re-asserts that -p is present when --list-personas is not used.
-    parser.add_argument("-p", "--pitcher", type=int, required=False, help="MLB pitcher ID (e.g., 592155)")
-    parser.add_argument(
+    # _run_report_command() re-asserts that -p is present when --list-personas is not used.
+    report.add_argument("-p", "--pitcher", type=int, required=False, help="MLB pitcher ID (e.g., 592155)")
+    report.add_argument(
         "-w",
         "--window",
         type=int,
         default=30,
         help="Lookback window in days (default: 30)",
     )
-    parser.add_argument(
+    report.add_argument(
         "-v",
         "--verbose",
         action="store_true",
         help="Show pitcher name, game dates, and pitch counts before generating report",
     )
-    parser.add_argument(
+    report.add_argument(
         "--print-prompts",
         action="store_true",
         help="Print the pipeline prompts that would be sent to the LLM, then exit without calling the model",
     )
-    parser.add_argument(
+    report.add_argument(
         "--provider",
         choices=["gemini", "claude"],
         default="gemini",
         help="LLM provider (default: gemini)"
     )
-    parser.add_argument(
+    report.add_argument(
         "--thinking",
         choices=["minimal", "low", "medium", "high", "xhigh"],
         default="medium",
         help="Thinking/reasoning effort level (default: medium)",
     )
-    parser.add_argument(
+    report.add_argument(
         "--persona",
         type=str.lower,
         choices=sorted(PERSONAS.keys()),
         default="scout",
         help="Writer persona to use (default: scout)",
     )
-    parser.add_argument(
+    report.add_argument(
         "--list-personas",
         action="store_true",
         help="List available personas (id, display name, description) and exit",
     )
+
+    morning = sub.add_parser("morning", help="Scout, select, and write the morning digest")
+    morning.add_argument(
+        "-w",
+        "--window",
+        type=int,
+        default=1,
+        help="Days to scan back from the most recent game date (default: 1)",
+    )
+    morning.add_argument(
+        "--candidates",
+        type=int,
+        default=25,
+        help="Scout candidates per role fed to the selector (default: 25)",
+    )
+    morning.add_argument(
+        "--min-pitches",
+        type=int,
+        default=20,
+        help="Minimum pitches for an appearance to be scored (default: 20)",
+    )
+    morning.add_argument(
+        "--provider",
+        choices=["gemini", "claude"],
+        default="gemini",
+        help="LLM provider (default: gemini)",
+    )
+    morning.add_argument(
+        "--persona",
+        type=str.lower,
+        choices=sorted(PERSONAS.keys()),
+        default="scout",
+        help="Writer persona (default: scout)",
+    )
+    morning.add_argument(
+        "--out",
+        default="morning-runs",
+        help="Output directory root (default: morning-runs)",
+    )
+
     return parser.parse_args()
 
 
@@ -106,10 +151,17 @@ def _print_verbose_summary(data: PitcherData) -> None:
 
 
 def main() -> None:
-    """Entry point: load pitcher data, assemble context, generate report."""
+    """Entry point: dispatch to the report or morning subcommand."""
     load_dotenv()
     args = parse_args()
+    if args.command == "morning":
+        _run_morning_command(args)
+    else:
+        _run_report_command(args)
 
+
+def _run_report_command(args: argparse.Namespace) -> None:
+    """Generate one pitcher's report (the pre-subcommand behavior)."""
     # --list-personas short-circuits BEFORE setup_logging, data loading,
     # and API key check. No LLM, no data file, no network.
     if args.list_personas:
@@ -272,6 +324,36 @@ def main() -> None:
                 f"(prompt warns against these): "
                 f"{', '.join(hallucination_report.outcome_stat_warnings)}"
             )
+
+
+def _run_morning_command(args: argparse.Namespace) -> None:
+    """Run the morning editorial workflow."""
+    env_var = API_KEYS[args.provider]
+    if not os.environ.get(env_var):
+        print(f"Error: {env_var} not set.", file=sys.stderr)
+        sys.exit(1)
+    setup_logging()
+
+    from pathlib import Path
+
+    from pydantic_ai.exceptions import UnexpectedModelBehavior
+
+    from pitcher_narratives.morning import run_morning
+
+    try:
+        run_dir = run_morning(
+            window_days=args.window,
+            top_n=args.candidates,
+            min_pitches=args.min_pitches,
+            provider=args.provider,
+            persona_id=args.persona,
+            out_root=Path(args.out),
+        )
+    except UnexpectedModelBehavior as exc:
+        print(f"Selector failed after retries: {exc}", file=sys.stderr)
+        sys.exit(1)
+    if run_dir is not None:
+        print(f"\nRun artifacts: {run_dir}", file=sys.stderr)
 
 
 if __name__ == "__main__":
