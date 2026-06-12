@@ -336,7 +336,10 @@ def _run_morning_command(args: argparse.Namespace) -> None:
 
     from pathlib import Path
 
-    from pydantic_ai.exceptions import UnexpectedModelBehavior
+    # Lazy imports: pydantic_ai.exceptions pulls in the whole package (~330ms)
+    # and polars is heavy (~90ms); only needed in the except clauses below.
+    import polars as pl
+    from pydantic_ai.exceptions import AgentRunError
 
     from pitcher_narratives.morning import run_morning
 
@@ -349,8 +352,11 @@ def _run_morning_command(args: argparse.Namespace) -> None:
             persona_id=args.persona,
             out_root=Path(args.out),
         )
-    except UnexpectedModelBehavior as exc:
-        print(f"Selector failed after retries: {exc}", file=sys.stderr)
+    except AgentRunError as exc:
+        print(f"Morning run failed: {exc}", file=sys.stderr)
+        sys.exit(1)
+    except (ValueError, FileNotFoundError, pl.exceptions.PolarsError, OSError) as exc:
+        print(f"Morning run failed: {exc}", file=sys.stderr)
         sys.exit(1)
     if run_dir is not None:
         print(f"\nRun artifacts: {run_dir}", file=sys.stderr)

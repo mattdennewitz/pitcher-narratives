@@ -202,7 +202,7 @@ def test_cli_no_args_shows_help():
     )
     assert result.returncode == 2
     # argparse emits a usage error when the required subcommand is absent.
-    assert result.stderr.strip()
+    assert "usage:" in result.stderr
 
 
 def test_cli_produces_report():
@@ -605,9 +605,17 @@ def test_cli_print_prompts_uses_generic_persona(tmp_path):
 # ── Subcommand routing ──────────────────────────────────────────────
 
 
-def test_bare_invocation_errors(monkeypatch, capsys):
+def test_bare_invocation_errors(monkeypatch):
     """Without a subcommand, argparse exits with a usage error."""
     monkeypatch.setattr(sys, "argv", ["cli"])
+    with pytest.raises(SystemExit) as exc:
+        parse_args()
+    assert exc.value.code == 2
+
+
+def test_old_style_invocation_errors(monkeypatch):
+    """Pre-subcommand style 'cli -p 123' is rejected with a usage error."""
+    monkeypatch.setattr(sys, "argv", ["cli", "-p", "123"])
     with pytest.raises(SystemExit) as exc:
         parse_args()
     assert exc.value.code == 2
