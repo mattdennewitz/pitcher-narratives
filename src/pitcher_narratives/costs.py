@@ -60,9 +60,11 @@ class UsageTracker:
         ))
 
     def total_input(self) -> int:
+        """Sum of input tokens across all recorded calls."""
         return sum(r.input_tokens for r in self.records)
 
     def total_output(self) -> int:
+        """Sum of output tokens across all recorded calls."""
         return sum(r.output_tokens for r in self.records)
 
     def total_cost(self) -> float | None:

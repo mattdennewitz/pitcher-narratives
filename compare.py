@@ -48,8 +48,8 @@ def _install_tracking() -> None:
         usage = result.usage()
         _tracker.record(
             _model_name(kwargs.get("model") or self.model),
-            usage.request_tokens or 0,
-            usage.response_tokens or 0,
+            usage.input_tokens or 0,
+            usage.output_tokens or 0,
         )
         return result
 
@@ -64,8 +64,8 @@ def _install_tracking() -> None:
         usage = stream.usage()
         _tracker.record(
             _model_name(kwargs.get("model") or self.model),
-            usage.request_tokens or 0,
-            usage.response_tokens or 0,
+            usage.input_tokens or 0,
+            usage.output_tokens or 0,
         )
 
     Agent.run_stream = tracked_run_stream  # type: ignore[method-assign]
