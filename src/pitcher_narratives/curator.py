@@ -16,6 +16,7 @@ from pydantic_ai import Agent, ModelRetry
 from pydantic_ai.settings import ModelSettings
 
 from pitcher_narratives.config import PROVIDERS
+from pitcher_narratives.costs import UsageTracker
 from pitcher_narratives.scout import ScoredAppearance
 
 __all__ = [
@@ -87,6 +88,8 @@ RULES:
 - For each pick: category from the hierarchy above; angle is ONE
   sentence stating the story; conviction scaled to the sample with a
   one-sentence reason. Be pragmatic, not breathless.
+- Frame each angle for front offices and data-driven fans — what to
+  watch, not what to do.
 """
 
 
@@ -143,6 +146,11 @@ def make_selector_agent(
                 f"starters {bad_sp}, relievers {bad_rp}. "
                 f"Use only the listed pitcher_id values."
             )
+        all_ids = [p.pitcher_id for p in (*output.starters, *output.relievers)]
+        if len(all_ids) != len(set(all_ids)):
+            raise ModelRetry(
+                "Duplicate pitcher_id picks; select each pitcher at most once."
+            )
         return output
 
     return agent
@@ -152,7 +160,7 @@ def select_slate(
     candidates: list[ScoredAppearance],
     *,
     provider: str = "gemini",
-    tracker: object | None = None,
+    tracker: UsageTracker | None = None,
     _model_override: object = None,
 ) -> CurationSlate:
     """Run the selector over the candidates and return the validated slate.
@@ -163,6 +171,8 @@ def select_slate(
         tracker: Optional costs.UsageTracker; records the call as 'selector'.
         _model_override: Test-only model override.
     """
+    if not candidates:
+        raise ValueError("no scored candidates to select from")
     agent = make_selector_agent(provider, candidates)
     briefing = build_selector_briefing(candidates)
     user_msg = (
@@ -174,7 +184,7 @@ def select_slate(
     result = agent.run_sync(**kwargs)
     if tracker is not None:
         usage = result.usage()
-        tracker.record(  # type: ignore[attr-defined]
+        tracker.record(
             PROVIDERS[provider],
             usage.input_tokens or 0,
             usage.output_tokens or 0,

@@ -112,3 +112,22 @@ def test_select_slate_rejects_role_swap():
     })
     with pytest.raises(UnexpectedModelBehavior):
         select_slate(candidates, provider="gemini", _model_override=model)
+
+
+def test_select_slate_empty_candidates_raises_without_llm():
+    """No candidates -> immediate ValueError, no model calls."""
+    with pytest.raises(ValueError):
+        select_slate([], provider="gemini")
+
+
+def test_select_slate_rejects_duplicate_picks():
+    """The same pitcher picked twice bounces via ModelRetry."""
+    from pydantic_ai.exceptions import UnexpectedModelBehavior
+
+    candidates = [_app(1, "SP"), _app(2, "RP")]
+    model = TestModel(custom_output_args={
+        "starters": [_pick(1), _pick(1)],
+        "relievers": [],
+    })
+    with pytest.raises(UnexpectedModelBehavior):
+        select_slate(candidates, provider="gemini", _model_override=model)
