@@ -20,7 +20,7 @@ from pydantic_ai.settings import ModelSettings
 from pitcher_narratives.config import PROVIDERS
 from pitcher_narratives.costs import UsageTracker
 from pitcher_narratives.curator import CurationPick, CurationSlate
-from pitcher_narratives.personas import Persona
+from pitcher_narratives.personas import PERSONAS, Persona
 from pitcher_narratives.scout import ScoredAppearance
 
 __all__ = [
@@ -60,7 +60,7 @@ def build_story_cue(
         "FIRED SIGNALS (from deterministic scouting):",
     ]
     for s in app.signals:
-        lines.append(f"- [{s.name}] {s.detail}")
+        lines.append(f"- [{s.name}, w={s.weight:.1f}] {s.detail}")
     lines += [
         "",
         "EDITORIAL FRAMING (from the selector):",
@@ -115,9 +115,35 @@ CONTRACT:
 """
 
 
+_PRECEDENCE_RULE = """\
+PRECEDENCE: The CONTRACT above governs length and document structure.
+Where the VOICE overlay specifies different lengths, headings, tables,
+or section requirements, ignore those — keep only its tone and
+vocabulary guidance."""
+
+
 def _build_writer_prompt(persona: Persona) -> str:
-    """Digest writer system prompt with the persona voice overlay."""
-    return _DIGEST_WRITER_BASE + "\nVOICE:\n" + persona.overlay
+    """Compose the digest writer system prompt for the given persona.
+
+    Walks the persona's parent chain (parent-first) via the PERSONAS registry
+    and appends each overlay as a VOICE section. The digest CONTRACT governs
+    length and structure; a PRECEDENCE rule at the end of the prompt prevents
+    capsule-specific directives in the overlays from overriding it.
+    """
+    # Collect overlays parent-first, then own overlay.
+    overlays: list[str] = []
+    if persona.parent is not None:
+        overlays.append(PERSONAS[persona.parent].overlay)
+    overlays.append(persona.overlay)
+
+    voice_block = "\n\n".join(overlays)
+    return (
+        _DIGEST_WRITER_BASE
+        + "\nVOICE:\n"
+        + voice_block
+        + "\n\n"
+        + _PRECEDENCE_RULE
+    )
 
 
 def _fallback_summary(pick: CurationPick, cue: str) -> str:

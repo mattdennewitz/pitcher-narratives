@@ -115,6 +115,65 @@ def test_write_pick_summaries_falls_back_on_failure():
     assert "Velocity spike with stuff gain" in summaries[1]
 
 
+def test_write_pick_summaries_records_usage():
+    """Each successful writer call records usage tagged writer:<name>."""
+    from pitcher_narratives.costs import UsageTracker
+
+    apps = {1: _app(1)}
+    cues = {1: "cue"}
+    tracker = UsageTracker()
+    asyncio.run(write_pick_summaries(
+        [_pick(1)], cues, apps, provider="gemini", persona=DEFAULT_PERSONA,
+        tracker=tracker,
+        _model_override=TestModel(custom_output_text="Summary."),
+    ))
+    [rec] = tracker.records
+    assert rec.stage == "writer:Pitcher 1"
+    assert rec.input_tokens > 0
+
+
+def test_write_pick_summaries_mixed_outcomes():
+    """One failing pick falls back; the other still gets written text."""
+
+    class _FailsForCueTwo(TestModel):
+        async def request(self, messages, model_settings, model_request_parameters):
+            # Inspect rendered message content for the cue text.
+            text = " ".join(
+                part.content
+                for m in messages
+                for part in (m.parts if hasattr(m, "parts") else [])
+                if hasattr(part, "content") and isinstance(part.content, str)
+            )
+            if "cue two" in text:
+                raise RuntimeError("provider error")
+            return await super().request(messages, model_settings, model_request_parameters)
+
+    apps = {1: _app(1), 2: _app(2, role="RP")}
+    cues = {1: "cue one", 2: "cue two"}
+    summaries = asyncio.run(write_pick_summaries(
+        [_pick(1), _pick(2)], cues, apps, provider="gemini",
+        persona=DEFAULT_PERSONA, _model_override=_FailsForCueTwo(),
+    ))
+    assert "[summary unavailable" not in summaries[1]
+    assert "[summary unavailable" in summaries[2]
+
+
+def test_writer_prompt_composes_persona_chain():
+    """Child personas include their parent overlay, and the precedence
+    rule appears after the voice section."""
+    from pitcher_narratives.digest import _build_writer_prompt
+    from pitcher_narratives.personas import PERSONAS
+
+    analyst = PERSONAS["analyst"]
+    prompt = _build_writer_prompt(analyst)
+    scout_overlay_marker = PERSONAS["scout"].overlay[:40]
+    assert scout_overlay_marker in prompt          # parent chain included
+    assert analyst.overlay[:40] in prompt          # own overlay included
+    assert prompt.index(scout_overlay_marker) < prompt.index(analyst.overlay[:40])
+    assert "PRECEDENCE:" in prompt
+    assert prompt.index("PRECEDENCE:") > prompt.index("VOICE:")
+
+
 # ── Full Board + assembly ───────────────────────────────────────────
 
 
