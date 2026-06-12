@@ -54,7 +54,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--curate",
         action="store_true",
-        help="Send top results to an LLM to select the 3-5 most compelling stories",
+        help="Run the LLM selector on the scored candidates and print the slate",
     )
     parser.add_argument(
         "--provider",
@@ -123,13 +123,19 @@ def main() -> None:
             print(f"\nError: {env_var} not set.", file=sys.stderr)
             sys.exit(1)
 
-        from pitcher_narratives.curator import curate_appearances
+        from pitcher_narratives.curator import select_slate
 
         print(f"\n{'═' * 72}", file=sys.stderr)
-        print("CURATOR — selecting top stories...", file=sys.stderr)
+        print("SELECTOR — choosing the slate...", file=sys.stderr)
         print(f"{'═' * 72}\n", file=sys.stderr)
 
-        curate_appearances(results, provider=args.provider)
+        slate = select_slate(results, provider=args.provider)
+        names = {r.pitcher_id: r.pitcher_name for r in results}
+        for label, picks in (("STARTERS", slate.starters), ("RELIEVERS", slate.relievers)):
+            print(f"\n{label}")
+            for p in picks:
+                print(f"  [{p.category}] {names.get(p.pitcher_id, p.pitcher_id)} "
+                      f"({p.conviction}): {p.angle}")
 
 
 if __name__ == "__main__":

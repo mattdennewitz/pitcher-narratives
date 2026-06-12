@@ -1,115 +1,183 @@
-"""LLM-powered curation of scouted appearances.
+"""Structured editorial selection of scouted appearances.
 
-Takes the ranked output from scout.scout_appearances and asks an LLM
-to select the 3-5 most compelling stories using a signal hierarchy.
+Stage 1 of the morning run: one LLM call ("the editor") reads the
+role-bucketed candidate briefing and returns a CurationSlate — up to
+10 starters and up to 10 relievers, each with a story category, a
+one-sentence angle, and a conviction level. The angle is the cue the
+Stage 2 writers build from.
 """
 
 from __future__ import annotations
 
-from pydantic_ai import Agent
+from typing import Literal
+
+from pydantic import BaseModel, Field, model_validator
+from pydantic_ai import Agent, ModelRetry
 from pydantic_ai.settings import ModelSettings
 
 from pitcher_narratives.config import PROVIDERS
 from pitcher_narratives.scout import ScoredAppearance
 
-__all__ = ["curate_appearances"]
+__all__ = [
+    "CurationPick",
+    "CurationSlate",
+    "build_selector_briefing",
+    "select_slate",
+]
 
-_CURATOR_PROMPT = """\
-You are a Lead Sabermetric Analyst for a data-driven baseball newsletter. \
-Your job is to select the 3-5 most compelling pitchers from a scored list \
-of recent appearances, focusing on process over results.
+_MAX_PICKS_PER_ROLE = 10
+_SELECTOR_TEMPERATURE = 0.2
+"""Low temperature: selection should be near-deterministic."""
+_SELECTOR_MAX_TOKENS = 8192
+
+
+class CurationPick(BaseModel):
+    """One selected story: the pitcher and the editorial framing."""
+
+    pitcher_id: int
+    category: Literal[
+        "clean_breakout", "lab_project", "identity_crisis", "red_flag"
+    ]
+    angle: str = Field(min_length=1)
+    conviction: Literal["low", "medium", "high"]
+    conviction_reason: str = Field(min_length=1)
+
+
+class CurationSlate(BaseModel):
+    """The morning slate: up to 10 picks per role, at least one overall."""
+
+    starters: list[CurationPick] = Field(max_length=_MAX_PICKS_PER_ROLE)
+    relievers: list[CurationPick] = Field(max_length=_MAX_PICKS_PER_ROLE)
+
+    @model_validator(mode="after")
+    def _non_empty(self) -> "CurationSlate":
+        if not self.starters and not self.relievers:
+            raise ValueError("slate must contain at least one pick")
+        return self
+
+
+_SELECTOR_PROMPT = """\
+You are the editor of a data-driven baseball morning report. From the
+scored candidate appearances below, select up to 10 STARTERS and up to
+10 RELIEVERS whose outings are the most compelling stories, focusing on
+process over results.
 
 Use this hierarchy of signal when choosing:
 
-1. Clean Breakout: A pitcher showing a significant velocity gain (1.5+ mph) \
-coupled with a jump in overall stuff (P+ or S+). This is the strongest \
-signal — a physical change backed by data.
+1. clean_breakout: A significant velocity gain (1.5+ mph) coupled with
+a jump in overall stuff (P+ or S+). A physical change backed by data.
 
-2. Lab Project: Pitchers with top-tier raw stuff (S+ 130+) but poor command \
-(L+ < 80). These are the high-upside development stories — the pitch has \
-the shape, the feel hasn't arrived yet.
+2. lab_project: Top-tier raw stuff (S+ 130+) with poor command
+(L+ < 80). High-upside development stories — the pitch has the shape,
+the feel hasn't arrived.
 
-3. Identity Crisis: A pitcher who radically altered their pitch mix — \
-shelving a primary pitch, doubling a secondary, or introducing something \
-new. The question is whether it's a plan or a problem.
+3. identity_crisis: A radically altered pitch mix — shelving a primary,
+doubling a secondary, or introducing something new. Plan or problem?
 
-4. Red Flag: Statistical anomalies that look like gains but might be \
-tracking errors. A single-game velocity spike of 3+ mph, or a P+ jump \
-that doesn't match the underlying stuff metrics. Flag these honestly.
+4. red_flag: Statistical anomalies that look like gains but might be
+tracking errors. A single-game velocity spike of 3+ mph, or a P+ jump
+the underlying stuff metrics don't support. Flag honestly.
 
-IMPORTANT:
-- Ignore "good" outings where the data matches the season average. \
-Only select the outliers.
-- Be pragmatic and cautious, not breathless. Scale your conviction to \
-the sample.
-- Write for front offices and data-driven fans who want to know what \
-to watch, not what to do.
-- Use conversational scouting language. No clinical jargon.
-
-For each selection, use this exact format:
-
-**[Pitcher Name]**: [One sentence: the core "why"]
-
-- Signal: [The specific S+, L+, velo, or usage numbers that matter]
-- Narrative: [2 sentences — why should a front-office reader care \
-about this specific outing? Frame as observation, not advice.]
-- Conviction: [Low / Medium / High] — [One sentence: is this a \
-sustainable physical change or a one-day outlier?]
-
-After your selections, add:
-
-**Also worth tracking:** [2-3 pitchers that just missed the cut \
-and why in a sentence each.]
-
-**Why not the others:** Go through every pitcher you did NOT select \
-and explain in one sentence each why they didn't make the cut. Be \
-specific — "too small a sample," "signals cancel out," "the numbers \
-are loud but it's spring training noise," etc. Group them if several \
-share the same reason. This section helps the reader understand your \
-filter, not just your picks."""
+RULES:
+- Pick ONLY from the listed candidates, using their exact pitcher_id.
+- Starters come ONLY from the STARTERS section, relievers ONLY from
+  the RELIEVERS section.
+- If a bucket is thin, pick fewer. Never pad with ordinary outings.
+- Ignore "good" outings where the data matches the season average.
+- For each pick: category from the hierarchy above; angle is ONE
+  sentence stating the story; conviction scaled to the sample with a
+  one-sentence reason. Be pragmatic, not breathless.
+"""
 
 
-def _format_appearances_for_llm(appearances: list[ScoredAppearance]) -> str:
-    """Format scored appearances as a readable briefing for the LLM."""
-    lines: list[str] = []
-    for r in appearances:
-        lines.append(
-            f"## {r.pitcher_name} ({r.throws}HP) — "
-            f"{r.game_date}, {r.n_pitches} pitches, score {r.score:.1f}"
-        )
-        for s in r.signals:
-            lines.append(f"- [{s.name}] {s.detail}")
-        lines.append("")
-    return "\n".join(lines)
+def build_selector_briefing(candidates: list[ScoredAppearance]) -> str:
+    """Render role-bucketed candidates as the selector's briefing."""
+
+    def _bucket(label: str, apps: list[ScoredAppearance]) -> list[str]:
+        lines = [f"=== {label} ({len(apps)} candidates) ==="]
+        if not apps:
+            lines.append("(none)")
+        for r in apps:
+            lines.append(
+                f"## {r.pitcher_name} (id={r.pitcher_id}, {r.throws}HP) — "
+                f"{r.game_date}, {r.n_pitches} pitches, score {r.score:.1f}"
+            )
+            for s in r.signals:
+                lines.append(f"- [{s.name}] {s.detail}")
+            lines.append("")
+        return lines
+
+    sp = [r for r in candidates if r.role == "SP"]
+    rp = [r for r in candidates if r.role == "RP"]
+    return "\n".join(_bucket("STARTERS", sp) + _bucket("RELIEVERS", rp))
 
 
-def curate_appearances(
-    appearances: list[ScoredAppearance],
-    *,
-    provider: str = "gemini",
-) -> None:
-    """Send scored appearances to an LLM for curation and stream the output.
-
-    Args:
-        appearances: Ranked list from scout_appearances.
-        provider: LLM provider key.
-    """
+def make_selector_agent(
+    provider: str, candidates: list[ScoredAppearance]
+) -> Agent[None, CurationSlate]:
+    """Build the selector agent with candidate-membership validation."""
     if provider not in PROVIDERS:
         raise ValueError(f"Unknown provider {provider!r}, expected: {', '.join(PROVIDERS)}")
 
-    model = PROVIDERS[provider]
-    settings = ModelSettings(max_tokens=4096)
-    agent = Agent(model, output_type=str, system_prompt=_CURATOR_PROMPT,
-                  model_settings=settings, defer_model_check=True)
+    sp_ids = {r.pitcher_id for r in candidates if r.role == "SP"}
+    rp_ids = {r.pitcher_id for r in candidates if r.role == "RP"}
 
-    briefing = _format_appearances_for_llm(appearances)
-    user_msg = (
-        f"Here are {len(appearances)} scored pitcher appearances from recent games. "
-        f"Select the 3-5 most compelling based on the signal hierarchy.\n\n"
-        f"{briefing}"
+    agent: Agent[None, CurationSlate] = Agent(
+        PROVIDERS[provider],
+        output_type=CurationSlate,
+        system_prompt=_SELECTOR_PROMPT,
+        model_settings=ModelSettings(
+            temperature=_SELECTOR_TEMPERATURE, max_tokens=_SELECTOR_MAX_TOKENS,
+        ),
+        retries=3,
+        defer_model_check=True,
     )
 
-    stream = agent.run_stream_sync(user_prompt=user_msg)
-    for delta in stream.stream_text(delta=True):
-        print(delta, end="", flush=True)
-    print()
+    @agent.output_validator
+    def _picks_are_candidates(output: CurationSlate) -> CurationSlate:
+        bad_sp = [p.pitcher_id for p in output.starters if p.pitcher_id not in sp_ids]
+        bad_rp = [p.pitcher_id for p in output.relievers if p.pitcher_id not in rp_ids]
+        if bad_sp or bad_rp:
+            raise ModelRetry(
+                f"Invalid picks — not candidates in that role bucket: "
+                f"starters {bad_sp}, relievers {bad_rp}. "
+                f"Use only the listed pitcher_id values."
+            )
+        return output
+
+    return agent
+
+
+def select_slate(
+    candidates: list[ScoredAppearance],
+    *,
+    provider: str = "gemini",
+    tracker: object | None = None,
+    _model_override: object = None,
+) -> CurationSlate:
+    """Run the selector over the candidates and return the validated slate.
+
+    Args:
+        candidates: Role-tagged ranked output of scout_appearances.
+        provider: Contestant provider key.
+        tracker: Optional costs.UsageTracker; records the call as 'selector'.
+        _model_override: Test-only model override.
+    """
+    agent = make_selector_agent(provider, candidates)
+    briefing = build_selector_briefing(candidates)
+    user_msg = (
+        "Select the slate from these scored candidates.\n\n" + briefing
+    )
+    kwargs: dict = {"user_prompt": user_msg}
+    if _model_override is not None:
+        kwargs["model"] = _model_override
+    result = agent.run_sync(**kwargs)
+    if tracker is not None:
+        usage = result.usage()
+        tracker.record(  # type: ignore[attr-defined]
+            PROVIDERS[provider],
+            usage.input_tokens or 0,
+            usage.output_tokens or 0,
+            stage="selector",
+        )
+    return result.output
