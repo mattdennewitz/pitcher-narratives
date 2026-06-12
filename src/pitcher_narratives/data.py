@@ -347,8 +347,9 @@ def classify_game_roles(statcast: pl.DataFrame) -> pl.DataFrame:
         )
     starters = (
         statcast.group_by(["game_pk", "inning_topbot"])
-        .agg(pl.col("pitcher").sort_by("at_bat_number").first())
+        .agg(pl.col("pitcher").sort_by("at_bat_number", maintain_order=True, nulls_last=True).first())
         .select("game_pk", "pitcher")
+        .unique(subset=["game_pk", "pitcher"])
         .with_columns(pl.lit("SP").alias("role"))
     )
     appearances = statcast.select("game_pk", "pitcher").unique()

@@ -8,6 +8,7 @@ from pitcher_narratives.data import (
     _SEASON_GRAINS,
     _YEARS,
     classify_appearances,
+    classify_game_roles,
     compute_pitch_type_baseline,
     compute_season_baseline,
     filter_game_type,
@@ -657,8 +658,6 @@ def test_load_statcast_reads_from_statcast_dir():
 
 # ── classify_game_roles ──────────────────────────────────────────────
 
-from pitcher_narratives.data import classify_game_roles
-
 
 def _statcast_rows(rows: list[tuple[int, int, str, int]]) -> pl.DataFrame:
     """Build a minimal statcast frame: (game_pk, pitcher, inning_topbot, at_bat_number)."""
@@ -732,3 +731,22 @@ def test_classify_game_roles_empty_frame():
     df = _statcast_rows([])
     roles = classify_game_roles(df)
     assert roles.is_empty()
+
+
+def test_classify_game_roles_tied_at_bat_number():
+    """On tied at_bat_number (mid-at-bat injury replacement), the
+    first-listed pitcher wins SP deterministically, regardless of
+    later row order."""
+    rows = [
+        (5, 500, "Top", 1),  # starter: first listed at the tied AB
+        (5, 501, "Top", 1),  # mid-at-bat replacement, same at_bat_number
+        (5, 501, "Top", 2),
+    ]
+    df = _statcast_rows(rows)
+    roles = classify_game_roles(df)
+    lookup = {
+        (r["game_pk"], r["pitcher"]): r["role"]
+        for r in roles.iter_rows(named=True)
+    }
+    assert lookup[(5, 500)] == "SP"
+    assert lookup[(5, 501)] == "RP"
