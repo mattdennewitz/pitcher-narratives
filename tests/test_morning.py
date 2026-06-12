@@ -76,6 +76,42 @@ def test_run_morning_writes_all_artifacts(tmp_path, monkeypatch):
     assert any(rec["stage"] == "selector" for rec in usage)
 
 
+def test_run_morning_single_event_loop(tmp_path, monkeypatch):
+    """Selector and writers share one event loop: provider-client state
+    created during selection must not leak into a second loop (observed
+    live: the first writer call failed with 'Event bound to a different
+    event loop' and the top pick always fell back)."""
+    import asyncio
+
+    loops: list = []
+
+    class _LoopRecorder(TestModel):
+        async def request(self, messages, model_settings, model_request_parameters):
+            loops.append(asyncio.get_running_loop())
+            return await super().request(
+                messages, model_settings, model_request_parameters
+            )
+
+    selector = _LoopRecorder(custom_output_args={
+        "starters": [{
+            "pitcher_id": 1, "category": "clean_breakout",
+            "angle": "Velo spike", "conviction": "medium",
+            "conviction_reason": "Shape agrees.",
+        }],
+        "relievers": [],
+    })
+    writer = _LoopRecorder(custom_output_text="A summary.")
+
+    _patch_data(monkeypatch)
+    morning.run_morning(
+        window_days=1, top_n=25, min_pitches=20,
+        provider="gemini", persona_id="scout", out_root=tmp_path,
+        _selector_override=selector, _writer_override=writer,
+    )
+    assert len(loops) >= 2
+    assert all(lp is loops[0] for lp in loops)
+
+
 def test_run_morning_quiet_day_returns_none(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(morning, "scout_appearances", lambda **kw: [])
     result = morning.run_morning(

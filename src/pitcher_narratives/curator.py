@@ -9,6 +9,7 @@ Stage 2 writers build from.
 
 from __future__ import annotations
 
+import asyncio
 from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
@@ -23,6 +24,7 @@ __all__ = [
     "CurationSlate",
     "build_selector_briefing",
     "select_slate",
+    "select_slate_async",
 ]
 
 _MAX_PICKS_PER_ROLE = 10
@@ -155,6 +157,36 @@ def make_selector_agent(
     return agent
 
 
+async def select_slate_async(
+    candidates: list[ScoredAppearance],
+    *,
+    provider: str = "gemini",
+    tracker: UsageTracker | None = None,
+    briefing: str | None = None,
+    _model_override: object = None,
+) -> CurationSlate:
+    """Async core of select_slate; see select_slate for the contract."""
+    if not candidates:
+        raise ValueError("no scored candidates to select from")
+    agent = make_selector_agent(provider, candidates)
+    if briefing is None:
+        briefing = build_selector_briefing(candidates)
+    user_msg = "Select the slate from these scored candidates.\n\n" + briefing
+    kwargs: dict = {"user_prompt": user_msg}
+    if _model_override is not None:
+        kwargs["model"] = _model_override
+    result = await agent.run(**kwargs)
+    if tracker is not None:
+        usage = result.usage()
+        tracker.record(
+            PROVIDERS[provider],
+            usage.input_tokens or 0,
+            usage.output_tokens or 0,
+            stage="selector",
+        )
+    return result.output
+
+
 def select_slate(
     candidates: list[ScoredAppearance],
     *,
@@ -174,23 +206,10 @@ def select_slate(
             selector sees exactly what was persisted.
         _model_override: Test-only model override.
     """
-    if not candidates:
-        raise ValueError("no scored candidates to select from")
-    agent = make_selector_agent(provider, candidates)
-    briefing = briefing if briefing is not None else build_selector_briefing(candidates)
-    user_msg = (
-        "Select the slate from these scored candidates.\n\n" + briefing
-    )
-    kwargs: dict = {"user_prompt": user_msg}
-    if _model_override is not None:
-        kwargs["model"] = _model_override
-    result = agent.run_sync(**kwargs)
-    if tracker is not None:
-        usage = result.usage()
-        tracker.record(
-            PROVIDERS[provider],
-            usage.input_tokens or 0,
-            usage.output_tokens or 0,
-            stage="selector",
-        )
-    return result.output
+    return asyncio.run(select_slate_async(
+        candidates,
+        provider=provider,
+        tracker=tracker,
+        briefing=briefing,
+        _model_override=_model_override,
+    ))

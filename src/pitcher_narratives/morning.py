@@ -18,7 +18,7 @@ from pathlib import Path
 import polars as pl
 
 from pitcher_narratives.costs import UsageTracker
-from pitcher_narratives.curator import build_selector_briefing, select_slate
+from pitcher_narratives.curator import build_selector_briefing, select_slate_async
 from pitcher_narratives.data import (
     compute_pitch_type_baseline,
     compute_season_baseline,
@@ -88,35 +88,43 @@ def run_morning(
     for c in candidates:
         appearances.setdefault(c.pitcher_id, c)
 
-    # ── Select ────────────────────────────────────────────────────
+    # ── Select + write (one event loop) ───────────────────────────
+    # The selector and the writers must share a single event loop:
+    # provider-client state (e.g. asyncio primitives inside the
+    # google-genai/httpx stack) created during selection stays bound
+    # to the loop it was created on, and a second asyncio.run loop
+    # would fail the first writer call.
     log.info("Selecting the slate from %d candidates...", len(candidates))
     briefing = build_selector_briefing(candidates)
-    slate = select_slate(
-        candidates, provider=provider, tracker=tracker,
-        briefing=briefing, _model_override=_selector_override,
-    )
-    picks = [*slate.starters, *slate.relievers]
-    log.info("Slate: %d starters, %d relievers.",
-             len(slate.starters), len(slate.relievers))
 
-    # ── Cues ──────────────────────────────────────────────────────
-    season_baseline, type_baseline, season_velo = _load_baselines()
-    cues = {
-        p.pitcher_id: build_story_cue(
-            appearances[p.pitcher_id], p,
-            season_baseline=season_baseline,
-            type_baseline=type_baseline,
-            season_velo=season_velo.get(p.pitcher_id),
+    async def _llm_stages():
+        slate = await select_slate_async(
+            candidates, provider=provider, tracker=tracker, briefing=briefing,
+            _model_override=_selector_override,
         )
-        for p in picks
-    }
+        picks = [*slate.starters, *slate.relievers]
+        log.info("Slate: %d starters, %d relievers.",
+                 len(slate.starters), len(slate.relievers))
 
-    # ── Write ─────────────────────────────────────────────────────
-    log.info("Writing %d summaries...", len(picks))
-    summaries = asyncio.run(write_pick_summaries(
-        picks, cues, appearances, provider=provider, persona=persona,
-        tracker=tracker, _model_override=_writer_override,
-    ))
+        season_baseline, type_baseline, season_velo = _load_baselines()
+        cues = {
+            p.pitcher_id: build_story_cue(
+                appearances[p.pitcher_id], p,
+                season_baseline=season_baseline,
+                type_baseline=type_baseline,
+                season_velo=season_velo.get(p.pitcher_id),
+            )
+            for p in picks
+        }
+
+        log.info("Writing %d summaries...", len(picks))
+        summaries = await write_pick_summaries(
+            picks, cues, appearances, provider=provider, persona=persona,
+            tracker=tracker, _model_override=_writer_override,
+        )
+        return slate, picks, summaries
+
+    slate, picks, summaries = asyncio.run(_llm_stages())
 
     # ── Assemble + persist ────────────────────────────────────────
     wall_s = time.monotonic() - started
