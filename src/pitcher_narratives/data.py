@@ -20,6 +20,7 @@ __all__ = [
     "RV_DF_PATH",
     "PitcherData",
     "classify_appearances",
+    "classify_game_roles",
     "compute_pitch_type_baseline",
     "compute_season_baseline",
     "filter_game_type",
@@ -322,6 +323,37 @@ def classify_appearances(statcast: pl.DataFrame) -> pl.DataFrame:
             pl.when(pl.col("first_inning") == 1).then(pl.lit("SP")).otherwise(pl.lit("RP")).alias("role")
         )
         .sort("game_date")
+    )
+
+
+def classify_game_roles(statcast: pl.DataFrame) -> pl.DataFrame:
+    """Classify every appearance in a league-wide statcast frame as SP or RP.
+
+    The starter for each side of each game is the pitcher with the
+    minimum at_bat_number in that (game_pk, inning_topbot) group. This
+    handles the opener edge that first_inning == 1 misses: a reliever
+    entering mid-first is RP.
+
+    Args:
+        statcast: Pitch-level frame with at least game_pk, pitcher,
+            inning_topbot, at_bat_number (any number of pitchers/games).
+
+    Returns:
+        One row per (game_pk, pitcher) with a 'role' column ('SP'/'RP').
+    """
+    if statcast.is_empty():
+        return pl.DataFrame(
+            schema={"game_pk": pl.Int64, "pitcher": pl.Int64, "role": pl.String}
+        )
+    starters = (
+        statcast.group_by(["game_pk", "inning_topbot"])
+        .agg(pl.col("pitcher").sort_by("at_bat_number").first())
+        .select("game_pk", "pitcher")
+        .with_columns(pl.lit("SP").alias("role"))
+    )
+    appearances = statcast.select("game_pk", "pitcher").unique()
+    return appearances.join(starters, on=["game_pk", "pitcher"], how="left").with_columns(
+        pl.col("role").fill_null("RP")
     )
 
 

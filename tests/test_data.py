@@ -653,3 +653,82 @@ def test_load_statcast_reads_from_statcast_dir():
     """Integration: pitcher loads from the relocated parquet files."""
     df = load_statcast(592155)
     assert not df.is_empty()
+
+
+# ── classify_game_roles ──────────────────────────────────────────────
+
+from pitcher_narratives.data import classify_game_roles
+
+
+def _statcast_rows(rows: list[tuple[int, int, str, int]]) -> pl.DataFrame:
+    """Build a minimal statcast frame: (game_pk, pitcher, inning_topbot, at_bat_number)."""
+    return pl.DataFrame(
+        {
+            "game_pk": [r[0] for r in rows],
+            "pitcher": [r[1] for r in rows],
+            "inning_topbot": [r[2] for r in rows],
+            "at_bat_number": [r[3] for r in rows],
+        }
+    )
+
+
+def test_classify_game_roles_starter_and_reliever():
+    """First pitcher per side is SP; later pitchers are RP."""
+    df = _statcast_rows([
+        (1, 100, "Top", 1),   # home starter (pitches in Top)
+        (1, 100, "Top", 2),
+        (1, 101, "Top", 30),  # home reliever
+        (1, 200, "Bot", 4),   # away starter
+        (1, 201, "Bot", 35),  # away reliever
+    ])
+    roles = classify_game_roles(df)
+    lookup = {
+        (r["game_pk"], r["pitcher"]): r["role"]
+        for r in roles.iter_rows(named=True)
+    }
+    assert lookup[(1, 100)] == "SP"
+    assert lookup[(1, 101)] == "RP"
+    assert lookup[(1, 200)] == "SP"
+    assert lookup[(1, 201)] == "RP"
+
+
+def test_classify_game_roles_opener_edge():
+    """A reliever entering mid-first inning is RP (min at_bat_number rule),
+    even though their first_inning is 1."""
+    df = _statcast_rows([
+        (2, 300, "Top", 1),  # opener: faces 2 batters in the 1st
+        (2, 300, "Top", 2),
+        (2, 301, "Top", 3),  # bulk guy, also enters in the 1st inning
+    ])
+    roles = classify_game_roles(df)
+    lookup = {
+        (r["game_pk"], r["pitcher"]): r["role"]
+        for r in roles.iter_rows(named=True)
+    }
+    assert lookup[(2, 300)] == "SP"  # opener started the game: SP
+    assert lookup[(2, 301)] == "RP"  # mid-inning entrant: RP
+
+
+def test_classify_game_roles_multiple_games():
+    """Roles are computed per game: the same pitcher can be SP in one
+    game and RP in another."""
+    df = _statcast_rows([
+        (3, 400, "Top", 1),
+        (4, 400, "Top", 20),
+        (4, 401, "Top", 1),
+    ])
+    roles = classify_game_roles(df)
+    lookup = {
+        (r["game_pk"], r["pitcher"]): r["role"]
+        for r in roles.iter_rows(named=True)
+    }
+    assert lookup[(3, 400)] == "SP"
+    assert lookup[(4, 400)] == "RP"
+    assert lookup[(4, 401)] == "SP"
+
+
+def test_classify_game_roles_empty_frame():
+    """An empty frame yields an empty result, not an error."""
+    df = _statcast_rows([])
+    roles = classify_game_roles(df)
+    assert roles.is_empty()
