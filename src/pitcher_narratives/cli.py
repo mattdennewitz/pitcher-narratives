@@ -336,8 +336,9 @@ def _run_morning_command(args: argparse.Namespace) -> None:
 
     from pathlib import Path
 
-    # Lazy imports: pydantic_ai.exceptions pulls in the whole package (~330ms)
-    # and polars is heavy (~90ms); only needed in the except clauses below.
+    # Lazy imports: pydantic_ai (~330ms) and polars (~90ms) are heavy, and
+    # run_morning pulls in both. Importing at call time keeps
+    # `pitcher-narratives --help` fast.
     import polars as pl
     from pydantic_ai.exceptions import AgentRunError
 

@@ -13,9 +13,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
 from pydantic_ai import Agent, ModelRetry
-from pydantic_ai.settings import ModelSettings
 
-from pitcher_narratives.config import PROVIDERS
+from pitcher_narratives.config import PROVIDERS, make_model_settings
 from pitcher_narratives.costs import UsageTracker
 from pitcher_narratives.scout import ScoredAppearance
 
@@ -129,8 +128,8 @@ def make_selector_agent(
         PROVIDERS[provider],
         output_type=CurationSlate,
         system_prompt=_SELECTOR_PROMPT,
-        model_settings=ModelSettings(
-            temperature=_SELECTOR_TEMPERATURE, max_tokens=_SELECTOR_MAX_TOKENS,
+        model_settings=make_model_settings(
+            provider, "medium", _SELECTOR_TEMPERATURE, max_tokens=_SELECTOR_MAX_TOKENS,
         ),
         retries=3,
         defer_model_check=True,

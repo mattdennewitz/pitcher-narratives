@@ -158,6 +158,16 @@ def test_write_pick_summaries_mixed_outcomes():
     assert "[summary unavailable" in summaries[2]
 
 
+def test_writer_settings_are_provider_aware():
+    """Gemini writers get explicit thinking config so reasoning tokens
+    cannot silently consume the output budget (observed live: summaries
+    truncated mid-sentence at the cap)."""
+    from pitcher_narratives.digest import _make_writer_agent
+
+    agent = _make_writer_agent("gemini", DEFAULT_PERSONA)
+    assert "google_thinking_config" in agent.model_settings
+
+
 def test_writer_prompt_composes_persona_chain():
     """Child personas include their parent overlay, and the precedence
     rule appears after the voice section."""

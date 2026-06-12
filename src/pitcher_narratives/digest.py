@@ -15,9 +15,8 @@ from datetime import date
 import polars as pl
 
 from pydantic_ai import Agent
-from pydantic_ai.settings import ModelSettings
 
-from pitcher_narratives.config import PROVIDERS
+from pitcher_narratives.config import PROVIDERS, TOKEN_BUDGET_LARGE, make_model_settings
 from pitcher_narratives.costs import UsageTracker
 from pitcher_narratives.curator import CurationPick, CurationSlate
 from pitcher_narratives.personas import PERSONAS, Persona
@@ -34,7 +33,6 @@ log = logging.getLogger("pitcher_narratives.digest")
 
 _WRITER_TEMPERATURE = 0.7
 """Match the pipeline writer's voice settings."""
-_WRITER_MAX_TOKENS = 2048
 
 
 # ── Cue builder ─────────────────────────────────────────────────────
@@ -146,6 +144,26 @@ def _build_writer_prompt(persona: Persona) -> str:
     )
 
 
+def _make_writer_agent(provider: str, persona: Persona) -> Agent[None, str]:
+    """Build the per-pick digest writer agent.
+
+    Settings go through the shared provider-aware factory so gemini
+    gets an explicit thinking level (its default thinking would
+    otherwise consume the output budget) and claude gets thinking
+    headroom, matching the pipeline writer's convention.
+    """
+    return Agent(
+        PROVIDERS[provider],
+        output_type=str,
+        system_prompt=_build_writer_prompt(persona),
+        model_settings=make_model_settings(
+            provider, "low", _WRITER_TEMPERATURE, max_tokens=TOKEN_BUDGET_LARGE,
+        ),
+        retries=3,
+        defer_model_check=True,
+    )
+
+
 def _fallback_summary(pick: CurationPick, cue: str) -> str:
     """Deterministic stand-in when a writer call fails."""
     return (
@@ -171,16 +189,7 @@ async def write_pick_summaries(
     Returns:
         Mapping of pitcher_id to summary text (written or fallback).
     """
-    agent: Agent[None, str] = Agent(
-        PROVIDERS[provider],
-        output_type=str,
-        system_prompt=_build_writer_prompt(persona),
-        model_settings=ModelSettings(
-            temperature=_WRITER_TEMPERATURE, max_tokens=_WRITER_MAX_TOKENS,
-        ),
-        retries=3,
-        defer_model_check=True,
-    )
+    agent = _make_writer_agent(provider, persona)
 
     async def _write_one(pick: CurationPick) -> tuple[int, str]:
         name = appearances[pick.pitcher_id].pitcher_name

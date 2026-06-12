@@ -76,6 +76,14 @@ def test_briefing_buckets_by_role():
 # ── Selector agent ──────────────────────────────────────────────────
 
 
+def test_selector_settings_are_provider_aware():
+    """Gemini selector gets explicit thinking config via the shared factory."""
+    from pitcher_narratives.curator import make_selector_agent
+
+    agent = make_selector_agent("gemini", [_app(1, "SP")])
+    assert "google_thinking_config" in agent.model_settings
+
+
 def test_select_slate_returns_validated_slate():
     candidates = [_app(1, "SP"), _app(2, "RP")]
     model = TestModel(custom_output_args={
