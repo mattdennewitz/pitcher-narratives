@@ -75,13 +75,18 @@ class UsageTracker:
         return sum(costs)
 
     def to_json(self) -> list[dict]:
-        """Raw per-call records for usage.json."""
+        """Raw per-call records for usage.json.
+
+        Each record carries stage, model, token counts, and the per-call
+        dollar cost (None — JSON null — for unpriced models).
+        """
         return [
             {
                 "stage": r.stage,
                 "model": r.model,
                 "input_tokens": r.input_tokens,
                 "output_tokens": r.output_tokens,
+                "cost": r.cost(),
             }
             for r in self.records
         ]

@@ -1,5 +1,7 @@
 """Tests for the shared cost-tracking module."""
 
+import pytest
+
 from pitcher_narratives.costs import PRICING, UsageTracker, model_label
 
 
@@ -41,6 +43,7 @@ def test_tracker_unknown_model_costs_none():
     assert t.total_cost() is None or t.total_cost() == 0.0
     block = t.render_cost_block(wall_s=10.0)
     assert "n/a" in block
+    assert t.to_json()[0]["cost"] is None
 
 
 def test_render_cost_block_contents():
@@ -62,12 +65,11 @@ def test_to_json_records():
     t = UsageTracker()
     t.record("anthropic:claude-sonnet-4-6", 100, 50, stage="selector")
     [rec] = t.to_json()
-    assert rec == {
-        "stage": "selector",
-        "model": "claude-sonnet-4-6",
-        "input_tokens": 100,
-        "output_tokens": 50,
-    }
+    assert rec["stage"] == "selector"
+    assert rec["model"] == "claude-sonnet-4-6"
+    assert rec["input_tokens"] == 100
+    assert rec["output_tokens"] == 50
+    assert rec["cost"] == pytest.approx(0.00105)
 
 
 def test_format_table_still_renders_markdown():
