@@ -11,7 +11,7 @@ import os
 import sys
 
 from pitcher_narratives.config import API_KEYS, setup_logging
-from pitcher_narratives.scout import scout_appearances
+from pitcher_narratives.scout import _top_per_role, scout_appearances
 
 
 def parse_args() -> argparse.Namespace:
@@ -94,9 +94,9 @@ def main() -> None:
     print("Scanning appearances...", file=sys.stderr)
     results = scout_appearances(
         window_days=args.window,
-        top_n=args.top,
         min_pitches=args.min_pitches,
     )
+    results = _top_per_role(results, args.top)
 
     if args.min_score > 0:
         results = [r for r in results if r.score >= args.min_score]

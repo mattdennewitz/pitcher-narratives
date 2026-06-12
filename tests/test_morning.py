@@ -140,6 +140,50 @@ def test_run_morning_quiet_day_returns_none(tmp_path, monkeypatch, capsys):
     assert not list(tmp_path.iterdir())
 
 
+def test_full_board_lists_beyond_candidate_cap(tmp_path, monkeypatch):
+    """The Full Board shows every scored appearance even when the
+    selector only sees the top N per role."""
+    apps = [_app(1, "SP")] + [
+        ScoredAppearance(
+            pitcher_id=pid, pitcher_name=f"Pitcher {pid}", throws="R",
+            game_date=date(2026, 6, 10), game_pk=pid, n_pitches=40,
+            score=float(5 - pid), role="SP",
+            signals=[Signal("velo_delta", 3.0, "+1.6 mph vs season")],
+        )
+        for pid in range(2, 5)
+    ]
+    monkeypatch.setattr(morning, "scout_appearances", lambda **kw: apps)
+    season = pl.DataFrame({
+        "pitcher": [1], "season": [2026], "n_pitches": [900],
+        "P+": [104.0], "S+": [112.0], "L+": [96.0],
+    })
+    types = pl.DataFrame({
+        "pitcher": [1], "season": [2026], "pitch_type": ["FF"],
+        "n_pitches": [500], "S+": [115.0], "L+": [98.0], "usage_pct": [55.6],
+    })
+    monkeypatch.setattr(morning, "_load_baselines", lambda: (season, types, {}))
+    selector = TestModel(custom_output_args={
+        "starters": [{
+            "pitcher_id": 1, "category": "clean_breakout",
+            "angle": "Velo spike", "conviction": "medium",
+            "conviction_reason": "Shape agrees.",
+        }],
+        "relievers": [],
+    })
+    run_dir = morning.run_morning(
+        window_days=1, top_n=1, min_pitches=20,
+        provider="gemini", persona_id="scout", out_root=tmp_path,
+        _selector_override=selector,
+        _writer_override=TestModel(custom_output_text="A summary."),
+    )
+    digest = (run_dir / "digest.md").read_text()
+    board = digest[digest.index("## The Full Board"):]
+    for pid in range(1, 5):
+        assert f"Pitcher {pid}" in board       # all scored, not just top_n=1
+    briefing = (run_dir / "briefing.md").read_text()
+    assert "Pitcher 4" not in briefing          # selector saw only the cap
+
+
 def test_run_morning_duplicate_pitcher_keeps_highest_scored(tmp_path, monkeypatch):
     """A pitcher with two scored appearances keys to the higher-scored one."""
     high = _app(1, "SP")

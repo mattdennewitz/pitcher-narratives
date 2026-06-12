@@ -108,18 +108,16 @@ def _get_max_date(appearance_df: pl.DataFrame) -> date:
 def scout_appearances(
     *,
     window_days: int = 1,
-    top_n: int = 20,
     min_pitches: int = 20,
 ) -> list[ScoredAppearance]:
     """Score all pitcher appearances in a date window by interestingness.
 
     Args:
         window_days: How many days back to scan (default: 1 = most recent date only).
-        top_n: Return the top N most interesting appearances PER ROLE (SP and RP ranked separately).
         min_pitches: Minimum pitches in an appearance to consider.
 
     Returns:
-        Ranked list of ScoredAppearance, highest score first.
+        Every scored appearance in the window, highest score first.
     """
     # Load data
     app_df = load_full_agg("pitcher_appearance")
@@ -237,7 +235,8 @@ def scout_appearances(
                 signals=signals,
             ))
 
-    return _top_per_role(results, top_n)
+    results.sort(key=lambda x: x.score, reverse=True)
+    return results
 
 
 

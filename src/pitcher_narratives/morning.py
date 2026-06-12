@@ -31,7 +31,12 @@ from pitcher_narratives.digest import (
     write_pick_summaries,
 )
 from pitcher_narratives.personas import PERSONAS
-from pitcher_narratives.scout import ScoredAppearance, _compute_velo_baselines, scout_appearances
+from pitcher_narratives.scout import (
+    ScoredAppearance,
+    _compute_velo_baselines,
+    _top_per_role,
+    scout_appearances,
+)
 
 __all__ = ["run_morning"]
 
@@ -78,15 +83,14 @@ def run_morning(
 
     # ── Scout ─────────────────────────────────────────────────────
     log.info("Scouting appearances...")
-    candidates = scout_appearances(
-        window_days=window_days, top_n=top_n, min_pitches=min_pitches,
-    )
-    if not candidates:
+    all_scored = scout_appearances(window_days=window_days, min_pitches=min_pitches)
+    if not all_scored:
         print("No interesting appearances found — quiet day, no digest.", file=sys.stderr)
         return None
-    game_date = max(c.game_date for c in candidates)
+    candidates = _top_per_role(all_scored, top_n)
+    game_date = max(c.game_date for c in all_scored)
     appearances: dict[int, ScoredAppearance] = {}
-    for c in candidates:
+    for c in all_scored:
         appearances.setdefault(c.pitcher_id, c)
 
     # ── Select + write (one event loop) ───────────────────────────
@@ -138,7 +142,7 @@ def run_morning(
         )
     digest = assemble_digest(
         slate=slate, summaries=summaries, appearances=appearances,
-        board=candidates, game_date=game_date, cost_block=cost_block,
+        board=all_scored, game_date=game_date, cost_block=cost_block,
     )
 
     run_dir = out_root / str(game_date)
