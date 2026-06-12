@@ -112,6 +112,24 @@ def test_run_morning_single_event_loop(tmp_path, monkeypatch):
     assert all(lp is loops[0] for lp in loops)
 
 
+def test_run_morning_notes_failed_writers_in_cost_block(tmp_path, monkeypatch):
+    """A fallen-back writer is disclosed in the cost footer."""
+
+    class _ExplodingWriter(TestModel):
+        async def request(self, messages, model_settings, model_request_parameters):
+            raise RuntimeError("provider error")
+
+    _patch_data(monkeypatch)
+    run_dir = morning.run_morning(
+        window_days=1, top_n=25, min_pitches=20,
+        provider="gemini", persona_id="scout", out_root=tmp_path,
+        _selector_override=_selector_model(),
+        _writer_override=_ExplodingWriter(),
+    )
+    digest = (run_dir / "digest.md").read_text()
+    assert "2 writer call(s) failed" in digest
+
+
 def test_run_morning_quiet_day_returns_none(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(morning, "scout_appearances", lambda **kw: [])
     result = morning.run_morning(

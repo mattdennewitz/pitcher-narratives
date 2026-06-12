@@ -27,6 +27,7 @@ from pitcher_narratives.data import (
 from pitcher_narratives.digest import (
     assemble_digest,
     build_story_cue,
+    is_fallback_summary,
     write_pick_summaries,
 )
 from pitcher_narratives.personas import PERSONAS
@@ -129,6 +130,12 @@ def run_morning(
     # ── Assemble + persist ────────────────────────────────────────
     wall_s = time.monotonic() - started
     cost_block = tracker.render_cost_block(wall_s=wall_s)
+    failed = sum(1 for text in summaries.values() if is_fallback_summary(text))
+    if failed:
+        cost_block += (
+            f"\nnote: {failed} writer call(s) failed and fell back; "
+            f"their token cost is not captured above"
+        )
     digest = assemble_digest(
         slate=slate, summaries=summaries, appearances=appearances,
         board=candidates, game_date=game_date, cost_block=cost_block,

@@ -23,8 +23,10 @@ from pitcher_narratives.personas import PERSONAS, Persona
 from pitcher_narratives.scout import ScoredAppearance
 
 __all__ = [
+    "FALLBACK_MARKER",
     "assemble_digest",
     "build_story_cue",
+    "is_fallback_summary",
     "render_full_board",
     "write_pick_summaries",
 ]
@@ -164,10 +166,19 @@ def _make_writer_agent(provider: str, persona: Persona) -> Agent[None, str]:
     )
 
 
+FALLBACK_MARKER = "*[summary unavailable"
+"""Prefix marking a deterministic fallback summary (writer call failed)."""
+
+
+def is_fallback_summary(text: str) -> bool:
+    """True when a summary is the deterministic fallback, not written prose."""
+    return text.startswith(FALLBACK_MARKER)
+
+
 def _fallback_summary(pick: CurationPick, cue: str) -> str:
     """Deterministic stand-in when a writer call fails."""
     return (
-        f"*[summary unavailable — writer call failed; cue data follows]*\n\n"
+        f"{FALLBACK_MARKER} — writer call failed; cue data follows]*\n\n"
         f"**Angle:** {pick.angle}\n"
         f"**Conviction:** {pick.conviction} — {pick.conviction_reason}\n\n"
         f"```\n{cue}\n```"
