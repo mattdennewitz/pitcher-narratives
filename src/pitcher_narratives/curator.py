@@ -161,6 +161,7 @@ def select_slate(
     *,
     provider: str = "gemini",
     tracker: UsageTracker | None = None,
+    briefing: str | None = None,
     _model_override: object = None,
 ) -> CurationSlate:
     """Run the selector over the candidates and return the validated slate.
@@ -169,12 +170,15 @@ def select_slate(
         candidates: Role-tagged ranked output of scout_appearances.
         provider: Contestant provider key.
         tracker: Optional costs.UsageTracker; records the call as 'selector'.
+        briefing: Pre-built selector briefing; if None, one is built from
+            candidates.  Pass the same briefing written to briefing.md so the
+            selector sees exactly what was persisted.
         _model_override: Test-only model override.
     """
     if not candidates:
         raise ValueError("no scored candidates to select from")
     agent = make_selector_agent(provider, candidates)
-    briefing = build_selector_briefing(candidates)
+    briefing = briefing if briefing is not None else build_selector_briefing(candidates)
     user_msg = (
         "Select the slate from these scored candidates.\n\n" + briefing
     )

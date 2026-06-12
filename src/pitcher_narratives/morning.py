@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import sys
 import time
 from pathlib import Path
 
@@ -29,7 +30,7 @@ from pitcher_narratives.digest import (
     write_pick_summaries,
 )
 from pitcher_narratives.personas import PERSONAS
-from pitcher_narratives.scout import _compute_velo_baselines, scout_appearances
+from pitcher_narratives.scout import ScoredAppearance, _compute_velo_baselines, scout_appearances
 
 __all__ = ["run_morning"]
 
@@ -46,8 +47,10 @@ def _load_baselines() -> tuple[pl.DataFrame, pl.DataFrame, dict[int, float]]:
     velo = _compute_velo_baselines()
     season_velo: dict[int, float] = {}
     if not velo.is_empty():
-        per_pitcher = velo.group_by("pitcher").agg(
-            pl.col("season_velo").last(),
+        per_pitcher = (
+            velo.sort("game_date")
+            .group_by("pitcher", maintain_order=True)
+            .agg(pl.col("season_velo").last())
         )
         season_velo = {
             row["pitcher"]: row["season_velo"]
@@ -78,17 +81,19 @@ def run_morning(
         window_days=window_days, top_n=top_n, min_pitches=min_pitches,
     )
     if not candidates:
-        print("No interesting appearances found — quiet day, no digest.")
+        print("No interesting appearances found — quiet day, no digest.", file=sys.stderr)
         return None
     game_date = max(c.game_date for c in candidates)
-    appearances = {c.pitcher_id: c for c in candidates}
+    appearances: dict[int, ScoredAppearance] = {}
+    for c in candidates:
+        appearances.setdefault(c.pitcher_id, c)
 
     # ── Select ────────────────────────────────────────────────────
     log.info("Selecting the slate from %d candidates...", len(candidates))
     briefing = build_selector_briefing(candidates)
     slate = select_slate(
         candidates, provider=provider, tracker=tracker,
-        _model_override=_selector_override,
+        briefing=briefing, _model_override=_selector_override,
     )
     picks = [*slate.starters, *slate.relievers]
     log.info("Slate: %d starters, %d relievers.",

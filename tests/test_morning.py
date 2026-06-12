@@ -84,3 +84,37 @@ def test_run_morning_quiet_day_returns_none(tmp_path, monkeypatch, capsys):
     )
     assert result is None
     assert not list(tmp_path.iterdir())
+
+
+def test_run_morning_duplicate_pitcher_keeps_highest_scored(tmp_path, monkeypatch):
+    """A pitcher with two scored appearances keys to the higher-scored one."""
+    high = _app(1, "SP")
+    low = ScoredAppearance(
+        pitcher_id=1, pitcher_name="Pitcher 1", throws="R",
+        game_date=date(2026, 6, 9), game_pk=2, n_pitches=30, score=2.0,
+        role="SP",
+        signals=[Signal("workload_flag", 1.0, "2 consecutive days")],
+    )
+    monkeypatch.setattr(
+        morning, "scout_appearances",
+        lambda **kw: [high, low, _app(2, "RP")],
+    )
+    season = pl.DataFrame({
+        "pitcher": [1, 2], "season": [2026, 2026], "n_pitches": [900, 400],
+        "P+": [104.0, 99.0], "S+": [112.0, 105.0], "L+": [96.0, 101.0],
+    })
+    types = pl.DataFrame({
+        "pitcher": [1], "season": [2026], "pitch_type": ["FF"],
+        "n_pitches": [500], "S+": [115.0], "L+": [98.0], "usage_pct": [55.6],
+    })
+    monkeypatch.setattr(morning, "_load_baselines", lambda: (season, types, {}))
+    run_dir = morning.run_morning(
+        window_days=2, top_n=25, min_pitches=20,
+        provider="gemini", persona_id="scout", out_root=tmp_path,
+        _selector_override=_selector_model(),
+        _writer_override=TestModel(custom_output_text="A summary."),
+    )
+    briefing = (run_dir / "briefing.md").read_text()
+    assert "80 pitches" in briefing            # high-scored appearance present
+    digest = (run_dir / "digest.md").read_text()
+    assert run_dir == tmp_path / "2026-06-10"  # game date = max date
