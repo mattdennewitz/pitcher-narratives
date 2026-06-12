@@ -318,8 +318,8 @@ In `compare.py`:
 ```python
 _tracker.record(
     model_name,
-    usage.request_tokens or 0,
-    usage.response_tokens or 0,
+    usage.input_tokens or 0,
+    usage.output_tokens or 0,
 )
 ```
 
@@ -970,8 +970,8 @@ def select_slate(
         usage = result.usage()
         tracker.record(  # type: ignore[attr-defined]
             PROVIDERS[provider],
-            usage.request_tokens or 0,
-            usage.response_tokens or 0,
+            usage.input_tokens or 0,
+            usage.output_tokens or 0,
             stage="selector",
         )
     return result.output
@@ -1384,8 +1384,8 @@ async def write_pick_summaries(
             usage = result.usage()
             tracker.record(  # type: ignore[attr-defined]
                 PROVIDERS[provider],
-                usage.request_tokens or 0,
-                usage.response_tokens or 0,
+                usage.input_tokens or 0,
+                usage.output_tokens or 0,
                 stage=f"writer:{name}",
             )
         return pick.pitcher_id, result.output
