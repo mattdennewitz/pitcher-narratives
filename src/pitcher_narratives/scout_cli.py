@@ -31,7 +31,7 @@ def parse_args() -> argparse.Namespace:
         "--top",
         type=int,
         default=20,
-        help="Number of results to show (default: 20)",
+        help="Number of results per role to show (default: 20)",
     )
     parser.add_argument(
         "--min-pitches",
@@ -67,14 +67,14 @@ def parse_args() -> argparse.Namespace:
 
 def _print_table(results: list, *, verbose: bool) -> None:
     """Print the scored appearances table."""
-    print(f"{'Score':>5}  {'Pitcher':<25} {'T':>1}  {'Date':<10}  {'#P':>3}  {'Signals'}")
-    print(f"{'─' * 5}  {'─' * 25} {'─':>1}  {'─' * 10}  {'─' * 3}  {'─' * 40}")
+    print(f"{'Score':>5}  {'Pitcher':<25} {'T':>1} {'Role':<4}  {'Date':<10}  {'#P':>3}  {'Signals'}")
+    print(f"{'─' * 5}  {'─' * 25} {'─':>1} {'─' * 4}  {'─' * 10}  {'─' * 3}  {'─' * 40}")
 
     for r in results:
         signal_names = ", ".join(s.name for s in r.signals)
         print(
-            f"{r.score:5.1f}  {r.pitcher_name:<25} {r.throws:>1}  {r.game_date!s:<10}  "
-            f"{r.n_pitches:>3}  {signal_names}"
+            f"{r.score:5.1f}  {r.pitcher_name:<25} {r.throws:>1} {r.role:<4}  "
+            f"{r.game_date!s:<10}  {r.n_pitches:>3}  {signal_names}"
         )
 
         if verbose:

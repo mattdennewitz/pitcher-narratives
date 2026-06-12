@@ -17,6 +17,7 @@ from typing import cast
 import polars as pl
 
 from pitcher_narratives.data import (
+    classify_game_roles,
     compute_pitch_type_baseline,
     compute_season_baseline,
     load_all_statcast,
@@ -75,6 +76,7 @@ class ScoredAppearance:
     game_pk: int
     n_pitches: int
     score: float
+    role: str = "RP"
     signals: list[Signal] = field(default_factory=list)
 
     @property
@@ -83,6 +85,16 @@ class ScoredAppearance:
         return " | ".join(f"{s.name}: {s.detail}" for s in self.signals)
 
 
+
+
+def _top_per_role(results: list[ScoredAppearance], top_n: int) -> list[ScoredAppearance]:
+    """Keep the top N per role, merged and sorted by score descending."""
+    ranked = sorted(results, key=lambda x: x.score, reverse=True)
+    sp = [r for r in ranked if r.role == "SP"][:top_n]
+    rp = [r for r in ranked if r.role == "RP"][:top_n]
+    merged = sp + rp
+    merged.sort(key=lambda x: x.score, reverse=True)
+    return merged
 
 
 def _get_max_date(appearance_df: pl.DataFrame) -> date:
@@ -103,7 +115,7 @@ def scout_appearances(
 
     Args:
         window_days: How many days back to scan (default: 1 = most recent date only).
-        top_n: Return the top N most interesting appearances.
+        top_n: Return the top N most interesting appearances PER ROLE (SP and RP ranked separately).
         min_pitches: Minimum pitches in an appearance to consider.
 
     Returns:
@@ -144,6 +156,8 @@ def scout_appearances(
 
     # Track consecutive-day pitchers
     consecutive_days = _find_consecutive_day_pitchers(app_df)
+
+    role_map = _compute_role_map()
 
     results: list[ScoredAppearance] = []
     for row in app_window.iter_rows(named=True):
@@ -219,12 +233,11 @@ def scout_appearances(
                 game_pk=game_pk,
                 n_pitches=row["n_pitches"],
                 score=total,
+                role=role_map.get((pitcher_id, game_pk), "RP"),
                 signals=signals,
             ))
 
-    # Sort by score descending, return top N
-    results.sort(key=lambda x: x.score, reverse=True)
-    return results[:top_n]
+    return _top_per_role(results, top_n)
 
 
 
@@ -253,6 +266,20 @@ def _compute_velo_baselines() -> pl.DataFrame:
     )
 
     return game.join(season, on=["pitcher", "_year"]).drop("_year")
+
+
+def _compute_role_map() -> dict[tuple[int, int], str]:
+    """Map (pitcher_id, game_pk) -> 'SP'/'RP' from league-wide statcast."""
+    df = load_all_statcast(
+        columns=["pitcher", "game_pk", "inning_topbot", "at_bat_number"],
+    )
+    if df.is_empty():
+        return {}
+    roles = classify_game_roles(df)
+    return {
+        (row["pitcher"], row["game_pk"]): row["role"]
+        for row in roles.iter_rows(named=True)
+    }
 
 
 def _find_consecutive_day_pitchers(app_df: pl.DataFrame) -> dict[int, int]:
