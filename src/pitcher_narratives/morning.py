@@ -33,7 +33,7 @@ from pitcher_narratives.digest import (
 from pitcher_narratives.personas import PERSONAS
 from pitcher_narratives.scout import (
     ScoredAppearance,
-    _compute_velo_baselines,
+    compute_velo_baselines,
     scout_appearances,
     top_per_role,
 )
@@ -50,7 +50,7 @@ def _load_baselines() -> tuple[pl.DataFrame, pl.DataFrame, dict[int, float]]:
     season_baseline = compute_season_baseline(season_df)
     type_baseline = compute_pitch_type_baseline(type_df)
 
-    velo = _compute_velo_baselines()
+    velo = compute_velo_baselines()
     season_velo: dict[int, float] = {}
     if not velo.is_empty():
         per_pitcher = (

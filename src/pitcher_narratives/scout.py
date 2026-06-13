@@ -24,7 +24,7 @@ from pitcher_narratives.data import (
     load_full_agg,
 )
 
-__all__ = ["ScoredAppearance", "scout_appearances", "top_per_role"]
+__all__ = ["ScoredAppearance", "compute_velo_baselines", "scout_appearances", "top_per_role"]
 
 # ── Scoring weights ──────────────────────────────────────────────────
 
@@ -143,7 +143,7 @@ def scout_appearances(
     season_type_baseline = compute_pitch_type_baseline(season_type_df)
 
     # Compute velocity baselines from statcast
-    velo_baselines = _compute_velo_baselines()
+    velo_baselines = compute_velo_baselines()
 
     # Score all appearances in recent date(s) that had enough appearances to
     # build a season baseline
@@ -241,7 +241,7 @@ def scout_appearances(
 
 
 
-def _compute_velo_baselines() -> pl.DataFrame:
+def compute_velo_baselines() -> pl.DataFrame:
     """Compute season avg fastball velocity per pitcher from statcast.
 
     Returns DataFrame with columns: pitcher, season_velo, and per-game velos.
