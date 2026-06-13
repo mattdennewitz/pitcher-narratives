@@ -247,10 +247,13 @@ def _compute_velo_baselines() -> pl.DataFrame:
     Returns DataFrame with columns: pitcher, season_velo, and per-game velos.
     """
     df = load_all_statcast(
-        columns=["pitcher", "game_pk", "game_date", "pitch_type", "release_speed"],
+        columns=["pitcher", "game_pk", "game_date", "pitch_type", "release_speed", "level"],
     )
     if df.is_empty():
         return pl.DataFrame(schema={"pitcher": pl.Int64, "season_velo": pl.Float64})
+    # MLB-only norm: exclude minor-league (A/AAA) and WBC pitches so the
+    # season velocity baseline is not diluted by non-MLB outings.
+    df = df.filter(pl.col("level") == "MLB")
     fastballs = df.filter(pl.col("pitch_type").is_in(["FF", "SI", "FC"]))
     fastballs = fastballs.with_columns(pl.col("game_date").dt.year().alias("_year"))
 

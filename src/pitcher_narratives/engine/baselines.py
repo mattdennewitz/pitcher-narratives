@@ -66,8 +66,13 @@ def compute_league_baselines() -> list[LeagueBaseline]:
         return _league_baselines_cache
 
     df = load_all_statcast(
-        columns=["pitch_type", "pitch_name", "release_speed", "pfx_x", "pfx_z", "zone", "description"],
+        columns=[
+            "pitch_type", "pitch_name", "release_speed",
+            "pfx_x", "pfx_z", "zone", "description", "level",
+        ],
     )
+    # MLB-only norm: exclude minor-league (A/AAA) and WBC pitches.
+    df = df.filter(pl.col("level") == "MLB")
     df = df.filter(pl.col("release_speed").is_not_null())
 
     is_in_zone = pl.col("zone").is_between(1, 9)
@@ -95,6 +100,8 @@ def compute_league_baselines() -> list[LeagueBaseline]:
     # --- S-variant benchmarks from pitcher_type CSV ---
     s_variant_lookup: dict[str, dict[str, float]] = {}
     pt_df = load_full_agg("pitcher_type")
+    if "level" in pt_df.columns:
+        pt_df = pt_df.filter(pl.col("level") == "MLB")
     if not pt_df.is_empty():
         # Weighted average across all pitchers per pitch type
         s_agg = (

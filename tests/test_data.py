@@ -389,6 +389,52 @@ def test_pitch_type_baseline_per_season():
     assert abs(row_2026["usage_pct"][0] - 100.0) < 0.01
 
 
+def test_season_baseline_excludes_minor_league():
+    """Baselines are MLB-only: A/AAA rows must not leak into the season norm."""
+    df = pl.DataFrame(
+        {
+            "season": [2025, 2025, 2025],
+            "game_type": ["R", "R", "R"],
+            "level": ["MLB", "AAA", "A"],
+            "pitcher": [12345, 12345, 12345],
+            "player_name": ["Test", "Test", "Test"],
+            "p_throws": ["R", "R", "R"],
+            "team_code": ["NYY", "NYY", "NYY"],
+            "n_pitches": [100, 500, 300],
+            "stuff_plus": [100.0, 50.0, 10.0],
+        }
+    )
+    baseline = compute_season_baseline(df)
+    assert len(baseline) == 1
+    # Only the MLB row survives. Without the level filter the weighted mean
+    # would be (100*100 + 500*50 + 300*10) / 900 = 42.2 and n_pitches = 900.
+    assert baseline["n_pitches"][0] == 100
+    assert abs(baseline["stuff_plus"][0] - 100.0) < 0.01
+
+
+def test_pitch_type_baseline_excludes_minor_league():
+    """Per-pitch-type baselines are MLB-only; minor-league rows are excluded."""
+    df = pl.DataFrame(
+        {
+            "season": [2025, 2025],
+            "game_type": ["R", "R"],
+            "level": ["MLB", "AAA"],
+            "pitcher": [12345, 12345],
+            "pitch_type": ["FF", "FF"],
+            "player_name": ["Test", "Test"],
+            "p_throws": ["R", "R"],
+            "team_code": ["NYY", "NYY"],
+            "n_pitches": [80, 400],
+            "stuff_plus": [110.0, 40.0],
+        }
+    )
+    baseline = compute_pitch_type_baseline(df)
+    assert len(baseline) == 1
+    assert baseline["pitch_type"][0] == "FF"
+    assert baseline["n_pitches"][0] == 80
+    assert abs(baseline["stuff_plus"][0] - 110.0) < 0.01
+
+
 # ---------------------------------------------------------------------------
 # Tests for load_all_statcast() and load_full_agg()
 # ---------------------------------------------------------------------------
