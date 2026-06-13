@@ -14,7 +14,6 @@ from pitcher_narratives.data import load_pitcher_data
 from pitcher_narratives.engine import (
     _CSW_DESCRIPTIONS,
     AppearanceWorkload,
-    ArsenalPitchTrend,
     ArsenalTrends,
     ComponentAttribution,
     CrossSeasonSummary,
@@ -24,7 +23,6 @@ from pitcher_narratives.engine import (
     FirstPitchWeaponry,
     HardHitRate,
     IntermediateProbabilities,
-    OutcomeContribution,
     PitchTypeSummary,
     PlatoonMix,
     PlatoonSplit,
@@ -44,13 +42,13 @@ from pitcher_narratives.engine import (
     compute_arsenal_summary,
     compute_arsenal_trends,
     compute_component_attribution,
-    compute_league_baselines,
     compute_cross_season_summary,
     compute_execution_metrics,
     compute_fastball_summary,
     compute_first_pitch_weaponry,
     compute_hard_hit_rate,
     compute_intermediate_probabilities,
+    compute_league_baselines,
     compute_platoon_mix,
     compute_release_point_metrics,
     compute_tto_analysis,
@@ -547,7 +545,24 @@ def test_xrv100_percentile():
     assert pctl != 50
 
 
-def test_xrv100_polarity():
+def test_xrv100_percentile_excludes_minor_league():
+    """The percentile distribution is MLB-only; A/AAA pitchers must not pad it."""
+    from pitcher_narratives.engine.execution import _compute_xrv100_percentile
+
+    # 3 MLB pitchers (xRV100 0/1/2) and 5 worse minor-league pitchers (5..9).
+    df = pl.DataFrame(
+        {
+            "pitcher": [1, 2, 3, 4, 5, 6, 7, 8],
+            "pitch_type": ["FF"] * 8,
+            "level": ["MLB", "MLB", "MLB", "AAA", "AAA", "A", "A", "AAA"],
+            "n_pitches": [100] * 8,
+            "xRV100_P": [0.0, 1.0, 2.0, 5.0, 6.0, 7.0, 8.0, 9.0],
+        }
+    )
+    # Query xRV100 = 1.5: worse-than among MLB = {2.0} -> 1/3 -> 33rd percentile.
+    # If minor-league rows leaked in, worse = 6/8 -> 75th. So this distinguishes.
+    pctl = _compute_xrv100_percentile(1.5, "FF", df)
+    assert pctl == 33, f"expected MLB-only 33rd percentile, got {pctl} (minor-league leak?)"
     """Lower (more negative) xRV100 = better for pitcher = higher percentile."""
     data = load_pitcher_data(TEST_PITCHER, window_days=30)
     metrics = compute_execution_metrics(data)

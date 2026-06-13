@@ -130,21 +130,22 @@ class IntermediateProbabilities:
 def _compute_xrv100_percentile(
     pitcher_xrv100: float | None,
     pitch_type: str,
-    full_pitcher_type_df: pl.DataFrame,
+    pitcher_type_df: pl.DataFrame,
     min_pitches: int = 10,
 ) -> int | None:
-    """Compute percentile rank of pitcher's xRV100 vs all pitchers for a type.
+    """Compute percentile rank of pitcher's xRV100 vs all MLB pitchers for a type.
 
-    Uses the full (unfiltered) pitcher_type DataFrame to get the league
-    distribution. Weight-averages xRV100_P per (pitcher, pitch_type)
-    across game_types. Lower (more negative) xRV100 = better pitcher
-    = higher percentile.
+    Restricts the league distribution to MLB level: minor-league (A/AAA)
+    and WBC rows are excluded so percentiles are not inflated against
+    weaker competition. Weight-averages xRV100_P per (pitcher, pitch_type)
+    across game_types. Lower (more negative) xRV100 = better pitcher =
+    higher percentile.
 
     Args:
         pitcher_xrv100: The pitcher's weighted window xRV100_P for this type.
         pitch_type: Pitch type code.
-        full_pitcher_type_df: Full unfiltered pitcher_type DataFrame for
-            league distribution.
+        pitcher_type_df: pitcher_type DataFrame for the league distribution
+            (restricted to MLB level here).
         min_pitches: Minimum pitches threshold for inclusion.
 
     Returns:
@@ -153,10 +154,11 @@ def _compute_xrv100_percentile(
     if pitcher_xrv100 is None:
         return None
 
-    # Filter to this pitch type and minimum pitches
-    type_data = full_pitcher_type_df.filter(
-        (pl.col("pitch_type") == pitch_type) & (pl.col("n_pitches") >= min_pitches)
-    )
+    # MLB-only league distribution for this pitch type, above the sample floor
+    type_data = pitcher_type_df.filter(pl.col("pitch_type") == pitch_type)
+    if "level" in type_data.columns:
+        type_data = type_data.filter(pl.col("level") == "MLB")
+    type_data = type_data.filter(pl.col("n_pitches") >= min_pitches)
 
     if type_data.is_empty():
         return 50
@@ -198,7 +200,9 @@ def compute_execution_metrics(data: PitcherData) -> list[ExecutionMetrics]:
     baseline = data.pitch_type_baseline.sort("n_pitches", descending=True)
     pitch_types = baseline["pitch_type"].to_list()
 
-    # Load full pitcher_type CSV once for percentile computation
+    # Load pitcher_type CSV once for the percentile distribution. The
+    # percentile function restricts it to MLB level (minor-league / WBC rows
+    # must not pad the league reference, or percentiles inflate).
     full_pitcher_type_df = load_full_agg("pitcher_type")
 
     results: list[ExecutionMetrics] = []
