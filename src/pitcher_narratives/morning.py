@@ -34,8 +34,8 @@ from pitcher_narratives.personas import PERSONAS
 from pitcher_narratives.scout import (
     ScoredAppearance,
     _compute_velo_baselines,
-    _top_per_role,
     scout_appearances,
+    top_per_role,
 )
 
 __all__ = ["run_morning"]
@@ -87,7 +87,7 @@ def run_morning(
     if not all_scored:
         print("No interesting appearances found — quiet day, no digest.", file=sys.stderr)
         return None
-    candidates = _top_per_role(all_scored, top_n)
+    candidates = top_per_role(all_scored, top_n)
     game_date = max(c.game_date for c in all_scored)
     appearances: dict[int, ScoredAppearance] = {}
     for c in all_scored:

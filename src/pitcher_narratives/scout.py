@@ -24,7 +24,7 @@ from pitcher_narratives.data import (
     load_full_agg,
 )
 
-__all__ = ["ScoredAppearance", "scout_appearances"]
+__all__ = ["ScoredAppearance", "scout_appearances", "top_per_role"]
 
 # ── Scoring weights ──────────────────────────────────────────────────
 
@@ -87,7 +87,7 @@ class ScoredAppearance:
 
 
 
-def _top_per_role(results: list[ScoredAppearance], top_n: int) -> list[ScoredAppearance]:
+def top_per_role(results: list[ScoredAppearance], top_n: int) -> list[ScoredAppearance]:
     """Keep the top N per role, merged and sorted by score descending."""
     ranked = sorted(results, key=lambda x: x.score, reverse=True)
     sp = [r for r in ranked if r.role == "SP"][:top_n]
