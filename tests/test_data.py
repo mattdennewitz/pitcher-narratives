@@ -2,7 +2,6 @@ import polars as pl
 import pytest
 
 from pitcher_narratives.data import (
-    _ALLOWED_GAME_TYPES,
     _APPEARANCE_GRAINS,
     _ID_COLS,
     _SEASON_GRAINS,
@@ -200,7 +199,6 @@ def test_load_statcast_filters_game_type():
 
 def test_load_csv_filters_game_type():
     """DFND-01: load_csv applies game type filter."""
-    from pitcher_narratives.data import AGGS_DIR, _YEARS
 
     filename = f"{_YEARS[-1]}-pitcher.csv"
     df = load_csv(filename, TEST_PITCHER)
@@ -224,7 +222,7 @@ def test_no_hardcoded_year_in_csv_dicts():
 
 def test_years_constant_drives_paths():
     """DFND-02/MYLD-01: _YEARS includes both years and drives path generation."""
-    from pitcher_narratives.data import _YEARS, statcast_parquet_path
+    from pitcher_narratives.data import statcast_parquet_path
 
     assert isinstance(_YEARS, list)
     assert _YEARS == [2025, 2026]
@@ -233,7 +231,6 @@ def test_years_constant_drives_paths():
 
 def test_season_in_id_cols():
     """DFND-03: season is an identity column, not a metric."""
-    from pitcher_narratives.data import _ID_COLS
 
     assert "season" in _ID_COLS
 
@@ -584,7 +581,7 @@ def test_load_full_agg_missing_year(tmp_path, monkeypatch):
             "stuff_plus": [105.0],
         }
     )
-    df.write_csv(aggs_dir / f"2026-pitcher_type.csv")
+    df.write_csv(aggs_dir / "2026-pitcher_type.csv")
     # No 2025 file created
 
     import pitcher_narratives.data as data_mod
