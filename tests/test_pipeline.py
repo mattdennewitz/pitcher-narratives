@@ -13,24 +13,21 @@ from pydantic_ai.models.test import TestModel
 from pitcher_narratives.context import assemble_pitcher_context
 from pitcher_narratives.data import load_pitcher_data
 from pitcher_narratives.engine import (
-    LeagueBaseline,
+    ArsenalPitchTrend,
+    ArsenalTrends,
+    CrossSeasonSummary,
     compute_league_baselines,
     format_s_variant_comparisons,
     outlier_tag,
     render_league_baselines,
 )
-from pitcher_narratives.engine import (
-    ArsenalPitchTrend,
-    ArsenalTrends,
-    CrossSeasonSummary,
-)
 from pitcher_narratives.pipeline import (
+    _STUFF_SPECIALIST_PROMPT,
     AuditFlag,
     AuditResult,
     PipelineAgents,
     PipelineResult,
     SpecialistOutputs,
-    _STUFF_SPECIALIST_PROMPT,
     _build_game_shape_input,
     _build_stuff_input,
     _build_trend_input,
@@ -42,7 +39,6 @@ from pitcher_narratives.pipeline import (
     run_specialists,
 )
 from pitcher_narratives.signals import KeySignals
-
 
 TEST_PITCHER = 592155
 
@@ -715,23 +711,9 @@ def _make_mock_ctx():
     mock.cross_season_summary = _make_cross_season_summary()
     mock.arsenal_trend = _make_arsenal_trends()
 
-    # For _build_trend_input — methods return string sections
-    mock._render_fastball_section.return_value = "## Fastball\nFF 94.0 mph"
-    mock._render_arsenal_section.return_value = "## Arsenal\nSL, CH"
-    mock._render_release_point_section.return_value = "## Release Point\nConsistent"
-    mock._render_hard_hit_section.return_value = "## Hard Hit\n35%"
-    mock._render_yoy_section.return_value = (
-        "## Year-over-Year\n"
-        "Comparing 2026 vs 2025:\n"
-        "- Velocity: Up 1.5 mph\n"
-        "- Added pitches: Sweeper\n"
-        "- Slider: usage Up 5.0 pp, velo Up 1.5 mph"
-    )
-
-    # For _build_game_shape_input — methods return string sections
-    mock._render_tto_section.return_value = "## TTO\nSteady"
-    mock._render_appearances_section.return_value = "## Appearances\n3 in window"
-    mock._render_role_section.return_value = "## Role\nSP"
+    # The trend/game-shape builders render sections via the prompt_builder
+    # render_*_section(ctx) free functions; those are patched per-test by the
+    # _patch_render_sections fixture, not on the mock ctx.
 
     # TemporalContext for game shape workload rendering
     mock.temporal.current_season_appearances = 8
@@ -754,6 +736,39 @@ def _patch_baselines(monkeypatch):
         "pitcher_narratives.pipeline.render_league_baselines",
         lambda _types: "## League Baselines (mocked)",
     )
+
+
+@pytest.fixture
+def _patch_render_sections(monkeypatch):
+    """Patch the prompt_builder render functions used by the pipeline builders.
+
+    The trend and game-shape builders call render_*_section(ctx) free functions
+    (imported into the pipeline namespace). Patch them to canned strings so
+    these unit tests do not depend on full PitcherContext rendering. Each patch
+    is a MagicMock so call assertions still work.
+    """
+    from unittest.mock import MagicMock
+
+    canned = {
+        "render_fastball_section": "## Fastball\nFF 94.0 mph",
+        "render_arsenal_section": "## Arsenal\nSL, CH",
+        "render_release_point_section": "## Release Point\nConsistent",
+        "render_hard_hit_section": "## Hard Hit\n35%",
+        "render_yoy_section": (
+            "## Year-over-Year\n"
+            "Comparing 2026 vs 2025:\n"
+            "- Velocity: Up 1.5 mph\n"
+            "- Added pitches: Sweeper\n"
+            "- Slider: usage Up 5.0 pp, velo Up 1.5 mph"
+        ),
+        "render_tto_section": "## TTO\nSteady",
+        "render_appearances_section": "## Appearances\n3 in window",
+        "render_role_section": "## Role\nSP",
+    }
+    for name, value in canned.items():
+        monkeypatch.setattr(
+            f"pitcher_narratives.pipeline.{name}", MagicMock(return_value=value)
+        )
 
 
 @pytest.mark.usefixtures("_patch_baselines")
@@ -789,9 +804,9 @@ class TestStuffSpecialistReceivesYoyData:
         assert "H-mov" not in output
 
 
-@pytest.mark.usefixtures("_patch_baselines")
+@pytest.mark.usefixtures("_patch_baselines", "_patch_render_sections")
 class TestTrendSpecialistReceivesYoySection:
-    """Verify _build_trend_input includes YoY section via _render_yoy_section."""
+    """Verify _build_trend_input includes the YoY section via render_yoy_section."""
 
     def test_output_is_string_list(self):
         ctx = _make_mock_ctx()
@@ -808,19 +823,14 @@ class TestTrendSpecialistReceivesYoySection:
         assert "Sweeper" in text
 
     def test_render_yoy_section_called(self):
+        import pitcher_narratives.pipeline as p
+
         ctx = _make_mock_ctx()
         _build_trend_input(ctx)
-        ctx._render_yoy_section.assert_called_once()
-
-    def test_no_appearance_pitch_trends_reference(self):
-        """Verify the removed _render_appearance_pitch_trends_section is not called."""
-        ctx = _make_mock_ctx()
-        _build_trend_input(ctx)
-        # The removed method should never be called
-        ctx._render_appearance_pitch_trends_section.assert_not_called()
+        p.render_yoy_section.assert_called_once()
 
 
-@pytest.mark.usefixtures("_patch_baselines")
+@pytest.mark.usefixtures("_patch_baselines", "_patch_render_sections")
 class TestGameShapeSpecialistReceivesYoyData:
     """Verify _build_game_shape_input includes cross-season data with correct attributes."""
 
@@ -862,7 +872,6 @@ class TestCheckExplainerPresent:
 
     def test_check_explainer_present_detects_plus_family(self):
         """PERSONA-11: Each Pitching+ family keyword individually returns True."""
-        from pitcher_narratives.pipeline import check_explainer_present
         for keyword in ("S+", "L+", "P+", "Pitching+", "Stuff+", "Location+"):
             text = f"The model graded this pitch {keyword} 112 above average."
             assert check_explainer_present(text) is True, (
@@ -871,7 +880,6 @@ class TestCheckExplainerPresent:
 
     def test_check_explainer_present_absent(self):
         """PERSONA-11: Capsule with no explainer keywords returns False."""
-        from pitcher_narratives.pipeline import check_explainer_present
         text = (
             "The slider has been sharp lately. The curveball is giving "
             "him trouble, particularly against right-handers."
@@ -880,13 +888,11 @@ class TestCheckExplainerPresent:
 
     def test_check_explainer_present_rejects_empty(self):
         """PERSONA-11: Empty capsule raises ValueError."""
-        from pitcher_narratives.pipeline import check_explainer_present
         with pytest.raises(ValueError, match="empty"):
             check_explainer_present("")
 
     def test_check_explainer_present_rejects_non_string(self):
         """PERSONA-11: Non-string input raises TypeError."""
-        from pitcher_narratives.pipeline import check_explainer_present
         with pytest.raises(TypeError, match="must be str"):
             check_explainer_present(None)  # type: ignore[arg-type]
         with pytest.raises(TypeError, match="must be str"):
@@ -911,10 +917,12 @@ def test_run_pipeline_logs_warning_when_capsule_missing_explainer(caplog):
     False and a warning is logged at WARNING level.
     """
     import logging
+
+    from pydantic_ai.models.test import TestModel
+
     from pitcher_narratives.context import assemble_pitcher_context
     from pitcher_narratives.data import load_pitcher_data
     from pitcher_narratives.pipeline import generate_pipeline_streaming
-    from pydantic_ai.models.test import TestModel
 
     data = load_pitcher_data(592155, window_days=30)
     ctx = assemble_pitcher_context(data)
@@ -953,7 +961,6 @@ def test_check_explainer_present_happy_path_is_silent(caplog, monkeypatch):
     import logging
 
     from pitcher_narratives import pipeline as pipeline_mod
-    from pitcher_narratives.pipeline import check_explainer_present
 
     # Direct unit-level check: happy path returns True.
     assert check_explainer_present(
@@ -967,9 +974,10 @@ def test_check_explainer_present_happy_path_is_silent(caplog, monkeypatch):
         pipeline_mod, "check_explainer_present", lambda capsule: True
     )
 
+    from pydantic_ai.models.test import TestModel
+
     from pitcher_narratives.context import assemble_pitcher_context
     from pitcher_narratives.data import load_pitcher_data
-    from pydantic_ai.models.test import TestModel
 
     data = load_pitcher_data(592155, window_days=30)
     ctx = assemble_pitcher_context(data)

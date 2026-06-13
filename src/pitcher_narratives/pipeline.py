@@ -47,6 +47,7 @@ from pydantic import BaseModel
 from pydantic_ai import Agent, CachePoint
 from pydantic_ai.settings import ThinkingEffort
 
+from pitcher_narratives.agent_skills import skill_toolset
 from pitcher_narratives.anchor import (
     ANCHOR_PROMPT,
     AnchorResult,
@@ -67,23 +68,31 @@ from pitcher_narratives.config import (
 )
 from pitcher_narratives.context import PitcherContext
 from pitcher_narratives.engine import (
-    LeagueBaseline,
     compute_league_baselines,
     format_s_variant_comparisons,
     outlier_tag,
     render_league_baselines,
 )
 from pitcher_narratives.personas import (
-    Persona,
     DEFAULT_PERSONA,
+    Persona,
     build_writer_system_prompt,
     get_persona,
 )
-from pitcher_narratives.agent_skills import skill_toolset
+from pitcher_narratives.prompt_builder import (
+    render_appearances_section,
+    render_arsenal_section,
+    render_fastball_section,
+    render_hard_hit_section,
+    render_release_point_section,
+    render_role_section,
+    render_tto_section,
+    render_yoy_section,
+)
 from pitcher_narratives.shape import render_pitch_shape
 from pitcher_narratives.signals import (
-    KeySignals,
     SIGNAL_EXTRACTOR_PROMPT,
+    KeySignals,
     render_key_signals,
 )
 
@@ -640,14 +649,14 @@ def _build_trend_input(ctx: PitcherContext) -> UserPrompt:
         baselines,
     ]
     data_sections = [
-        ctx._render_fastball_section(),
-        ctx._render_arsenal_section(),
-        ctx._render_release_point_section(),
-        ctx._render_hard_hit_section(),
+        render_fastball_section(ctx),
+        render_arsenal_section(ctx),
+        render_release_point_section(ctx),
+        render_hard_hit_section(ctx),
     ]
     # Cross-season context (when available) — trends specialist gets full YoY section
     if ctx.cross_season_summary is not None or ctx.arsenal_trend is not None:
-        data_sections.append(ctx._render_yoy_section())
+        data_sections.append(render_yoy_section(ctx))
     return [
         "\n\n".join(s for s in prefix_sections if s),
         CachePoint(),
@@ -691,10 +700,10 @@ def _build_game_shape_input(ctx: PitcherContext) -> UserPrompt:
     prefix_sections.append(baselines)
 
     data_sections = [
-        ctx._render_tto_section(),
-        ctx._render_fastball_section(),
-        ctx._render_appearances_section(),
-        ctx._render_role_section(),
+        render_tto_section(ctx),
+        render_fastball_section(ctx),
+        render_appearances_section(ctx),
+        render_role_section(ctx),
     ]
     # Cross-season context (when available) — game shape gets workload + usage shifts
     css = ctx.cross_season_summary
@@ -809,12 +818,12 @@ def _get_specialist_input_text(name: str, ctx: PitcherContext) -> str:
 
 
 async def audit_and_revise_specialists(
-    specialists: "SpecialistOutputs",
-    specialist_agents: dict[str, "Agent[None, str]"],
-    auditor: "Agent[None, AuditResult]",
+    specialists: SpecialistOutputs,
+    specialist_agents: dict[str, Agent[None, str]],
+    auditor: Agent[None, AuditResult],
     ctx: PitcherContext,
     _model_override: Any = None,
-) -> tuple["SpecialistOutputs", list[AuditFlag]]:
+) -> tuple[SpecialistOutputs, list[AuditFlag]]:
     """Audit each specialist's output independently, revise any with flags.
 
     Phase 1.5a: Run 5 per-specialist audits concurrently.
@@ -1188,8 +1197,8 @@ async def run_specialists(
 
 async def _run_anchor_revision_loop(
     *,
-    anchor_agent: "Agent[None, AnchorResult]",
-    writer_agent: "Agent[None, str]",
+    anchor_agent: Agent[None, AnchorResult],
+    writer_agent: Agent[None, str],
     synthesis: str,
     capsule: str,
     max_revisions: int,

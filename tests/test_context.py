@@ -253,7 +253,9 @@ def test_yoy_section_omitted_for_single_season():
         cross_season_summary=None,
         arsenal_trend=None,
     )
-    result = ctx._render_yoy_section()
+    from pitcher_narratives.prompt_builder import render_yoy_section
+
+    result = render_yoy_section(ctx)
     assert result == ""
     prompt = ctx.to_prompt()
     assert "Year-over-Year" not in prompt
@@ -321,7 +323,9 @@ def test_yoy_section_renders_cross_season_summary():
         cross_season_summary=css,
         arsenal_trend=None,
     )
-    section = ctx._render_yoy_section()
+    from pitcher_narratives.prompt_builder import render_yoy_section
+
+    section = render_yoy_section(ctx)
     assert "## Year-over-Year" in section
     assert "2026 vs 2025" in section
     assert "Up 1.5 mph" in section
