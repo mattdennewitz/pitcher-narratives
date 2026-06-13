@@ -15,10 +15,10 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
-from pitcher_narratives.bench.judge import JUDGE_MODELS, _with_retry, judge_text, judges_for
+from pitcher_narratives.bench.judge import JUDGE_MODELS, judge_text, judges_for, with_retry
 from pitcher_narratives.bench.rubric import AGENT_RUBRIC, CAPSULE_RUBRIC
 from pitcher_narratives.bench.runner import run_provider
 from pitcher_narratives.bench.scorecard import JudgedRecord, aggregate, render_report
@@ -67,7 +67,7 @@ def main() -> None:
         print(f"Unknown judge: {args.judges}", file=sys.stderr)
         sys.exit(2)
 
-    run_dir = Path(args.out) / datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    run_dir = Path(args.out) / datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     run_dir.mkdir(parents=True, exist_ok=True)
 
     # ── Generate ──────────────────────────────────────────────────
@@ -123,14 +123,14 @@ def main() -> None:
             for judge in judges_for(run.provider, providers, args.judges):
                 print(f"Judging {run.provider}/{tier} with {judge}...", file=sys.stderr)
                 try:
-                    judged = _with_retry(lambda: judge_text(
+                    judged = with_retry(lambda: judge_text(
                         ground_truth=run.ground_truths[tier],
                         output_text=text,
                         tier_label=tier,
                         rubric=rubric,
                         judge_provider=judge,
                     ))
-                except Exception as exc:  # noqa: BLE001 -- drop a failed judge, keep the bench
+                except Exception as exc:
                     print(f"  judge failed after retries ({type(exc).__name__}: {str(exc)[:120]}); dropped",
                           file=sys.stderr)
                     continue

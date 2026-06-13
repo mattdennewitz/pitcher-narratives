@@ -25,7 +25,7 @@ from pitcher_narratives.bench.rubric import (
 )
 from pitcher_narratives.config import PROVIDERS
 
-__all__ = ["JUDGE_MODELS", "judge_text", "judges_for", "make_judge_agent"]
+__all__ = ["JUDGE_MODELS", "judge_text", "judges_for", "make_judge_agent", "with_retry"]
 
 log = logging.getLogger("pitcher_narratives.bench")
 
@@ -47,7 +47,7 @@ _JUDGE_BACKOFFS = (10.0, 30.0, 60.0)
 trip provider rate limits, which clear on their own."""
 
 
-def _with_retry(
+def with_retry(
     fn: Callable[[], _T],
     *,
     attempts: int = 4,
@@ -59,7 +59,7 @@ def _with_retry(
     for i in range(attempts):
         try:
             return fn()
-        except Exception as exc:  # noqa: BLE001 -- judge errors are heterogenous API failures
+        except Exception as exc:
             last = exc
             if i < attempts - 1:
                 delay = backoffs[min(i, len(backoffs) - 1)]

@@ -9,6 +9,7 @@ import pytest
 from pydantic import ValidationError
 from pydantic_ai.models.test import TestModel
 
+from pitcher_narratives.bench.__main__ import parse_args
 from pitcher_narratives.bench.judge import JUDGE_MODELS, judges_for, make_judge_agent
 from pitcher_narratives.bench.rubric import (
     AGENT_RUBRIC,
@@ -20,7 +21,6 @@ from pitcher_narratives.bench.rubric import (
 )
 from pitcher_narratives.bench.runner import run_provider
 from pitcher_narratives.bench.scorecard import JudgedRecord, aggregate, render_report
-from pitcher_narratives.bench.__main__ import parse_args
 
 TEST_PITCHER = 592155
 
@@ -132,7 +132,7 @@ def test_deepseek_judge_uses_prompted_output():
 
 def test_judge_retry_backs_off_on_api_errors():
     """Transient API errors (rate limits) retry with backoff before dropping."""
-    from pitcher_narratives.bench.judge import _with_retry
+    from pitcher_narratives.bench.judge import with_retry
 
     calls = {"n": 0}
     sleeps: list[float] = []
@@ -143,20 +143,20 @@ def test_judge_retry_backs_off_on_api_errors():
             raise RuntimeError("429 too many requests")
         return "ok"
 
-    assert _with_retry(flaky, attempts=3, backoffs=(1, 2), _sleep=sleeps.append) == "ok"
+    assert with_retry(flaky, attempts=3, backoffs=(1, 2), _sleep=sleeps.append) == "ok"
     assert calls["n"] == 3
     assert sleeps == [1, 2]
 
 
 def test_judge_retry_raises_after_exhaustion():
     """After all attempts fail, the last error propagates (caller drops the judge)."""
-    from pitcher_narratives.bench.judge import _with_retry
+    from pitcher_narratives.bench.judge import with_retry
 
     def always_fails():
         raise RuntimeError("boom")
 
     with pytest.raises(RuntimeError):
-        _with_retry(always_fails, attempts=2, backoffs=(0,), _sleep=lambda s: None)
+        with_retry(always_fails, attempts=2, backoffs=(0,), _sleep=lambda s: None)
 
 
 # ── Scorecard aggregation ─────────────────────────────────────────────
