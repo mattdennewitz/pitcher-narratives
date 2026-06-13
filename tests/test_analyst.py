@@ -5,20 +5,17 @@ from __future__ import annotations
 import pytest
 from pydantic_ai.models.test import TestModel
 
-from pitcher_narratives.context import assemble_pitcher_context
-from pitcher_narratives.data import load_pitcher_data
-
-# Imported after module exists -- tests should fail with ImportError initially
 from pitcher_narratives.analyst import (
+    ANALYST_INSTRUCTIONS,
     PITCH_TYPE_MAP,
     QADeps,
-    _analyst_agent,
-    _make_analyst,
+    _make_qa_agent,
     ask_question_streaming,
     get_pitch_detail,
     get_pitcher_summary,
 )
-
+from pitcher_narratives.context import assemble_pitcher_context
+from pitcher_narratives.data import load_pitcher_data
 
 TEST_PITCHER = 592155  # Booser, Cam
 
@@ -161,11 +158,12 @@ def test_get_pitch_detail_case_insensitive(deps):
 def test_agent_uses_instructions_not_system_prompt():
     """Agent uses instructions parameter, not system_prompt."""
     # pydantic-ai stores instructions in _instructions list, system_prompt in _system_prompts tuple
-    assert len(_analyst_agent._instructions) > 0
-    assert isinstance(_analyst_agent._instructions[0], str)
-    assert len(_analyst_agent._instructions[0]) > 0
+    agent = _make_qa_agent()
+    assert len(agent._instructions) > 0
+    assert isinstance(agent._instructions[0], str)
+    assert len(agent._instructions[0]) > 0
     # No system_prompt should be set
-    assert len(_analyst_agent._system_prompts) == 0
+    assert len(agent._system_prompts) == 0
 
 
 def test_qadeps_has_required_fields():
@@ -182,11 +180,13 @@ def test_qadeps_has_required_fields():
 
 def test_ask_question_streaming(ctx, data):
     """ask_question_streaming returns a non-empty string with TestModel."""
+    # call_tools=[] so the deterministic test model does not blindly invoke
+    # the skills toolset's load_skill tool, which would fail on placeholder args.
     result = ask_question_streaming(
         "What's his best pitch?",
         context=ctx,
         data=data,
-        _model_override=TestModel(),
+        _model_override=TestModel(call_tools=[]),
     )
     assert isinstance(result, str)
     assert len(result) > 0
@@ -224,7 +224,10 @@ def test_get_pitch_detail_attribution_has_outcomes(deps):
         if "Component Attribution" in line:
             in_attribution = True
             continue
-        if in_attribution and line.startswith("## ") or (in_attribution and line.startswith("### ") and "Component" not in line):
+        if in_attribution and (
+            line.startswith("## ")
+            or (line.startswith("### ") and "Component" not in line)
+        ):
             break
         if in_attribution and line.startswith("|") and "Outcome" not in line and "---" not in line:
             outcome_rows += 1
@@ -273,7 +276,7 @@ def test_get_pitch_detail_existing_sections_preserved(deps):
 
 def test_prompt_references_intermediates():
     """ANLST-01: Prompt references all 4 intermediate metric names as primary analytical tools."""
-    prompt = _analyst_agent._instructions[0]
+    prompt = ANALYST_INSTRUCTIONS
     assert "xWhiff" in prompt, "Prompt must reference xWhiff"
     assert "xSwing" in prompt, "Prompt must reference xSwing"
     assert "xSwSt" in prompt, "Prompt must reference xSwSt"
@@ -282,7 +285,7 @@ def test_prompt_references_intermediates():
 
 def test_prompt_internals_before_plus():
     """ANLST-01: Framework leads with model internals; plus scores are summary grades."""
-    prompt = _analyst_agent._instructions[0]
+    prompt = ANALYST_INSTRUCTIONS
     # Old framing must be removed
     assert "Pitching+ triad" not in prompt, (
         "Prompt must not contain 'Pitching+ triad' (old framing)"
@@ -297,7 +300,7 @@ def test_prompt_internals_before_plus():
 
 def test_prompt_references_p_vs_s():
     """ANLST-02: Prompt teaches P-variant vs S-variant comparison for location diagnosis."""
-    prompt = _analyst_agent._instructions[0]
+    prompt = ANALYST_INSTRUCTIONS
     # Must reference both variant concepts
     has_s_variant = "S-variant" in prompt or "S variant" in prompt or "S+" in prompt
     assert has_s_variant, "Prompt must reference S-variant concept"
@@ -309,7 +312,7 @@ def test_prompt_references_p_vs_s():
 
 def test_prompt_references_attribution():
     """ANLST-03: Prompt teaches attribution decomposition with dominant-driver filtering."""
-    prompt = _analyst_agent._instructions[0]
+    prompt = ANALYST_INSTRUCTIONS
     # Must reference attribution concept
     assert "attribution" in prompt.lower(), (
         "Prompt must reference attribution (case-insensitive)"
