@@ -12,48 +12,18 @@ because the test suite references them directly.
 
 from __future__ import annotations
 
-# Shared internals — re-exported so the remaining compute code in this
-# module, sibling concern modules, and the test suite resolve them by name.
+# A handful of private helpers are re-exported here solely because the test
+# suite imports them from ``pitcher_narratives.engine``. Sibling concern
+# modules import from ``_common`` directly, not through this facade.
 from pitcher_narratives.engine._common import (  # noqa: F401
-    _COLD_START_STRING,
     _CSW_DESCRIPTIONS,
-    _DOUBLE_OUT_EVENTS,
-    _FASTBALL_TYPES,
-    _FEET_TO_INCHES,
-    _INTERMEDIATE_COLS,
-    _INTERMEDIATE_P_COLS,
-    _INTERMEDIATE_S_COLS,
     _MIN_PITCHES,
-    _MOVEMENT_THRESHOLD,
-    _OUT_EVENTS,
-    _OUTCOME_COLS_P,
-    _OUTCOME_NAMES,
-    _PPLUS_METRICS,
-    _PPLUS_THRESHOLD,
-    _SHARP_PPLUS_THRESHOLD,
-    _SHARP_VELO_THRESHOLD,
-    _SWING_DESCRIPTIONS,
-    _USAGE_THRESHOLD,
-    _VELO_THRESHOLD,
-    _XMETRICS,
-    _ZONE_IN,
-    _ZONE_OUT,
-    _build_name_map,
-    _compute_platoon_baseline,
-    _float,
-    _get_window_game_dates,
     _identify_primary_fastball,
-    _is_cold_start,
     _movement_delta_string,
-    _per_season_velo,
     _pplus_delta_string,
-    _pplus_delta_strings,
-    _safe_metric,
     _stand_to_platoon,
     _usage_delta_string,
     _velo_delta_string,
-    _weighted_window_metrics,
-    _window_date_type_filter,
 )
 from pitcher_narratives.engine.arsenal import (
     ArsenalPitchTrend,
