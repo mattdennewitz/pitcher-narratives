@@ -1,10 +1,10 @@
 """Structured editorial selection of scouted appearances.
 
 Stage 1 of the morning run: one LLM call ("the editor") reads the
-role-bucketed candidate briefing and returns a CurationSlate — up to
-10 starters and up to 10 relievers, each with a story category, a
-one-sentence angle, and a conviction level. The angle is the cue the
-Stage 2 writers build from.
+flat, score-ranked candidate briefing and returns a CurationSlate —
+up to 5 picks per category across four categories, each with a story
+category, a one-sentence angle, and a conviction level. The angle is
+the cue the Stage 2 writers build from.
 """
 
 from __future__ import annotations
@@ -70,9 +70,9 @@ class CurationSlate(BaseModel):
 
 _SELECTOR_PROMPT = """\
 You are the editor of a data-driven baseball morning report. From the
-scored candidate appearances below, select up to 10 STARTERS and up to
-10 RELIEVERS whose outings are the most compelling stories, focusing on
-process over results.
+scored candidate appearances below, select the most compelling stories,
+focusing on process over results. Assign each pick exactly one category
+and select up to 5 picks PER CATEGORY across the four categories below.
 
 Use this hierarchy of signal when choosing:
 
@@ -92,10 +92,15 @@ the underlying stuff metrics don't support. Flag honestly.
 
 RULES:
 - Pick ONLY from the listed candidates, using their exact pitcher_id.
-- Starters come ONLY from the STARTERS section, relievers ONLY from
-  the RELIEVERS section.
-- If a bucket is thin, pick fewer. Never pad with ordinary outings.
+- At most 5 picks per category. A category with few compelling
+  candidates gets fewer, or none. Never pad with ordinary outings.
 - Ignore "good" outings where the data matches the season average.
+- Favor variety. Prefer a spread across categories and distinct stories
+  over many look-alikes. When several candidates tell the same story
+  (e.g. multiple "elite breaking ball, no command" lab projects), keep
+  only the most distinctive or highest-conviction few rather than
+  filling the cap with duplicates. A shorter, varied slate beats a
+  long, repetitive one.
 - For each pick: category from the hierarchy above; angle is ONE
   sentence stating the story; conviction scaled to the sample with a
   one-sentence reason. Be pragmatic, not breathless.
@@ -105,25 +110,20 @@ RULES:
 
 
 def build_selector_briefing(candidates: list[ScoredAppearance]) -> str:
-    """Render role-bucketed candidates as the selector's briefing."""
-
-    def _bucket(label: str, apps: list[ScoredAppearance]) -> list[str]:
-        lines = [f"=== {label} ({len(apps)} candidates) ==="]
-        if not apps:
-            lines.append("(none)")
-        for r in apps:
-            lines.append(
-                f"## {r.pitcher_name} (id={r.pitcher_id}, {r.throws}HP) — "
-                f"{r.game_date}, {r.n_pitches} pitches, score {r.score:.1f}"
-            )
-            for s in r.signals:
-                lines.append(f"- [{s.name}] {s.detail}")
-            lines.append("")
-        return lines
-
-    sp = [r for r in candidates if r.role == "SP"]
-    rp = [r for r in candidates if r.role == "RP"]
-    return "\n".join(_bucket("STARTERS", sp) + _bucket("RELIEVERS", rp))
+    """Render scored candidates as a single flat, score-ranked briefing."""
+    ranked = sorted(candidates, key=lambda r: r.score, reverse=True)
+    lines = [f"=== CANDIDATES ({len(ranked)}) ==="]
+    if not ranked:
+        lines.append("(none)")
+    for r in ranked:
+        lines.append(
+            f"## {r.pitcher_name} (id={r.pitcher_id}, {r.throws}HP, {r.role}) — "
+            f"{r.game_date}, {r.n_pitches} pitches, score {r.score:.1f}"
+        )
+        for s in r.signals:
+            lines.append(f"- [{s.name}] {s.detail}")
+        lines.append("")
+    return "\n".join(lines)
 
 
 def make_selector_agent(
@@ -133,8 +133,7 @@ def make_selector_agent(
     if provider not in PROVIDERS:
         raise ValueError(f"Unknown provider {provider!r}, expected: {', '.join(PROVIDERS)}")
 
-    sp_ids = {r.pitcher_id for r in candidates if r.role == "SP"}
-    rp_ids = {r.pitcher_id for r in candidates if r.role == "RP"}
+    candidate_ids = {r.pitcher_id for r in candidates}
 
     agent: Agent[None, CurationSlate] = Agent(
         PROVIDERS[provider],
@@ -149,16 +148,14 @@ def make_selector_agent(
 
     @agent.output_validator
     def _picks_are_candidates(output: CurationSlate) -> CurationSlate:
-        bad_sp = [p.pitcher_id for p in output.starters if p.pitcher_id not in sp_ids]
-        bad_rp = [p.pitcher_id for p in output.relievers if p.pitcher_id not in rp_ids]
-        if bad_sp or bad_rp:
+        bad = [p.pitcher_id for p in output.picks if p.pitcher_id not in candidate_ids]
+        if bad:
             raise ModelRetry(
-                f"Invalid picks — not candidates in that role bucket: "
-                f"starters {bad_sp}, relievers {bad_rp}. "
+                f"Invalid picks — not listed candidates: {bad}. "
                 f"Use only the listed pitcher_id values."
             )
-        all_ids = [p.pitcher_id for p in (*output.starters, *output.relievers)]
-        if len(all_ids) != len(set(all_ids)):
+        ids = [p.pitcher_id for p in output.picks]
+        if len(ids) != len(set(ids)):
             raise ModelRetry(
                 "Duplicate pitcher_id picks; select each pitcher at most once."
             )

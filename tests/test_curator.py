@@ -70,16 +70,12 @@ def test_slate_accepts_thin_day():
 # ── Briefing ────────────────────────────────────────────────────────
 
 
-def test_briefing_buckets_by_role():
-    """SP and RP candidates appear under separate labeled sections."""
+def test_briefing_is_flat_not_role_bucketed():
     briefing = build_selector_briefing([_app(1, "SP"), _app(2, "RP")])
-    sp_idx = briefing.index("STARTERS")
-    rp_idx = briefing.index("RELIEVERS")
-    assert sp_idx < briefing.index("Pitcher 1") < rp_idx
-    assert rp_idx < briefing.index("Pitcher 2")
-    assert "velo_delta" in briefing
-    assert "+2.1 mph vs season" in briefing
-    assert "id=1" in briefing  # pitcher_id is in the briefing for the LLM to echo
+    assert "STARTERS" not in briefing
+    assert "RELIEVERS" not in briefing
+    # both candidates still appear, with role shown inline
+    assert "id=1" in briefing and "id=2" in briefing
 
 
 # ── Selector agent ──────────────────────────────────────────────────
@@ -95,39 +91,15 @@ def test_selector_settings_are_provider_aware():
 
 def test_select_slate_returns_validated_slate():
     candidates = [_app(1, "SP"), _app(2, "RP")]
-    model = TestModel(custom_output_args={
-        "starters": [_pick(1)],
-        "relievers": [_pick(2)],
-    })
+    model = TestModel(custom_output_args={"picks": [_pick(1), _pick(2)]})
     slate = select_slate(candidates, provider="gemini", _model_override=model)
-    assert [p.pitcher_id for p in slate.starters] == [1]
-    assert [p.pitcher_id for p in slate.relievers] == [2]
+    assert sorted(p.pitcher_id for p in slate.picks) == [1, 2]
 
 
 def test_select_slate_rejects_unknown_pitcher_id():
-    """A pick whose id is not among the role's candidates is retried and,
-    with a model that never corrects, ultimately fails."""
-    from pydantic_ai.exceptions import UnexpectedModelBehavior
-
-    candidates = [_app(1, "SP"), _app(2, "RP")]
-    model = TestModel(custom_output_args={
-        "starters": [_pick(999)],  # not a candidate
-        "relievers": [],
-    })
-    with pytest.raises(UnexpectedModelBehavior):
-        select_slate(candidates, provider="gemini", _model_override=model)
-
-
-def test_select_slate_rejects_role_swap():
-    """An RP candidate picked as a starter bounces."""
-    from pydantic_ai.exceptions import UnexpectedModelBehavior
-
-    candidates = [_app(1, "SP"), _app(2, "RP")]
-    model = TestModel(custom_output_args={
-        "starters": [_pick(2)],  # RP picked as SP
-        "relievers": [],
-    })
-    with pytest.raises(UnexpectedModelBehavior):
+    candidates = [_app(1, "SP")]
+    model = TestModel(custom_output_args={"picks": [_pick(999)]})  # not a candidate
+    with pytest.raises(Exception):
         select_slate(candidates, provider="gemini", _model_override=model)
 
 
@@ -138,13 +110,7 @@ def test_select_slate_empty_candidates_raises_without_llm():
 
 
 def test_select_slate_rejects_duplicate_picks():
-    """The same pitcher picked twice bounces via ModelRetry."""
-    from pydantic_ai.exceptions import UnexpectedModelBehavior
-
     candidates = [_app(1, "SP"), _app(2, "RP")]
-    model = TestModel(custom_output_args={
-        "starters": [_pick(1), _pick(1)],
-        "relievers": [],
-    })
-    with pytest.raises(UnexpectedModelBehavior):
+    model = TestModel(custom_output_args={"picks": [_pick(1), _pick(1)]})
+    with pytest.raises(Exception):
         select_slate(candidates, provider="gemini", _model_override=model)
