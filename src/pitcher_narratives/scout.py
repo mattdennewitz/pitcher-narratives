@@ -41,6 +41,7 @@ _WEIGHTS = {
     "hard_hit_spike": 1.5,
     "walk_rate_pplus_contradiction": 2.5,
     "development_opportunity": 3.5,
+    "command_surge": 3.5,
     "workload_flag": 1.0,
 }
 
@@ -60,6 +61,8 @@ _DROPPED_PITCH_SEASON_MIN = 10.0  # season usage % above which = established
 _PPLUS_GOOD = 105  # P+ above which walk contradiction fires
 _DEV_SPLUS_MIN = 110  # high stuff threshold
 _DEV_LPLUS_MAX = 80  # low command threshold
+_COMMAND_SURGE_DELTA = 15  # L+ points gained vs season for a command surge
+_COMMAND_GOOD_LPLUS = 110  # game L+ floor — command is now a genuine strength
 _CONSECUTIVE_DAYS_FLAG = 3
 
 
@@ -235,6 +238,10 @@ def scout_appearances(
         # --- Signal: Development opportunity (high S+, low L+) ---
         dev_signals = _check_development_opportunity(game_types, pitcher_type_bl)
         signals.extend(dev_signals)
+
+        # --- Signal: Command surge (Location+ jump) ---
+        command_signals = _check_command_surge(game_types, pitcher_type_bl)
+        signals.extend(command_signals)
 
         # --- Signal: Workload flag ---
         consec = consecutive_days.get(pitcher_id, 0)
@@ -551,5 +558,39 @@ def _check_development_opportunity(
                 "development_opportunity",
                 _WEIGHTS["development_opportunity"],
                 f"{pt}: S+ {float(game_s):.0f} / L+ {float(game_l):.0f} (stuff without feel)",
+            ))
+    return signals
+
+
+def _check_command_surge(
+    game_types: pl.DataFrame,
+    pitcher_type_bl: pl.DataFrame,
+) -> list[Signal]:
+    """Check for pitches whose Location+ surged vs season — command arrived.
+
+    The inverse of development_opportunity: delta-based (a breakout is a change),
+    firing when a pitch's L+ jumped meaningfully and now locates well.
+    """
+    signals: list[Signal] = []
+    for row in game_types.iter_rows(named=True):
+        pt = row["pitch_type"]
+        if row.get("n_pitches", 0) < _MIN_TYPE_PITCHES:
+            continue  # too few pitches for a reliable L+ grade
+        bl_row = pitcher_type_bl.filter(pl.col("pitch_type") == pt)
+        if bl_row.is_empty():
+            continue
+
+        bl = bl_row.row(0, named=True)
+        game_l = row.get("L+")
+        season_l = bl.get("L+")
+        if game_l is None or season_l is None:
+            continue
+
+        l_delta = float(game_l) - float(season_l)
+        if l_delta >= _COMMAND_SURGE_DELTA and float(game_l) >= _COMMAND_GOOD_LPLUS:
+            signals.append(Signal(
+                "command_surge",
+                _WEIGHTS["command_surge"],
+                f"{pt}: L+ {l_delta:+.0f} (now {float(game_l):.0f}) — found the zone",
             ))
     return signals

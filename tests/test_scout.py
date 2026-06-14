@@ -96,3 +96,86 @@ def test_development_opportunity_ignores_tiny_samples():
     fired = {s.detail.split(":")[0] for s in _check_development_opportunity(game_types, pl.DataFrame())}
     assert "SI" not in fired
     assert "SL" in fired
+
+
+def test_command_surge_fires_on_location_jump():
+    """A pitch whose L+ surged vs season and now locates well fires command_surge."""
+    import polars as pl
+
+    from pitcher_narratives.scout import _check_command_surge
+
+    game_types = pl.DataFrame({
+        "pitch_type": ["SL"],
+        "n_pitches": [12],
+        "S+": [105.0],
+        "L+": [118.0],          # game L+ well above the 110 floor
+    })
+    baseline = pl.DataFrame({
+        "pitch_type": ["SL"],
+        "S+": [104.0],
+        "L+": [98.0],           # +20 vs season, >= 15 delta
+    })
+    fired = {s.detail.split(":")[0] for s in _check_command_surge(game_types, baseline)}
+    assert "SL" in fired
+
+
+def test_command_surge_ignores_small_jump():
+    """An L+ gain below the surge delta does not fire."""
+    import polars as pl
+
+    from pitcher_narratives.scout import _check_command_surge
+
+    game_types = pl.DataFrame({
+        "pitch_type": ["SL"],
+        "n_pitches": [12],
+        "S+": [105.0],
+        "L+": [112.0],          # above floor, but only +5 vs season
+    })
+    baseline = pl.DataFrame({
+        "pitch_type": ["SL"],
+        "S+": [104.0],
+        "L+": [107.0],
+    })
+    assert _check_command_surge(game_types, baseline) == []
+
+
+def test_command_surge_ignores_sub_floor_command():
+    """A big L+ jump that still lands below the 'good command' floor does not fire."""
+    import polars as pl
+
+    from pitcher_narratives.scout import _check_command_surge
+
+    game_types = pl.DataFrame({
+        "pitch_type": ["SL"],
+        "n_pitches": [12],
+        "S+": [105.0],
+        "L+": [100.0],          # +20 vs season but below the 110 floor
+    })
+    baseline = pl.DataFrame({
+        "pitch_type": ["SL"],
+        "S+": [104.0],
+        "L+": [80.0],
+    })
+    assert _check_command_surge(game_types, baseline) == []
+
+
+def test_command_surge_ignores_tiny_samples():
+    """A one-pitch L+ can't establish a command jump (small-sample gate)."""
+    import polars as pl
+
+    from pitcher_narratives.scout import _check_command_surge
+
+    game_types = pl.DataFrame({
+        "pitch_type": ["SI", "SL"],
+        "n_pitches": [1, 12],
+        "S+": [105.0, 105.0],
+        "L+": [125.0, 118.0],
+    })
+    baseline = pl.DataFrame({
+        "pitch_type": ["SI", "SL"],
+        "S+": [104.0, 104.0],
+        "L+": [98.0, 98.0],
+    })
+    fired = {s.detail.split(":")[0] for s in _check_command_surge(game_types, baseline)}
+    assert "SI" not in fired
+    assert "SL" in fired
