@@ -10,6 +10,7 @@ ranks appearances so you only generate capsules for the interesting ones.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 from typing import cast
@@ -25,6 +26,8 @@ from pitcher_narratives.data import (
 )
 
 __all__ = ["ScoredAppearance", "compute_velo_baselines", "scout_appearances", "top_per_role"]
+
+log = logging.getLogger("pitcher_narratives.scout")
 
 # ── Scoring weights ──────────────────────────────────────────────────
 
@@ -156,6 +159,25 @@ def scout_appearances(
     consecutive_days = _find_consecutive_day_pitchers(app_df)
 
     role_map = _compute_role_map()
+
+    # Guard against a silent role-classification failure. The role map is built
+    # from the statcast parquet, while appearances come from the aggregates. If
+    # the parquet lags the aggs (e.g. `make pull-aggs` ran without
+    # `make pull-statcast`), recent game_pks are absent from the map and every
+    # appearance silently defaults to "RP" -- turning starters into relievers.
+    window_keys = [
+        (r["pitcher"], r["game_pk"])
+        for r in app_window.select("pitcher", "game_pk").iter_rows(named=True)
+    ]
+    missing = sum(1 for k in window_keys if k not in role_map)
+    if window_keys and missing / len(window_keys) > 0.5:
+        log.warning(
+            "Role classification degraded: %d/%d window appearances (%.0f%%) are "
+            "missing from the role map and will default to RP. The statcast parquet "
+            "is likely stale relative to the aggregates -- run `make pull-statcast` "
+            "(or `make pull-data`).",
+            missing, len(window_keys), 100.0 * missing / len(window_keys),
+        )
 
     results: list[ScoredAppearance] = []
     for row in app_window.iter_rows(named=True):

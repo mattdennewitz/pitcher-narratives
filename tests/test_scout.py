@@ -35,3 +35,21 @@ def test_scored_appearance_has_role_default():
     """role is part of the dataclass (default RP so old call sites work)."""
     a = _app(1, 1.0, "SP")
     assert a.role == "SP"
+
+
+def test_role_map_coverage_warning(monkeypatch, caplog):
+    """Warns when most window appearances are missing from the role map.
+
+    Reproduces the silent failure where a stale statcast parquet (vs fresh
+    aggregates) leaves recent game_pks out of the role map, so every
+    appearance defaults to RP. Monkeypatching the role map to empty forces
+    100% misses.
+    """
+    import logging
+
+    import pitcher_narratives.scout as scout
+
+    monkeypatch.setattr(scout, "_compute_role_map", lambda: {})
+    with caplog.at_level(logging.WARNING, logger="pitcher_narratives.scout"):
+        scout.scout_appearances(window_days=1, min_pitches=20)
+    assert any("missing from the role map" in r.message for r in caplog.records)
