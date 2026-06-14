@@ -10,6 +10,7 @@ Stage 2 writers build from.
 from __future__ import annotations
 
 import asyncio
+from collections import Counter
 from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
@@ -27,7 +28,7 @@ __all__ = [
     "select_slate_async",
 ]
 
-_MAX_PICKS_PER_ROLE = 10
+_MAX_PICKS_PER_CATEGORY = 5
 _SELECTOR_TEMPERATURE = 0.2
 """Low temperature: selection should be near-deterministic."""
 _SELECTOR_MAX_TOKENS = 8192
@@ -46,15 +47,24 @@ class CurationPick(BaseModel):
 
 
 class CurationSlate(BaseModel):
-    """The morning slate: up to 10 picks per role, at least one overall."""
+    """The morning slate: up to 5 picks per category, at least one overall."""
 
-    starters: list[CurationPick] = Field(max_length=_MAX_PICKS_PER_ROLE)
-    relievers: list[CurationPick] = Field(max_length=_MAX_PICKS_PER_ROLE)
+    picks: list[CurationPick] = Field(default_factory=list)
 
     @model_validator(mode="after")
-    def _non_empty(self) -> "CurationSlate":
-        if not self.starters and not self.relievers:
+    def _validate(self) -> CurationSlate:
+        if not self.picks:
             raise ValueError("slate must contain at least one pick")
+        over = {
+            cat: n
+            for cat, n in Counter(p.category for p in self.picks).items()
+            if n > _MAX_PICKS_PER_CATEGORY
+        }
+        if over:
+            raise ValueError(
+                f"Too many picks in categories {over}; "
+                f"cap is {_MAX_PICKS_PER_CATEGORY} per category."
+            )
         return self
 
 

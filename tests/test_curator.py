@@ -34,28 +34,37 @@ def _pick(pid: int) -> dict:
     }
 
 
+def _pick_cat(pid: int, category: str) -> dict:
+    return {**_pick(pid), "category": category}
+
+
 # ── Model validation ────────────────────────────────────────────────
 
 
-def test_slate_caps_each_role_at_ten():
+def test_slate_caps_each_category_at_five():
+    """At most 5 picks per category; a 6th in one category is rejected."""
     with pytest.raises(ValidationError):
         CurationSlate(
-            starters=[CurationPick(**_pick(i)) for i in range(11)],
-            relievers=[],
+            picks=[CurationPick(**_pick_cat(i, "lab_project")) for i in range(6)]
         )
+
+
+def test_slate_allows_five_per_category_across_categories():
+    """5 in each of the four categories (20 total, distinct ids) is valid."""
+    cats = ["clean_breakout", "lab_project", "identity_crisis", "red_flag"]
+    picks = [CurationPick(**_pick_cat(i, cats[i // 5])) for i in range(20)]
+    slate = CurationSlate(picks=picks)
+    assert len(slate.picks) == 20
 
 
 def test_slate_must_not_be_empty():
     with pytest.raises(ValidationError):
-        CurationSlate(starters=[], relievers=[])
+        CurationSlate(picks=[])
 
 
 def test_slate_accepts_thin_day():
-    slate = CurationSlate(
-        starters=[CurationPick(**_pick(1))],
-        relievers=[],
-    )
-    assert len(slate.starters) == 1
+    slate = CurationSlate(picks=[CurationPick(**_pick(1))])
+    assert len(slate.picks) == 1
 
 
 # ── Briefing ────────────────────────────────────────────────────────
