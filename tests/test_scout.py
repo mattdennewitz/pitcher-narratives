@@ -13,7 +13,7 @@ def _app(pid: int, score: float, role: str) -> ScoredAppearance:
     )
 
 
-def testtop_per_role_caps_each_bucket():
+def test_top_per_role_caps_each_bucket():
     """Each role keeps its own top N; result is merged, score-desc."""
     apps = [
         _app(1, 9.0, "SP"), _app(2, 8.0, "SP"), _app(3, 7.0, "SP"),
@@ -24,7 +24,7 @@ def testtop_per_role_caps_each_bucket():
     assert [a.score for a in out] == sorted([a.score for a in out], reverse=True)
 
 
-def testtop_per_role_thin_bucket():
+def test_top_per_role_thin_bucket():
     """A bucket with fewer than N keeps everything it has."""
     apps = [_app(1, 9.0, "SP"), _app(4, 6.5, "RP")]
     out = top_per_role(apps, top_n=10)

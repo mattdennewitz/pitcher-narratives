@@ -236,7 +236,12 @@ def compute_slot_expectations() -> dict[tuple[str, int], SlotExpectation]:
     if _slot_expectations_cache is not None:
         return _slot_expectations_cache
 
-    df = load_all_statcast(columns=["pitcher", "pitch_type", "p_throws", "arm_angle", "pfx_x", "pfx_z"])
+    df = load_all_statcast(
+        columns=["pitcher", "pitch_type", "p_throws", "arm_angle", "pfx_x", "pfx_z", "level"],
+    )
+    # MLB-only league norm: minor-league (A/AAA) and WBC pitches must not skew
+    # the slot-expectation means or the between-pitcher SD denominator.
+    df = df.filter(pl.col("level") == "MLB")
     df = df.filter(
         pl.col("arm_angle").is_not_null()
         & pl.col("pfx_x").is_not_null()

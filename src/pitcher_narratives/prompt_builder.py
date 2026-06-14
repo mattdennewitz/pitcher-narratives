@@ -12,6 +12,25 @@ from pitcher_narratives.context import _MAX_PITCH_TYPES, PitcherContext
 from pitcher_narratives.engine import TTOPitchType, TTOPlatoonSplit
 from pitcher_narratives.shape import render_pitch_shape
 
+__all__ = [
+    "build_pitcher_prompt",
+    "render_appearances_section",
+    "render_arsenal_section",
+    "render_execution_section",
+    "render_executive_summary",
+    "render_fastball_section",
+    "render_first_pitch_section",
+    "render_hard_hit_section",
+    "render_intermediates_section",
+    "render_pitch_shape_section",
+    "render_platoon_section",
+    "render_release_point_section",
+    "render_role_section",
+    "render_temporal_section",
+    "render_tto_section",
+    "render_yoy_section",
+]
+
 
 def build_pitcher_prompt(ctx: PitcherContext) -> str:
     """Render the context as prompt-ready markdown under 2,000 tokens."""

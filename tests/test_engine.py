@@ -470,6 +470,73 @@ def test_platoon_missing_combo():
             assert "not thrown" in s.usage_delta.lower()
 
 
+def _one_sided_platoon_data() -> PitcherData:
+    """Minimal PitcherData where CH is thrown only to opposite-side batters.
+
+    Drives compute_platoon_mix to the 'not thrown to this side' branch for
+    CH-same deterministically, independent of any live pitcher's splits. The
+    empty (schema-only) platoon agg frames let the available (opposite) branch
+    run without contributing data.
+    """
+    import datetime
+
+    day = datetime.date(2026, 6, 1)
+    statcast = pl.DataFrame(
+        {
+            "game_pk": [1] * 3,
+            "game_date": [day] * 3,
+            "pitch_type": ["CH"] * 3,
+            "pitch_name": ["Changeup"] * 3,
+            "stand": ["L"] * 3,  # LHB vs RHP -> opposite-side only
+            "p_throws": ["R"] * 3,
+            "release_speed": [85.0, 85.5, 84.5],
+            "pfx_x": [1.0] * 3,
+            "pfx_z": [1.0] * 3,
+        }
+    )
+    appearances = pl.DataFrame({"game_pk": [1], "game_date": [day]})
+    pitch_type_baseline = pl.DataFrame({"pitch_type": ["CH"], "n_pitches": [3]})
+    platoon_schema = {
+        "pitcher": pl.Int64, "pitch_type": pl.String, "platoon_matchup": pl.String,
+        "n_pitches": pl.Int64, "P+": pl.Float64, "S+": pl.Float64, "L+": pl.Float64,
+    }
+    appearance_schema = {
+        "game_date": pl.Date, "pitch_type": pl.String, "platoon_matchup": pl.String,
+        "n_pitches": pl.Int64, "P+": pl.Float64, "S+": pl.Float64, "L+": pl.Float64,
+    }
+    empty = pl.DataFrame()
+    return PitcherData(
+        statcast=statcast,
+        appearances=appearances,
+        window_appearances=appearances,
+        season_baseline=empty,
+        pitch_type_baseline=pitch_type_baseline,
+        prior_season_baseline=empty,
+        prior_pitch_type_baseline=empty,
+        agg_csvs={
+            "pitcher_type_platoon": pl.DataFrame(schema=platoon_schema),
+            "pitcher_type_platoon_appearance": pl.DataFrame(schema=appearance_schema),
+        },
+        pitcher_id=1,
+        pitcher_name="Test",
+        throws="R",
+    )
+
+
+def test_platoon_unavailable_combo():
+    """A pitch thrown to only one side yields an unavailable split (with a
+    'not thrown' note) for the side it skipped, and an available split for the
+    side it was thrown to."""
+    platoon = compute_platoon_mix(_one_sided_platoon_data())
+    ch_same = [s for s in platoon.splits if s.pitch_type == "CH" and s.platoon_side == "same"]
+    assert len(ch_same) == 1
+    assert ch_same[0].available is False
+    assert "not thrown" in ch_same[0].usage_delta.lower()
+    ch_opp = [s for s in platoon.splits if s.pitch_type == "CH" and s.platoon_side == "opposite"]
+    assert len(ch_opp) == 1
+    assert ch_opp[0].available is True
+
+
 def test_platoon_mapping():
     """For LHP, stand=L maps to 'same' and stand=R maps to 'opposite'."""
     assert _stand_to_platoon("L", "L") == "same"
@@ -607,6 +674,9 @@ def test_xrv100_percentile_excludes_minor_league():
     # If minor-league rows leaked in, worse = 6/8 -> 75th. So this distinguishes.
     pctl = _compute_xrv100_percentile(1.5, "FF", df)
     assert pctl == 33, f"expected MLB-only 33rd percentile, got {pctl} (minor-league leak?)"
+
+
+def test_xrv100_polarity():
     """Lower (more negative) xRV100 = better for pitcher = higher percentile."""
     data = load_pitcher_data(TEST_PITCHER, window_days=30)
     metrics = compute_execution_metrics(data)

@@ -22,16 +22,26 @@ AGGS_LOOKBACK ?= 14
 pull-data: pull-statcast pull-aggs
 
 # statcast/<year>.parquet  <-  pitchingplus/statcast/<year>.parquet
+# Downloads to a .part file and moves on success so an interrupted download
+# never leaves a corrupt parquet in place.
 pull-statcast:
 	@mkdir -p statcast
-	$(WRANGLER) r2 object get $(R2_BUCKET)/statcast/$(YEAR).parquet --remote --file statcast/$(YEAR).parquet
+	@set -e; \
+	dest=statcast/$(YEAR).parquet; \
+	rm -f "$$dest.part"; \
+	$(WRANGLER) r2 object get $(R2_BUCKET)/statcast/$(YEAR).parquet --remote --file "$$dest.part"; \
+	mv -f "$$dest.part" "$$dest"; \
+	echo "Wrote $$dest"
 
 # aggs/  <-  pitchingplus/pitchingplus/aggs/<closest YYYY-MM-DD>/aggs.zip
 # Snapshots are daily; walk back from today to the most recent one available,
-# download the zip, unzip, and move the CSVs into aggs/.
+# download the zip, unzip, and move the CSVs into aggs/. `set -e` aborts on any
+# download/unzip/move failure; the trap cleans up the temp dir on every exit.
 pull-aggs:
 	@mkdir -p aggs
-	@tmp=$$(mktemp -d); \
+	@set -e; \
+	tmp=$$(mktemp -d); \
+	trap 'rm -rf "$$tmp"' EXIT; \
 	found=""; \
 	for i in $$(seq 0 $(AGGS_LOOKBACK)); do \
 		day=$$(date -v-$${i}d +%F 2>/dev/null || date -d "-$${i} days" +%F); \
@@ -43,10 +53,12 @@ pull-aggs:
 	done; \
 	if [ -z "$$found" ]; then \
 		echo "No aggs snapshot found in the last $(AGGS_LOOKBACK) days." >&2; \
-		rm -rf "$$tmp"; exit 1; \
+		exit 1; \
 	fi; \
 	echo "Using aggs snapshot $$found"; \
 	unzip -oq "$$tmp/aggs.zip" -d "$$tmp/unz"; \
+	if [ -z "$$(find "$$tmp/unz" -name '*.csv' -print -quit)" ]; then \
+		echo "aggs.zip contained no CSV files." >&2; exit 1; \
+	fi; \
 	find "$$tmp/unz" -name '*.csv' -exec mv -f {} aggs/ \; ; \
-	rm -rf "$$tmp"; \
 	echo "Aggs refreshed into aggs/"
