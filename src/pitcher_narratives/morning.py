@@ -13,6 +13,7 @@ import json
 import logging
 import sys
 import time
+from collections import Counter
 from pathlib import Path
 
 import polars as pl
@@ -107,9 +108,9 @@ def run_morning(
             candidates, provider=provider, tracker=tracker, briefing=briefing,
             _model_override=_selector_override,
         )
-        picks = [*slate.starters, *slate.relievers]
-        log.info("Slate: %d starters, %d relievers.",
-                 len(slate.starters), len(slate.relievers))
+        picks = slate.picks
+        by_cat = Counter(p.category for p in picks)
+        log.info("Slate: %d picks across categories %s.", len(picks), dict(by_cat))
 
         season_baseline, type_baseline, season_velo = _load_baselines()
         cues = {
@@ -152,7 +153,7 @@ def run_morning(
     (run_dir / "slate.json").write_text(json.dumps(
         {
             "game_date": str(game_date),
-            "picks": slate.model_dump(),
+            "picks": slate.model_dump()["picks"],
             "names": {
                 str(p.pitcher_id): appearances[p.pitcher_id].pitcher_name
                 for p in picks

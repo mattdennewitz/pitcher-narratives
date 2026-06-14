@@ -13,7 +13,6 @@ import logging
 from datetime import date
 
 import polars as pl
-
 from pydantic_ai import Agent
 
 from pitcher_narratives.config import PROVIDERS, TOKEN_BUDGET_LARGE, make_model_settings
@@ -286,8 +285,7 @@ def assemble_digest(
         return lines
 
     parts = [f"# Morning Digest — {game_date}", ""]
-    parts += _section("Starters", slate.starters)
-    parts += _section("Relievers", slate.relievers)
+    parts += _section("Candidates", slate.picks)
     parts.append(render_full_board(board))
     parts += ["", cost_block]
     return "\n".join(parts)

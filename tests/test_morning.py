@@ -38,16 +38,18 @@ def _patch_data(monkeypatch):
 
 def _selector_model():
     return TestModel(custom_output_args={
-        "starters": [{
-            "pitcher_id": 1, "category": "clean_breakout",
-            "angle": "Velo spike", "conviction": "medium",
-            "conviction_reason": "Shape agrees.",
-        }],
-        "relievers": [{
-            "pitcher_id": 2, "category": "red_flag",
-            "angle": "Suspicious spike", "conviction": "low",
-            "conviction_reason": "Single game.",
-        }],
+        "picks": [
+            {
+                "pitcher_id": 1, "category": "clean_breakout",
+                "angle": "Velo spike", "conviction": "medium",
+                "conviction_reason": "Shape agrees.",
+            },
+            {
+                "pitcher_id": 2, "category": "red_flag",
+                "angle": "Suspicious spike", "conviction": "low",
+                "conviction_reason": "Single game.",
+            },
+        ],
     })
 
 
@@ -68,10 +70,10 @@ def test_run_morning_writes_all_artifacts(tmp_path, monkeypatch):
 
     slate = json.loads((run_dir / "slate.json").read_text())
     assert slate["game_date"] == "2026-06-10"
-    assert slate["picks"]["starters"][0]["pitcher_id"] == 1
+    assert slate["picks"][0]["pitcher_id"] == 1
     assert slate["names"]["1"] == "Pitcher 1"
 
-    assert "STARTERS" in (run_dir / "briefing.md").read_text()
+    assert "CANDIDATES" in (run_dir / "briefing.md").read_text()
     usage = json.loads((run_dir / "usage.json").read_text())
     assert any(rec["stage"] == "selector" for rec in usage)
 
@@ -93,12 +95,13 @@ def test_run_morning_single_event_loop(tmp_path, monkeypatch):
             )
 
     selector = _LoopRecorder(custom_output_args={
-        "starters": [{
-            "pitcher_id": 1, "category": "clean_breakout",
-            "angle": "Velo spike", "conviction": "medium",
-            "conviction_reason": "Shape agrees.",
-        }],
-        "relievers": [],
+        "picks": [
+            {
+                "pitcher_id": 1, "category": "clean_breakout",
+                "angle": "Velo spike", "conviction": "medium",
+                "conviction_reason": "Shape agrees.",
+            },
+        ],
     })
     writer = _LoopRecorder(custom_output_text="A summary.")
 
@@ -163,12 +166,13 @@ def test_full_board_lists_beyond_candidate_cap(tmp_path, monkeypatch):
     })
     monkeypatch.setattr(morning, "_load_baselines", lambda: (season, types, {}))
     selector = TestModel(custom_output_args={
-        "starters": [{
-            "pitcher_id": 1, "category": "clean_breakout",
-            "angle": "Velo spike", "conviction": "medium",
-            "conviction_reason": "Shape agrees.",
-        }],
-        "relievers": [],
+        "picks": [
+            {
+                "pitcher_id": 1, "category": "clean_breakout",
+                "angle": "Velo spike", "conviction": "medium",
+                "conviction_reason": "Shape agrees.",
+            },
+        ],
     })
     run_dir = morning.run_morning(
         window_days=1, top_n=1, min_pitches=20,
