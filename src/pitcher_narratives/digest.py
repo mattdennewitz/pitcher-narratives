@@ -235,6 +235,15 @@ _CATEGORY_BADGES = {
     "red_flag": "RED FLAG",
 }
 
+_CATEGORY_ORDER = ["clean_breakout", "lab_project", "identity_crisis", "red_flag"]
+_CATEGORY_SECTION_TITLES = {
+    "clean_breakout": "Clean Breakouts",
+    "lab_project": "Lab Projects",
+    "identity_crisis": "Identity Crises",
+    "red_flag": "Red Flags",
+}
+_CONVICTION_RANK = {"high": 0, "medium": 1, "low": 2}
+
 
 def render_full_board(board: list[ScoredAppearance]) -> str:
     """Deterministic listing of every scored appearance, grouped by role."""
@@ -267,13 +276,20 @@ def assemble_digest(
     game_date: date,
     cost_block: str,
 ) -> str:
-    """Render the final digest document."""
+    """Render the final digest document, grouped by category."""
+
+    def _ordered(picks: list[CurationPick]) -> list[CurationPick]:
+        return sorted(
+            picks,
+            key=lambda p: (
+                _CONVICTION_RANK[p.conviction],
+                -appearances[p.pitcher_id].score,
+            ),
+        )
 
     def _section(title: str, picks: list[CurationPick]) -> list[str]:
         lines = [f"## {title}", ""]
-        if not picks:
-            lines += ["*(no picks today)*", ""]
-        for pick in picks:
+        for pick in _ordered(picks):
             name = appearances[pick.pitcher_id].pitcher_name
             badge = _CATEGORY_BADGES[pick.category]
             lines += [
@@ -284,8 +300,14 @@ def assemble_digest(
             ]
         return lines
 
+    by_cat: dict[str, list[CurationPick]] = {c: [] for c in _CATEGORY_ORDER}
+    for pick in slate.picks:
+        by_cat[pick.category].append(pick)
+
     parts = [f"# Morning Digest — {game_date}", ""]
-    parts += _section("Candidates", slate.picks)
+    for cat in _CATEGORY_ORDER:
+        if by_cat[cat]:
+            parts += _section(_CATEGORY_SECTION_TITLES[cat], by_cat[cat])
     parts.append(render_full_board(board))
     parts += ["", cost_block]
     return "\n".join(parts)

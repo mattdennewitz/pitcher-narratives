@@ -198,7 +198,7 @@ def test_render_full_board_groups_and_sorts():
 
 
 def test_assemble_digest_layout():
-    slate = CurationSlate(starters=[_pick(1)], relievers=[_pick(2)])
+    slate = CurationSlate(picks=[_pick(1), _pick(2)])
     apps = {1: _app(1), 2: _app(2, role="RP")}
     digest = assemble_digest(
         slate=slate,
@@ -209,12 +209,62 @@ def test_assemble_digest_layout():
         cost_block="── Run cost ── total $0.10 (5s)",
     )
     assert digest.startswith("# Morning Digest — 2026-06-10")
-    i_sp = digest.index("## Starters")
-    i_rp = digest.index("## Relievers")
+    i_cat = digest.index("## Clean Breakouts")
     i_board = digest.index("## The Full Board")
-    assert i_sp < i_rp < i_board
-    assert i_sp < digest.index("SP summary text.") < i_rp
-    assert i_rp < digest.index("RP summary text.") < i_board
-    assert "clean_breakout" in digest          # category badge
-    assert "Pitcher 1" in digest               # name resolved from scout data
-    assert digest.rstrip().endswith("(5s)")    # cost footer last
+    assert i_cat < i_board
+    assert i_cat < digest.index("SP summary text.") < i_board
+    assert i_cat < digest.index("RP summary text.") < i_board
+    assert "clean_breakout" in digest
+    assert "Pitcher 1" in digest
+    assert digest.rstrip().endswith("(5s)")
+
+
+def _pick2(pid: int, category: str, conviction: str = "medium") -> CurationPick:
+    return CurationPick(
+        pitcher_id=pid, category=category, angle="a", conviction=conviction,
+        conviction_reason="r",
+    )
+
+
+def _appearance(pid: int, score: float):
+    from datetime import date as _date
+
+    from pitcher_narratives.scout import ScoredAppearance
+    return ScoredAppearance(
+        pitcher_id=pid, pitcher_name=f"P{pid}", throws="R",
+        game_date=_date(2026, 6, 13), game_pk=1, n_pitches=80, score=score, role="RP",
+    )
+
+
+def test_digest_groups_by_category_and_omits_empty():
+    slate = CurationSlate(picks=[
+        _pick2(1, "red_flag"),
+        _pick2(2, "lab_project"),
+        _pick2(3, "lab_project"),
+    ])
+    appearances = {1: _appearance(1, 9.0), 2: _appearance(2, 5.0), 3: _appearance(3, 8.0)}
+    summaries = {1: "s1", 2: "s2", 3: "s3"}
+    out = assemble_digest(
+        slate=slate, summaries=summaries, appearances=appearances,
+        board=list(appearances.values()), game_date="2026-06-13", cost_block="cost",
+    )
+    assert "## Lab Projects" in out
+    assert "## Red Flags" in out
+    assert "## Clean Breakouts" not in out
+    assert "## Identity Crises" not in out
+    assert out.index("## Lab Projects") < out.index("## Red Flags")
+
+
+def test_digest_orders_within_category_by_conviction_then_score():
+    slate = CurationSlate(picks=[
+        _pick2(1, "lab_project", "low"),
+        _pick2(2, "lab_project", "high"),
+        _pick2(3, "lab_project", "high"),
+    ])
+    appearances = {1: _appearance(1, 9.0), 2: _appearance(2, 5.0), 3: _appearance(3, 8.0)}
+    summaries = {1: "s1", 2: "s2", 3: "s3"}
+    out = assemble_digest(
+        slate=slate, summaries=summaries, appearances=appearances,
+        board=list(appearances.values()), game_date="2026-06-13", cost_block="cost",
+    )
+    assert out.index("### P3") < out.index("### P2") < out.index("### P1")
