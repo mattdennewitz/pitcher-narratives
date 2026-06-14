@@ -53,3 +53,46 @@ def test_role_map_coverage_warning(monkeypatch, caplog):
     with caplog.at_level(logging.WARNING, logger="pitcher_narratives.scout"):
         scout.scout_appearances(window_days=1, min_pitches=20)
     assert any("missing from the role map" in r.message for r in caplog.records)
+
+
+def test_divergence_ignores_tiny_pitch_type_samples():
+    """A pitch type thrown too few times can't establish a stuff/command split.
+
+    Guards against phantom signals like a single sinker whose Location+ model
+    output (-138) produced a -261 'divergence' that was pure small-sample noise.
+    """
+    import polars as pl
+
+    from pitcher_narratives.scout import _check_splus_lplus_divergence
+
+    game_types = pl.DataFrame({
+        "pitch_type": ["SI", "SL"],
+        "n_pitches": [1, 10],           # SI: 1 pitch (noise); SL: 10 (real)
+        "S+": [110.0, 112.0],
+        "L+": [-138.0, 60.0],
+    })
+    baseline = pl.DataFrame({
+        "pitch_type": ["SI", "SL"],
+        "S+": [96.0, 100.0],
+        "L+": [122.0, 100.0],
+    })
+    fired = {s.detail.split(":")[0] for s in _check_splus_lplus_divergence(game_types, baseline)}
+    assert "SI" not in fired   # 1-pitch sample gated out
+    assert "SL" in fired       # 10-pitch divergence still fires
+
+
+def test_development_opportunity_ignores_tiny_samples():
+    """High-S+/low-L+ 'stuff without feel' needs a real sample, not one pitch."""
+    import polars as pl
+
+    from pitcher_narratives.scout import _check_development_opportunity
+
+    game_types = pl.DataFrame({
+        "pitch_type": ["SI", "SL"],
+        "n_pitches": [1, 10],
+        "S+": [120.0, 130.0],
+        "L+": [20.0, 30.0],
+    })
+    fired = {s.detail.split(":")[0] for s in _check_development_opportunity(game_types, pl.DataFrame())}
+    assert "SI" not in fired
+    assert "SL" in fired

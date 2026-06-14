@@ -49,6 +49,10 @@ _WEIGHTS = {
 _VELO_THRESHOLD = 1.5  # mph from season avg
 _PPLUS_THRESHOLD = 15  # points from season
 _DIVERGENCE_THRESHOLD = 10  # S+ and L+ moving opposite directions, each ≥ this
+_MIN_TYPE_PITCHES = 3
+"""Minimum pitches of a type in an outing before its S+/L+ grades are trusted.
+Per-pitch-type Stuff+/Location+ are model outputs that blow up on tiny samples
+(a single sinker once produced a -138 Location+, a phantom -261 'divergence')."""
 _USAGE_THRESHOLD = 8.0  # percentage points
 _NEW_PITCH_SEASON_MAX = 1.0  # season usage % below which = "new"
 _NEW_PITCH_GAME_MIN = 5.0  # game usage % above which = meaningful
@@ -402,6 +406,8 @@ def _check_splus_lplus_divergence(
     signals: list[Signal] = []
     for row in game_types.iter_rows(named=True):
         pt = row["pitch_type"]
+        if row.get("n_pitches", 0) < _MIN_TYPE_PITCHES:
+            continue  # too few pitches for a reliable S+/L+ grade
         bl_row = pitcher_type_bl.filter(pl.col("pitch_type") == pt)
         if bl_row.is_empty():
             continue
@@ -533,6 +539,8 @@ def _check_development_opportunity(
     signals: list[Signal] = []
     for row in game_types.iter_rows(named=True):
         pt = row["pitch_type"]
+        if row.get("n_pitches", 0) < _MIN_TYPE_PITCHES:
+            continue  # too few pitches for a reliable S+/L+ grade
         game_s = row.get("S+")
         game_l = row.get("L+")
         if game_s is None or game_l is None:
