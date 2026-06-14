@@ -5,7 +5,7 @@
 
 ## Goal
 
-Replace the morning slate's **role-based** selection structure (up to 10 starters + up to 10 relievers) with a **category-based** one: up to **5 picks per editorial category**, no minimum. This forces angle diversity across the four story categories and prevents a single category from dominating the digest.
+Replace the morning slate's **role-based** selection structure (up to 10 starters + up to 10 relievers) with a **category-based** one: up to **5 picks per editorial category**, no minimum. This caps any single category and, paired with an explicit anti-clustering nudge in the selector prompt, pushes the slate toward variety instead of a block of near-identical stories.
 
 ## Motivation
 
@@ -70,6 +70,7 @@ class CurationSlate(BaseModel):
 - Instruction: "select up to **5 per category** across the four categories below" (replacing "up to 10 STARTERS and up to 10 RELIEVERS").
 - Keep the existing category hierarchy/definitions (clean_breakout → lab_project → identity_crisis → red_flag) and the "never pad ordinary outings" / "ignore average outings" rules.
 - Remove the role-section rules ("starters come ONLY from the STARTERS section…").
+- **Add an anti-clustering nudge.** The cap bounds over-representation; this nudge pushes for *variety* so the slate doesn't become a block of near-identical stories. Add a rule to the effect of: "Favor variety. Prefer a spread across categories and distinct stories over many look-alikes. Within a category, when several candidates tell the same story (e.g. multiple 'elite breaking ball, no command' lab projects), keep only the most distinctive or highest-conviction few rather than filling the cap with duplicates. A shorter, varied slate beats a long, repetitive one." This is the only behavioral lever for angle diversity; the per-capsule writer template is out of scope.
 
 ### Membership validator (`curator.py`)
 
