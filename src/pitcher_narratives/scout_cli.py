@@ -131,10 +131,17 @@ def main() -> None:
 
         slate = select_slate(results, provider=args.provider)
         names = {r.pitcher_id: r.pitcher_name for r in results}
-        for label, picks in (("STARTERS", slate.starters), ("RELIEVERS", slate.relievers)):
-            print(f"\n{label}")
+        order = ["clean_breakout", "lab_project", "identity_crisis", "red_flag"]
+        by_cat: dict[str, list] = {c: [] for c in order}
+        for p in slate.picks:
+            by_cat[p.category].append(p)
+        for cat in order:
+            picks = by_cat[cat]
+            if not picks:
+                continue
+            print(f"\n{cat.upper().replace('_', ' ')}")
             for p in picks:
-                print(f"  [{p.category}] {names.get(p.pitcher_id, p.pitcher_id)} "
+                print(f"  {names.get(p.pitcher_id, p.pitcher_id)} "
                       f"({p.conviction}): {p.angle}")
 
 
