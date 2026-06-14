@@ -246,7 +246,7 @@ def test_digest_groups_by_category_and_omits_empty():
     summaries = {1: "s1", 2: "s2", 3: "s3"}
     out = assemble_digest(
         slate=slate, summaries=summaries, appearances=appearances,
-        board=list(appearances.values()), game_date="2026-06-13", cost_block="cost",
+        board=list(appearances.values()), game_date=date(2026, 6, 13), cost_block="cost",
     )
     assert "## Lab Projects" in out
     assert "## Red Flags" in out
@@ -265,6 +265,6 @@ def test_digest_orders_within_category_by_conviction_then_score():
     summaries = {1: "s1", 2: "s2", 3: "s3"}
     out = assemble_digest(
         slate=slate, summaries=summaries, appearances=appearances,
-        board=list(appearances.values()), game_date="2026-06-13", cost_block="cost",
+        board=list(appearances.values()), game_date=date(2026, 6, 13), cost_block="cost",
     )
     assert out.index("### P3") < out.index("### P2") < out.index("### P1")

@@ -97,9 +97,11 @@ def test_select_slate_returns_validated_slate():
 
 
 def test_select_slate_rejects_unknown_pitcher_id():
+    from pydantic_ai.exceptions import UnexpectedModelBehavior
+
     candidates = [_app(1, "SP")]
     model = TestModel(custom_output_args={"picks": [_pick(999)]})  # not a candidate
-    with pytest.raises(Exception):
+    with pytest.raises(UnexpectedModelBehavior):
         select_slate(candidates, provider="gemini", _model_override=model)
 
 
@@ -110,7 +112,9 @@ def test_select_slate_empty_candidates_raises_without_llm():
 
 
 def test_select_slate_rejects_duplicate_picks():
+    from pydantic_ai.exceptions import UnexpectedModelBehavior
+
     candidates = [_app(1, "SP"), _app(2, "RP")]
     model = TestModel(custom_output_args={"picks": [_pick(1), _pick(1)]})
-    with pytest.raises(Exception):
+    with pytest.raises(UnexpectedModelBehavior):
         select_slate(candidates, provider="gemini", _model_override=model)
