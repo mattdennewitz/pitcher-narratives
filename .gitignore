@@ -15,3 +15,6 @@ data-*.md
 .DS_Store
 stderr*.txt
 bench-runs/
+
+# Wrangler local state
+.wrangler/
