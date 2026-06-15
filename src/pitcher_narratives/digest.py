@@ -16,15 +16,17 @@ import polars as pl
 from pydantic_ai import Agent
 
 from pitcher_narratives.config import PROVIDERS, TOKEN_BUDGET_LARGE, make_model_settings
+from pitcher_narratives.context import PitcherContext
 from pitcher_narratives.costs import UsageTracker
 from pitcher_narratives.curator import CurationPick, CurationSlate
-from pitcher_narratives.personas import PERSONAS, Persona
+from pitcher_narratives.personas import DIGEST_ITEM, Persona, build_system_prompt
 from pitcher_narratives.scout import ScoredAppearance
 
 __all__ = [
     "FALLBACK_MARKER",
     "assemble_digest",
     "build_story_cue",
+    "build_story_cue_from_context",
     "is_fallback_summary",
     "render_full_board",
     "write_pick_summaries",
@@ -93,56 +95,64 @@ def build_story_cue(
     return "\n".join(lines)
 
 
+def build_story_cue_from_context(
+    app: ScoredAppearance,
+    pick: CurationPick,
+    ctx: PitcherContext,
+) -> str:
+    """Render the writer's briefing for one pick from a PitcherContext.
+
+    Projects the engine-computed facts (fastball velocity, arsenal grades and
+    usage) into the same top-level sections as build_story_cue — preserving
+    downstream writer compatibility — but reads from PitcherContext instead of
+    raw DataFrames.
+    """
+    lines = [
+        f"PITCHER: {app.pitcher_name} ({app.throws}HP, {app.role})",
+        f"APPEARANCE: {app.game_date}, {app.n_pitches} pitches",
+        "",
+        "FIRED SIGNALS (from deterministic scouting):",
+    ]
+    for s in app.signals:
+        lines.append(f"- [{s.name}, w={s.weight:.1f}] {s.detail}")
+    lines += [
+        "",
+        "EDITORIAL FRAMING (from the selector):",
+        f"- Category: {pick.category}",
+        f"- Angle: {pick.angle}",
+        f"- Conviction: {pick.conviction} — {pick.conviction_reason}",
+        "",
+        "SEASON CONTEXT:",
+    ]
+
+    total_pitches = sum(pt.n_pitches_season for pt in ctx.arsenal)
+    if total_pitches > 0:
+        weighted_p = sum(pt.season_p_plus * pt.n_pitches_season for pt in ctx.arsenal) / total_pitches
+        weighted_s = sum(pt.season_s_plus * pt.n_pitches_season for pt in ctx.arsenal) / total_pitches
+        weighted_l = sum(pt.season_l_plus * pt.n_pitches_season for pt in ctx.arsenal) / total_pitches
+        lines.append(
+            f"- Season ({total_pitches} pitches): "
+            f"P+ {weighted_p:.0f}, S+ {weighted_s:.0f}, L+ {weighted_l:.0f}"
+        )
+        if ctx.fastball is not None:
+            lines.append(f"- Season avg fastball velocity: {ctx.fastball.season_velo:.1f} mph")
+        for pt in ctx.arsenal:
+            lines.append(
+                f"- {pt.pitch_type}: {pt.season_usage_pct:.1f}% usage, "
+                f"S+ {pt.season_s_plus:.0f}, L+ {pt.season_l_plus:.0f}"
+            )
+    else:
+        lines.append("- no season baseline available")
+
+    return "\n".join(lines)
+
+
 # ── Per-pick writers ────────────────────────────────────────────────
 
 
-_DIGEST_WRITER_BASE = """\
-You write one short item for a data-driven baseball morning digest.
-
-INPUT: a cue package for one pitcher's recent appearance — fired
-scouting signals, the editor's framing (category, angle, conviction),
-and season context.
-
-CONTRACT:
-- Lead with the editor's angle. It is the story; do not bury it.
-- Ground every claim in the cue's numbers. Do not invent statistics.
-- Scale your tone to the stated conviction: a 'low' conviction story
-  is framed as something to monitor, not a breakout.
-- Close with one sentence on what to watch in the next outing.
-- 150-250 words. No headline; prose only — the document supplies
-  headings.
-"""
-
-
-_PRECEDENCE_RULE = """\
-PRECEDENCE: The CONTRACT above governs length and document structure.
-Where the VOICE overlay specifies different lengths, headings, tables,
-or section requirements, ignore those — keep only its tone and
-vocabulary guidance."""
-
-
 def _build_writer_prompt(persona: Persona) -> str:
-    """Compose the digest writer system prompt for the given persona.
-
-    Walks the persona's parent chain (parent-first) via the PERSONAS registry
-    and appends each overlay as a VOICE section. The digest CONTRACT governs
-    length and structure; a PRECEDENCE rule at the end of the prompt prevents
-    capsule-specific directives in the overlays from overriding it.
-    """
-    # Collect overlays parent-first, then own overlay.
-    overlays: list[str] = []
-    if persona.parent is not None:
-        overlays.append(PERSONAS[persona.parent].overlay)
-    overlays.append(persona.overlay)
-
-    voice_block = "\n\n".join(overlays)
-    return (
-        _DIGEST_WRITER_BASE
-        + "\nVOICE:\n"
-        + voice_block
-        + "\n\n"
-        + _PRECEDENCE_RULE
-    )
+    """Compose the digest writer system prompt for the given persona using the DIGEST_ITEM contract."""
+    return build_system_prompt(persona, DIGEST_ITEM)
 
 
 def _make_writer_agent(provider: str, persona: Persona) -> Agent[None, str]:
@@ -210,7 +220,7 @@ async def write_pick_summaries(
             result = await agent.run(**kwargs)
         except Exception:
             log.error("Writer failed for %s; using fallback.", name, exc_info=True)
-            return pick.pitcher_id, _fallback_summary(pick, cues[pick.pitcher_id])
+            return pick.pitcher_id, _fallback_summary(pick, cues.get(pick.pitcher_id, "(cue unavailable)"))
         if tracker is not None:
             usage = result.usage()
             tracker.record(
@@ -289,7 +299,7 @@ def assemble_digest(
         return sorted(
             picks,
             key=lambda p: (
-                _CONVICTION_RANK[p.conviction],
+                _CONVICTION_RANK.get(p.conviction, 99),
                 -appearances[p.pitcher_id].score,
             ),
         )
@@ -298,7 +308,9 @@ def assemble_digest(
         lines = [f"## {title}", ""]
         for pick in _ordered(picks):
             name = appearances[pick.pitcher_id].pitcher_name
-            badge = _CATEGORY_BADGES[pick.category]
+            badge = _CATEGORY_BADGES.get(pick.category, pick.category.upper().replace("_", " "))
+            if pick.category not in _CATEGORY_BADGES:
+                log.warning("Unknown pick category %r for %s; using raw name as badge.", pick.category, name)
             lines += [
                 f"### {name} — `{pick.category}` [{badge}]",
                 "",

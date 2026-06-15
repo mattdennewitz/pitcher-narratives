@@ -67,6 +67,12 @@ class FastballSummary:
     window_pfx_z: float
     pfx_z_delta: str
 
+    velo_delta_mph: float
+    """Raw velocity delta (window - season) in mph. Negative = velocity dropped."""
+
+    p_plus_delta_pts: float | None
+    """Raw P+ delta (window - season) in points. None when window P+ is unavailable."""
+
     small_sample: bool
     """True when fewer than _MIN_PITCHES fastballs in window."""
 
@@ -151,6 +157,18 @@ class PitchTypeSummary:
 
     cold_start: bool
     """True when window covers the full season."""
+
+    usage_delta_pp: float | None
+    """Raw usage delta (window - season) in percentage points. None when cold_start=True."""
+
+    s_plus_delta_pts: float | None
+    """Raw S+ delta (window - season) in points. None when cold_start=True or window S+ is unavailable."""
+
+    l_plus_delta_pts: float | None
+    """Raw L+ delta (window - season) in points. None when cold_start=True or window L+ is unavailable."""
+
+    p_plus_delta_pts: float | None
+    """Raw P+ delta (window - season) in points. None when cold_start=True or window P+ is unavailable."""
 
 
 @dataclass
@@ -366,15 +384,23 @@ def compute_fastball_summary(data: PitcherData) -> FastballSummary | None:
     name_rows = fb_statcast.select("pitch_name").unique()
     pitch_name = str(name_rows["pitch_name"][0]) if not name_rows.is_empty() else primary
 
+    p_plus_delta_pts = (
+        window_p_plus - season_p_plus
+        if window_p_plus is not None
+        else None
+    )
+
     return FastballSummary(
         pitch_type=primary,
         pitch_name=pitch_name,
         season_velo=season_velo,
         window_velo=window_velo,
         velo_delta=velo_delta_str,
+        velo_delta_mph=velo_delta,
         season_p_plus=season_p_plus,
         window_p_plus=window_p_plus,
         p_plus_delta=p_plus_delta_str,
+        p_plus_delta_pts=p_plus_delta_pts,
         season_s_plus=season_s_plus,
         window_s_plus=window_s_plus,
         s_plus_delta=s_plus_delta_str,
@@ -555,6 +581,23 @@ def compute_arsenal_summary(data: PitcherData) -> list[PitchTypeSummary]:
         # ── Small sample ─────────────────────────────────────────
         small_sample = n_window < _MIN_PITCHES
 
+        if cold_start:
+            usage_delta_pp = None
+            s_plus_delta_pts = None
+            l_plus_delta_pts = None
+            p_plus_delta_pts = None
+        else:
+            usage_delta_pp = window_usage_pct - season_usage_pct
+            s_plus_delta_pts = (
+                window_s_plus - season_s_plus if window_s_plus is not None else None
+            )
+            l_plus_delta_pts = (
+                window_l_plus - season_l_plus if window_l_plus is not None else None
+            )
+            p_plus_delta_pts = (
+                window_p_plus - season_p_plus if window_p_plus is not None else None
+            )
+
         results.append(
             PitchTypeSummary(
                 pitch_type=pt,
@@ -584,6 +627,10 @@ def compute_arsenal_summary(data: PitcherData) -> list[PitchTypeSummary]:
                 n_pitches_window=n_window,
                 small_sample=small_sample,
                 cold_start=cold_start,
+                usage_delta_pp=usage_delta_pp,
+                s_plus_delta_pts=s_plus_delta_pts,
+                l_plus_delta_pts=l_plus_delta_pts,
+                p_plus_delta_pts=p_plus_delta_pts,
             )
         )
 

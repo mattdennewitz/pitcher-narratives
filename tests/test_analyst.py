@@ -6,7 +6,7 @@ import pytest
 from pydantic_ai.models.test import TestModel
 
 from pitcher_narratives.analyst import (
-    ANALYST_INSTRUCTIONS,
+    ANALYST_MECHANICS,
     PITCH_TYPE_MAP,
     QADeps,
     _make_qa_agent,
@@ -276,7 +276,7 @@ def test_get_pitch_detail_existing_sections_preserved(deps):
 
 def test_prompt_references_intermediates():
     """ANLST-01: Prompt references all 4 intermediate metric names as primary analytical tools."""
-    prompt = ANALYST_INSTRUCTIONS
+    prompt = ANALYST_MECHANICS
     assert "xWhiff" in prompt, "Prompt must reference xWhiff"
     assert "xSwing" in prompt, "Prompt must reference xSwing"
     assert "xSwSt" in prompt, "Prompt must reference xSwSt"
@@ -285,7 +285,7 @@ def test_prompt_references_intermediates():
 
 def test_prompt_internals_before_plus():
     """ANLST-01: Framework leads with model internals; plus scores are summary grades."""
-    prompt = ANALYST_INSTRUCTIONS
+    prompt = ANALYST_MECHANICS
     # Old framing must be removed
     assert "Pitching+ triad" not in prompt, (
         "Prompt must not contain 'Pitching+ triad' (old framing)"
@@ -300,7 +300,7 @@ def test_prompt_internals_before_plus():
 
 def test_prompt_references_p_vs_s():
     """ANLST-02: Prompt teaches P-variant vs S-variant comparison for location diagnosis."""
-    prompt = ANALYST_INSTRUCTIONS
+    prompt = ANALYST_MECHANICS
     # Must reference both variant concepts
     has_s_variant = "S-variant" in prompt or "S variant" in prompt or "S+" in prompt
     assert has_s_variant, "Prompt must reference S-variant concept"
@@ -312,7 +312,7 @@ def test_prompt_references_p_vs_s():
 
 def test_prompt_references_attribution():
     """ANLST-03: Prompt teaches attribution decomposition with dominant-driver filtering."""
-    prompt = ANALYST_INSTRUCTIONS
+    prompt = ANALYST_MECHANICS
     # Must reference attribution concept
     assert "attribution" in prompt.lower(), (
         "Prompt must reference attribution (case-insensitive)"

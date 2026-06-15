@@ -260,23 +260,45 @@ def test_ask_cli_thinking_flag():
 
 
 # ══════════════════════════════════════════════════════════════════════
-# CLI-06 / TEST-08: scope guard — pitcher-ask must NOT accept --persona
+# Phase 1B: --persona on pitcher-ask (added in Task B)
 # ══════════════════════════════════════════════════════════════════════
 
 
-def test_ask_cli_does_not_accept_persona():
-    """TEST-08: --persona on pitcher-ask exits 2 (argparse rejection).
+def test_parse_persona_flag(monkeypatch):
+    """parse_args captures --persona flag."""
+    monkeypatch.setattr(sys, "argv", ["ask_cli", "--persona", "analyst", "Q?"])
+    args = parse_args()
+    assert args.persona == "analyst"
 
-    v1.10 is writer-layer-only: the narrative CLI gets --persona; the
-    Q&A CLI does not. Argparse's default behavior rejects unknown flags
-    with exit 2 and an "unrecognized arguments" message. This test
-    guards against accidental copy-paste of the flag definition into
-    ask_cli.py.
-    """
+
+def test_parse_persona_default(monkeypatch):
+    """parse_args --persona defaults to 'scout'."""
+    monkeypatch.setattr(sys, "argv", ["ask_cli", "Q?"])
+    args = parse_args()
+    assert args.persona == "scout"
+
+
+def test_ask_cli_persona_flag():
+    """Integration: --persona analyst accepted with test model, exits 0."""
     result = subprocess.run(
         [
             sys.executable, "-m", "pitcher_narratives.ask_cli",
-            "--persona", "scout", "How is Cease pitching?",
+            "--persona", "analyst", "How is Cease pitching?",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        env=_test_env(PITCHER_NARRATIVES_TEST_MODEL="1"),
+    )
+    assert result.returncode == 0
+
+
+def test_ask_cli_invalid_persona_flag():
+    """Integration: --persona with unknown value exits 2 with argparse error message."""
+    result = subprocess.run(
+        [
+            sys.executable, "-m", "pitcher_narratives.ask_cli",
+            "--persona", "bogus", "How is Cease pitching?",
         ],
         capture_output=True,
         text=True,
@@ -284,5 +306,4 @@ def test_ask_cli_does_not_accept_persona():
         env=_test_env(PITCHER_NARRATIVES_TEST_MODEL="1"),
     )
     assert result.returncode == 2
-    # Argparse emits "unrecognized arguments: --persona ..." on stderr.
-    assert "--persona" in result.stderr or "unrecognized" in result.stderr
+    assert "bogus" in result.stderr or "invalid choice" in result.stderr

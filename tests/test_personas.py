@@ -4,30 +4,37 @@ import dataclasses
 from pathlib import Path
 
 import pytest
+from pydantic_ai.models.test import TestModel
 
+from pitcher_narratives.context import assemble_pitcher_context
+from pitcher_narratives.data import load_pitcher_data
 from pitcher_narratives.personas import (
     ANALYST,
-    GENERIC,
-    Persona,
-    PERSONAS,
-    SCOUT,
+    CAPSULE,
     DEFAULT_PERSONA,
+    GENERIC,
+    NEWSLETTER,
+    PERSONAS,
+    REPORT_CONTRACTS,
+    SCOUT,
+    SECTIONED,
     SHARED_WRITER_BASE,
+    OutputContract,
+    Persona,
     build_writer_system_prompt,
     get_persona,
 )
-from pitcher_narratives.pipeline import make_pipeline_agents, generate_pipeline_streaming, PipelineResult
-from pitcher_narratives.context import assemble_pitcher_context
-from pitcher_narratives.data import load_pitcher_data
-from pydantic_ai.models.test import TestModel
+from pitcher_narratives.pipeline import PipelineResult, generate_pipeline_streaming, make_pipeline_agents
 
 _FIXTURE = Path(__file__).parent / "fixtures" / "writer_prompt_scout.txt"
 _FIXTURE_ANALYST = Path(__file__).parent / "fixtures" / "writer_prompt_analyst.txt"
 _FIXTURE_GENERIC = Path(__file__).parent / "fixtures" / "writer_prompt_generic.txt"
 
 # Scout-specific voice words that must NOT appear in SHARED_WRITER_BASE.
-# These words belong in the scout overlay only.
-_SCOUT_VOICE_WORDS = ("stuff", "feel", "groove", "tagged", "elite", "massive")
+# These words belong in the scout overlay only. ("elite"/"massive" are NOT
+# listed here: they now legitimately appear in the universal banned-word
+# directive that lives in SHARED_WRITER_BASE.)
+_SCOUT_VOICE_WORDS = ("stuff", "feel", "groove", "tagged")
 
 
 def test_persona_is_frozen_dataclass():
@@ -37,7 +44,6 @@ def test_persona_is_frozen_dataclass():
         display_name="Test",
         description="A test persona",
         overlay="test overlay",
-        length_target=(100, 200),
     )
     assert dataclasses.is_dataclass(persona)
     with pytest.raises(dataclasses.FrozenInstanceError):
@@ -52,31 +58,28 @@ def test_persona_rejects_empty_overlay():
             display_name="Bad",
             description="bad",
             overlay="",
-            length_target=(100, 200),
         )
 
 
-def test_persona_rejects_inverted_length_target():
-    """Construction fails when length_target min > max."""
+def test_output_contract_rejects_inverted_length_target():
+    """OutputContract construction fails when length_target min > max."""
     with pytest.raises(ValueError, match="min must be <= max"):
-        Persona(
+        OutputContract(
             id="bad",
-            display_name="Bad",
-            description="bad",
-            overlay="ok",
             length_target=(500, 100),
+            structure="s",
+            input_framing="f",
         )
 
 
-def test_persona_rejects_non_positive_length_target():
-    """Construction fails when length_target contains zero or negative values."""
+def test_output_contract_rejects_non_positive_length_target():
+    """OutputContract construction fails when length_target has zero/negative values."""
     with pytest.raises(ValueError, match="must be positive"):
-        Persona(
+        OutputContract(
             id="bad",
-            display_name="Bad",
-            description="bad",
-            overlay="ok",
             length_target=(0, 100),
+            structure="s",
+            input_framing="f",
         )
 
 
@@ -99,14 +102,19 @@ def test_all_registered_personas_satisfy_invariants():
 
 
 def test_scout_has_expected_fields():
-    """SCOUT persona has the correct id, display_name, parent, and length_target."""
+    """SCOUT persona has the correct id, display_name, and parent (voice-only)."""
     scout = PERSONAS["scout"]
     assert scout.id == "scout"
     assert scout.display_name == "Scout"
     assert scout.parent is None
-    assert isinstance(scout.length_target, tuple)
-    assert len(scout.length_target) == 2
-    assert all(isinstance(v, int) for v in scout.length_target)
+
+
+def test_scout_report_contract_is_capsule():
+    """The scout report contract is CAPSULE with length_target (150, 350)."""
+    contract = REPORT_CONTRACTS["scout"]
+    assert contract is CAPSULE
+    assert contract.length_target == (150, 350)
+    assert all(isinstance(v, int) for v in contract.length_target)
 
 
 def test_default_persona_is_scout():
@@ -198,9 +206,21 @@ def test_base_prompt_has_no_voice_words():
         )
 
 
-def test_base_prompt_has_explainer_section():
-    """SHARED_WRITER_BASE contains the EXPLAIN THE MODEL instruction."""
-    assert "EXPLAIN THE MODEL" in SHARED_WRITER_BASE
+def test_base_prompt_has_universal_analytical_rules():
+    """SHARED_WRITER_BASE carries the universal analytical directives.
+
+    EXPLAIN THE MODEL now lives in the synthesis-input framing (not the
+    universal base); the universal base holds the directives that apply to
+    every composed prompt, including the digest path.
+    """
+    assert "DIRECTIONAL CONSISTENCY" in SHARED_WRITER_BASE
+    assert "TEMPORAL GROUNDING" in SHARED_WRITER_BASE
+    assert "degradation" in SHARED_WRITER_BASE  # banned-word list, single-sourced
+
+
+def test_report_prompt_has_explainer_section():
+    """EXPLAIN THE MODEL survives in the composed report prompt (synthesis framing)."""
+    assert "EXPLAIN THE MODEL" in build_writer_system_prompt(PERSONAS["scout"])
 
 
 def test_scout_overlay_contains_voice_section():
@@ -300,12 +320,13 @@ def test_scout_pipeline_smoke(ctx):
 
 
 def test_analyst_has_expected_fields():
-    """VOICE-02: ANALYST persona has correct id, parent, length_target, and display_name."""
+    """VOICE-02: ANALYST persona has correct id, parent, contract, and display_name."""
     analyst = PERSONAS["analyst"]
     assert analyst.id == "analyst"
     assert analyst.display_name == "Analyst"
     assert analyst.parent == "scout"
-    assert analyst.length_target == (450, 800)
+    assert REPORT_CONTRACTS["analyst"] is NEWSLETTER
+    assert NEWSLETTER.length_target == (450, 800)
     assert "newsletter" in analyst.description.lower() or "teaching" in analyst.description.lower()
 
 
@@ -327,11 +348,15 @@ def test_analyst_overlay_has_teaching_vocabulary():
         assert term in overlay, f"Teaching vocabulary term {term!r} missing from analyst overlay"
 
 
-def test_analyst_overlay_has_hard_word_limit():
-    """VOICE-02: Analyst overlay enforces hard 800-word ceiling."""
-    overlay = ANALYST.overlay
-    assert "800 words" in overlay
-    assert "HARD LIMIT" in overlay
+def test_newsletter_contract_has_hard_word_limit():
+    """VOICE-02: The NEWSLETTER contract enforces the hard 800-word ceiling.
+
+    The hard limit is a structure/length concern, so it now lives on the
+    output contract rather than the (voice-only) analyst overlay.
+    """
+    structure = NEWSLETTER.structure
+    assert "800 words" in structure
+    assert "HARD LIMIT" in structure
 
 
 # -- Analyst shape assertion helper (Phase 07: TEST-06) --
@@ -431,12 +456,13 @@ def test_analyst_pipeline_smoke(ctx):
 
 
 def test_generic_has_expected_fields():
-    """VOICE-03: GENERIC persona has correct id, parent, length_target, and display_name."""
+    """VOICE-03: GENERIC persona has correct id, parent, contract, and display_name."""
     generic = PERSONAS["generic"]
     assert generic.id == "generic"
     assert generic.display_name == "Generic"
     assert generic.parent == "scout"
-    assert generic.length_target == (300, 500)
+    assert REPORT_CONTRACTS["generic"] is SECTIONED
+    assert SECTIONED.length_target == (300, 500)
     assert "structured" in generic.description.lower() or "section" in generic.description.lower()
 
 
@@ -452,9 +478,13 @@ def test_generic_composed_prompt_includes_base_and_scout():
     assert "Signal | Key Finding | Grade" in composed
 
 
-def test_generic_overlay_fixes_section_order():
-    """VOICE-03: Generic overlay lists the six sections in the fixed order."""
-    overlay = GENERIC.overlay
+def test_sectioned_contract_fixes_section_order():
+    """VOICE-03: The SECTIONED contract lists the six sections in fixed order.
+
+    Section layout is structure, so it lives on the output contract now, not
+    the (voice-only) generic overlay.
+    """
+    structure = SECTIONED.structure
     expected_order = (
         "## Stuff",
         "## Location",
@@ -463,29 +493,27 @@ def test_generic_overlay_fixes_section_order():
         "## Game Shape",
         "## Summary Table",
     )
-    positions = [overlay.find(section) for section in expected_order]
+    positions = [structure.find(section) for section in expected_order]
     assert all(p >= 0 for p in positions), f"Missing section(s): {[s for s, p in zip(expected_order, positions) if p < 0]}"
     assert positions == sorted(positions), f"Sections out of order: {list(zip(expected_order, positions))}"
 
 
-def test_generic_overlay_forbids_h1():
-    """VOICE-03: Generic overlay explicitly forbids h1 (single #) headings."""
-    overlay = GENERIC.overlay
-    assert "FORBIDDEN: Markdown h1 headings" in overlay
+def test_sectioned_contract_forbids_h1():
+    """VOICE-03: The SECTIONED contract explicitly forbids h1 (single #) headings."""
+    assert "FORBIDDEN: Markdown h1 headings" in SECTIONED.structure
 
 
-def test_generic_overlay_has_override_language():
-    """VOICE-03: Generic overlay explicitly overrides scout's no-headers/no-tables rule."""
-    overlay = GENERIC.overlay
-    # Override clause must exist to counteract inherited scout rule
-    assert "STRUCTURE OVERRIDE" in overlay or "override" in overlay.lower()
+def test_sectioned_contract_has_override_language():
+    """VOICE-03: The SECTIONED contract overrides the no-headers/no-tables rule."""
+    structure = SECTIONED.structure
+    assert "STRUCTURE OVERRIDE" in structure or "override" in structure.lower()
 
 
-def test_generic_overlay_has_hard_word_limit():
-    """VOICE-03: Generic overlay enforces hard 500-word ceiling."""
-    overlay = GENERIC.overlay
-    assert "500 words" in overlay
-    assert "HARD LIMIT" in overlay
+def test_sectioned_contract_has_hard_word_limit():
+    """VOICE-03: The SECTIONED contract enforces the hard 500-word ceiling."""
+    structure = SECTIONED.structure
+    assert "500 words" in structure
+    assert "HARD LIMIT" in structure
 
 
 # ── Generic shape assertion helper (Phase 08: TEST-06) ──
@@ -663,3 +691,28 @@ def test_shared_base_surfaces_arm_slot_insight():
     """SHARED_WRITER_BASE instructs the writer to keep arm-slot shape insight."""
     assert "arm slot" in SHARED_WRITER_BASE.lower()
     assert "DEAD ZONE" in SHARED_WRITER_BASE
+
+
+# ── RT-4: fallback contract for unmapped personas ─────────────────────
+
+
+def test_build_writer_system_prompt_falls_back_to_capsule_for_unknown_persona():
+    """RT-4: build_writer_system_prompt uses CAPSULE for personas not in REPORT_CONTRACTS.
+
+    A newly added voice persona whose id is not yet in REPORT_CONTRACTS must
+    not raise a KeyError.  It should produce a CAPSULE-shaped prompt (i.e.
+    contain the CAPSULE structure phrase) rather than crashing.
+    """
+    unknown = Persona(
+        id="future_voice",
+        display_name="Future Voice",
+        description="A persona not yet mapped to a report contract",
+        overlay="Write in a future style.",
+    )
+    # Must not raise KeyError
+    prompt = build_writer_system_prompt(unknown)
+    # CAPSULE structure is "2-3 paragraph" — the fallback contract's fingerprint
+    assert "2-3 paragraph" in prompt, (
+        "build_writer_system_prompt should fall back to CAPSULE for unmapped personas; "
+        "expected CAPSULE structure phrase '2-3 paragraph' in composed prompt"
+    )

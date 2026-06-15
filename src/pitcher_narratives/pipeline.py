@@ -915,7 +915,6 @@ async def audit_and_revise_specialists(
 def _render_pipeline_data_sections(
     ctx: PitcherContext,
     *,
-    question: str | None = None,
     persona: str = "scout",
 ) -> list[str]:
     """Render all pipeline prompt sections as a list of strings.
@@ -925,8 +924,7 @@ def _render_pipeline_data_sections(
     (e.g. cli.py --print-prompts).
 
     The persona arg controls which composed writer prompt is rendered in
-    the WRITER section (narrative pipeline only — the ask pipeline uses
-    the ANSWERER and is persona-agnostic).
+    the WRITER section.
     """
     persona_obj = get_persona(persona)
     sep = "═" * 72
@@ -962,40 +960,27 @@ def _render_pipeline_data_sections(
         "[Receives: all 5 specialist outputs (without key signals)]\n"
     )
 
-    if question is not None:
-        # Ask pipeline: answerer phase
-        from pitcher_narratives.analyst import ANSWERER_INSTRUCTIONS
+    # Narrative pipeline: writer + anchor + executive summary
+    sections.append(f"\n{sep}\nWRITER\n{sep}\n")
+    sections.append(f"## System Prompt\n\n{build_writer_system_prompt(persona_obj)}\n")
+    sections.append(
+        "## User Message\n\n"
+        "[Receives: key signals + all 5 specialist outputs]\n"
+    )
 
-        sections.append(f"\n{sep}\nANSWERER\n{sep}\n")
-        sections.append(f"## System Prompt\n\n{ANSWERER_INSTRUCTIONS}\n")
-        sections.append(
-            f"## User Message\n\n"
-            f"## Question\n{question}\n\n"
-            f"## Pitcher: {ctx.pitcher_name} ({ctx.throws}HP, {ctx.role})\n\n"
-            f"[Receives: key signals + all 5 specialist outputs]\n"
-        )
-    else:
-        # Narrative pipeline: writer + anchor + executive summary
-        sections.append(f"\n{sep}\nWRITER\n{sep}\n")
-        sections.append(f"## System Prompt\n\n{build_writer_system_prompt(persona_obj)}\n")
-        sections.append(
-            "## User Message\n\n"
-            "[Receives: key signals + all 5 specialist outputs]\n"
-        )
+    sections.append(f"\n{sep}\nEXECUTIVE SUMMARY\n{sep}\n")
+    sections.append(f"## System Prompt\n\n{_EXECUTIVE_SUMMARY_PROMPT}\n")
+    sections.append(
+        "## User Message\n\n"
+        "[Receives: same input as writer]\n"
+    )
 
-        sections.append(f"\n{sep}\nEXECUTIVE SUMMARY\n{sep}\n")
-        sections.append(f"## System Prompt\n\n{_EXECUTIVE_SUMMARY_PROMPT}\n")
-        sections.append(
-            "## User Message\n\n"
-            "[Receives: same input as writer]\n"
-        )
-
-        sections.append(f"\n{sep}\nANCHOR CHECK\n{sep}\n")
-        sections.append(f"## System Prompt\n\n{ANCHOR_PROMPT}\n")
-        sections.append(
-            "## User Message\n\n"
-            "[Receives: key signals + concatenated specialist outputs + writer capsule]\n"
-        )
+    sections.append(f"\n{sep}\nANCHOR CHECK\n{sep}\n")
+    sections.append(f"## System Prompt\n\n{ANCHOR_PROMPT}\n")
+    sections.append(
+        "## User Message\n\n"
+        "[Receives: key signals + concatenated specialist outputs + writer capsule]\n"
+    )
 
     return sections
 
@@ -1005,23 +990,19 @@ def write_pipeline_data_file(
     pitcher_id: int,
     provider: str,
     *,
-    question: str | None = None,
     persona: str = "scout",
 ) -> tuple[str, str]:
     """Write all pipeline prompts to a data file for end-to-end tracing.
 
     Dumps every system prompt and user message that would be sent to the
-    LLM at each phase of the pipeline. For the ask pipeline, also includes
-    the user's question and the answerer prompt.
+    LLM at each phase of the pipeline.
 
     Args:
         ctx: Assembled pitcher context.
         pitcher_id: MLB pitcher ID for the filename.
         provider: LLM provider key for the filename.
-        question: If provided, includes the ask-pipeline answerer phase.
         persona: Persona id string (default "scout"); controls which
             composed writer prompt is rendered in the WRITER section.
-            Ignored on the ask path (question is not None).
 
     Returns:
         Tuple of (filename, rendered_text). Callers that need to display
@@ -1034,13 +1015,10 @@ def write_pipeline_data_file(
     """
     from pathlib import Path
 
-    sections = _render_pipeline_data_sections(
-        ctx, question=question, persona=persona
-    )
+    sections = _render_pipeline_data_sections(ctx, persona=persona)
     text = "\n".join(sections)
 
-    mode = "ask" if question else "pipeline"
-    filename = f"data-{pitcher_id}-{provider}-{mode}.md"
+    filename = f"data-{pitcher_id}-{provider}-pipeline.md"
     Path(filename).write_text(text, encoding="utf-8")
     return filename, text
 

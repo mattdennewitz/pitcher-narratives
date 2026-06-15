@@ -1,9 +1,15 @@
 """Analyst Q&A agent for natural-language pitcher questions.
 
 Provides a tool-calling pydantic-ai agent that answers questions about
-pitchers grounded exclusively in the existing data pipeline. Two tools
-(get_pitcher_summary, get_pitch_detail) give the agent access to
-PitcherContext data via RunContext[QADeps] dependency injection.
+pitchers grounded exclusively in the existing data pipeline. Two data-access
+tools (get_pitcher_summary, get_pitch_detail) give the agent access to
+PitcherContext data via RunContext[QADeps] dependency injection;
+skill_toolset() supplies additional capabilities.
+
+Voice and format are composed via build_system_prompt(persona, ANSWER).
+ANALYST_MECHANICS carries domain-specific non-voice concerns: the model
+reasoning chain, sign conventions, tool-grounding rules, and out-of-scope
+handling.
 """
 
 from __future__ import annotations
@@ -16,16 +22,22 @@ from pydantic_ai import Agent, RunContext
 from pydantic_ai.settings import ThinkingEffort
 
 from pitcher_narratives.agent_skills import skill_toolset
-from pitcher_narratives.config import PROVIDERS, TOKEN_BUDGET_LARGE, agent_kwargs, make_model_settings
+from pitcher_narratives.config import PROVIDERS, TOKEN_BUDGET_LARGE, make_model_settings
 from pitcher_narratives.context import PitcherContext
 from pitcher_narratives.data import PitcherData
 from pitcher_narratives.engine import compute_league_baselines
-from pitcher_narratives.signals import KeySignals, render_key_signals
+from pitcher_narratives.personas import (
+    ANSWER,
+    DEFAULT_PERSONA,
+    Persona,
+    build_system_prompt,
+)
 
 __all__ = [
-    "ANALYST_INSTRUCTIONS", "ANSWERER_INSTRUCTIONS",
-    "PITCH_TYPE_MAP", "PipelineAnswer", "QADeps",
-    "ask_question_streaming", "ask_question_pipeline",
+    "ANALYST_MECHANICS",
+    "PITCH_TYPE_MAP",
+    "QADeps",
+    "ask_question_streaming",
 ]
 
 log = logging.getLogger("pitcher_narratives.analyst")
@@ -97,30 +109,7 @@ class QADeps:
 # AGENT INSTRUCTIONS
 # ═══════════════════════════════════════════════════════════════════════
 
-ANALYST_INSTRUCTIONS = """\
-You are a sabermetric scout answering questions about a specific pitcher. \
-You write the way an analyst talks to another analyst -- plain, specific, \
-conversational. Not the way a research paper reads.
-
-FIND THE THREAD:
-Before you write anything, decide what the story is. Maybe the pitch \
-generates whiffs but gives up damage when hitters connect. Maybe the \
-stuff is average but command turns it into something dangerous. Maybe \
-the location is actively hurting a pitch that has raw potential. Lead \
-with that thread -- do not walk through every metric. Pick the 2-3 \
-numbers that tell the story; everything else stays in the data.
-
-TEMPORAL GROUNDING:
-The scouting context includes a "Temporal Context" section with a \
-prior-year workload relevance level (HIGH, MODERATE, or LOW). This \
-tells you how much weight to give last season's workload when answering \
-questions. When it says LOW, do not build workload narratives from \
-prior-season data. When it says HIGH, prior-year workload is plausible \
-residual context but two seasons are NOT a continuous timeline -- an \
-offseason separates them. A pitcher with a handful of early-season \
-appearances is not fatigued from this season's workload. Scale your \
-seasonal narrative to the actual sample size.
-
+ANALYST_MECHANICS = """\
 HOW THE MODEL THINKS (your reasoning chain):
 The Pitching+ model grades pitches by predicting 13 outcome probabilities \
 from the pitch's physical characteristics, then pricing each outcome in \
@@ -154,8 +143,8 @@ neither swing nor get called strikes. That is the physical explanation \
 for why the model's P-variant prediction diverges from the S-variant.
 
 4. Read the component attribution to see where runs come from. Each \
-pitch's xRV100 breaks into 13 outcome contributions. Find the dominant \
-2-3 drivers, but connect them back to the pitch: called balls dominate \
+pitch's xRV100 breaks into 13 outcome contributions. Find the 2-3 \
+largest drivers, but connect them back to the pitch: called balls dominate \
 because of poor location, whiffs dominate because of sharp movement, \
 home runs bleed through because of hittable velocity in the zone.
 
@@ -169,28 +158,6 @@ event. P > S means location increases the rate.
 - Run value (xRV100): more negative = better for pitcher. P < S means \
 location is helping.
 - Attribution: negative = pitcher benefits. Positive = costs runs.
-
-VOICE:
-- Start immediately with the pitcher's stuff. Your first sentence \
-should be about what is happening, not about "looking at the data."
-- Diagnose, do not just describe. Connect the outcome to the physical \
-input. Link the "what" to the "why."
-- Vary sentence length. Let a short sentence land a point. Then explain \
-in a longer one when the idea needs room.
-- Use conversational scouting language: stuff, feel, finding a groove, \
-keeping them off balance, getting tagged, working the edges.
-- No clichés ("electric stuff," "pitches to contact," "bulldog mentality").
-- No formulaic transitions ("Meanwhile," "However," "The stark gap \
-between"). Just start the next thought.
-- Never say "the data shows," "looking at the numbers," or "when we \
-examine." Just say what is happening and why.
-- Never use: "degradation," "binary," "physical characteristics," \
-"extreme variance," "profiles as," "metrics are grim," "dominant," \
-"massive spike."
-- No bullet lists or tables. Write prose. Cite numbers naturally \
-inside sentences.
-- Use execution metrics (CSW%, Zone%, Chase%) as supporting color, not \
-the headline.
 
 DATA GROUNDING RULES (absolute):
 1. Answer ONLY from the data returned by your tools. NEVER cite statistics \
@@ -206,28 +173,15 @@ what you CAN answer.
 with standard deviations. If a metric is within ±1.5 stddev of the \
 league average for that pitch type, it is NORMAL — do not characterize \
 it as unusually high or low. Only flag metrics that are genuine outliers.
-5. DIRECTIONAL CONSISTENCY: S+ below 100 → pitch grades below average, \
-xRV100_S should be positive (costly). S+ above 100 → above average, \
-xRV100_S should be negative (saves runs). If these don't align, note \
-the discrepancy rather than forcing a narrative.
-6. If xWhiff_S ≥ 25%, that is a meaningful whiff rate. Reconcile this \
+5. If xWhiff_S ≥ 25%, that is a meaningful whiff rate. Reconcile this \
 strength before labeling any pitch as detrimental or poor.
-
-RESPONSE FORMAT:
-- For broad questions ("How is he pitching?"): 2-3 paragraphs. Find the \
-thread, diagnose the mechanism, land the verdict. Call get_pitch_detail \
-on the most interesting pitch to get the attribution breakdown.
-- For specific pitch questions ("How's his slider?"): 1-2 focused \
-paragraphs. Always call get_pitch_detail for that pitch type first.
-- Lead with what happened -- the concrete change or signal -- not with \
-a theory about why.
 
 OUT OF SCOPE (decline gracefully):
 - Predictions or projections
 - Fantasy baseball advice
 - Historical season-over-season comparisons
 - Cross-pitcher comparisons or leaderboard rankings
-- Game-by-game play-by-play analysis
+- Game-by-game play-by-play analysis\
 """
 
 
@@ -427,18 +381,20 @@ def _ps_line_rv(label: str, p: float | None, s: float | None) -> str:
 # AGENT FACTORY
 # ═══════════════════════════════════════════════════════════════════════
 
-_qa_agent_cache: dict[tuple[str, ThinkingEffort], Agent[QADeps, str]] = {}
+_qa_agent_cache: dict[tuple[str, str, ThinkingEffort], Agent[QADeps, str]] = {}
 
 
 def _make_qa_agent(
     provider: str = "gemini",
     thinking: ThinkingEffort = "high",
+    persona: Persona | None = None,
 ) -> Agent[QADeps, str]:
-    """Create (or return cached) QA agent for the given provider and thinking level.
+    """Create (or return cached) QA agent for the given provider, thinking, and persona.
 
     Args:
         provider: LLM provider key ('gemini' or 'claude').
         thinking: Thinking effort level.
+        persona: Writer voice persona. Defaults to DEFAULT_PERSONA.
 
     Returns:
         Configured Agent with get_pitcher_summary and get_pitch_detail tools.
@@ -446,7 +402,8 @@ def _make_qa_agent(
     Raises:
         ValueError: If provider is not in PROVIDERS.
     """
-    key = (provider, thinking)
+    resolved = persona or DEFAULT_PERSONA
+    key = (provider, resolved.id, thinking)
     if key in _qa_agent_cache:
         return _qa_agent_cache[key]
 
@@ -455,12 +412,13 @@ def _make_qa_agent(
 
     model = PROVIDERS[provider]
     settings = make_model_settings(provider, thinking, 0.3, max_tokens=TOKEN_BUDGET_LARGE)
+    instructions = build_system_prompt(resolved, ANSWER) + "\n\n" + ANALYST_MECHANICS
 
     agent: Agent[QADeps, str] = Agent(
         model,
         deps_type=QADeps,
         output_type=str,
-        instructions=ANALYST_INSTRUCTIONS,
+        instructions=instructions,
         model_settings=settings,
         tools=[get_pitcher_summary, get_pitch_detail],
         toolsets=[skill_toolset()],
@@ -482,6 +440,7 @@ def ask_question_streaming(
     *,
     provider: str = "gemini",
     thinking: ThinkingEffort = "high",
+    persona: Persona | None = None,
     _model_override: Any = None,
 ) -> str:
     """Ask a natural-language question about a pitcher with streaming output.
@@ -492,12 +451,13 @@ def ask_question_streaming(
         data: Loaded PitcherData for the pitcher.
         provider: LLM provider key ('gemini' or 'claude').
         thinking: Thinking effort level.
+        persona: Writer voice persona. Defaults to DEFAULT_PERSONA.
         _model_override: Optional model override for testing (e.g., TestModel).
 
     Returns:
         The agent's complete response as a string.
     """
-    agent = _make_qa_agent(provider, thinking)
+    agent = _make_qa_agent(provider, thinking, persona)
     deps = QADeps(context=context, data=data)
 
     kwargs: dict[str, Any] = {"user_prompt": question, "deps": deps}
@@ -512,214 +472,3 @@ def ask_question_streaming(
     print()
     return "".join(chunks)
 
-
-# ═══════════════════════════════════════════════════════════════════════
-# MULTI-AGENT Q&A (PIPELINE APPROACH)
-# ═══════════════════════════════════════════════════════════════════════
-
-
-@dataclass
-class PipelineAnswer:
-    """Result from the multi-agent Q&A pipeline."""
-
-    answer: str
-    stuff_summary: str
-    key_signals: KeySignals | None = None
-    executive_summary: list[str] | None = None
-    audit_flags: list[Any] | None = None
-
-ANSWERER_INSTRUCTIONS = """\
-You are a sabermetric scout answering a specific question about a pitcher. \
-You have five specialist analyses available as context — stuff, location, \
-run value decomposition, trends, and game shape. Use them as your evidence base.
-
-APPROACH:
-- Read the question carefully. Answer ONLY what was asked.
-- Draw from whichever specialist analyses are relevant. A question about \
-a specific pitch's stuff should lean on the stuff analysis. A question \
-about trends should lean on the trend analysis. A broad question should \
-synthesize across all five.
-- The Key Signals section (when present) highlights cross-specialist \
-patterns — tensions, connected changes, arsenal dependencies. For broad \
-questions, these are high-value starting points. For narrow questions, \
-use them only if directly relevant.
-- The specialist analyses are your ONLY source of truth. Do not invent \
-metrics or cite numbers not present in the analyses.
-
-TEMPORAL GROUNDING:
-The specialist analyses are grounded against a "Temporal Context" that \
-includes a prior-year relevance level. Follow it. Do not infer \
-cumulative fatigue, late-season workload, or mechanical drift across \
-season boundaries unless the relevance level supports it. Scale \
-seasonal narrative to the actual sample.
-
-INTERPRETATION RULES:
-- DIRECTIONAL CONSISTENCY: If a specialist says a pitch is effective \
-(S+ above 100, negative xRV100), do not flip the narrative. If a \
-specialist says a pitch is weak, do not spin it positive.
-- If a pitch shows xWhiff_S ≥ 25%, that is a meaningful whiff rate. \
-Reconcile this strength before labeling the pitch as poor.
-
-VOICE:
-- Write like an analyst talking to another analyst. Plain, specific, \
-conversational.
-- Vary sentence length. Short sentences land points.
-- Use scouting language: stuff, feel, finding a groove, getting tagged.
-- No clichés, no formulaic transitions, no "the data shows."
-- Never use: "degradation," "binary," "profiles as," "dominant," \
-"elite," "massive spike."
-- Start immediately with the answer. No preamble.
-
-FORMAT:
-- For specific pitch questions: 1-2 focused paragraphs.
-- For broad questions: 2-3 paragraphs. Find the thread first.
-- No bullet lists or tables. Prose only.
-
-OUT OF SCOPE (decline gracefully):
-- Predictions or projections
-- Fantasy baseball advice
-- Historical season-over-season comparisons
-- Cross-pitcher comparisons
-"""
-
-
-def ask_question_pipeline(
-    question: str,
-    context: PitcherContext,
-    *,
-    provider: str = "gemini",
-    thinking: ThinkingEffort = "high",
-    _model_override: Any = None,
-) -> PipelineAnswer:
-    """Ask a question using the specialist→auditor→answerer pipeline.
-
-    Phase 1: 5 specialists run concurrently on the full context.
-    Phase 1.5: Data auditor validates specialist outputs against ground truth.
-    Phase 1.75: Signal extractor identifies cross-specialist patterns.
-    Phase 2: Answerer composes a focused response (streamed).
-
-    Args:
-        question: The user's question in natural language.
-        context: Assembled PitcherContext for the pitcher.
-        provider: LLM provider key.
-        thinking: Thinking effort level.
-        _model_override: Optional model override for testing.
-
-    Returns:
-        PipelineAnswer with the streamed answer, stuff summary, and key signals.
-    """
-    import asyncio
-
-    from pitcher_narratives.pipeline import (
-        audit_and_revise_specialists,
-        build_writer_input,
-        make_pipeline_agents,
-        run_specialists,
-    )
-
-    agents = make_pipeline_agents(provider, thinking)
-
-    async def _run() -> PipelineAnswer:
-        # Phase 1: Run specialists concurrently
-        log.info("Running specialists...")
-        raw_specialists = await run_specialists(
-            agents.stuff, agents.location, agents.runvalue, agents.trends,
-            agents.game_shape, context, _model_override,
-        )
-
-        # Phase 1.5: Per-specialist audit + revision loop
-        log.info("Auditing...")
-        specialist_agents = {
-            "stuff": agents.stuff, "location": agents.location,
-            "runvalue": agents.runvalue, "trends": agents.trends,
-            "game_shape": agents.game_shape,
-        }
-        specialists, audit_flags = await audit_and_revise_specialists(
-            raw_specialists, specialist_agents, agents.auditor, context, _model_override,
-        )
-        # Phase 1.75: Extract key signals from clean specialist outputs
-        # Non-critical enrichment — pipeline continues without signals on failure.
-        log.info("Extracting key signals...")
-        signal_input = build_writer_input(
-            context, specialists.stuff, specialists.location,
-            specialists.runvalue, specialists.trends, specialists.game_shape,
-        )
-        try:
-            signal_result = await agents.signal_extractor.run(
-                **agent_kwargs(signal_input, _model_override)
-            )
-            key_signals = signal_result.output
-            log.info("Key signals extracted.")
-        except Exception:
-            log.warning("Signal extractor failed, continuing without key signals.", exc_info=True)
-            key_signals = None
-
-        log.info("Answering...")
-
-        # Phase 2: Answerer composes from clean specialist outputs (streamed)
-        model = PROVIDERS[provider]
-        answerer_settings = make_model_settings(provider, thinking, 0.3, max_tokens=TOKEN_BUDGET_LARGE)
-        answerer = Agent(
-            _model_override if _model_override is not None else model,
-            output_type=str,
-            instructions=ANSWERER_INSTRUCTIONS,
-            model_settings=answerer_settings,
-            defer_model_check=True,
-        )
-
-        # Answerer gets key signals (when available) + clean specialist outputs
-        answerer_parts = [
-            f"## Question\n{question}\n",
-            f"## Pitcher: {context.pitcher_name} ({context.throws}HP, {context.role})\n",
-        ]
-        if key_signals is not None:
-            answerer_parts.append(render_key_signals(key_signals) + "\n")
-        answerer_parts.extend([
-            f"## Specialist Analysis: Stuff\n{specialists.stuff}\n",
-            f"## Specialist Analysis: Location\n{specialists.location}\n",
-            f"## Specialist Analysis: Run Value\n{specialists.runvalue}\n",
-            f"## Specialist Analysis: Trends\n{specialists.trends}\n",
-            f"## Specialist Analysis: Game Shape\n{specialists.game_shape}",
-        ])
-        answerer_input = "\n\n".join(answerer_parts)
-
-        # Build summary input from clean specialist outputs + key signals
-        summary_input = build_writer_input(
-            context, specialists.stuff, specialists.location,
-            specialists.runvalue, specialists.trends, specialists.game_shape,
-            key_signals=key_signals,
-        )
-
-        # Run summary in background while answerer streams
-        summary_task = asyncio.create_task(
-            agents.summary.run(**agent_kwargs(summary_input, _model_override))
-        )
-
-        chunks: list[str] = []
-        async with answerer.run_stream(answerer_input) as stream:
-            async for delta in stream.stream_text(delta=True):
-                print(delta, end="", flush=True)
-                chunks.append(delta)
-        print()
-
-        # Await and parse summary bullets — non-critical, don't crash if it fails
-        try:
-            summary_result = await summary_task
-            summary_bullets = [
-                line.lstrip("- ").strip()
-                for line in summary_result.output.strip().splitlines()
-                if line.strip().startswith("- ")
-            ]
-        except Exception:
-            log.warning("Executive summary agent failed, skipping.", exc_info=True)
-            summary_bullets = []
-
-        return PipelineAnswer(
-            answer="".join(chunks),
-            stuff_summary=specialists.stuff,
-            key_signals=key_signals,
-            executive_summary=summary_bullets or None,
-            audit_flags=audit_flags or None,
-        )
-
-    return asyncio.run(_run())
