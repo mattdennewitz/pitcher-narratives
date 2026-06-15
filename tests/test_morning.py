@@ -2,11 +2,24 @@
 
 import json
 from datetime import date
+from unittest.mock import AsyncMock
 
 from pydantic_ai.models.test import TestModel
 
 from pitcher_narratives import morning
+from pitcher_narratives.pipeline import AnalyzedContext, SpecialistOutputs
 from pitcher_narratives.scout import ScoredAppearance, Signal
+
+
+def _fake_analyzed() -> AnalyzedContext:
+    """Minimal AnalyzedContext for test stubs."""
+    return AnalyzedContext(
+        specialists=SpecialistOutputs(
+            stuff="Stuff analysis.", location="Location analysis.",
+            runvalue="Run value analysis.", trends="Trends analysis.",
+            game_shape="Game shape analysis.",
+        ),
+    )
 
 
 def _app(pid: int, role: str) -> ScoredAppearance:
@@ -56,13 +69,21 @@ def _make_minimal_context():
     )
 
 
-def _patch_data(monkeypatch):
-    """Stub all data-loading seams in morning.py."""
+def _patch_data(monkeypatch, *, patch_spine: bool = True):
+    """Stub all data-loading and LLM seams in morning.py.
+
+    patch_spine=True (default) replaces run_analysis_spine with a synchronous
+    stub returning a fake AnalyzedContext. Tests that specifically exercise the
+    spine integration should pass patch_spine=False and configure _writer_override
+    with call_tools=[] to avoid SkillNotFoundError from the skill toolset.
+    """
     monkeypatch.setattr(
         morning, "scout_appearances",
         lambda **kw: [_app(1, "SP"), _app(2, "RP")],
     )
     monkeypatch.setattr(morning, "_load_pitcher_context", lambda pid: _make_minimal_context())
+    if patch_spine:
+        monkeypatch.setattr(morning, "run_analysis_spine", AsyncMock(return_value=_fake_analyzed()))
 
 
 def _selector_model():
@@ -186,6 +207,7 @@ def test_full_board_lists_beyond_candidate_cap(tmp_path, monkeypatch):
     ]
     monkeypatch.setattr(morning, "scout_appearances", lambda **kw: apps)
     monkeypatch.setattr(morning, "_load_pitcher_context", lambda pid: _make_minimal_context())
+    monkeypatch.setattr(morning, "run_analysis_spine", AsyncMock(return_value=_fake_analyzed()))
     selector = TestModel(custom_output_args={
         "picks": [
             {
@@ -209,6 +231,39 @@ def test_full_board_lists_beyond_candidate_cap(tmp_path, monkeypatch):
     assert "Pitcher 4" not in briefing          # selector saw only the cap
 
 
+def test_morning_passes_analyzed_contexts_to_writer(tmp_path, monkeypatch):
+    """Morning populates AnalyzedContext per pick and passes them to write_pick_summaries."""
+    from pitcher_narratives.digest import write_pick_summaries as _real_write
+
+    captured: dict = {}
+
+    async def _spy_write(picks, cues, appearances, *, analyzed_contexts=None, **kw):
+        captured["analyzed_contexts"] = analyzed_contexts
+        return await _real_write(
+            picks, cues, appearances,
+            analyzed_contexts=analyzed_contexts, **kw,
+        )
+
+    # patch_spine=False: let run_analysis_spine run for real under TestModel.
+    # call_tools=[] suppresses the automatic skill-toolset calls TestModel generates.
+    _patch_data(monkeypatch, patch_spine=False)
+    monkeypatch.setattr(morning, "write_pick_summaries", _spy_write)
+    model = TestModel(call_tools=[], custom_output_text="A summary.")
+    morning.run_morning(
+        window_days=1, top_n=25, min_pitches=20,
+        provider="gemini", persona_id="scout", out_root=tmp_path,
+        _selector_override=_selector_model(),
+        _writer_override=model,
+    )
+    assert "analyzed_contexts" in captured
+    ctx_map = captured["analyzed_contexts"]
+    assert ctx_map is not None
+    assert len(ctx_map) > 0
+    for analyzed in ctx_map.values():
+        assert isinstance(analyzed, AnalyzedContext)
+        assert analyzed.specialists.stuff != ""
+
+
 def test_run_morning_duplicate_pitcher_keeps_highest_scored(tmp_path, monkeypatch):
     """A pitcher with two scored appearances keys to the higher-scored one."""
     high = _app(1, "SP")
@@ -223,6 +278,7 @@ def test_run_morning_duplicate_pitcher_keeps_highest_scored(tmp_path, monkeypatc
         lambda **kw: [high, low, _app(2, "RP")],
     )
     monkeypatch.setattr(morning, "_load_pitcher_context", lambda pid: _make_minimal_context())
+    monkeypatch.setattr(morning, "run_analysis_spine", AsyncMock(return_value=_fake_analyzed()))
     run_dir = morning.run_morning(
         window_days=2, top_n=25, min_pitches=20,
         provider="gemini", persona_id="scout", out_root=tmp_path,

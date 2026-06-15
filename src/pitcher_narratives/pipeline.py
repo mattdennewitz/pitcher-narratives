@@ -97,12 +97,13 @@ from pitcher_narratives.signals import (
 )
 
 __all__ = [
+    "AnalyzedContext",
     "AuditFlag", "AuditResult", "ExecutiveSummary", "HallucinationReport",
     "KeySignals", "PipelineAgents", "PipelineResult",
     "UserPrompt", "audit_and_revise_specialists", "build_writer_input",
     "check_explainer_present", "check_hallucinated_metrics",
     "generate_pipeline_streaming",
-    "make_pipeline_agents", "run_specialists",
+    "make_pipeline_agents", "run_analysis_spine", "run_specialists",
     "write_pipeline_data_file",
 ]
 
@@ -1036,6 +1037,20 @@ class SpecialistOutputs(BaseModel):
     game_shape: str
 
 
+class AnalyzedContext(BaseModel):
+    """Grounded specialist analysis produced by run_analysis_spine.
+
+    Carries the clean specialist outputs, cross-specialist key signals, and
+    any audit flags from the specialist revision loop. Does not include
+    terminal-layer artifacts (writer capsule, anchor result, hallucination
+    report) — those depend on a specific output target and are produced by
+    the calling terminal.
+    """
+    specialists: SpecialistOutputs
+    key_signals: KeySignals | None = None
+    audit_flags: list[AuditFlag] = []
+
+
 class PipelineResult(BaseModel):
     """Result from the multi-agent pipeline."""
     narrative: str
@@ -1173,6 +1188,57 @@ async def run_specialists(
     )
 
 
+async def run_analysis_spine(
+    ctx: PitcherContext,
+    *,
+    agents: PipelineAgents,
+    _model_override: Any = None,
+) -> AnalyzedContext:
+    """Run the specialist → audit → signal-extraction spine.
+
+    Shared analysis path for report, ask, and morning. Returns a grounded
+    AnalyzedContext; does not run the writer, anchor check, or hallucination
+    check — those are terminal-layer concerns.
+
+    Args:
+        ctx: Assembled pitcher context (facts, baselines, arsenal data).
+        agents: Pre-built pipeline agents (create once, reuse across picks).
+        _model_override: Optional model override for deterministic testing.
+    """
+    specialist_agents = {
+        "stuff": agents.stuff, "location": agents.location,
+        "runvalue": agents.runvalue, "trends": agents.trends,
+        "game_shape": agents.game_shape,
+    }
+
+    raw = await run_specialists(
+        agents.stuff, agents.location, agents.runvalue,
+        agents.trends, agents.game_shape, ctx, _model_override,
+    )
+    specialists, audit_flags = await audit_and_revise_specialists(
+        raw, specialist_agents, agents.auditor, ctx, _model_override,
+    )
+
+    signal_input = build_writer_input(
+        ctx, specialists.stuff, specialists.location,
+        specialists.runvalue, specialists.trends, specialists.game_shape,
+    )
+    try:
+        signal_result = await agents.signal_extractor.run(
+            **agent_kwargs(signal_input, _model_override)
+        )
+        key_signals = signal_result.output
+    except Exception:
+        log.warning("Signal extractor failed, continuing without key signals.", exc_info=True)
+        key_signals = None
+
+    return AnalyzedContext(
+        specialists=specialists,
+        key_signals=key_signals,
+        audit_flags=audit_flags,
+    )
+
+
 async def _run_anchor_revision_loop(
     *,
     anchor_agent: Agent[None, AnchorResult],
@@ -1262,41 +1328,13 @@ async def _run_pipeline(
     persona_obj = get_persona(persona)
     agents = make_pipeline_agents(provider, thinking, persona_obj)
 
-    # Phase 1: Run specialists concurrently
-    log.info("Running specialists...")
-    raw_specialists = await run_specialists(
-        agents.stuff, agents.location, agents.runvalue, agents.trends,
-        agents.game_shape, ctx, _model_override,
-    )
-    log.info("Specialists complete.")
-
-    # Phase 1.5: Per-specialist audit + revision loop
-    log.info("Auditing specialist outputs...")
-    specialist_agents = {
-        "stuff": agents.stuff, "location": agents.location,
-        "runvalue": agents.runvalue, "trends": agents.trends,
-        "game_shape": agents.game_shape,
-    }
-    specialists, audit_flags = await audit_and_revise_specialists(
-        raw_specialists, specialist_agents, agents.auditor, ctx, _model_override,
-    )
-
-    # Phase 1.75: Extract key signals from clean specialist outputs
-    # Non-critical enrichment — pipeline continues without signals on failure.
-    log.info("Extracting key signals...")
-    signal_input = build_writer_input(
-        ctx, specialists.stuff, specialists.location,
-        specialists.runvalue, specialists.trends, specialists.game_shape,
-    )
-    try:
-        signal_result = await agents.signal_extractor.run(
-            **agent_kwargs(signal_input, _model_override)
-        )
-        key_signals = signal_result.output
-        log.info("Key signals extracted.")
-    except Exception:
-        log.warning("Signal extractor failed, continuing without key signals.", exc_info=True)
-        key_signals = None
+    # Phases 1 → 1.75: specialist → audit → signal extraction
+    log.info("Running analysis spine...")
+    analyzed = await run_analysis_spine(ctx, agents=agents, _model_override=_model_override)
+    specialists = analyzed.specialists
+    audit_flags = analyzed.audit_flags
+    key_signals = analyzed.key_signals
+    log.info("Analysis spine complete.")
 
     # Phase 2: Writer + Executive Summary run concurrently
     # Writer gets clean specialist outputs + key signals.
