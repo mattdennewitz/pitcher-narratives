@@ -12,7 +12,8 @@ Voice and output format are orthogonal concerns, composed at build time:
 - ``SHARED_WRITER_BASE`` holds the *universal analytical rules* that every
   composed writer prompt must obey, exactly once.
 - ``_SYNTHESIS_FRAMING`` holds the framing shared by the specialist-synthesis
-  contracts (report writers); the digest contract uses cue framing instead.
+  contracts (report writers); ``_CUE_FRAMING`` is for the digest contract;
+  ``_ANSWER_FRAMING`` is for the Q&A contract.
 
 ``build_system_prompt(persona, contract)`` composes:
 ``universal base + contract.input_framing + persona voice chain + contract.structure``.
@@ -20,8 +21,11 @@ Voice and output format are orthogonal concerns, composed at build time:
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from types import MappingProxyType
+
+log = logging.getLogger("pitcher_narratives.personas")
 
 __all__ = [
     "ANALYST",
@@ -319,8 +323,8 @@ ANSWER = OutputContract(
     input_framing=_ANSWER_FRAMING,
 )
 
-# Report path pairs each persona with the contract matching its current format
-# so the composed report prompt is behaviour-preserving.
+# Pairs each persona with its canonical report contract so build_writer_system_prompt
+# remains a backward-compatible shim.
 REPORT_CONTRACTS: dict[str, OutputContract] = {
     "scout": CAPSULE,
     "analyst": NEWSLETTER,
@@ -506,4 +510,12 @@ def build_writer_system_prompt(persona: Persona) -> str:
     fall back to CAPSULE — the default report format — rather than raising a
     KeyError.
     """
-    return build_system_prompt(persona, REPORT_CONTRACTS.get(persona.id, CAPSULE))
+    contract = REPORT_CONTRACTS.get(persona.id)
+    if contract is None:
+        log.warning(
+            "Persona %r has no REPORT_CONTRACTS entry; falling back to CAPSULE. "
+            "Add an entry to REPORT_CONTRACTS to suppress this warning.",
+            persona.id,
+        )
+        contract = CAPSULE
+    return build_system_prompt(persona, contract)

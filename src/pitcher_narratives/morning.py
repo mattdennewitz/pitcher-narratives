@@ -39,7 +39,8 @@ log = logging.getLogger("pitcher_narratives.morning")
 
 
 def _load_pitcher_context(pitcher_id: int) -> PitcherContext:
-    """Load per-pitcher data and assemble a PitcherContext for cue generation."""
+    """Isolated so the morning run loads context per-pick post-selection, not upfront for all pitchers."""
+    log.debug("Loading pitcher context for pitcher_id=%d", pitcher_id)
     data = load_pitcher_data(pitcher_id)
     return assemble_pitcher_context(data)
 
@@ -90,13 +91,19 @@ def run_morning(
         by_cat = Counter(p.category for p in picks)
         log.info("Slate: %d picks across categories %s.", len(picks), dict(by_cat))
 
-        cues = {
-            p.pitcher_id: build_story_cue_from_context(
-                appearances[p.pitcher_id], p,
-                _load_pitcher_context(p.pitcher_id),
-            )
-            for p in picks
-        }
+        cues: dict[int, str] = {}
+        for p in picks:
+            try:
+                ctx = _load_pitcher_context(p.pitcher_id)
+                cues[p.pitcher_id] = build_story_cue_from_context(
+                    appearances[p.pitcher_id], p, ctx,
+                )
+            except Exception:
+                log.error(
+                    "Context load failed for pitcher_id=%d (%s); skipping pick.",
+                    p.pitcher_id, appearances[p.pitcher_id].pitcher_name, exc_info=True,
+                )
+        picks = [p for p in picks if p.pitcher_id in cues]
 
         log.info("Writing %d summaries...", len(picks))
         summaries = await write_pick_summaries(

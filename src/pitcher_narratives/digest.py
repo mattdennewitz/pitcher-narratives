@@ -102,9 +102,10 @@ def build_story_cue_from_context(
 ) -> str:
     """Render the writer's briefing for one pick from a PitcherContext.
 
-    Projects the engine-computed facts (fastball, arsenal, workload) into the
-    same top-level sections as build_story_cue — preserving downstream writer
-    compatibility — but reads from PitcherContext instead of raw DataFrames.
+    Projects the engine-computed facts (fastball velocity, arsenal grades and
+    usage) into the same top-level sections as build_story_cue — preserving
+    downstream writer compatibility — but reads from PitcherContext instead of
+    raw DataFrames.
     """
     lines = [
         f"PITCHER: {app.pitcher_name} ({app.throws}HP, {app.role})",
@@ -124,8 +125,8 @@ def build_story_cue_from_context(
         "SEASON CONTEXT:",
     ]
 
-    if ctx.arsenal:
-        total_pitches = sum(pt.n_pitches_season for pt in ctx.arsenal)
+    total_pitches = sum(pt.n_pitches_season for pt in ctx.arsenal)
+    if total_pitches > 0:
         weighted_p = sum(pt.season_p_plus * pt.n_pitches_season for pt in ctx.arsenal) / total_pitches
         weighted_s = sum(pt.season_s_plus * pt.n_pitches_season for pt in ctx.arsenal) / total_pitches
         weighted_l = sum(pt.season_l_plus * pt.n_pitches_season for pt in ctx.arsenal) / total_pitches
@@ -150,13 +151,7 @@ def build_story_cue_from_context(
 
 
 def _build_writer_prompt(persona: Persona) -> str:
-    """Compose the digest writer system prompt for the given persona.
-
-    Delegates to the shared voice composer with the DIGEST_ITEM contract:
-    universal analytical rules + cue input framing + the persona voice chain +
-    the digest length/structure contract. The persona overlays carry voice
-    only, so no precedence rule is needed to suppress capsule structure.
-    """
+    """Compose the digest writer system prompt for the given persona using the DIGEST_ITEM contract."""
     return build_system_prompt(persona, DIGEST_ITEM)
 
 
@@ -225,7 +220,7 @@ async def write_pick_summaries(
             result = await agent.run(**kwargs)
         except Exception:
             log.error("Writer failed for %s; using fallback.", name, exc_info=True)
-            return pick.pitcher_id, _fallback_summary(pick, cues[pick.pitcher_id])
+            return pick.pitcher_id, _fallback_summary(pick, cues.get(pick.pitcher_id, "(cue unavailable)"))
         if tracker is not None:
             usage = result.usage()
             tracker.record(
@@ -304,7 +299,7 @@ def assemble_digest(
         return sorted(
             picks,
             key=lambda p: (
-                _CONVICTION_RANK[p.conviction],
+                _CONVICTION_RANK.get(p.conviction, 99),
                 -appearances[p.pitcher_id].score,
             ),
         )
@@ -313,7 +308,9 @@ def assemble_digest(
         lines = [f"## {title}", ""]
         for pick in _ordered(picks):
             name = appearances[pick.pitcher_id].pitcher_name
-            badge = _CATEGORY_BADGES[pick.category]
+            badge = _CATEGORY_BADGES.get(pick.category, pick.category.upper().replace("_", " "))
+            if pick.category not in _CATEGORY_BADGES:
+                log.warning("Unknown pick category %r for %s; using raw name as badge.", pick.category, name)
             lines += [
                 f"### {name} — `{pick.category}` [{badge}]",
                 "",

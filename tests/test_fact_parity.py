@@ -340,6 +340,7 @@ def test_usage_shift_parity_arithmetic() -> None:
     fc_summary = next((p for p in arsenal if p.pitch_type == "FC"), None)
     assert fc_summary is not None
 
+    assert fc_summary.usage_delta_pp is not None, "Expected non-None usage_delta_pp (non-cold-start fixture)"
     engine_usage_delta = fc_summary.usage_delta_pp
 
     # Scout formula: game_usage = (n_pitches / total_pitches) * 100

@@ -1,9 +1,10 @@
 """Analyst Q&A agent for natural-language pitcher questions.
 
 Provides a tool-calling pydantic-ai agent that answers questions about
-pitchers grounded exclusively in the existing data pipeline. Two tools
-(get_pitcher_summary, get_pitch_detail) give the agent access to
-PitcherContext data via RunContext[QADeps] dependency injection.
+pitchers grounded exclusively in the existing data pipeline. Two data-access
+tools (get_pitcher_summary, get_pitch_detail) give the agent access to
+PitcherContext data via RunContext[QADeps] dependency injection;
+skill_toolset() supplies additional capabilities.
 
 Voice and format are composed via build_system_prompt(persona, ANSWER).
 ANALYST_MECHANICS carries domain-specific non-voice concerns: the model

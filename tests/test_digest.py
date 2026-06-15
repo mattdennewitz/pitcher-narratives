@@ -118,6 +118,7 @@ def _minimal_context(*, with_fastball: bool = True):
         usage_delta_pp=4.4,
         s_plus_delta_pts=None,
         l_plus_delta_pts=None,
+        p_plus_delta_pts=17.0,
     )
     sl = PitchTypeSummary(
         pitch_type="SL", pitch_name="Slider",
@@ -134,6 +135,7 @@ def _minimal_context(*, with_fastball: bool = True):
         usage_delta_pp=-4.4,
         s_plus_delta_pts=None,
         l_plus_delta_pts=None,
+        p_plus_delta_pts=None,
     )
 
     fastball = FastballSummary(

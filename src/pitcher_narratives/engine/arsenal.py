@@ -158,14 +158,17 @@ class PitchTypeSummary:
     cold_start: bool
     """True when window covers the full season."""
 
-    usage_delta_pp: float
-    """Raw usage delta (window - season) in percentage points."""
+    usage_delta_pp: float | None
+    """Raw usage delta (window - season) in percentage points. None when cold_start=True."""
 
     s_plus_delta_pts: float | None
-    """Raw S+ delta (window - season) in points. None when window S+ is unavailable."""
+    """Raw S+ delta (window - season) in points. None when cold_start=True or window S+ is unavailable."""
 
     l_plus_delta_pts: float | None
-    """Raw L+ delta (window - season) in points. None when window L+ is unavailable."""
+    """Raw L+ delta (window - season) in points. None when cold_start=True or window L+ is unavailable."""
+
+    p_plus_delta_pts: float | None
+    """Raw P+ delta (window - season) in points. None when cold_start=True or window P+ is unavailable."""
 
 
 @dataclass
@@ -578,13 +581,22 @@ def compute_arsenal_summary(data: PitcherData) -> list[PitchTypeSummary]:
         # ── Small sample ─────────────────────────────────────────
         small_sample = n_window < _MIN_PITCHES
 
-        usage_delta_pp = window_usage_pct - season_usage_pct
-        s_plus_delta_pts = (
-            window_s_plus - season_s_plus if window_s_plus is not None else None
-        )
-        l_plus_delta_pts = (
-            window_l_plus - season_l_plus if window_l_plus is not None else None
-        )
+        if cold_start:
+            usage_delta_pp = None
+            s_plus_delta_pts = None
+            l_plus_delta_pts = None
+            p_plus_delta_pts = None
+        else:
+            usage_delta_pp = window_usage_pct - season_usage_pct
+            s_plus_delta_pts = (
+                window_s_plus - season_s_plus if window_s_plus is not None else None
+            )
+            l_plus_delta_pts = (
+                window_l_plus - season_l_plus if window_l_plus is not None else None
+            )
+            p_plus_delta_pts = (
+                window_p_plus - season_p_plus if window_p_plus is not None else None
+            )
 
         results.append(
             PitchTypeSummary(
@@ -618,6 +630,7 @@ def compute_arsenal_summary(data: PitcherData) -> list[PitchTypeSummary]:
                 usage_delta_pp=usage_delta_pp,
                 s_plus_delta_pts=s_plus_delta_pts,
                 l_plus_delta_pts=l_plus_delta_pts,
+                p_plus_delta_pts=p_plus_delta_pts,
             )
         )
 
