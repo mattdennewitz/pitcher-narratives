@@ -29,8 +29,10 @@ __all__ = [
 ]
 
 _MAX_PICKS_PER_CATEGORY = 5
-_SELECTOR_TEMPERATURE = 0.2
-"""Low temperature: selection should be near-deterministic."""
+_SELECTOR_TEMPERATURE = 0.0
+"""Greedy decoding: the slate (and thus its size) is reproducible run-to-run
+on identical candidate data. The briefing is already deterministic (candidates
+sorted by score), so temperature 0 removes the only source of run variance."""
 _SELECTOR_MAX_TOKENS = 8192
 
 
