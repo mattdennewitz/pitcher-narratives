@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pitcher Narratives — Consolidation Refactor Plan</title>
+<style>
+  :root{
+    --bg:#0d1117; --panel:#161b22; --panel2:#1c2230; --ink:#e6edf3; --muted:#8b949e;
+    --line:#30363d; --accent:#58a6ff;
+    /* fact engines */
+    --faA:#1f6feb; --faA-bg:#0d2a52;
+    --faB:#d29922; --faB-bg:#3a2d08;
+    --faC:#f85149; --faC-bg:#3d1413;
+    /* voices */
+    --v1:#3fb950; --v1-bg:#0f2d16;
+    --v2:#2dd4bf; --v2-bg:#06302b;
+    --v3:#a371f7; --v3-bg:#241a3d;
+    --v4:#6e7681; --v4-bg:#21262d;
+    --target:#e3b341; --target-bg:#2b2410;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    -webkit-font-smoothing:antialiased}
+  code,.mono{font-family:"SF Mono",ui-monospace,Menlo,Consolas,monospace;font-size:.86em}
+  .wrap{max-width:1180px;margin:0 auto;padding:40px 28px 120px}
+  h1{font-size:30px;margin:0 0 6px;letter-spacing:-.02em}
+  h2{font-size:21px;margin:54px 0 6px;letter-spacing:-.01em;border-bottom:1px solid var(--line);padding-bottom:10px}
+  h3{font-size:16px;margin:26px 0 8px;color:var(--ink)}
+  .sub{color:var(--muted);font-size:15px;margin:0 0 8px}
+  p{color:#c9d1d9}
+  .lead{color:var(--muted);max-width:760px}
+  a{color:var(--accent)}
+
+  /* legend */
+  .legend{display:flex;flex-wrap:wrap;gap:18px;margin:22px 0 8px;padding:16px 18px;background:var(--panel);border:1px solid var(--line);border-radius:10px}
+  .legcol{min-width:230px}
+  .legcol h4{margin:0 0 8px;font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+  .chip{display:inline-flex;align-items:center;gap:7px;font-size:12.5px;margin:3px 10px 3px 0}
+  .dot{width:11px;height:11px;border-radius:3px;flex:none;border:1px solid rgba(255,255,255,.15)}
+
+  /* swimlane */
+  .lane{background:var(--panel);border:1px solid var(--line);border-radius:12px;margin:18px 0;padding:16px 18px}
+  .lane-head{display:flex;align-items:baseline;gap:12px;margin-bottom:14px;flex-wrap:wrap}
+  .lane-title{font-weight:700;font-size:16px}
+  .lane-cmd{font-family:"SF Mono",ui-monospace,Menlo,monospace;font-size:12px;color:var(--muted);background:var(--panel2);padding:2px 8px;border-radius:6px;border:1px solid var(--line)}
+  .lane-note{color:var(--muted);font-size:12.5px;margin-left:auto}
+
+  .flow{display:flex;align-items:stretch;gap:0;overflow-x:auto;padding-bottom:6px}
+  .stage{position:relative;min-width:118px;flex:none;background:var(--panel2);border:1px solid var(--line);
+    border-radius:9px;padding:10px 11px 11px;margin-right:26px}
+  .stage:last-child{margin-right:0}
+  .stage::after{content:"→";position:absolute;right:-21px;top:50%;transform:translateY(-50%);color:var(--muted);font-size:16px}
+  .stage:last-child::after{content:""}
+  .stage .nm{font-size:13px;font-weight:600;line-height:1.25}
+  .stage .fn{font-family:"SF Mono",ui-monospace,Menlo,monospace;font-size:10.5px;color:var(--muted);margin-top:3px;word-break:break-word}
+  .topbar{height:4px;border-radius:3px;margin:-2px -3px 8px}
+  .badges{display:flex;gap:4px;margin-top:7px;flex-wrap:wrap}
+  .b{font-size:10px;padding:1px 6px;border-radius:20px;border:1px solid;font-weight:600;letter-spacing:.02em}
+  .b-faA{color:var(--faA);border-color:var(--faA);background:var(--faA-bg)}
+  .b-faB{color:var(--faB);border-color:var(--faB);background:var(--faB-bg)}
+  .b-faC{color:var(--faC);border-color:var(--faC);background:var(--faC-bg)}
+  .b-v1{color:var(--v1);border-color:var(--v1);background:var(--v1-bg)}
+  .b-v2{color:var(--v2);border-color:var(--v2);background:var(--v2-bg)}
+  .b-v3{color:var(--v3);border-color:var(--v3);background:var(--v3-bg)}
+  .b-v4{color:var(--v4);border-color:var(--v4);background:var(--v4-bg)}
+  .shared{outline:2px dashed var(--accent);outline-offset:3px;border-radius:11px}
+  .spinebar{display:inline-block;font-size:11px;color:var(--accent);border:1px dashed var(--accent);border-radius:6px;padding:1px 8px;margin-bottom:10px}
+
+  .callout{background:var(--panel);border:1px solid var(--line);border-left:3px solid var(--faC);
+    border-radius:9px;padding:14px 18px;margin:14px 0}
+  .callout.warn{border-left-color:var(--faB)}
+  .callout.good{border-left-color:var(--v1)}
+  .callout h3{margin:0 0 6px}
+  .callout p{margin:6px 0;color:#c9d1d9}
+
+  table{width:100%;border-collapse:collapse;margin:14px 0;font-size:13.5px}
+  th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{color:var(--muted);font-size:11.5px;letter-spacing:.06em;text-transform:uppercase;font-weight:600}
+  td code{color:#d2a8ff;background:var(--panel2);padding:1px 5px;border-radius:4px}
+
+  /* phases */
+  .phase{background:var(--panel);border:1px solid var(--line);border-radius:12px;margin:16px 0;padding:0;overflow:hidden}
+  .phase-h{display:flex;align-items:center;gap:14px;padding:15px 20px;background:var(--panel2);border-bottom:1px solid var(--line)}
+  .pnum{width:30px;height:30px;border-radius:8px;background:var(--accent);color:#06101f;font-weight:800;
+    display:flex;align-items:center;justify-content:center;flex:none;font-size:15px}
+  .phase-h .ttl{font-weight:700;font-size:16px}
+  .phase-h .goal{margin-left:auto;font-size:12px;color:var(--muted)}
+  .risk{font-size:10.5px;padding:2px 9px;border-radius:20px;border:1px solid;font-weight:700}
+  .risk-lo{color:var(--v1);border-color:var(--v1);background:var(--v1-bg)}
+  .risk-md{color:var(--faB);border-color:var(--faB);background:var(--faB-bg)}
+  .risk-hi{color:var(--faC);border-color:var(--faC);background:var(--faC-bg)}
+  .phase-b{padding:16px 20px 18px}
+  .phase-b ul{margin:6px 0 12px;padding-left:20px}
+  .phase-b li{margin:5px 0;color:#c9d1d9}
+  .phase-b .label{font-size:11px;letter-spacing:.07em;text-transform:uppercase;color:var(--muted);margin:14px 0 2px}
+  .files{display:flex;flex-wrap:wrap;gap:6px;margin-top:4px}
+  .file{font-family:"SF Mono",ui-monospace,Menlo,monospace;font-size:11.5px;background:var(--panel2);
+    border:1px solid var(--line);border-radius:6px;padding:2px 8px}
+  .file.del{color:var(--faC);border-color:#5b2220;text-decoration:line-through}
+  .file.new{color:var(--v1);border-color:#1c4626}
+  .verify{margin-top:12px;background:#0b1a12;border:1px solid #1c4626;border-radius:8px;padding:10px 14px;font-size:13px}
+  .verify b{color:var(--v1)}
+
+  .target-diagram{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:22px;margin:18px 0}
+  .tcols{display:flex;gap:16px;flex-wrap:wrap}
+  .tcol{flex:1;min-width:240px;background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:14px 16px}
+  .tcol h4{margin:0 0 4px;font-size:13px}
+  .tcol .desc{color:var(--muted);font-size:12px;margin-bottom:10px}
+  .tnode{background:var(--bg);border:1px solid var(--line);border-radius:7px;padding:7px 10px;font-size:12.5px;margin:6px 0}
+  .tnode .t{font-weight:600}
+  .tnode .s{font-family:"SF Mono",ui-monospace,Menlo,monospace;font-size:10.5px;color:var(--muted)}
+  .arrowdown{text-align:center;color:var(--muted);font-size:18px;margin:8px 0}
+  .terminals{display:flex;gap:10px;flex-wrap:wrap;margin-top:4px}
+  .term{flex:1;min-width:150px;border:1px solid var(--target);background:var(--target-bg);border-radius:8px;padding:9px 12px;font-size:12.5px}
+  .term .t{font-weight:700;color:var(--target)}
+  .foot{color:var(--muted);font-size:12px;margin-top:50px;border-top:1px solid var(--line);padding-top:16px}
+  .kbd{font-family:"SF Mono",ui-monospace,Menlo,monospace;background:var(--panel2);border:1px solid var(--line);border-radius:4px;padding:1px 5px;font-size:11px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>Pitcher Narratives — Consolidation Refactor</h1>
+  <p class="lead">Two goals: <b>(1) fact generation becomes singular</b> — one engine computes every delta/baseline; <b>(2) agent voice becomes singular</b> — one composition (analytical base + persona + output contract) drives every writing agent, so the voice holds steady as the output target changes (capsule, digest item, answer).</p>
+
+  <div class="legend">
+    <div class="legcol">
+      <h4>Fact engines (current)</h4>
+      <span class="chip"><span class="dot" style="background:var(--faA)"></span><b>A</b>&nbsp;<code>engine/</code> + <code>context.py</code> → PitcherContext</span><br>
+      <span class="chip"><span class="dot" style="background:var(--faB)"></span><b>B</b>&nbsp;<code>scout.py</code> signal scoring</span><br>
+      <span class="chip"><span class="dot" style="background:var(--faC)"></span><b>C</b>&nbsp;<code>digest.build_story_cue</code> slice</span>
+    </div>
+    <div class="legcol">
+      <h4>Voice definitions (current)</h4>
+      <span class="chip"><span class="dot" style="background:var(--v1)"></span><b>V1</b>&nbsp;<code>personas.py</code> base+overlay</span><br>
+      <span class="chip"><span class="dot" style="background:var(--v2)"></span><b>V2</b>&nbsp;<code>digest._DIGEST_WRITER_BASE</code></span><br>
+      <span class="chip"><span class="dot" style="background:var(--v3)"></span><b>V3</b>&nbsp;<code>analyst.ANALYST_INSTRUCTIONS</code></span><br>
+      <span class="chip"><span class="dot" style="background:var(--v4)"></span><b>V4</b>&nbsp;<code>analyst.ANSWERER_INSTRUCTIONS</code> (orphan)</span>
+    </div>
+    <div class="legcol">
+      <h4>Markers</h4>
+      <span class="chip"><span class="dot" style="background:transparent;border:2px dashed var(--accent)"></span>Shared specialist spine</span><br>
+      <span class="chip"><span class="dot" style="background:var(--target)"></span>Target-state node</span>
+    </div>
+  </div>
+
+  <!-- ============================ CURRENT ============================ -->
+  <h2>Current state — four workflows, three fact engines, four voices</h2>
+  <p class="sub">Each box is a pipeline stage. The colored top-bar + badges show which fact engine feeds it and which voice (if it writes prose).</p>
+
+  <!-- REPORT -->
+  <div class="lane">
+    <div class="lane-head">
+      <span class="lane-title">1 · Report</span>
+      <span class="lane-cmd">pitcher-narratives report -p ID</span>
+      <span class="lane-note">full single-pitcher capsule · honors <code>--persona</code></span>
+    </div>
+    <span class="spinebar">specialist spine ↓ (shared with Ask-pipeline)</span>
+    <div class="flow">
+      <div class="stage"><div class="topbar" style="background:var(--faA)"></div><div class="nm">Load data</div><div class="fn">data.load_pitcher_data</div></div>
+      <div class="stage"><div class="topbar" style="background:var(--faA)"></div><div class="nm">Assemble context</div><div class="fn">context.assemble_pitcher_context</div><div class="badges"><span class="b b-faA">A</span></div></div>
+      <div class="stage shared"><div class="topbar" style="background:var(--faA)"></div><div class="nm">5 specialists</div><div class="fn">pipeline.run_specialists</div><div class="badges"><span class="b b-faA">A</span></div></div>
+      <div class="stage shared"><div class="topbar" style="background:var(--faA)"></div><div class="nm">Audit + revise</div><div class="fn">audit_and_revise_specialists</div></div>
+      <div class="stage shared"><div class="topbar" style="background:var(--faA)"></div><div class="nm">Signal extractor</div><div class="fn">signals.KeySignals</div></div>
+      <div class="stage"><div class="topbar" style="background:var(--v1)"></div><div class="nm">Writer + exec summary</div><div class="fn">build_writer_system_prompt</div><div class="badges"><span class="b b-v1">V1</span></div></div>
+      <div class="stage"><div class="topbar" style="background:var(--v1)"></div><div class="nm">Anchor loop</div><div class="fn">_run_anchor_revision_loop</div></div>
+      <div class="stage"><div class="topbar" style="background:var(--faA)"></div><div class="nm">Hallucination check</div><div class="fn">check_hallucinated_metrics</div></div>
+    </div>
+  </div>
+
+  <!-- ASK -->
+  <div class="lane">
+    <div class="lane-head">
+      <span class="lane-title">2 · Ask</span>
+      <span class="lane-cmd">pitcher-ask "question"</span>
+      <span class="lane-note">tool-calling single agent · <b>ignores</b> <code>--persona</code></span>
+    </div>
+    <div class="flow">
+      <div class="stage"><div class="topbar" style="background:var(--faA)"></div><div class="nm">Load data</div><div class="fn">data.load_pitcher_data</div></div>
+      <div class="stage"><div class="topbar" style="background:var(--faA)"></div><div class="nm">Assemble context</div><div class="fn">context.assemble_pitcher_context</div><div class="badges"><span class="b b-faA">A</span></div></div>
+      <div class="stage"><div class="topbar" style="background:var(--v3)"></div><div class="nm">Analyst agent<br>(+tools)</div><div class="fn">ask_question_streaming</div><div class="badges"><span class="b b-faA">A</span><span class="b b-v3">V3</span></div></div>
+    </div>
+    <div class="callout warn" style="margin-top:14px;border-left-color:var(--v4)">
+      <h3>Orphaned twin: <code>ask_question_pipeline</code></h3>
+      <p>Re-runs the entire specialist spine (A) then renders with <span class="b b-v4">V4</span> <code>ANSWERER_INSTRUCTIONS</code>. <b>Wired to no CLI</b> — <code>ask_cli.py:170</code> only calls <code>ask_question_streaming</code>. Carries a 4th full voice copy for nothing.</p>
+    </div>
+  </div>
+
+  <!-- MORNING -->
+  <div class="lane">
+    <div class="lane-head">
+      <span class="lane-title">3 · Morning</span>
+      <span class="lane-cmd">pitcher-narratives morning</span>
+      <span class="lane-note">many-pitcher digest · <b>never touches engine A</b></span>
+    </div>
+    <div class="flow">
+      <div class="stage"><div class="topbar" style="background:var(--faB)"></div><div class="nm">Scout + score</div><div class="fn">scout.scout_appearances</div><div class="badges"><span class="b b-faB">B</span></div></div>
+      <div class="stage"><div class="topbar" style="background:var(--faB)"></div><div class="nm">Selector (editor)</div><div class="fn">curator.select_slate_async</div><div class="badges"><span class="b b-faB">B</span></div></div>
+      <div class="stage"><div class="topbar" style="background:var(--faC)"></div><div class="nm">Build story cue</div><div class="fn">digest.build_story_cue</div><div class="badges"><span class="b b-faC">C</span></div></div>
+      <div class="stage"><div class="topbar" style="background:var(--v2)"></div><div class="nm">Per-pick writers</div><div class="fn">digest.write_pick_summaries</div><div class="badges"><span class="b b-faC">C</span><span class="b b-v2">V2</span><span class="b b-v1">V1*</span></div></div>
+      <div class="stage"><div class="topbar" style="background:var(--faB)"></div><div class="nm">Assemble digest</div><div class="fn">digest.assemble_digest</div></div>
+    </div>
+    <div class="callout good" style="margin-top:14px">
+      <h3>Half-right already: <code>V1*</code></h3>
+      <p>The morning writer <i>reuses persona overlays</i> (good) but wraps them in its own <span class="b b-v2">V2</span> base and a <code>_PRECEDENCE_RULE</code> that tells the model to <b>ignore</b> the overlay's length/structure directives. Voice via suppression, not composition — the pattern Phase 1 generalizes.</p>
+    </div>
+  </div>
+
+  <!-- SCOUT -->
+  <div class="lane">
+    <div class="lane-head">
+      <span class="lane-title">4 · Scout</span>
+      <span class="lane-cmd">pitcher-scout [--curate]</span>
+      <span class="lane-note">dev/ops triage · no prose writer</span>
+    </div>
+    <div class="flow">
+      <div class="stage"><div class="topbar" style="background:var(--faB)"></div><div class="nm">Scout + score</div><div class="fn">scout.scout_appearances</div><div class="badges"><span class="b b-faB">B</span></div></div>
+      <div class="stage"><div class="topbar" style="background:var(--faB)"></div><div class="nm">Print table</div><div class="fn">scout_cli._print_table</div></div>
+      <div class="stage"><div class="topbar" style="background:var(--faB)"></div><div class="nm">Curate (opt)</div><div class="fn">curator.select_slate</div><div class="badges"><span class="b b-faB">B</span></div></div>
+    </div>
+  </div>
+
+  <!-- DIVERGENCES -->
+  <h2>Where they diverge that they shouldn't</h2>
+
+  <div class="callout">
+    <h3>Fact fork — the same number computed in up to three places</h3>
+    <p>"Velo delta vs season", "P+ delta vs season", "usage shift", "a pitcher's season baseline" each exist in <b>A and B (and C)</b> as independent code with different thresholds &amp; rounding: <code>scout._check_velo_delta</code> / <code>_check_pplus_swing</code> / <code>_check_usage_shifts</code> vs the engine's arsenal-trend deltas; <code>digest.build_story_cue:73–92</code> vs <code>engine.compute_league_baselines</code>.</p>
+    <p>Consequence: the <b>same pitcher &amp; outing</b> rests on a different fact substrate depending on the output. Only A carries the anti-hallucination grounding (<code>outlier_tag</code>, S-variant baselines) the specialist prompts depend on — so morning capsules are written on the <i>thinner, ungrounded</i> substrate.</p>
+  </div>
+
+  <div class="callout">
+    <h3>Voice fork — one "sabermetric scout" voice maintained in four copies</h3>
+    <p>The banned-word list (<code>degradation, binary, profiles as, dominant, elite, massive spike</code>) is duplicated verbatim in <code>personas.py</code> and <code>analyst.py</code>. "Directional consistency", "find the thread", "temporal grounding" recur across <code>personas.py</code>, <code>analyst.py</code>, <code>pipeline.py</code>, <code>prompt_builder.py</code>. Editing the voice means chasing 4–6 files; they <i>will</i> drift.</p>
+  </div>
+
+  <div class="callout good">
+    <h3>Already shared — keep &amp; extend</h3>
+    <p>Report and Ask-pipeline run the <b>identical</b> specialists → audit → signal-extractor spine (dashed). That spine is the right shared bone. The fix is to make the three <i>terminal renderers</i> the only divergence, and drive them from one voice composition.</p>
+  </div>
+
+  <!-- ============================ TARGET ============================ -->
+  <h2>Target architecture</h2>
+  <p class="sub">One fact engine → one analysis spine → three thin terminal renderers, each = <code>(persona × output-contract)</code> over one shared voice base.</p>
+
+  <div class="target-diagram">
+    <div class="tcols">
+      <div class="tcol">
+        <h4 style="color:var(--faA)">① Singular fact layer</h4>
+        <div class="desc">Every delta/baseline computed once.</div>
+        <div class="tnode"><div class="t">PitcherContext</div><div class="s">engine/ + context.py</div></div>
+        <div class="tnode"><div class="t">shared delta fns</div><div class="s">velo / P+ / usage — one impl each</div></div>
+        <div class="tnode"><div class="t">scout = thresholding</div><div class="s">scores engine outputs, no recompute</div></div>
+        <div class="tnode"><div class="t">digest cue = projection</div><div class="s">renders a subset of PitcherContext</div></div>
+      </div>
+      <div class="tcol">
+        <h4 style="color:var(--accent)">② Singular analysis spine</h4>
+        <div class="desc">Computed once, consumed by all writers.</div>
+        <div class="tnode"><div class="t">run_analysis_spine(ctx)</div><div class="s">specialists → audit → KeySignals</div></div>
+        <div class="tnode"><div class="t">→ AnalyzedContext</div><div class="s">clean specialist outputs + signals + flags</div></div>
+        <div class="desc" style="margin-top:10px">Morning may run a reduced spine per pick; same return type.</div>
+      </div>
+      <div class="tcol">
+        <h4 style="color:var(--v1)">③ Singular voice</h4>
+        <div class="desc">Composition, not copies.</div>
+        <div class="tnode"><div class="t">SHARED_WRITER_BASE</div><div class="s">banned words · directional · temporal · thread — ONCE</div></div>
+        <div class="tnode"><div class="t">× Persona</div><div class="s">tone + vocabulary (scout/analyst/generic)</div></div>
+        <div class="tnode"><div class="t">× OutputContract</div><div class="s">length + structure (capsule/item/answer)</div></div>
+      </div>
+    </div>
+    <div class="arrowdown">▼ &nbsp; build_system_prompt(persona, contract) &nbsp; ▼</div>
+    <div class="terminals">
+      <div class="term"><div class="t">CAPSULE</div>report writer</div>
+      <div class="term"><div class="t">DIGEST_ITEM</div>morning writer</div>
+      <div class="term"><div class="t">ANSWER</div>ask answerer</div>
+    </div>
+    <p style="color:var(--muted);font-size:12px;margin:14px 0 0">Result: <code>--persona</code> works everywhere · the <code>_PRECEDENCE_RULE</code> hack disappears (contract &amp; voice no longer fight) · V2/V3/V4 deleted.</p>
+  </div>
+
+  <!-- ============================ PLAN ============================ -->
+  <h2>Sequenced refactor plan</h2>
+  <p class="sub">Ordered to de-risk: prove the seams with tests, take the cheap voice win first, then the heavier fact-layer migration, then converge the spine. Each phase is independently shippable and leaves the app green.</p>
+
+  <!-- PHASE 0 -->
+  <div class="phase">
+    <div class="phase-h"><div class="pnum">0</div><div class="ttl">Safety net &amp; dead-code removal</div><span class="risk risk-lo">low risk</span><span class="goal">make the refactor verifiable</span></div>
+    <div class="phase-b">
+      <ul>
+        <li>Confirm <code>ask_question_pipeline</code> + <code>ANSWERER_INSTRUCTIONS</code> have no live callers (CLI uses streaming; check <code>bench/</code> + tests). If orphaned, delete — removes voice copy <span class="b b-v4">V4</span> for free.</li>
+        <li>Lock behavior with characterization tests before changing anything: golden prompt dumps via <code>write_pipeline_data_file</code> (already exists), a digest-assembly snapshot, a scout-table snapshot, and an ask-answer prompt snapshot.</li>
+      </ul>
+      <div class="label">Files</div>
+      <div class="files"><span class="file del">analyst.ask_question_pipeline</span><span class="file del">analyst.ANSWERER_INSTRUCTIONS</span><span class="file new">tests/test_voice_golden.py</span></div>
+      <div class="verify"><b>Green when:</b> <code>uv run pytest -q</code> passes and golden snapshots are committed as the baseline the later phases must preserve (voice content may change intentionally; structure/fact wiring must not regress silently).</div>
+    </div>
+  </div>
+
+  <!-- PHASE 1 -->
+  <div class="phase">
+    <div class="phase-h"><div class="pnum">1</div><div class="ttl">Unify the voice layer</div><span class="risk risk-md">medium risk</span><span class="goal">one base, persona × contract</span></div>
+    <div class="phase-b">
+      <p>Introduce <code>OutputContract</code> (length_target + structure/format rules) as a sibling to <code>Persona</code> (tone/vocab). Move all analytical rules — banned words, directional consistency, temporal grounding, find-the-thread — into <code>SHARED_WRITER_BASE</code> as the single source.</p>
+      <ul>
+        <li>Define contracts: <code>CAPSULE</code> (2–3 ¶), <code>DIGEST_ITEM</code> (150–250w), <code>ANSWER</code> (1–3 ¶, no preamble). Length targets migrate off <code>Persona.length_target</code> onto the contract; persona keeps only tone+vocab.</li>
+        <li><code>build_system_prompt(persona, contract)</code> = base + persona-overlay-chain + contract. Replaces <code>build_writer_system_prompt</code> and <code>digest._build_writer_prompt</code>.</li>
+        <li>Repoint report writer, morning writer, and the ask answerer to it. Ask's tool-calling agent keeps its <i>mechanics</i> (tool use, data-grounding rules) but its <i>voice</i> rules come from the base via the <code>ANSWER</code> contract.</li>
+        <li>Delete <span class="b b-v2">V2</span> voice text + <code>_PRECEDENCE_RULE</code>, <span class="b b-v3">V3</span> voice rules, and the duplicated banned-word/directional blocks.</li>
+      </ul>
+      <div class="label">Files</div>
+      <div class="files">
+        <span class="file new">personas.OutputContract</span><span class="file new">personas.build_system_prompt</span>
+        <span class="file">personas.py</span><span class="file">pipeline.py</span><span class="file">digest.py</span><span class="file">analyst.py</span>
+        <span class="file del">_DIGEST_WRITER_BASE (voice)</span><span class="file del">_PRECEDENCE_RULE</span>
+      </div>
+      <div class="verify"><b>Green when:</b> <code>--persona</code> now changes ask &amp; morning output; banned-word list grep returns <b>one</b> hit; golden prompt dumps show the same three rule-blocks composed, not copied. Outcome: <code>pitcher-ask --persona analyst</code> works.</div>
+    </div>
+  </div>
+
+  <!-- PHASE 2 -->
+  <div class="phase">
+    <div class="phase-h"><div class="pnum">2</div><div class="ttl">Unify the fact layer</div><span class="risk risk-hi">high risk</span><span class="goal">PitcherContext is the only source</span></div>
+    <div class="phase-b">
+      <p>The biggest piece: morning stops computing its own facts. Extract the shared delta math into the engine and have scout/digest consume it.</p>
+      <ul>
+        <li>Lift velo-delta, P+-delta, usage-shift, S+/L+-divergence into single engine functions. <code>scout.py</code> becomes pure <i>thresholding/scoring</i> over engine outputs — it keeps its weights &amp; signal taxonomy but stops re-reading aggs with parallel thresholds.</li>
+        <li>Replace <code>build_story_cue</code>'s computation (C) with a <i>projection/renderer</i> over <code>PitcherContext</code> (the subset the cue needs) — no independent baseline math.</li>
+        <li><b>Design risk to resolve first:</b> morning scores many pitchers; <code>PitcherContext</code> is per-pitcher and heavier than B's bulk scan. Decide the loading strategy — keep the cheap bulk scan for <i>triage</i>, then build full <code>PitcherContext</code> only for the ~N selected picks (lazy, post-selection). This preserves morning's cost profile while putting the written picks on substrate A.</li>
+      </ul>
+      <div class="label">Files</div>
+      <div class="files"><span class="file new">engine: shared delta fns</span><span class="file">scout.py</span><span class="file">digest.py</span><span class="file">morning.py</span><span class="file del">scout duplicate threshold math</span></div>
+      <div class="verify"><b>Green when:</b> velo/P+/usage delta each have exactly one implementation; morning picks are written from <code>PitcherContext</code>; a morning capsule and a <code>report</code> capsule for the same pitcher cite identical numbers. Watch morning wall-clock/token cost vs the pre-refactor baseline.</div>
+    </div>
+  </div>
+
+  <!-- PHASE 3 -->
+  <div class="phase">
+    <div class="phase-h"><div class="pnum">3</div><div class="ttl">Converge the analysis spine</div><span class="risk risk-md">medium risk</span><span class="goal">compute once, render thrice</span></div>
+    <div class="phase-b">
+      <p>With facts and voice unified, collapse the orchestration so the only per-target divergence is the terminal renderer.</p>
+      <ul>
+        <li>Extract <code>run_analysis_spine(ctx) → AnalyzedContext</code> (clean specialist outputs + KeySignals + audit flags) shared by report and ask-pipeline today.</li>
+        <li>The three terminals — capsule writer, digest-item writer, answerer — all consume <code>AnalyzedContext</code> + <code>(persona, contract)</code>. Morning runs the full or a reduced spine per pick; same return type either way.</li>
+        <li>Anchor loop &amp; hallucination check become opt-in post-processors on any terminal, not report-only.</li>
+      </ul>
+      <div class="label">Files</div>
+      <div class="files"><span class="file new">pipeline.run_analysis_spine</span><span class="file new">pipeline.AnalyzedContext</span><span class="file">pipeline.py</span><span class="file">analyst.py</span><span class="file">morning.py</span></div>
+      <div class="verify"><b>Green when:</b> one spine function has three callers; report &amp; ask share it with no duplicated phase code; morning capsules can opt into the same grounding the report gets.</div>
+    </div>
+  </div>
+
+  <!-- PHASE 4 -->
+  <div class="phase">
+    <div class="phase-h"><div class="pnum">4</div><div class="ttl">Collapse entry points</div><span class="risk risk-lo">optional</span><span class="goal">surface tidy-up</span></div>
+    <div class="phase-b">
+      <ul>
+        <li>Now that scout, ask, report, morning share fact + voice + spine, consider folding <code>pitcher-scout</code> / <code>pitcher-ask</code> into <code>pitcher-narratives</code> subcommands (the morning-run design doc already weighed this and deferred). Low value, do last — keeping <code>pitcher-scout</code> as a standalone triage tool is a legitimate choice.</li>
+      </ul>
+      <div class="verify"><b>Green when:</b> CLI surface reflects the now-unified internals; no behavior change, just ergonomics.</div>
+    </div>
+  </div>
+
+  <div class="foot">
+    Generated for <code>pitcher-narratives</code> · written to <code>refactor-plan.html</code> in the repo root (untracked — delete or git-ignore when done).
+    Order is deliberate: <b>0</b> safety → <b>1</b> voice (cheap, high clarity) → <b>2</b> facts (heavy, the morning migration) → <b>3</b> spine → <b>4</b> surface. Phases 1 and 2 are independent and could be parallelized across worktrees if desired.
+  </div>
+
+</div>
+</body>
+</html>
