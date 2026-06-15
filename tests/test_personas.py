@@ -691,3 +691,28 @@ def test_shared_base_surfaces_arm_slot_insight():
     """SHARED_WRITER_BASE instructs the writer to keep arm-slot shape insight."""
     assert "arm slot" in SHARED_WRITER_BASE.lower()
     assert "DEAD ZONE" in SHARED_WRITER_BASE
+
+
+# ── RT-4: fallback contract for unmapped personas ─────────────────────
+
+
+def test_build_writer_system_prompt_falls_back_to_capsule_for_unknown_persona():
+    """RT-4: build_writer_system_prompt uses CAPSULE for personas not in REPORT_CONTRACTS.
+
+    A newly added voice persona whose id is not yet in REPORT_CONTRACTS must
+    not raise a KeyError.  It should produce a CAPSULE-shaped prompt (i.e.
+    contain the CAPSULE structure phrase) rather than crashing.
+    """
+    unknown = Persona(
+        id="future_voice",
+        display_name="Future Voice",
+        description="A persona not yet mapped to a report contract",
+        overlay="Write in a future style.",
+    )
+    # Must not raise KeyError
+    prompt = build_writer_system_prompt(unknown)
+    # CAPSULE structure is "2-3 paragraph" — the fallback contract's fingerprint
+    assert "2-3 paragraph" in prompt, (
+        "build_writer_system_prompt should fall back to CAPSULE for unmapped personas; "
+        "expected CAPSULE structure phrase '2-3 paragraph' in composed prompt"
+    )

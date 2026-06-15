@@ -486,5 +486,9 @@ def build_writer_system_prompt(persona: Persona) -> str:
     Thin shim over build_system_prompt that pairs the persona with the report
     contract matching its current output format, keeping report call sites and
     behaviour unchanged.
+
+    Personas not present in REPORT_CONTRACTS (e.g. newly added voice personas)
+    fall back to CAPSULE — the default report format — rather than raising a
+    KeyError.
     """
-    return build_system_prompt(persona, REPORT_CONTRACTS[persona.id])
+    return build_system_prompt(persona, REPORT_CONTRACTS.get(persona.id, CAPSULE))

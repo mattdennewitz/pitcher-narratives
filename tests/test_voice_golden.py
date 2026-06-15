@@ -101,10 +101,18 @@ class TestReportWriterInvariants:
 
         Phase 1A dedup goal: the writer-voice banned-word list lives only in
         SHARED_WRITER_BASE, not duplicated across persona overlays.
+
+        Robustness: we count the banned token ``"degradation,"`` (the word
+        with its enclosing quotes and trailing comma, as it appears in the
+        banned list) rather than the full surrounding sentence, so the
+        assertion survives rewording of the directive without giving false
+        confidence.
         """
         prompt = _report_prompt(persona_id)
-        assert prompt.count('Never use: "degradation,"') == 1, (
-            f"report({persona_id}): banned-word block must appear exactly once"
+        assert prompt.count('"degradation,"') == 1, (
+            f"report({persona_id}): banned token '\"degradation,\"' must appear "
+            "exactly once — the banned-word list must be single-sourced in "
+            "SHARED_WRITER_BASE"
         )
 
     @pytest.mark.parametrize("persona_id", ["scout", "analyst", "generic"])
@@ -213,3 +221,79 @@ class TestDigestWriterInvariants:
         prompt = _digest_prompt(persona_id)
         assert "morning digest" in prompt
         assert "five specialist analyses" not in prompt.lower()
+
+
+# ── RT-1: Directive-manifest completeness guard ───────────────────────
+
+
+# Per-persona structure phrase that must appear in the composed report prompt.
+# Each entry maps persona id → a stable substring from that persona's contract
+# structure block.  These differ by design (different output formats).
+_STRUCTURE_PHRASE: dict[str, str] = {
+    "scout": "2-3 paragraph",
+    "analyst": "450-800 words",
+    "generic": "300-500 words",
+}
+
+# Universal directives that EVERY composed report prompt must contain,
+# regardless of persona.  Chosen as stable, minimally-phrased substrings
+# that survive rewordings of surrounding sentences while still proving that
+# the concern they guard has not been dropped.
+#
+# Verification: each marker was confirmed present by running:
+#   uv run python -c "from pitcher_narratives.personas import get_persona, \
+#       build_writer_system_prompt; print(build_writer_system_prompt(get_persona('<pid>')))"
+# for all three personas before this test was written.
+_UNIVERSAL_MANIFEST: list[str] = [
+    # Banned-word list
+    "degradation",
+    # Directional-consistency rule
+    "DIRECTIONAL CONSISTENCY",
+    # Temporal-grounding rule
+    "TEMPORAL GROUNDING",
+    # Sample-size calibration
+    "sample size",
+    # Arm-slot insight (DEAD ZONE is the concrete example used)
+    "DEAD ZONE",
+    # Find-the-thread synthesis rule
+    "Find the thread",
+    # Explain-the-model rule
+    "EXPLAIN THE MODEL",
+]
+
+
+class TestReportDirectiveManifest:
+    """RT-1 completeness guard for the report-writer composed prompt.
+
+    Asserts that every canonical writer directive survives in the composed
+    report prompt for each persona.  This is a permanent guard: if a future
+    refactor silently drops a directive (e.g. moves SHARED_WRITER_BASE content
+    into an overlay and forgets to include it), this test catches it.
+
+    Markers are stable substrings verified against the actual composed prompts
+    at the time this test was written.  Per-persona structure phrases are
+    checked separately because they legitimately differ by output contract.
+    """
+
+    @pytest.mark.parametrize("persona_id", ["scout", "analyst", "generic"])
+    @pytest.mark.parametrize("marker", _UNIVERSAL_MANIFEST)
+    def test_universal_directive_present(self, persona_id: str, marker: str) -> None:
+        """Every universal directive marker survives in every persona's report prompt."""
+        prompt = _report_prompt(persona_id)
+        assert marker in prompt, (
+            f"RT-1: report({persona_id}) is missing directive marker {marker!r}. "
+            "A refactor may have dropped or relocated a universal directive from "
+            "SHARED_WRITER_BASE or the synthesis framing."
+        )
+
+    @pytest.mark.parametrize("persona_id,structure_phrase", list(_STRUCTURE_PHRASE.items()))
+    def test_structure_phrase_present(
+        self, persona_id: str, structure_phrase: str
+    ) -> None:
+        """Each persona's expected structure/length phrase appears in its report prompt."""
+        prompt = _report_prompt(persona_id)
+        assert structure_phrase in prompt, (
+            f"RT-1: report({persona_id}) is missing structure phrase "
+            f"{structure_phrase!r}. The output contract for this persona may "
+            "have been swapped or the structure block may have been reworded."
+        )
