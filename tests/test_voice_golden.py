@@ -95,6 +95,36 @@ class TestReportWriterInvariants:
         for pid in ("scout", "analyst", "generic"):
             assert pid in PERSONAS, f"Persona {pid!r} missing from PERSONAS registry"
 
+    @pytest.mark.parametrize("persona_id", ["scout", "analyst", "generic"])
+    def test_banned_word_block_appears_exactly_once(self, persona_id: str) -> None:
+        """The banned-word directive is single-sourced (universal base) — appears once.
+
+        Phase 1A dedup goal: the writer-voice banned-word list lives only in
+        SHARED_WRITER_BASE, not duplicated across persona overlays.
+        """
+        prompt = _report_prompt(persona_id)
+        assert prompt.count('Never use: "degradation,"') == 1, (
+            f"report({persona_id}): banned-word block must appear exactly once"
+        )
+
+    @pytest.mark.parametrize("persona_id", ["scout", "analyst", "generic"])
+    def test_composed_layering_order(self, persona_id: str) -> None:
+        """Composed report prompt layers universal base, then synthesis framing.
+
+        The universal analytical rules lead; the five-specialist synthesis
+        framing (EXPLAIN THE MODEL) follows. This locks the composer's layer
+        order so a refactor cannot silently scramble it.
+        """
+        from pitcher_narratives.personas import SHARED_WRITER_BASE
+
+        prompt = _report_prompt(persona_id)
+        assert prompt.startswith(SHARED_WRITER_BASE)
+        assert "five specialist analyses" in prompt.lower()
+        assert "EXPLAIN THE MODEL" in prompt
+        assert prompt.index("DIRECTIONAL CONSISTENCY") < prompt.index(
+            "EXPLAIN THE MODEL"
+        )
+
 
 # ── Analyst ask-voice invariants (ANALYST_INSTRUCTIONS) ───────────────
 
@@ -137,50 +167,49 @@ class TestAnalystAskVoiceInvariants:
 class TestDigestWriterInvariants:
     """Invariants for the digest-writer (_build_writer_prompt) path.
 
-    A later phase will rewrite this voice; these assertions capture
-    today's reality so regressions are detectable.
-
-    NOTE: The digest writer prompt currently does NOT carry
-    DIRECTIONAL CONSISTENCY or TEMPORAL GROUNDING directives — those
-    blocks are absent from _DIGEST_WRITER_BASE and none of the persona
-    overlays inject them into the digest path.  These are documented gaps
-    that a later phase should address; do not silently assume they exist.
+    Phase 1A repointed the digest writer through the shared voice composer
+    (build_system_prompt(persona, DIGEST_ITEM)). The digest prompt now draws
+    the universal analytical rules from SHARED_WRITER_BASE, closing the gaps
+    where it previously lacked DIRECTIONAL CONSISTENCY and TEMPORAL GROUNDING.
     """
 
     @pytest.mark.parametrize("persona_id", ["scout", "analyst", "generic"])
     def test_contains_banned_word_degradation(self, persona_id: str) -> None:
-        """Digest writer prompt carries the banned-word 'degradation' (via persona overlay)."""
+        """Digest writer prompt carries the banned-word 'degradation' (universal base)."""
         prompt = _digest_prompt(persona_id)
         assert "degradation" in prompt, (
             f"digest({persona_id}): banned-word 'degradation' not found in composed digest prompt"
         )
 
     @pytest.mark.parametrize("persona_id", ["scout", "analyst", "generic"])
-    def test_directional_consistency_absent_today(self, persona_id: str) -> None:
-        """Digest writer prompt does NOT carry DIRECTIONAL CONSISTENCY today (gap to close later).
+    def test_directional_consistency_present(self, persona_id: str) -> None:
+        """Digest writer prompt now carries DIRECTIONAL CONSISTENCY (gap closed in Phase 1A).
 
-        NOTE: This assertion documents a current gap — the digest writer lacks
-        this invariant.  When a later phase adds it, this test should be
-        converted to assert presence, not absence.
+        The directive flows from the universal SHARED_WRITER_BASE that the
+        DIGEST_ITEM composition now includes.
         """
         prompt = _digest_prompt(persona_id)
-        # NOTE: gap — digest writer prompt missing DIRECTIONAL CONSISTENCY
-        assert "DIRECTIONAL CONSISTENCY" not in prompt, (
-            f"digest({persona_id}): DIRECTIONAL CONSISTENCY now present — "
-            "update this test to assert presence (gap closed)"
+        assert "DIRECTIONAL CONSISTENCY" in prompt, (
+            f"digest({persona_id}): DIRECTIONAL CONSISTENCY missing — "
+            "the universal base should now supply it"
         )
 
     @pytest.mark.parametrize("persona_id", ["scout", "analyst", "generic"])
-    def test_temporal_grounding_absent_today(self, persona_id: str) -> None:
-        """Digest writer prompt does NOT carry TEMPORAL GROUNDING today (gap to close later).
+    def test_temporal_grounding_present(self, persona_id: str) -> None:
+        """Digest writer prompt now carries TEMPORAL GROUNDING (gap closed in Phase 1A).
 
-        NOTE: This assertion documents a current gap — the digest writer lacks
-        this invariant.  When a later phase adds it, this test should be
-        converted to assert presence, not absence.
+        The directive flows from the universal SHARED_WRITER_BASE that the
+        DIGEST_ITEM composition now includes.
         """
         prompt = _digest_prompt(persona_id)
-        # NOTE: gap — digest writer prompt missing TEMPORAL GROUNDING
-        assert "TEMPORAL GROUNDING" not in prompt, (
-            f"digest({persona_id}): TEMPORAL GROUNDING now present — "
-            "update this test to assert presence (gap closed)"
+        assert "TEMPORAL GROUNDING" in prompt, (
+            f"digest({persona_id}): TEMPORAL GROUNDING missing — "
+            "the universal base should now supply it"
         )
+
+    @pytest.mark.parametrize("persona_id", ["scout", "analyst", "generic"])
+    def test_uses_cue_framing_not_synthesis(self, persona_id: str) -> None:
+        """Digest uses cue framing, NOT the five-specialist synthesis framing."""
+        prompt = _digest_prompt(persona_id)
+        assert "morning digest" in prompt
+        assert "five specialist analyses" not in prompt.lower()

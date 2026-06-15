@@ -169,10 +169,14 @@ def test_writer_settings_are_provider_aware():
 
 
 def test_writer_prompt_composes_persona_chain():
-    """Child personas include their parent overlay, and the precedence
-    rule appears after the voice section."""
+    """The digest prompt composes universal rules + cue framing + the persona
+    voice chain (parent overlay before own) + the digest contract structure."""
     from pitcher_narratives.digest import _build_writer_prompt
-    from pitcher_narratives.personas import PERSONAS
+    from pitcher_narratives.personas import (
+        DIGEST_ITEM,
+        PERSONAS,
+        SHARED_WRITER_BASE,
+    )
 
     analyst = PERSONAS["analyst"]
     prompt = _build_writer_prompt(analyst)
@@ -180,8 +184,16 @@ def test_writer_prompt_composes_persona_chain():
     assert scout_overlay_marker in prompt          # parent chain included
     assert analyst.overlay[:40] in prompt          # own overlay included
     assert prompt.index(scout_overlay_marker) < prompt.index(analyst.overlay[:40])
-    assert "PRECEDENCE:" in prompt
-    assert prompt.index("PRECEDENCE:") > prompt.index("VOICE:")
+    # Universal analytical rules lead the prompt; cue framing (not the
+    # five-specialist synthesis framing) supplies the input description.
+    assert prompt.startswith(SHARED_WRITER_BASE)
+    assert "morning digest" in prompt
+    assert "five specialist analyses" not in prompt.lower()
+    # The digest length/structure contract follows the voice chain.
+    assert DIGEST_ITEM.structure in prompt
+    assert prompt.index(analyst.overlay[:40]) < prompt.index(DIGEST_ITEM.structure)
+    # Precedence rule is gone — voice overlays no longer carry capsule structure.
+    assert "PRECEDENCE:" not in prompt
 
 
 # ── Full Board + assembly ───────────────────────────────────────────

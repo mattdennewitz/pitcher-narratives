@@ -18,7 +18,7 @@ from pydantic_ai import Agent
 from pitcher_narratives.config import PROVIDERS, TOKEN_BUDGET_LARGE, make_model_settings
 from pitcher_narratives.costs import UsageTracker
 from pitcher_narratives.curator import CurationPick, CurationSlate
-from pitcher_narratives.personas import PERSONAS, Persona
+from pitcher_narratives.personas import DIGEST_ITEM, Persona, build_system_prompt
 from pitcher_narratives.scout import ScoredAppearance
 
 __all__ = [
@@ -96,53 +96,15 @@ def build_story_cue(
 # ── Per-pick writers ────────────────────────────────────────────────
 
 
-_DIGEST_WRITER_BASE = """\
-You write one short item for a data-driven baseball morning digest.
-
-INPUT: a cue package for one pitcher's recent appearance — fired
-scouting signals, the editor's framing (category, angle, conviction),
-and season context.
-
-CONTRACT:
-- Lead with the editor's angle. It is the story; do not bury it.
-- Ground every claim in the cue's numbers. Do not invent statistics.
-- Scale your tone to the stated conviction: a 'low' conviction story
-  is framed as something to monitor, not a breakout.
-- Close with one sentence on what to watch in the next outing.
-- 150-250 words. No headline; prose only — the document supplies
-  headings.
-"""
-
-
-_PRECEDENCE_RULE = """\
-PRECEDENCE: The CONTRACT above governs length and document structure.
-Where the VOICE overlay specifies different lengths, headings, tables,
-or section requirements, ignore those — keep only its tone and
-vocabulary guidance."""
-
-
 def _build_writer_prompt(persona: Persona) -> str:
     """Compose the digest writer system prompt for the given persona.
 
-    Walks the persona's parent chain (parent-first) via the PERSONAS registry
-    and appends each overlay as a VOICE section. The digest CONTRACT governs
-    length and structure; a PRECEDENCE rule at the end of the prompt prevents
-    capsule-specific directives in the overlays from overriding it.
+    Delegates to the shared voice composer with the DIGEST_ITEM contract:
+    universal analytical rules + cue input framing + the persona voice chain +
+    the digest length/structure contract. The persona overlays carry voice
+    only, so no precedence rule is needed to suppress capsule structure.
     """
-    # Collect overlays parent-first, then own overlay.
-    overlays: list[str] = []
-    if persona.parent is not None:
-        overlays.append(PERSONAS[persona.parent].overlay)
-    overlays.append(persona.overlay)
-
-    voice_block = "\n\n".join(overlays)
-    return (
-        _DIGEST_WRITER_BASE
-        + "\nVOICE:\n"
-        + voice_block
-        + "\n\n"
-        + _PRECEDENCE_RULE
-    )
+    return build_system_prompt(persona, DIGEST_ITEM)
 
 
 def _make_writer_agent(provider: str, persona: Persona) -> Agent[None, str]:
