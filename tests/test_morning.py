@@ -3,7 +3,6 @@
 import json
 from datetime import date
 
-import polars as pl
 from pydantic_ai.models.test import TestModel
 
 from pitcher_narratives import morning
@@ -19,21 +18,51 @@ def _app(pid: int, role: str) -> ScoredAppearance:
     )
 
 
+def _make_minimal_context():
+    """Build a minimal PitcherContext suitable for morning-run unit tests."""
+    from pitcher_narratives.context import PitcherContext
+    from pitcher_narratives.engine import (
+        FirstPitchWeaponry,
+        HardHitRate,
+        PlatoonMix,
+        ReleasePointMetrics,
+        TemporalContext,
+        WorkloadContext,
+    )
+
+    return PitcherContext(
+        pitcher_name="Pitcher", pitcher_id=0, throws="R", role="SP",
+        fastball=None, velocity_arc=None, arsenal=[],
+        platoon_mix=PlatoonMix(splits=[], cold_start=True),
+        first_pitch=FirstPitchWeaponry(
+            entries=[], total_first_pitches_season=0,
+            total_first_pitches_window=0, cold_start=True,
+        ),
+        execution=[], intermediates=[], attributions=[],
+        hard_hit_rate=HardHitRate(
+            hard_hit_pct=0, season_hard_hit_pct=0, delta="Steady",
+            n_batted_balls=0, n_hard_hit=0, small_sample=True, cold_start=True,
+        ),
+        release_point=ReleasePointMetrics(pitch_types=[], cold_start=True),
+        workload=WorkloadContext(appearances=[], max_consecutive_days=0, workload_concern=False),
+        temporal=TemporalContext(
+            analysis_date=date(2026, 6, 10), current_season=2026,
+            current_season_appearances=10, current_season_ip="20.0",
+            current_season_first_date="2026-03-28",
+            prior_season=2025, prior_season_appearances=0, prior_season_ip="0.0",
+            prior_year_relevance="LOW", prior_year_relevance_reason="No data",
+        ),
+        tto=None, cross_season_summary=None, arsenal_trend=None,
+    )
+
+
 def _patch_data(monkeypatch):
     """Stub all data-loading seams in morning.py."""
     monkeypatch.setattr(
         morning, "scout_appearances",
         lambda **kw: [_app(1, "SP"), _app(2, "RP")],
     )
-    season = pl.DataFrame({
-        "pitcher": [1, 2], "season": [2026, 2026], "n_pitches": [900, 400],
-        "P+": [104.0, 99.0], "S+": [112.0, 105.0], "L+": [96.0, 101.0],
-    })
-    types = pl.DataFrame({
-        "pitcher": [1], "season": [2026], "pitch_type": ["FF"],
-        "n_pitches": [500], "S+": [115.0], "L+": [98.0], "usage_pct": [55.6],
-    })
-    monkeypatch.setattr(morning, "_load_baselines", lambda: (season, types, {}))
+    monkeypatch.setattr(morning, "_load_pitcher_context", lambda pid: _make_minimal_context())
 
 
 def _selector_model():
@@ -156,15 +185,7 @@ def test_full_board_lists_beyond_candidate_cap(tmp_path, monkeypatch):
         for pid in range(2, 5)
     ]
     monkeypatch.setattr(morning, "scout_appearances", lambda **kw: apps)
-    season = pl.DataFrame({
-        "pitcher": [1], "season": [2026], "n_pitches": [900],
-        "P+": [104.0], "S+": [112.0], "L+": [96.0],
-    })
-    types = pl.DataFrame({
-        "pitcher": [1], "season": [2026], "pitch_type": ["FF"],
-        "n_pitches": [500], "S+": [115.0], "L+": [98.0], "usage_pct": [55.6],
-    })
-    monkeypatch.setattr(morning, "_load_baselines", lambda: (season, types, {}))
+    monkeypatch.setattr(morning, "_load_pitcher_context", lambda pid: _make_minimal_context())
     selector = TestModel(custom_output_args={
         "picks": [
             {
@@ -201,15 +222,7 @@ def test_run_morning_duplicate_pitcher_keeps_highest_scored(tmp_path, monkeypatc
         morning, "scout_appearances",
         lambda **kw: [high, low, _app(2, "RP")],
     )
-    season = pl.DataFrame({
-        "pitcher": [1, 2], "season": [2026, 2026], "n_pitches": [900, 400],
-        "P+": [104.0, 99.0], "S+": [112.0, 105.0], "L+": [96.0, 101.0],
-    })
-    types = pl.DataFrame({
-        "pitcher": [1], "season": [2026], "pitch_type": ["FF"],
-        "n_pitches": [500], "S+": [115.0], "L+": [98.0], "usage_pct": [55.6],
-    })
-    monkeypatch.setattr(morning, "_load_baselines", lambda: (season, types, {}))
+    monkeypatch.setattr(morning, "_load_pitcher_context", lambda pid: _make_minimal_context())
     run_dir = morning.run_morning(
         window_days=2, top_n=25, min_pitches=20,
         provider="gemini", persona_id="scout", out_root=tmp_path,

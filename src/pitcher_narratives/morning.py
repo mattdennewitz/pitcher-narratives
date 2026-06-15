@@ -16,25 +16,19 @@ import time
 from collections import Counter
 from pathlib import Path
 
-import polars as pl
-
+from pitcher_narratives.context import PitcherContext, assemble_pitcher_context
 from pitcher_narratives.costs import UsageTracker
 from pitcher_narratives.curator import build_selector_briefing, select_slate_async
-from pitcher_narratives.data import (
-    compute_pitch_type_baseline,
-    compute_season_baseline,
-    load_full_agg,
-)
+from pitcher_narratives.data import load_pitcher_data
 from pitcher_narratives.digest import (
     assemble_digest,
-    build_story_cue,
+    build_story_cue_from_context,
     is_fallback_summary,
     write_pick_summaries,
 )
 from pitcher_narratives.personas import PERSONAS
 from pitcher_narratives.scout import (
     ScoredAppearance,
-    compute_velo_baselines,
     scout_appearances,
     top_per_role,
 )
@@ -44,26 +38,10 @@ __all__ = ["run_morning"]
 log = logging.getLogger("pitcher_narratives.morning")
 
 
-def _load_baselines() -> tuple[pl.DataFrame, pl.DataFrame, dict[int, float]]:
-    """Season + pitch-type baselines and per-pitcher season fastball velo."""
-    season_df = load_full_agg("pitcher").filter(pl.col("level") == "MLB")
-    type_df = load_full_agg("pitcher_type").filter(pl.col("level") == "MLB")
-    season_baseline = compute_season_baseline(season_df)
-    type_baseline = compute_pitch_type_baseline(type_df)
-
-    velo = compute_velo_baselines()
-    season_velo: dict[int, float] = {}
-    if not velo.is_empty():
-        per_pitcher = (
-            velo.sort("game_date")
-            .group_by("pitcher", maintain_order=True)
-            .agg(pl.col("season_velo").last())
-        )
-        season_velo = {
-            row["pitcher"]: row["season_velo"]
-            for row in per_pitcher.iter_rows(named=True)
-        }
-    return season_baseline, type_baseline, season_velo
+def _load_pitcher_context(pitcher_id: int) -> PitcherContext:
+    """Load per-pitcher data and assemble a PitcherContext for cue generation."""
+    data = load_pitcher_data(pitcher_id)
+    return assemble_pitcher_context(data)
 
 
 def run_morning(
@@ -112,13 +90,10 @@ def run_morning(
         by_cat = Counter(p.category for p in picks)
         log.info("Slate: %d picks across categories %s.", len(picks), dict(by_cat))
 
-        season_baseline, type_baseline, season_velo = _load_baselines()
         cues = {
-            p.pitcher_id: build_story_cue(
+            p.pitcher_id: build_story_cue_from_context(
                 appearances[p.pitcher_id], p,
-                season_baseline=season_baseline,
-                type_baseline=type_baseline,
-                season_velo=season_velo.get(p.pitcher_id),
+                _load_pitcher_context(p.pitcher_id),
             )
             for p in picks
         }

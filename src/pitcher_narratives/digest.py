@@ -16,6 +16,7 @@ import polars as pl
 from pydantic_ai import Agent
 
 from pitcher_narratives.config import PROVIDERS, TOKEN_BUDGET_LARGE, make_model_settings
+from pitcher_narratives.context import PitcherContext
 from pitcher_narratives.costs import UsageTracker
 from pitcher_narratives.curator import CurationPick, CurationSlate
 from pitcher_narratives.personas import DIGEST_ITEM, Persona, build_system_prompt
@@ -25,6 +26,7 @@ __all__ = [
     "FALLBACK_MARKER",
     "assemble_digest",
     "build_story_cue",
+    "build_story_cue_from_context",
     "is_fallback_summary",
     "render_full_board",
     "write_pick_summaries",
@@ -90,6 +92,57 @@ def build_story_cue(
                     f"- {trow['pitch_type']}: {trow['usage_pct']:.1f}% usage, "
                     f"S+ {trow['S+']:.0f}, L+ {trow['L+']:.0f}"
                 )
+    return "\n".join(lines)
+
+
+def build_story_cue_from_context(
+    app: ScoredAppearance,
+    pick: CurationPick,
+    ctx: PitcherContext,
+) -> str:
+    """Render the writer's briefing for one pick from a PitcherContext.
+
+    Projects the engine-computed facts (fastball, arsenal, workload) into the
+    same top-level sections as build_story_cue — preserving downstream writer
+    compatibility — but reads from PitcherContext instead of raw DataFrames.
+    """
+    lines = [
+        f"PITCHER: {app.pitcher_name} ({app.throws}HP, {app.role})",
+        f"APPEARANCE: {app.game_date}, {app.n_pitches} pitches",
+        "",
+        "FIRED SIGNALS (from deterministic scouting):",
+    ]
+    for s in app.signals:
+        lines.append(f"- [{s.name}, w={s.weight:.1f}] {s.detail}")
+    lines += [
+        "",
+        "EDITORIAL FRAMING (from the selector):",
+        f"- Category: {pick.category}",
+        f"- Angle: {pick.angle}",
+        f"- Conviction: {pick.conviction} — {pick.conviction_reason}",
+        "",
+        "SEASON CONTEXT:",
+    ]
+
+    if ctx.arsenal:
+        total_pitches = sum(pt.n_pitches_season for pt in ctx.arsenal)
+        weighted_p = sum(pt.season_p_plus * pt.n_pitches_season for pt in ctx.arsenal) / total_pitches
+        weighted_s = sum(pt.season_s_plus * pt.n_pitches_season for pt in ctx.arsenal) / total_pitches
+        weighted_l = sum(pt.season_l_plus * pt.n_pitches_season for pt in ctx.arsenal) / total_pitches
+        lines.append(
+            f"- Season ({total_pitches} pitches): "
+            f"P+ {weighted_p:.0f}, S+ {weighted_s:.0f}, L+ {weighted_l:.0f}"
+        )
+        if ctx.fastball is not None:
+            lines.append(f"- Season avg fastball velocity: {ctx.fastball.season_velo:.1f} mph")
+        for pt in ctx.arsenal:
+            lines.append(
+                f"- {pt.pitch_type}: {pt.season_usage_pct:.1f}% usage, "
+                f"S+ {pt.season_s_plus:.0f}, L+ {pt.season_l_plus:.0f}"
+            )
+    else:
+        lines.append("- no season baseline available")
+
     return "\n".join(lines)
 
 
