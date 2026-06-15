@@ -131,7 +131,10 @@ def main() -> None:
 
         slate = select_slate(results, provider=args.provider)
         names = {r.pitcher_id: r.pitcher_name for r in results}
-        order = ["clean_breakout", "lab_project", "identity_crisis", "red_flag"]
+        order = [
+            "clean_breakout", "command_breakout", "lab_project",
+            "identity_crisis", "velo_drop", "red_flag",
+        ]
         by_cat: dict[str, list] = {c: [] for c in order}
         for p in slate.picks:
             by_cat[p.category].append(p)

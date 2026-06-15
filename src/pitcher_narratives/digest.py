@@ -230,16 +230,23 @@ async def write_pick_summaries(
 
 _CATEGORY_BADGES = {
     "clean_breakout": "CLEAN BREAKOUT",
+    "command_breakout": "COMMAND BREAKOUT",
     "lab_project": "LAB PROJECT",
     "identity_crisis": "IDENTITY CRISIS",
+    "velo_drop": "VELO DROP",
     "red_flag": "RED FLAG",
 }
 
-_CATEGORY_ORDER = ["clean_breakout", "lab_project", "identity_crisis", "red_flag"]
+_CATEGORY_ORDER = [
+    "clean_breakout", "command_breakout", "lab_project",
+    "identity_crisis", "velo_drop", "red_flag",
+]
 _CATEGORY_SECTION_TITLES = {
     "clean_breakout": "Clean Breakouts",
+    "command_breakout": "Command Breakouts",
     "lab_project": "Lab Projects",
     "identity_crisis": "Identity Crises",
+    "velo_drop": "Velocity Drops",
     "red_flag": "Red Flags",
 }
 _CONVICTION_RANK = {"high": 0, "medium": 1, "low": 2}

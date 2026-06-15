@@ -268,3 +268,30 @@ def test_digest_orders_within_category_by_conviction_then_score():
         board=list(appearances.values()), game_date=date(2026, 6, 13), cost_block="cost",
     )
     assert out.index("### P3") < out.index("### P2") < out.index("### P1")
+
+
+def test_digest_renders_new_category_sections_in_order():
+    """command_breakout and velo_drop render as sections, in hierarchy order."""
+    slate = CurationSlate(picks=[
+        _pick2(1, "command_breakout"),
+        _pick2(2, "velo_drop"),
+        _pick2(3, "red_flag"),
+    ])
+    appearances = {
+        1: _appearance(1, 9.0), 2: _appearance(2, 7.0), 3: _appearance(3, 8.0),
+    }
+    summaries = {1: "s1", 2: "s2", 3: "s3"}
+    out = assemble_digest(
+        slate=slate, summaries=summaries, appearances=appearances,
+        board=list(appearances.values()), game_date=date(2026, 6, 13), cost_block="cost",
+    )
+    assert "## Command Breakouts" in out
+    assert "## Velocity Drops" in out
+    # hierarchy order: command_breakout before velo_drop before red_flag
+    assert (
+        out.index("## Command Breakouts")
+        < out.index("## Velocity Drops")
+        < out.index("## Red Flags")
+    )
+    assert "[COMMAND BREAKOUT]" in out
+    assert "[VELO DROP]" in out
