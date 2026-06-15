@@ -5,10 +5,10 @@ assertions that prove the consolidated fact engine produces identical
 outputs to the original per-path scout functions.  Planned assertions
 include:
 
-- Velocity-delta parity: scout._check_velocity_drop vs engine function
-- Pitching+-delta parity: scout._check_pp_decline vs engine function
-- Usage-shift parity: scout._check_usage_shift vs engine function
-- S+/L+ divergence parity: scout._check_stuff_location_divergence vs engine function
+- Velocity-delta parity: scout._check_velo_delta vs engine function
+- Pitching+-delta parity: scout._check_pplus_swing vs engine function
+- Usage-shift parity: scout._check_usage_shifts vs engine function
+- S+/L+ divergence parity: scout._check_splus_lplus_divergence vs engine function
 
 These will be populated once the new engine functions are written in a
 later phase.  The placeholder test below keeps this file collected and

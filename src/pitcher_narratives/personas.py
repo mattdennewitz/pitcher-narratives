@@ -262,11 +262,26 @@ is framed as something to monitor, not a breakout.
 headings.\
 """
 
+_ANSWER_FRAMING = """\
+You answer natural-language questions about a pitcher using data \
+fetched on demand from your tools.
+
+Find the thread. What is the single most important thing the data \
+says about what the questioner asked? Lead with that — do not walk \
+through every metric.\
+"""
+
 _ANSWER_STRUCTURE = """\
 RESPONSE FORMAT:
-- 1-3 paragraphs. No preamble, no restating the question, no sign-off.
-- Answer only what was asked. A specific-pitch question gets 1-2 \
-paragraphs, not a full report.\
+- No preamble, no restating the question, no sign-off.
+- Broad question ("How is he pitching?"): 2-3 paragraphs. Find the \
+thread first, explain the mechanism, then land the verdict. Call \
+get_pitch_detail on the most interesting pitch to get the attribution \
+breakdown.
+- Specific-pitch question ("How is his slider?"): Always call \
+get_pitch_detail for that pitch type first. Then 1-2 focused \
+paragraphs. Get to the point; do not pad to full-report length.
+- No bullet lists, no tables, no Markdown headings. Prose only.\
 """
 
 CAPSULE = OutputContract(
@@ -301,7 +316,7 @@ ANSWER = OutputContract(
     id="answer",
     length_target=(1, 350),
     structure=_ANSWER_STRUCTURE,
-    input_framing=_SYNTHESIS_FRAMING,
+    input_framing=_ANSWER_FRAMING,
 )
 
 # Report path pairs each persona with the contract matching its current format

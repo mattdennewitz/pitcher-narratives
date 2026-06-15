@@ -19,6 +19,7 @@ import sys
 from dotenv import load_dotenv
 
 from pitcher_narratives.config import API_KEYS, setup_logging
+from pitcher_narratives.personas import ANSWER, PERSONAS, build_system_prompt, get_persona
 
 __all__ = ["main", "parse_args"]
 
@@ -59,6 +60,12 @@ def parse_args() -> argparse.Namespace:
         choices=["minimal", "low", "medium", "high", "xhigh"],
         default="medium",
         help="Thinking/reasoning effort level (default: medium)",
+    )
+    parser.add_argument(
+        "--persona",
+        choices=list(PERSONAS.keys()),
+        default="scout",
+        help="Writer voice persona (default: scout)",
     )
     return parser.parse_args()
 
@@ -140,13 +147,17 @@ def main() -> None:
     from pathlib import Path
 
     from pitcher_narratives.analyst import (
-        ANALYST_INSTRUCTIONS,
+        ANALYST_MECHANICS,
         ask_question_streaming,
     )
 
+    persona = get_persona(args.persona)
+    composed_prompt = build_system_prompt(persona, ANSWER) + "\n\n" + ANALYST_MECHANICS
+
     data_sections = [
         f"{'═' * 72}\nANALYST AGENT\n{'═' * 72}\n",
-        f"## System Prompt\n\n{ANALYST_INSTRUCTIONS}\n",
+        f"## Persona\n\n{persona.display_name} ({persona.id})\n",
+        f"## System Prompt\n\n{composed_prompt}\n",
         f"## User Question\n\n{args.question}\n",
         "## Tool: get_pitcher_summary\n\n[Returns full pitcher context with league baselines]\n",
         "## Tool: get_pitch_detail\n\n[Returns per-pitch detail on demand]\n",
@@ -173,6 +184,7 @@ def main() -> None:
             pitcher_data,
             provider=args.provider,
             thinking=args.thinking,
+            persona=persona,
             _model_override=model_override,
         )
     except AgentRunError as e:

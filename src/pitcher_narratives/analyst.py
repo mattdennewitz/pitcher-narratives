@@ -4,6 +4,11 @@ Provides a tool-calling pydantic-ai agent that answers questions about
 pitchers grounded exclusively in the existing data pipeline. Two tools
 (get_pitcher_summary, get_pitch_detail) give the agent access to
 PitcherContext data via RunContext[QADeps] dependency injection.
+
+Voice and format are composed via build_system_prompt(persona, ANSWER).
+ANALYST_MECHANICS carries domain-specific non-voice concerns: the model
+reasoning chain, sign conventions, tool-grounding rules, and out-of-scope
+handling.
 """
 
 from __future__ import annotations
@@ -20,10 +25,17 @@ from pitcher_narratives.config import PROVIDERS, TOKEN_BUDGET_LARGE, make_model_
 from pitcher_narratives.context import PitcherContext
 from pitcher_narratives.data import PitcherData
 from pitcher_narratives.engine import compute_league_baselines
+from pitcher_narratives.personas import (
+    ANSWER,
+    DEFAULT_PERSONA,
+    Persona,
+    build_system_prompt,
+)
 
 __all__ = [
-    "ANALYST_INSTRUCTIONS",
-    "PITCH_TYPE_MAP", "QADeps",
+    "ANALYST_MECHANICS",
+    "PITCH_TYPE_MAP",
+    "QADeps",
     "ask_question_streaming",
 ]
 
@@ -96,30 +108,7 @@ class QADeps:
 # AGENT INSTRUCTIONS
 # ═══════════════════════════════════════════════════════════════════════
 
-ANALYST_INSTRUCTIONS = """\
-You are a sabermetric scout answering questions about a specific pitcher. \
-You write the way an analyst talks to another analyst -- plain, specific, \
-conversational. Not the way a research paper reads.
-
-FIND THE THREAD:
-Before you write anything, decide what the story is. Maybe the pitch \
-generates whiffs but gives up damage when hitters connect. Maybe the \
-stuff is average but command turns it into something dangerous. Maybe \
-the location is actively hurting a pitch that has raw potential. Lead \
-with that thread -- do not walk through every metric. Pick the 2-3 \
-numbers that tell the story; everything else stays in the data.
-
-TEMPORAL GROUNDING:
-The scouting context includes a "Temporal Context" section with a \
-prior-year workload relevance level (HIGH, MODERATE, or LOW). This \
-tells you how much weight to give last season's workload when answering \
-questions. When it says LOW, do not build workload narratives from \
-prior-season data. When it says HIGH, prior-year workload is plausible \
-residual context but two seasons are NOT a continuous timeline -- an \
-offseason separates them. A pitcher with a handful of early-season \
-appearances is not fatigued from this season's workload. Scale your \
-seasonal narrative to the actual sample size.
-
+ANALYST_MECHANICS = """\
 HOW THE MODEL THINKS (your reasoning chain):
 The Pitching+ model grades pitches by predicting 13 outcome probabilities \
 from the pitch's physical characteristics, then pricing each outcome in \
@@ -153,8 +142,8 @@ neither swing nor get called strikes. That is the physical explanation \
 for why the model's P-variant prediction diverges from the S-variant.
 
 4. Read the component attribution to see where runs come from. Each \
-pitch's xRV100 breaks into 13 outcome contributions. Find the dominant \
-2-3 drivers, but connect them back to the pitch: called balls dominate \
+pitch's xRV100 breaks into 13 outcome contributions. Find the 2-3 \
+largest drivers, but connect them back to the pitch: called balls dominate \
 because of poor location, whiffs dominate because of sharp movement, \
 home runs bleed through because of hittable velocity in the zone.
 
@@ -168,28 +157,6 @@ event. P > S means location increases the rate.
 - Run value (xRV100): more negative = better for pitcher. P < S means \
 location is helping.
 - Attribution: negative = pitcher benefits. Positive = costs runs.
-
-VOICE:
-- Start immediately with the pitcher's stuff. Your first sentence \
-should be about what is happening, not about "looking at the data."
-- Diagnose, do not just describe. Connect the outcome to the physical \
-input. Link the "what" to the "why."
-- Vary sentence length. Let a short sentence land a point. Then explain \
-in a longer one when the idea needs room.
-- Use conversational scouting language: stuff, feel, finding a groove, \
-keeping them off balance, getting tagged, working the edges.
-- No clichés ("electric stuff," "pitches to contact," "bulldog mentality").
-- No formulaic transitions ("Meanwhile," "However," "The stark gap \
-between"). Just start the next thought.
-- Never say "the data shows," "looking at the numbers," or "when we \
-examine." Just say what is happening and why.
-- Never use: "degradation," "binary," "physical characteristics," \
-"extreme variance," "profiles as," "metrics are grim," "dominant," \
-"massive spike."
-- No bullet lists or tables. Write prose. Cite numbers naturally \
-inside sentences.
-- Use execution metrics (CSW%, Zone%, Chase%) as supporting color, not \
-the headline.
 
 DATA GROUNDING RULES (absolute):
 1. Answer ONLY from the data returned by your tools. NEVER cite statistics \
@@ -205,28 +172,15 @@ what you CAN answer.
 with standard deviations. If a metric is within ±1.5 stddev of the \
 league average for that pitch type, it is NORMAL — do not characterize \
 it as unusually high or low. Only flag metrics that are genuine outliers.
-5. DIRECTIONAL CONSISTENCY: S+ below 100 → pitch grades below average, \
-xRV100_S should be positive (costly). S+ above 100 → above average, \
-xRV100_S should be negative (saves runs). If these don't align, note \
-the discrepancy rather than forcing a narrative.
-6. If xWhiff_S ≥ 25%, that is a meaningful whiff rate. Reconcile this \
+5. If xWhiff_S ≥ 25%, that is a meaningful whiff rate. Reconcile this \
 strength before labeling any pitch as detrimental or poor.
-
-RESPONSE FORMAT:
-- For broad questions ("How is he pitching?"): 2-3 paragraphs. Find the \
-thread, diagnose the mechanism, land the verdict. Call get_pitch_detail \
-on the most interesting pitch to get the attribution breakdown.
-- For specific pitch questions ("How's his slider?"): 1-2 focused \
-paragraphs. Always call get_pitch_detail for that pitch type first.
-- Lead with what happened -- the concrete change or signal -- not with \
-a theory about why.
 
 OUT OF SCOPE (decline gracefully):
 - Predictions or projections
 - Fantasy baseball advice
 - Historical season-over-season comparisons
 - Cross-pitcher comparisons or leaderboard rankings
-- Game-by-game play-by-play analysis
+- Game-by-game play-by-play analysis\
 """
 
 
@@ -426,18 +380,20 @@ def _ps_line_rv(label: str, p: float | None, s: float | None) -> str:
 # AGENT FACTORY
 # ═══════════════════════════════════════════════════════════════════════
 
-_qa_agent_cache: dict[tuple[str, ThinkingEffort], Agent[QADeps, str]] = {}
+_qa_agent_cache: dict[tuple[str, str, ThinkingEffort], Agent[QADeps, str]] = {}
 
 
 def _make_qa_agent(
     provider: str = "gemini",
     thinking: ThinkingEffort = "high",
+    persona: Persona | None = None,
 ) -> Agent[QADeps, str]:
-    """Create (or return cached) QA agent for the given provider and thinking level.
+    """Create (or return cached) QA agent for the given provider, thinking, and persona.
 
     Args:
         provider: LLM provider key ('gemini' or 'claude').
         thinking: Thinking effort level.
+        persona: Writer voice persona. Defaults to DEFAULT_PERSONA.
 
     Returns:
         Configured Agent with get_pitcher_summary and get_pitch_detail tools.
@@ -445,7 +401,8 @@ def _make_qa_agent(
     Raises:
         ValueError: If provider is not in PROVIDERS.
     """
-    key = (provider, thinking)
+    resolved = persona or DEFAULT_PERSONA
+    key = (provider, resolved.id, thinking)
     if key in _qa_agent_cache:
         return _qa_agent_cache[key]
 
@@ -454,12 +411,13 @@ def _make_qa_agent(
 
     model = PROVIDERS[provider]
     settings = make_model_settings(provider, thinking, 0.3, max_tokens=TOKEN_BUDGET_LARGE)
+    instructions = build_system_prompt(resolved, ANSWER) + "\n\n" + ANALYST_MECHANICS
 
     agent: Agent[QADeps, str] = Agent(
         model,
         deps_type=QADeps,
         output_type=str,
-        instructions=ANALYST_INSTRUCTIONS,
+        instructions=instructions,
         model_settings=settings,
         tools=[get_pitcher_summary, get_pitch_detail],
         toolsets=[skill_toolset()],
@@ -481,6 +439,7 @@ def ask_question_streaming(
     *,
     provider: str = "gemini",
     thinking: ThinkingEffort = "high",
+    persona: Persona | None = None,
     _model_override: Any = None,
 ) -> str:
     """Ask a natural-language question about a pitcher with streaming output.
@@ -491,12 +450,13 @@ def ask_question_streaming(
         data: Loaded PitcherData for the pitcher.
         provider: LLM provider key ('gemini' or 'claude').
         thinking: Thinking effort level.
+        persona: Writer voice persona. Defaults to DEFAULT_PERSONA.
         _model_override: Optional model override for testing (e.g., TestModel).
 
     Returns:
         The agent's complete response as a string.
     """
-    agent = _make_qa_agent(provider, thinking)
+    agent = _make_qa_agent(provider, thinking, persona)
     deps = QADeps(context=context, data=data)
 
     kwargs: dict[str, Any] = {"user_prompt": question, "deps": deps}
