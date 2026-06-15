@@ -39,7 +39,8 @@ class CurationPick(BaseModel):
 
     pitcher_id: int
     category: Literal[
-        "clean_breakout", "lab_project", "identity_crisis", "red_flag"
+        "clean_breakout", "command_breakout", "lab_project",
+        "identity_crisis", "velo_drop", "red_flag",
     ]
     angle: str = Field(min_length=1)
     conviction: Literal["low", "medium", "high"]
@@ -72,21 +73,30 @@ _SELECTOR_PROMPT = """\
 You are the editor of a data-driven baseball morning report. From the
 scored candidate appearances below, select the most compelling stories,
 focusing on process over results. Assign each pick exactly one category
-and select up to 5 picks PER CATEGORY across the four categories below.
+and select up to 5 picks PER CATEGORY across the six categories below.
 
 Use this hierarchy of signal when choosing:
 
 1. clean_breakout: A significant velocity gain (1.5+ mph) coupled with
 a jump in overall stuff (P+ or S+). A physical change backed by data.
 
-2. lab_project: Top-tier raw stuff (S+ 130+) with poor command
+2. command_breakout: A jump in command — a pitch's Location+ surged
+versus its season norm and now locates well. The inverse of a lab
+project: the feel has arrived, even if the stuff was already there.
+
+3. lab_project: Top-tier raw stuff (S+ 130+) with poor command
 (L+ < 80). High-upside development stories — the pitch has the shape,
 the feel hasn't arrived.
 
-3. identity_crisis: A radically altered pitch mix — shelving a primary,
+4. identity_crisis: A radically altered pitch mix — shelving a primary,
 doubling a secondary, or introducing something new. Plan or problem?
 
-4. red_flag: Statistical anomalies that look like gains but might be
+5. velo_drop: A fastball velocity loss (1.5+ mph) where the stuff
+eroded with it (P+ or S+ down) — a durability concern, distinct from a
+tracking artifact. If the velo dipped but the stuff held, it is NOT a
+velo_drop.
+
+6. red_flag: Statistical anomalies that look like gains but might be
 tracking errors. A single-game velocity spike of 3+ mph, or a P+ jump
 the underlying stuff metrics don't support. Flag honestly.
 

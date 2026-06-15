@@ -118,3 +118,18 @@ def test_select_slate_rejects_duplicate_picks():
     model = TestModel(custom_output_args={"picks": [_pick(1), _pick(1)]})
     with pytest.raises(UnexpectedModelBehavior):
         select_slate(candidates, provider="gemini", _model_override=model)
+
+
+def test_slate_accepts_command_breakout_and_velo_drop():
+    """The two new categories validate as picks."""
+    slate = CurationSlate(picks=[
+        CurationPick(**_pick_cat(1, "command_breakout")),
+        CurationPick(**_pick_cat(2, "velo_drop")),
+    ])
+    assert {p.category for p in slate.picks} == {"command_breakout", "velo_drop"}
+
+
+def test_pick_rejects_unknown_category():
+    """A category outside the six-item enum is rejected."""
+    with pytest.raises(ValidationError):
+        CurationPick(**_pick_cat(1, "not_a_category"))
