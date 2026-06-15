@@ -148,7 +148,7 @@ class TestRenderLeagueBaselines:
 
 
 class TestSummaryBulletParsing:
-    """Test the bullet parsing logic used in _run_pipeline and ask_question_pipeline."""
+    """Test the bullet parsing logic used in _run_pipeline."""
 
     def _parse(self, raw: str) -> list[str]:
         return [
