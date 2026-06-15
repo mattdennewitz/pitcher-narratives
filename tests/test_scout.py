@@ -98,8 +98,8 @@ def test_development_opportunity_ignores_tiny_samples():
     assert "SL" in fired
 
 
-def test_command_surge_fires_on_location_jump():
-    """A pitch whose L+ surged vs season and now locates well fires command_surge."""
+def test_command_surge_fires_when_poor_command_locates_well():
+    """A pitch that was a command liability (low season L+) now locating well fires."""
     import polars as pl
 
     from pitcher_narratives.scout import _check_command_surge
@@ -113,14 +113,14 @@ def test_command_surge_fires_on_location_jump():
     baseline = pl.DataFrame({
         "pitch_type": ["SL"],
         "S+": [104.0],
-        "L+": [98.0],           # +20 vs season, >= 15 delta
+        "L+": [82.0],           # season command was poor (< 90)
     })
     fired = {s.detail.split(":")[0] for s in _check_command_surge(game_types, baseline)}
     assert "SL" in fired
 
 
-def test_command_surge_ignores_small_jump():
-    """An L+ gain below the surge delta does not fire."""
+def test_command_surge_ignores_already_good_command():
+    """A good outing on a pitch that already commanded well is not a breakout."""
     import polars as pl
 
     from pitcher_narratives.scout import _check_command_surge
@@ -129,18 +129,18 @@ def test_command_surge_ignores_small_jump():
         "pitch_type": ["SL"],
         "n_pitches": [12],
         "S+": [105.0],
-        "L+": [112.0],          # above floor, but only +5 vs season
+        "L+": [118.0],          # game L+ clears the floor
     })
     baseline = pl.DataFrame({
         "pitch_type": ["SL"],
         "S+": [104.0],
-        "L+": [107.0],
+        "L+": [96.0],           # season L+ >= 90 — no prior command deficit
     })
     assert _check_command_surge(game_types, baseline) == []
 
 
 def test_command_surge_ignores_sub_floor_command():
-    """A big L+ jump that still lands below the 'good command' floor does not fire."""
+    """Improvement off a poor baseline that still lands below the good-command floor."""
     import polars as pl
 
     from pitcher_narratives.scout import _check_command_surge
@@ -149,12 +149,12 @@ def test_command_surge_ignores_sub_floor_command():
         "pitch_type": ["SL"],
         "n_pitches": [12],
         "S+": [105.0],
-        "L+": [100.0],          # +20 vs season but below the 110 floor
+        "L+": [104.0],          # better than season, but below the 110 floor
     })
     baseline = pl.DataFrame({
         "pitch_type": ["SL"],
         "S+": [104.0],
-        "L+": [80.0],
+        "L+": [82.0],           # season command was poor
     })
     assert _check_command_surge(game_types, baseline) == []
 
@@ -174,7 +174,7 @@ def test_command_surge_ignores_tiny_samples():
     baseline = pl.DataFrame({
         "pitch_type": ["SI", "SL"],
         "S+": [104.0, 104.0],
-        "L+": [98.0, 98.0],
+        "L+": [82.0, 82.0],     # both were poor; only the well-sampled SL fires
     })
     fired = {s.detail.split(":")[0] for s in _check_command_surge(game_types, baseline)}
     assert "SI" not in fired

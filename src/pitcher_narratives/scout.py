@@ -61,8 +61,8 @@ _DROPPED_PITCH_SEASON_MIN = 10.0  # season usage % above which = established
 _PPLUS_GOOD = 105  # P+ above which walk contradiction fires
 _DEV_SPLUS_MIN = 110  # high stuff threshold
 _DEV_LPLUS_MAX = 80  # low command threshold
-_COMMAND_SURGE_DELTA = 15  # L+ points gained vs season for a command surge
-_COMMAND_GOOD_LPLUS = 110  # game L+ floor — command is now a genuine strength
+_COMMAND_POOR_LPLUS = 90  # season L+ below which the pitch was a command liability
+_COMMAND_GOOD_LPLUS = 110  # game L+ at/above which command is now a genuine strength
 _CONSECUTIVE_DAYS_FLAG = 3
 
 
@@ -566,10 +566,12 @@ def _check_command_surge(
     game_types: pl.DataFrame,
     pitcher_type_bl: pl.DataFrame,
 ) -> list[Signal]:
-    """Check for pitches whose Location+ surged vs season — command arrived.
+    """Check for pitches that were a command liability and now locate well.
 
-    The inverse of development_opportunity: delta-based (a breakout is a change),
-    firing when a pitch's L+ jumped meaningfully and now locates well.
+    The inverse of development_opportunity (elite stuff it can't command): a pitch
+    whose season command was poor (low season L+) is suddenly located well (high
+    game L+). Two decorrelated conditions — a prior deficit and a good outing —
+    so the jump is a genuine arrival, not just a high-variance good-command day.
     """
     signals: list[Signal] = []
     for row in game_types.iter_rows(named=True):
@@ -586,11 +588,10 @@ def _check_command_surge(
         if game_l is None or season_l is None:
             continue
 
-        l_delta = float(game_l) - float(season_l)
-        if l_delta >= _COMMAND_SURGE_DELTA and float(game_l) >= _COMMAND_GOOD_LPLUS:
+        if float(season_l) < _COMMAND_POOR_LPLUS and float(game_l) >= _COMMAND_GOOD_LPLUS:
             signals.append(Signal(
                 "command_surge",
                 _WEIGHTS["command_surge"],
-                f"{pt}: L+ {l_delta:+.0f} (now {float(game_l):.0f}) — found the zone",
+                f"{pt}: L+ {float(season_l):.0f} → {float(game_l):.0f} — found the zone",
             ))
     return signals
