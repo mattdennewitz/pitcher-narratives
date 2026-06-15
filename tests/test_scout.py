@@ -179,3 +179,27 @@ def test_command_surge_ignores_tiny_samples():
     fired = {s.detail.split(":")[0] for s in _check_command_surge(game_types, baseline)}
     assert "SI" not in fired
     assert "SL" in fired
+
+
+def test_command_surge_flows_through_scout_appearances():
+    """End-to-end: a command_surge signal reaches scout_appearances and scores.
+
+    Covers the per-appearance assembly wiring that the isolated
+    _check_command_surge tests don't, using the on-disk aggregates the suite
+    already scores against (cf. test_role_map_coverage_warning).
+    """
+    from pitcher_narratives.scout import _WEIGHTS, scout_appearances
+
+    results = scout_appearances(window_days=14, min_pitches=20)
+    surged = [a for a in results if any(s.name == "command_surge" for s in a.signals)]
+    assert surged, "expected at least one command_surge appearance in a 14-day window"
+
+    app = surged[0]
+    # The signal is present at its configured weight ...
+    assert any(
+        s.name == "command_surge" and s.weight == _WEIGHTS["command_surge"]
+        for s in app.signals
+    )
+    # ... and the score is the sum of all signal weights, so the surge contributes.
+    assert app.score == sum(s.weight for s in app.signals)
+    assert app.score >= _WEIGHTS["command_surge"]
