@@ -1,0 +1,8 @@
+{
+  "$comment": "This project uses ty for type checking (see pyproject.toml dev deps, the pre-commit hook, and `uv run ty check`). Pyright/Pylance is disabled here so editors defer to ty as the single source of type-check truth.",
+  "venvPath": ".",
+  "venv": ".venv",
+  "typeCheckingMode": "off",
+  "reportMissingImports": "none",
+  "reportMissingModuleSource": "none"
+}
