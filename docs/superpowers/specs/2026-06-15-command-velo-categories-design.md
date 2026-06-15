@@ -52,6 +52,8 @@ Two specific gaps surfaced:
 
 ### New `command_surge` signal (`scout.py`)
 
+> **Calibration update (implemented in `df417c4`).** The delta-based form below was the *proposed* design. A smoke test against 14 days of real data showed `delta >= 15 AND game L+ >= 110` fired on **67% of appearances** (510/756) — because both conditions key the same metric (L+ delta and level are correlated), the conjunction stayed weak, and it inflated two-thirds of all interest scores. The shipped signal **decorrelates** the two conditions into the true "found the zone" story and the exact structural mirror of `development_opportunity` (high S+ **and** low L+): the pitch was a command liability (`season L+ < _COMMAND_POOR_LPLUS = 90`) **and** now locates well (`game L+ >= _COMMAND_GOOD_LPLUS = 110`), gated by `n_pitches >= _MIN_TYPE_PITCHES`. This fires **7.9/day**, matching `development_opportunity`'s 9.6. The `delta >= 15` clause is provably redundant once `season < 90` and `game >= 110` (the improvement is always 20+), so it was removed. The pseudocode below is retained as the design-time record.
+
 Delta-based mirror of `development_opportunity` (a breakout is a change, so it keys on the jump, not a static snapshot):
 
 ```python
