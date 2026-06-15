@@ -32,7 +32,7 @@ __all__ = [
 
 PROVIDERS = {
     "claude": "anthropic:claude-sonnet-4-6",
-    "gemini": "google-gla:gemini-3.1-pro-preview",
+    "gemini": "google-gla:gemini-3.5-flash",
 }
 
 MINI_PROVIDERS = {
