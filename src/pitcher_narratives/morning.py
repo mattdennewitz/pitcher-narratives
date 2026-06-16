@@ -55,6 +55,7 @@ def run_morning(
     provider: str,
     persona_id: str,
     out_root: Path,
+    max_concurrency: int = 4,
     _selector_override: object = None,
     _writer_override: object = None,
 ) -> Path | None:
@@ -83,9 +84,11 @@ def run_morning(
     # would fail the first writer call.
     log.info("Selecting the slate from %d candidates...", len(candidates))
     briefing = build_selector_briefing(candidates)
-    spine_agents = make_pipeline_agents(provider, "medium", persona)
 
     async def _llm_stages():
+        spine_agents = make_pipeline_agents(provider, "medium", persona)
+        sem = asyncio.Semaphore(max_concurrency)
+
         slate = await select_slate_async(
             candidates, provider=provider, tracker=tracker, briefing=briefing,
             _model_override=_selector_override,
@@ -95,19 +98,21 @@ def run_morning(
         log.info("Slate: %d picks across categories %s.", len(picks), dict(by_cat))
 
         async def _build_pick(p) -> tuple[int, str, AnalyzedContext] | None:
-            try:
-                ctx = _load_pitcher_context(p.pitcher_id)
-                analyzed = await run_analysis_spine(
-                    ctx, agents=spine_agents, _model_override=_writer_override,
-                )
-                cue = build_story_cue_from_context(appearances[p.pitcher_id], p, ctx)
-                return p.pitcher_id, cue, analyzed
-            except Exception:
-                log.error(
-                    "Spine failed for pitcher_id=%d (%s); skipping pick.",
-                    p.pitcher_id, appearances[p.pitcher_id].pitcher_name, exc_info=True,
-                )
-                return None
+            pitcher_name = appearances[p.pitcher_id].pitcher_name
+            async with sem:
+                try:
+                    ctx = _load_pitcher_context(p.pitcher_id)
+                    analyzed = await run_analysis_spine(
+                        ctx, agents=spine_agents, _model_override=_writer_override,
+                    )
+                    cue = build_story_cue_from_context(appearances[p.pitcher_id], p, ctx)
+                    return p.pitcher_id, cue, analyzed
+                except Exception:
+                    log.error(
+                        "Spine failed for pitcher_id=%d (%s); skipping pick.",
+                        p.pitcher_id, pitcher_name, exc_info=True,
+                    )
+                    return None
 
         log.info("Running analysis spine for %d picks...", len(picks))
         build_results = await asyncio.gather(*(_build_pick(p) for p in picks))
@@ -120,6 +125,10 @@ def run_morning(
             pid, cue, analyzed = result
             cues[pid] = cue
             analyzed_contexts[pid] = analyzed
+        dropped_names = [
+            appearances[p.pitcher_id].pitcher_name
+            for p in picks if p.pitcher_id not in cues
+        ]
         picks = [p for p in picks if p.pitcher_id in cues]
 
         log.info("Writing %d summaries...", len(picks))
@@ -127,11 +136,12 @@ def run_morning(
             picks, cues, appearances,
             analyzed_contexts=analyzed_contexts,
             provider=provider, persona=persona,
-            tracker=tracker, _model_override=_writer_override,
+            tracker=tracker, max_concurrency=max_concurrency,
+            _model_override=_writer_override,
         )
-        return slate, picks, summaries
+        return slate, picks, summaries, dropped_names
 
-    slate, picks, summaries = asyncio.run(_llm_stages())
+    slate, picks, summaries, dropped_names = asyncio.run(_llm_stages())
 
     # ── Assemble + persist ────────────────────────────────────────
     wall_s = time.monotonic() - started
@@ -145,6 +155,7 @@ def run_morning(
     digest = assemble_digest(
         slate=slate, summaries=summaries, appearances=appearances,
         board=all_scored, game_date=game_date, cost_block=cost_block,
+        dropped_picks=dropped_names or None,
     )
 
     run_dir = out_root / str(game_date)
