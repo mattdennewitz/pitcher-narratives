@@ -672,11 +672,11 @@ def test_prior_baseline_schema_preserved():
 
 
 def test_statcast_dir_defaults_to_statcast_subdir(monkeypatch):
-    """Without STATCAST_PATH, parquet files live in DATA_DIR/statcast/."""
+    """Without STATCAST_PATH, parquet files live in DATA_DIR/var/statcast/."""
     from pitcher_narratives import data as data_mod
 
     monkeypatch.delenv("STATCAST_PATH", raising=False)
-    assert statcast_dir() == data_mod.DATA_DIR / "statcast"
+    assert statcast_dir() == data_mod.DATA_DIR / "var" / "statcast"
 
 
 def test_statcast_dir_honors_env_var(monkeypatch):

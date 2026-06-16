@@ -8,7 +8,7 @@ build/
 .pytest_cache/
 *.parquet
 *.csv
-aggs
+var/
 *~
 data-*.md
 .claude

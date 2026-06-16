@@ -15,8 +15,8 @@ outlier tag the downstream stages need, so specialists receive inputs
 that already say "FB velo is DOWN 1.8 mph (OUTLIER, z=-2.1)" rather
 than two numbers that the model has to subtract and evaluate.
 
-The inputs are entirely static: a pair of Statcast parquet files at the
-project root and a folder of pre-computed Pitching+ CSVs in `aggs/`.
+The inputs are entirely static: a pair of Statcast parquet files in
+`var/statcast/` and a folder of pre-computed Pitching+ CSVs in `var/aggs/`.
 The output is a streamed scouting capsule plus a set of structured
 side artifacts — executive summary bullets, stuff analysis, data-audit
 flags, anchor-check results, and an optional hallucination-guard
@@ -25,13 +25,13 @@ once per run.
 
 ## Data sources
 
-### Statcast parquet (project root)
+### Statcast parquet (`var/statcast/`)
 
-- `statcast_2025.parquet`, `statcast_2026.parquet` — pitch-level
+- `var/statcast/2025.parquet`, `var/statcast/2026.parquet` — pitch-level
   Statcast data for the 2025 and 2026 seasons. Loaded by `data.py` via
   `load_all_statcast` / `load_pitcher_data`.
 
-### Pitching+ CSVs (`aggs/`)
+### Pitching+ CSVs (`var/aggs/`)
 
 Eight CSVs per season. The 2026 set is the current season; the 2025
 set provides cross-season baselines for year-over-year deltas.
