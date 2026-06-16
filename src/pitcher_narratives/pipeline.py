@@ -1611,6 +1611,13 @@ _TRADITIONAL_PATTERN = re.compile(
     r")(?=[\s,.);\-:]|$)"
 )
 
+# Stuff-side / Pitch-side variant suffix on x-metrics. The specialist and
+# writer prompts teach paired variants — xRV100_S vs xRV100_P, xWhiff_S vs
+# xWhiff_P — but _KNOWN_METRICS lists only the bare base (xRV100, xWhiff).
+# Strip a trailing _S/_P before testing membership so legitimate variants
+# the prompts themselves use don't get flagged as hallucinated.
+_VARIANT_SUFFIX = re.compile(r"_[SP]$")
+
 
 def check_hallucinated_metrics(
     report_text: str,
@@ -1660,7 +1667,16 @@ def check_hallucinated_metrics(
         persona_known = _PERSONA_KNOWN_METRICS.get(persona, frozenset())
     else:
         persona_known = frozenset()
-    unknown = sorted(found - _KNOWN_METRICS - _TRADITIONAL_STATS - persona_known)
+
+    def _is_known(metric: str) -> bool:
+        if metric in _KNOWN_METRICS or metric in _TRADITIONAL_STATS or metric in persona_known:
+            return True
+        # Tolerate Stuff/Pitch-side variant suffixes (xRV100_S, xWhiff_P) when
+        # the base metric is known. The original token is still reported if the
+        # base is genuinely unknown, so faithful flagging is preserved.
+        return _VARIANT_SUFFIX.sub("", metric) in _KNOWN_METRICS
+
+    unknown = sorted(m for m in found if not _is_known(m))
 
     traditional_found = set(_TRADITIONAL_PATTERN.findall(report_text))
     outcome_warnings = sorted(traditional_found & _TRADITIONAL_STATS)

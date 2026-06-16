@@ -51,6 +51,36 @@ def test_hallucination_guard_known_metrics():
     assert result.is_clean
 
 
+def test_hallucination_guard_variant_suffix_metrics_known():
+    """Stuff/Pitch-side variants (xRV100_S, xRV100_P, xWhiff_S) are not flagged.
+
+    The specialist and writer prompts teach paired _S/_P variants of base
+    metrics. The known-metrics allowlist holds only the bare base (xRV100,
+    xWhiff); the guard strips a trailing _S/_P before testing membership so
+    these legitimate variants pass clean (regression for the live false
+    positive "Unknown metrics referenced: xRV100_S").
+    """
+    text = (
+        "S+ below 100 with xRV100_S of +1.4 confirms the slider bleeds runs, "
+        "while xRV100_P sits at -0.8 and xWhiff_S holds at 0.30."
+    )
+    result = check_hallucinated_metrics(text)
+    assert result.unknown_metrics == []
+    assert result.is_clean
+
+
+def test_hallucination_guard_unknown_base_with_variant_suffix_flagged():
+    """A variant suffix on an unknown base is still flagged, with the original token.
+
+    Stripping _S/_P only forgives variants whose base is known. An invented
+    base (xBogus) must remain flagged, and the reported token keeps its
+    original spelling rather than the normalized form.
+    """
+    result = check_hallucinated_metrics("His xBogus_S of 9.9 is off the charts.")
+    assert "xBogus_S" in result.unknown_metrics
+    assert "xBogus" not in result.unknown_metrics
+
+
 def test_hallucination_guard_percentage_metrics():
     """CSW%, Zone%, Chase% are all known."""
     text = "CSW% of 32.1%, Zone% at 48%, Chase% near 30%."
