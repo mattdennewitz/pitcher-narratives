@@ -27,7 +27,8 @@ from pitcher_narratives.digest import (
     write_pick_summaries,
 )
 from pitcher_narratives.personas import PERSONAS
-from pitcher_narratives.pipeline import AnalyzedContext, make_pipeline_agents, run_analysis_spine
+from pitcher_narratives.models import AnalyzedContext
+from pitcher_narratives.pipeline import make_pipeline_agents, run_analysis_spine
 from pitcher_narratives.scout import (
     ScoredAppearance,
     scout_appearances,

@@ -20,7 +20,7 @@ from pitcher_narratives.context import PitcherContext
 from pitcher_narratives.costs import UsageTracker
 from pitcher_narratives.curator import CurationPick, CurationSlate
 from pitcher_narratives.personas import DIGEST_ITEM, Persona, build_system_prompt
-from pitcher_narratives.pipeline import AnalyzedContext
+from pitcher_narratives.models import AnalyzedContext
 from pitcher_narratives.scout import ScoredAppearance
 from pitcher_narratives.signals import render_key_signals
 

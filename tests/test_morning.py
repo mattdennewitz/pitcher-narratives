@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock
 from pydantic_ai.models.test import TestModel
 
 from pitcher_narratives import morning
-from pitcher_narratives.pipeline import AnalyzedContext, SpecialistOutputs
+from pitcher_narratives.models import AnalyzedContext, SpecialistOutputs
 from pitcher_narratives.scout import ScoredAppearance, Signal
 
 

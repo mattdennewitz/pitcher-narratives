@@ -90,6 +90,12 @@ from pitcher_narratives.prompt_builder import (
     render_yoy_section,
 )
 from pitcher_narratives.shape import render_pitch_shape
+from pitcher_narratives.models import (
+    AnalyzedContext,
+    AuditFlag,
+    AuditResult,
+    SpecialistOutputs,
+)
 from pitcher_narratives.signals import (
     SIGNAL_EXTRACTOR_PROMPT,
     KeySignals,
@@ -416,25 +422,7 @@ For each problem found, report:
 If everything checks out, return an empty list."""
 
 
-class AuditFlag(BaseModel):
-    """A single data audit flag."""
-
-    category: str
-    specialist: str = ""
-    claim: str
-    data_shows: str
-    suggested_fix: str
-
-
-class AuditResult(BaseModel):
-    """Structured output from the data auditor agent."""
-
-    flags: list[AuditFlag]
-
-    @property
-    def is_clean(self) -> bool:
-        return len(self.flags) == 0
-
+# AuditFlag and AuditResult are defined in models.py and imported above.
 
 # ═══════════════════════════════════════════════════════════════════════
 # EXECUTIVE SUMMARY PROMPT
@@ -1028,27 +1016,7 @@ def write_pipeline_data_file(
 # RESULT MODEL
 # ═══════════════════════════════════════════════════════════════════════
 
-class SpecialistOutputs(BaseModel):
-    """Raw outputs from each specialist agent."""
-    stuff: str
-    location: str
-    runvalue: str
-    trends: str
-    game_shape: str
-
-
-class AnalyzedContext(BaseModel):
-    """Grounded specialist analysis produced by run_analysis_spine.
-
-    Carries the clean specialist outputs, cross-specialist key signals, and
-    any audit flags from the specialist revision loop. Does not include
-    terminal-layer artifacts (writer capsule, anchor result, hallucination
-    report) — those depend on a specific output target and are produced by
-    the calling terminal.
-    """
-    specialists: SpecialistOutputs
-    key_signals: KeySignals | None = None
-    audit_flags: list[AuditFlag] = []
+# SpecialistOutputs and AnalyzedContext are defined in models.py and imported above.
 
 
 class PipelineResult(BaseModel):
@@ -1079,6 +1047,21 @@ class PipelineAgents(NamedTuple):
     anchor: Agent[None, AnchorResult]
     summary: Agent[None, str]
     signal_extractor: Agent[None, KeySignals]
+
+    def specialist_dict(self) -> dict[str, Agent[None, str]]:
+        """Return the five specialist agents keyed by name.
+
+        Used to pass specialists to audit_and_revise_specialists. Adding a
+        new specialist only requires updating PipelineAgents — callers never
+        need to repeat the mapping.
+        """
+        return {
+            "stuff": self.stuff,
+            "location": self.location,
+            "runvalue": self.runvalue,
+            "trends": self.trends,
+            "game_shape": self.game_shape,
+        }
 
 
 def make_pipeline_agents(
@@ -1196,7 +1179,7 @@ async def run_analysis_spine(
 ) -> AnalyzedContext:
     """Run the specialist → audit → signal-extraction spine.
 
-    Shared analysis path for report, ask, and morning. Returns a grounded
+    Shared analysis path for report and morning. Returns a grounded
     AnalyzedContext; does not run the writer, anchor check, or hallucination
     check — those are terminal-layer concerns.
 
@@ -1205,24 +1188,19 @@ async def run_analysis_spine(
         agents: Pre-built pipeline agents (create once, reuse across picks).
         _model_override: Optional model override for deterministic testing.
     """
-    specialist_agents = {
-        "stuff": agents.stuff, "location": agents.location,
-        "runvalue": agents.runvalue, "trends": agents.trends,
-        "game_shape": agents.game_shape,
-    }
-
     raw = await run_specialists(
         agents.stuff, agents.location, agents.runvalue,
         agents.trends, agents.game_shape, ctx, _model_override,
     )
     specialists, audit_flags = await audit_and_revise_specialists(
-        raw, specialist_agents, agents.auditor, ctx, _model_override,
+        raw, agents.specialist_dict(), agents.auditor, ctx, _model_override,
     )
 
     signal_input = build_writer_input(
         ctx, specialists.stuff, specialists.location,
         specialists.runvalue, specialists.trends, specialists.game_shape,
     )
+    signals_failed = False
     try:
         signal_result = await agents.signal_extractor.run(
             **agent_kwargs(signal_input, _model_override)
@@ -1231,11 +1209,13 @@ async def run_analysis_spine(
     except Exception:
         log.warning("Signal extractor failed, continuing without key signals.", exc_info=True)
         key_signals = None
+        signals_failed = True
 
     return AnalyzedContext(
         specialists=specialists,
         key_signals=key_signals,
         audit_flags=audit_flags,
+        signals_failed=signals_failed,
     )
 
 
