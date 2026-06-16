@@ -93,10 +93,15 @@ class UsageTracker:
         ]
 
     def _grouped(self) -> dict[tuple[str, str], list[CallRecord]]:
-        """Group records by (stage group, model). writer:* collapses to 'writers'."""
+        """Group records by (stage group, model). writer:* → 'writers', specialist:* → 'specialists'."""
         groups: dict[tuple[str, str], list[CallRecord]] = {}
         for r in self.records:
-            stage = "writers" if r.stage.startswith("writer:") else (r.stage or "other")
+            if r.stage.startswith("writer:"):
+                stage = "writers"
+            elif r.stage.startswith("specialist:"):
+                stage = "specialists"
+            else:
+                stage = r.stage or "other"
             groups.setdefault((stage, r.model), []).append(r)
         return groups
 

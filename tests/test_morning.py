@@ -394,6 +394,7 @@ def test_signals_failed_flag_set_on_extractor_failure(monkeypatch):
         # they must exist but are never actually called.
         stuff = location = runvalue = trends = game_shape = auditor = _noop
         signal_extractor = bad_extractor
+        mini_model_name = ""
         def specialist_dict(self):
             return {}
 

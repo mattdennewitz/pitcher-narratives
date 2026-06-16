@@ -95,7 +95,7 @@ def run_morning(
 
     async def _llm_stages():
         spine_agents = make_pipeline_agents(provider, "medium", persona)
-        sem = asyncio.Semaphore(max_concurrency)
+        spine_sem = asyncio.Semaphore(min(max_concurrency, 2))
 
         slate = await select_slate_async(
             candidates, provider=provider, tracker=tracker, briefing=briefing,
@@ -107,11 +107,12 @@ def run_morning(
 
         async def _build_pick(p) -> tuple[int, str, AnalyzedContext] | None:
             pitcher_name = appearances[p.pitcher_id].pitcher_name
-            async with sem:
+            async with spine_sem:
                 try:
                     ctx = _load_pitcher_context(p.pitcher_id)
                     analyzed = await run_analysis_spine(
                         ctx, agents=spine_agents, _model_override=_writer_override,
+                        tracker=tracker,
                     )
                     cue = build_story_cue_from_context(appearances[p.pitcher_id], p, ctx)
                     return p.pitcher_id, cue, analyzed
