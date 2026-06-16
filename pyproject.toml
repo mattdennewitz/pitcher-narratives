@@ -18,7 +18,6 @@ dependencies = [
 [project.scripts]
 pitcher-narratives = "pitcher_narratives.cli:main"
 pitcher-scout = "pitcher_narratives.scout_cli:main"
-pitcher-ask = "pitcher_narratives.ask_cli:main"
 
 [build-system]
 requires = ["hatchling"]

@@ -12,8 +12,7 @@ Voice and output format are orthogonal concerns, composed at build time:
 - ``SHARED_WRITER_BASE`` holds the *universal analytical rules* that every
   composed writer prompt must obey, exactly once.
 - ``_SYNTHESIS_FRAMING`` holds the framing shared by the specialist-synthesis
-  contracts (report writers); ``_CUE_FRAMING`` is for the digest contract;
-  ``_ANSWER_FRAMING`` is for the Q&A contract.
+  contracts (report writers); ``_CUE_FRAMING`` is for the digest contract.
 
 ``build_system_prompt(persona, contract)`` composes:
 ``universal base + contract.input_framing + persona voice chain + contract.structure``.
@@ -29,7 +28,6 @@ log = logging.getLogger("pitcher_narratives.personas")
 
 __all__ = [
     "ANALYST",
-    "ANSWER",
     "CAPSULE",
     "DEFAULT_PERSONA",
     "DIGEST_ITEM",
@@ -172,7 +170,8 @@ You write one short item for a data-driven baseball morning digest.
 
 INPUT: a cue package for one pitcher's recent appearance — fired \
 scouting signals, the editor's framing (category, angle, conviction), \
-and season context.\
+season context, and optionally a ## Key Signals block with \
+cross-specialist patterns.\
 """
 
 
@@ -261,31 +260,13 @@ CONTRACT:
 - Ground every claim in the cue's numbers. Do not invent statistics.
 - Scale your tone to the stated conviction: a 'low' conviction story \
 is framed as something to monitor, not a breakout.
+- Key Signals (if a ## Key Signals block is present): treat it as the \
+priority lens. State each finding once with the best evidence — do not \
+restate a metric that already appears in the cue body. Weave the top \
+improvement or concern into the what-to-watch close.
 - Close with one sentence on what to watch in the next outing.
 - 150-250 words. No headline; prose only — the document supplies \
 headings.\
-"""
-
-_ANSWER_FRAMING = """\
-You answer natural-language questions about a pitcher using data \
-fetched on demand from your tools.
-
-Find the thread. What is the single most important thing the data \
-says about what the questioner asked? Lead with that — do not walk \
-through every metric.\
-"""
-
-_ANSWER_STRUCTURE = """\
-RESPONSE FORMAT:
-- No preamble, no restating the question, no sign-off.
-- Broad question ("How is he pitching?"): 2-3 paragraphs. Find the \
-thread first, explain the mechanism, then land the verdict. Call \
-get_pitch_detail on the most interesting pitch to get the attribution \
-breakdown.
-- Specific-pitch question ("How is his slider?"): Always call \
-get_pitch_detail for that pitch type first. Then 1-2 focused \
-paragraphs. Get to the point; do not pad to full-report length.
-- No bullet lists, no tables, no Markdown headings. Prose only.\
 """
 
 CAPSULE = OutputContract(
@@ -314,13 +295,6 @@ DIGEST_ITEM = OutputContract(
     length_target=(150, 250),
     structure=_DIGEST_STRUCTURE,
     input_framing=_CUE_FRAMING,
-)
-
-ANSWER = OutputContract(
-    id="answer",
-    length_target=(1, 350),
-    structure=_ANSWER_STRUCTURE,
-    input_framing=_ANSWER_FRAMING,
 )
 
 # Pairs each persona with its canonical report contract so build_writer_system_prompt

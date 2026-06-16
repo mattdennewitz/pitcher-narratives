@@ -9,7 +9,7 @@ It works at two scales:
 
 - **One pitcher** — a full scouting capsule for a single arm's recent
   appearances (`pitcher-narratives report`), plus a triage scanner
-  (`pitcher-scout`) and a natural-language Q&A agent (`pitcher-ask`).
+  (`pitcher-scout`).
 - **The whole league, every morning** — an editorial digest that scouts the
   day's appearances, selects the most compelling stories by category, and
   writes a capsule for each (`pitcher-narratives morning`).
@@ -51,13 +51,12 @@ make run   # uv run pitcher-narratives report -p 657277 -w 5
 
 ## The CLIs
 
-The package installs three entry points via `[project.scripts]`:
+The package installs two entry points via `[project.scripts]`:
 
 | Script | Source | Purpose |
 |---|---|---|
 | `pitcher-narratives` | `pitcher_narratives.cli:main` | `report` (one pitcher) and `morning` (daily digest) subcommands |
 | `pitcher-scout` | `pitcher_narratives.scout_cli:main` | Appearance triage + scoring |
-| `pitcher-ask` | `pitcher_narratives.ask_cli:main` | Natural-language Q&A |
 
 ### `pitcher-narratives report`
 
@@ -133,26 +132,6 @@ checks) require at least a handful of pitches of that type, so a one-off pitch
 can't manufacture a phantom signal. See `METHODOLOGY.md` for the full signal
 table and weights.
 
-### `pitcher-ask`
-
-Natural-language Q&A grounded in the same `PitcherContext` the report pipeline
-builds, served by a tool-calling analyst agent with two tools —
-`get_pitcher_summary` and `get_pitch_detail`.
-
-| Flag | Default | Notes |
-|---|---|---|
-| positional `question` | — | Natural-language question (quoted) |
-| `-w`, `--window` | `30` | Lookback in days |
-| `--provider` | `gemini` | `gemini` \| `claude` |
-| `--thinking` | `medium` | `minimal` \| `low` \| `medium` \| `high` \| `xhigh` |
-
-```bash
-uv run pitcher-ask "How is Cease's slider playing this month?"
-```
-
-The pitcher name is fuzzy-matched out of the question via `resolver.py`
-(`rapidfuzz`). Output is just the streamed answer.
-
 ## The morning digest
 
 `pitcher-narratives morning` runs the full editorial pipeline:
@@ -222,7 +201,6 @@ pitcher-narratives/
 ├── src/pitcher_narratives/
 │   ├── cli.py            # pitcher-narratives entry (report + morning)
 │   ├── scout_cli.py      # pitcher-scout entry
-│   ├── ask_cli.py        # pitcher-ask entry
 │   ├── data.py           # Statcast + Pitching+ loading pipeline
 │   ├── engine/           # computation subpackage (baselines, arsenal,
 │   │                     #   execution, workload, mechanics, contact, tto,
@@ -232,7 +210,6 @@ pitcher-narratives/
 │   ├── pipeline.py       # multi-specialist report pipeline (phases 1–2.5)
 │   ├── anchor.py         # anchor-check prompt + result models
 │   ├── signals.py        # KeySignals model + extractor prompt
-│   ├── analyst.py        # Q&A tool-calling agent (pitcher-ask)
 │   ├── resolver.py       # fuzzy pitcher name resolution
 │   ├── shape.py          # arm-slot / pitch-shape analysis
 │   ├── scout.py          # appearance interest scoring (no LLM)

@@ -9,7 +9,6 @@ instructions, bodies on demand).
 from pydantic_ai_skills import SkillsToolset, discover_skills
 
 from pitcher_narratives.agent_skills import SKILLS_DIR, runtime_skill_names, skill_toolset
-from pitcher_narratives.analyst import _make_qa_agent
 from pitcher_narratives.pipeline import make_pipeline_agents
 
 
@@ -72,15 +71,6 @@ def test_runtime_toolset_excludes_builder_skill_body():
     from pydantic_ai_skills import discover_skills as _discover
     loaded = {s.name for s in _discover(SKILLS_DIR) if s.name in runtime_skill_names()}
     assert "derived-signal-feature" not in loaded
-
-
-# ── QA agent wiring ───────────────────────────────────────────────────
-
-
-def test_qa_agent_has_skill_toolset():
-    """The Q&A agent carries the shared skills toolset."""
-    agent = _make_qa_agent()
-    assert skill_toolset() in _toolsets(agent)
 
 
 # ── Narrative engine wiring ───────────────────────────────────────────

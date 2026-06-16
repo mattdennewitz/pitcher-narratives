@@ -20,7 +20,7 @@ from pitcher_narratives.context import PitcherContext
 from pitcher_narratives.costs import UsageTracker
 from pitcher_narratives.curator import CurationPick, CurationSlate
 from pitcher_narratives.personas import DIGEST_ITEM, Persona, build_system_prompt
-from pitcher_narratives.pipeline import AnalyzedContext
+from pitcher_narratives.models import AnalyzedContext
 from pitcher_narratives.scout import ScoredAppearance
 from pitcher_narratives.signals import render_key_signals
 
@@ -218,6 +218,7 @@ async def write_pick_summaries(
     provider: str,
     persona: Persona,
     tracker: UsageTracker | None = None,
+    max_concurrency: int = 4,
     _model_override: object = None,
 ) -> dict[int, str]:
     """Write all pick summaries concurrently. Failures degrade to fallback.
@@ -229,29 +230,31 @@ async def write_pick_summaries(
         Mapping of pitcher_id to summary text (written or fallback).
     """
     agent = _make_writer_agent(provider, persona)
+    sem = asyncio.Semaphore(max_concurrency)
 
     async def _write_one(pick: CurationPick) -> tuple[int, str]:
-        name = appearances[pick.pitcher_id].pitcher_name
-        cue = cues[pick.pitcher_id]
-        if analyzed_contexts is not None and pick.pitcher_id in analyzed_contexts:
-            cue = enrich_cue_with_signals(cue, analyzed_contexts[pick.pitcher_id])
-        kwargs: dict = {"user_prompt": cue}
-        if _model_override is not None:
-            kwargs["model"] = _model_override
-        try:
-            result = await agent.run(**kwargs)
-        except Exception:
-            log.error("Writer failed for %s; using fallback.", name, exc_info=True)
-            return pick.pitcher_id, _fallback_summary(pick, cue)
-        if tracker is not None:
-            usage = result.usage()
-            tracker.record(
-                PROVIDERS[provider],
-                usage.input_tokens or 0,
-                usage.output_tokens or 0,
-                stage=f"writer:{name}",
-            )
-        return pick.pitcher_id, result.output
+        async with sem:
+            name = appearances[pick.pitcher_id].pitcher_name
+            cue = cues[pick.pitcher_id]
+            if analyzed_contexts is not None and pick.pitcher_id in analyzed_contexts:
+                cue = enrich_cue_with_signals(cue, analyzed_contexts[pick.pitcher_id])
+            kwargs: dict = {"user_prompt": cue}
+            if _model_override is not None:
+                kwargs["model"] = _model_override
+            try:
+                result = await agent.run(**kwargs)
+            except Exception:
+                log.error("Writer failed for %s; using fallback.", name, exc_info=True)
+                return pick.pitcher_id, _fallback_summary(pick, cue)
+            if tracker is not None:
+                usage = result.usage()
+                tracker.record(
+                    PROVIDERS[provider],
+                    usage.input_tokens or 0,
+                    usage.output_tokens or 0,
+                    stage=f"writer:{name}",
+                )
+            return pick.pitcher_id, result.output
 
     results = await asyncio.gather(*(_write_one(p) for p in picks))
     return dict(results)
@@ -314,6 +317,7 @@ def assemble_digest(
     board: list[ScoredAppearance],
     game_date: date,
     cost_block: str,
+    dropped_picks: list[str] | None = None,
 ) -> str:
     """Render the final digest document, grouped by category."""
 
@@ -343,12 +347,16 @@ def assemble_digest(
 
     by_cat: dict[str, list[CurationPick]] = {c: [] for c in _CATEGORY_ORDER}
     for pick in slate.picks:
-        by_cat[pick.category].append(pick)
+        if pick.pitcher_id in summaries:
+            by_cat[pick.category].append(pick)
 
     parts = [f"# Morning Digest — {game_date}", ""]
     for cat in _CATEGORY_ORDER:
         if by_cat[cat]:
             parts += _section(_CATEGORY_SECTION_TITLES[cat], by_cat[cat])
     parts.append(render_full_board(board))
-    parts += ["", cost_block]
+    footer = cost_block
+    if dropped_picks:
+        footer += f"\nnote: analysis unavailable for {', '.join(dropped_picks)}"
+    parts += ["", footer]
     return "\n".join(parts)

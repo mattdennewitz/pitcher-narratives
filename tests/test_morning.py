@@ -1,5 +1,6 @@
 """Tests for morning-run orchestration: artifacts, quiet days."""
 
+import asyncio
 import json
 from datetime import date
 from unittest.mock import AsyncMock
@@ -7,7 +8,7 @@ from unittest.mock import AsyncMock
 from pydantic_ai.models.test import TestModel
 
 from pitcher_narratives import morning
-from pitcher_narratives.pipeline import AnalyzedContext, SpecialistOutputs
+from pitcher_narratives.models import AnalyzedContext, SpecialistOutputs
 from pitcher_narratives.scout import ScoredAppearance, Signal
 
 
@@ -289,3 +290,114 @@ def test_run_morning_duplicate_pitcher_keeps_highest_scored(tmp_path, monkeypatc
     assert "80 pitches" in briefing            # high-scored appearance present
     digest = (run_dir / "digest.md").read_text()
     assert run_dir == tmp_path / "2026-06-10"  # game date = max date
+
+
+def test_spine_failure_drops_pick_and_discloses_in_footer(tmp_path, monkeypatch):
+    """When the spine fails for one pitcher, that pick is absent from the digest
+    body but named in the footer disclosure; the surviving pick renders normally."""
+    def _context_or_raise(pid):
+        if pid == 1:
+            raise RuntimeError("simulated context failure for pitcher 1")
+        return _make_minimal_context()
+
+    monkeypatch.setattr(morning, "scout_appearances", lambda **kw: [_app(1, "SP"), _app(2, "RP")])
+    monkeypatch.setattr(morning, "_load_pitcher_context", _context_or_raise)
+    monkeypatch.setattr(morning, "run_analysis_spine", AsyncMock(return_value=_fake_analyzed()))
+
+    run_dir = morning.run_morning(
+        window_days=1, top_n=25, min_pitches=20,
+        provider="gemini", persona_id="scout", out_root=tmp_path,
+        _selector_override=_selector_model(),
+        _writer_override=TestModel(custom_output_text="A summary."),
+    )
+    assert run_dir is not None
+    digest = (run_dir / "digest.md").read_text()
+
+    # Surviving pick renders; failed pick is absent from body sections.
+    assert "Pitcher 2" in digest
+    body_end = digest.index("## The Full Board")
+    body = digest[:body_end]
+    assert "Pitcher 1" not in body
+
+    # Footer discloses the dropped pick by name.
+    assert "analysis unavailable for" in digest
+    assert "Pitcher 1" in digest[digest.index("analysis unavailable for"):]
+
+
+def test_semaphore_bounds_concurrency(tmp_path, monkeypatch):
+    """The spine semaphore limits peak concurrent _build_pick executions."""
+    max_concurrency = 2
+    peak: list[int] = [0]
+    current: list[int] = [0]
+
+    async def _counting_spine(ctx, *, agents, _model_override=None):
+        current[0] += 1
+        peak[0] = max(peak[0], current[0])
+        await asyncio.sleep(0)  # yield so all coroutines can enter if uncapped
+        current[0] -= 1
+        return _fake_analyzed()
+
+    # Use 4 picks to ensure concurrency pressure.
+    apps = [_app(pid, "SP") for pid in range(1, 5)]
+    monkeypatch.setattr(morning, "scout_appearances", lambda **kw: apps)
+    monkeypatch.setattr(morning, "_load_pitcher_context", lambda pid: _make_minimal_context())
+    monkeypatch.setattr(morning, "run_analysis_spine", _counting_spine)
+
+    selector = TestModel(custom_output_args={
+        "picks": [
+            {"pitcher_id": pid, "category": "clean_breakout",
+             "angle": "Velo spike", "conviction": "medium",
+             "conviction_reason": "Shape agrees."}
+            for pid in range(1, 5)
+        ],
+    })
+
+    morning.run_morning(
+        window_days=1, top_n=25, min_pitches=20,
+        provider="gemini", persona_id="scout", out_root=tmp_path,
+        max_concurrency=max_concurrency,
+        _selector_override=selector,
+        _writer_override=TestModel(custom_output_text="A summary."),
+    )
+    assert peak[0] <= max_concurrency, f"peak concurrency {peak[0]} exceeded cap {max_concurrency}"
+
+
+def test_signals_failed_flag_set_on_extractor_failure(monkeypatch):
+    """AnalyzedContext.signals_failed=True when signal extractor raises.
+
+    Tested directly against run_analysis_spine (no full morning stack needed)
+    by monkeypatching the two internal async helpers so only the extractor path
+    is live. The extractor mock raises, which should set signals_failed=True.
+    """
+    import asyncio
+    import unittest.mock
+    import pitcher_narratives.pipeline as _pl
+    from pitcher_narratives.pipeline import run_analysis_spine
+    from pitcher_narratives.models import SpecialistOutputs
+
+    fake_specs = SpecialistOutputs(
+        stuff="S", location="L", runvalue="R", trends="T", game_shape="G"
+    )
+    monkeypatch.setattr(_pl, "run_specialists", AsyncMock(return_value=fake_specs))
+    monkeypatch.setattr(
+        _pl, "audit_and_revise_specialists",
+        AsyncMock(return_value=(fake_specs, [])),
+    )
+    monkeypatch.setattr(_pl, "build_writer_input", lambda *a, **kw: "")
+
+    bad_extractor = unittest.mock.MagicMock()
+    bad_extractor.run = AsyncMock(side_effect=RuntimeError("extractor down"))
+    _noop = unittest.mock.MagicMock()
+
+    class _FakeAgents:
+        # Specialist/auditor attrs are passed as args to monkeypatched helpers;
+        # they must exist but are never actually called.
+        stuff = location = runvalue = trends = game_shape = auditor = _noop
+        signal_extractor = bad_extractor
+        mini_model_name = ""
+        def specialist_dict(self):
+            return {}
+
+    result = asyncio.run(run_analysis_spine(_make_minimal_context(), agents=_FakeAgents()))
+    assert result.signals_failed is True
+    assert result.key_signals is None
