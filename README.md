@@ -79,7 +79,9 @@ uv run pitcher-narratives report -p 657277 -w 30 --provider claude --thinking hi
 ```
 
 Stdout is printed in this order: `# Scouting Report` (the writer's capsule,
-streamed live) → `# Executive Summary` → `# Stuff Analysis` → `# Data Audit` →
+streamed live) → `# Executive Summary` → `# Brief` (a 2-3 sentence
+recent-appearance-vs-window summary, in the selected persona's voice) →
+`# Stuff Analysis` → `# Data Audit` →
 `# Anchor Check` → `# Hallucination Check` (emitted only when the post-pipeline
 guard finds unknown metrics or traditional outcome stats). Each run also writes
 `data-{pitcher}-{provider}-pipeline.md` with the rendered prompts;
