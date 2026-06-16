@@ -4,6 +4,14 @@ scout -> selector -> cue builder -> concurrent writers -> assembler,
 with artifacts written to <out_root>/<game-date>/: digest.md,
 slate.json, briefing.md, usage.json. See
 docs/superpowers/specs/2026-06-12-morning-run-design.md.
+
+Validation parity note: digest entries are intentionally less validated
+than single-pitcher reports. The anchor-revision loop and hallucination
+check (check_hallucinated_metrics, invoked in cli.py for the report path)
+are terminal-layer concerns that are omitted here to keep the morning run
+fast. Each entry is produced from clean specialist outputs (run through
+the audit/revision loop in run_analysis_spine), but is not anchor-checked
+for signal fidelity or cross-validated for metric accuracy.
 """
 
 from __future__ import annotations
@@ -26,8 +34,8 @@ from pitcher_narratives.digest import (
     is_fallback_summary,
     write_pick_summaries,
 )
-from pitcher_narratives.personas import PERSONAS
 from pitcher_narratives.models import AnalyzedContext
+from pitcher_narratives.personas import PERSONAS
 from pitcher_narratives.pipeline import make_pipeline_agents, run_analysis_spine
 from pitcher_narratives.scout import (
     ScoredAppearance,

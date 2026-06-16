@@ -172,7 +172,8 @@ You write one short item for a data-driven baseball morning digest.
 
 INPUT: a cue package for one pitcher's recent appearance — fired \
 scouting signals, the editor's framing (category, angle, conviction), \
-and season context.\
+season context, and optionally a ## Key Signals block with \
+cross-specialist patterns.\
 """
 
 
@@ -261,6 +262,10 @@ CONTRACT:
 - Ground every claim in the cue's numbers. Do not invent statistics.
 - Scale your tone to the stated conviction: a 'low' conviction story \
 is framed as something to monitor, not a breakout.
+- Key Signals (if a ## Key Signals block is present): treat it as the \
+priority lens. State each finding once with the best evidence — do not \
+restate a metric that already appears in the cue body. Weave the top \
+improvement or concern into the what-to-watch close.
 - Close with one sentence on what to watch in the next outing.
 - 150-250 words. No headline; prose only — the document supplies \
 headings.\
