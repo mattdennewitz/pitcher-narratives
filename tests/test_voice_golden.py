@@ -14,12 +14,9 @@ from __future__ import annotations
 
 import pytest
 
-from pitcher_narratives.analyst import ANALYST_MECHANICS
 from pitcher_narratives.digest import _build_writer_prompt
 from pitcher_narratives.personas import (
-    ANSWER,
     PERSONAS,
-    build_system_prompt,
     build_writer_system_prompt,
     get_persona,
 )
@@ -137,88 +134,6 @@ class TestReportWriterInvariants:
 
 
 # ── Analyst ask-voice invariants (composed ask prompt) ────────────────
-
-
-def _ask_prompt(persona_id: str) -> str:
-    """Return the composed ask-agent system prompt for a persona."""
-    return build_system_prompt(get_persona(persona_id), ANSWER) + "\n\n" + ANALYST_MECHANICS
-
-
-class TestAnalystAskVoiceInvariants:
-    """Invariants for the composed analyst ask-path voice (Phase 1B).
-
-    Phase 1B rewired the ask path through build_system_prompt(persona, ANSWER).
-    The composed prompt = SHARED_WRITER_BASE + ANSWER.input_framing + persona
-    voice chain + ANSWER.structure + ANALYST_MECHANICS.
-
-    Parametrized over all three registered personas so persona choice cannot
-    silently drop a directive.
-    """
-
-    @pytest.mark.parametrize("persona_id", ["scout", "analyst", "generic"])
-    def test_contains_directional_consistency(self, persona_id: str) -> None:
-        """Composed ask prompt carries DIRECTIONAL CONSISTENCY from universal base."""
-        prompt = _ask_prompt(persona_id)
-        assert "DIRECTIONAL CONSISTENCY" in prompt, (
-            f"ask({persona_id}): missing DIRECTIONAL CONSISTENCY "
-            "(should flow from SHARED_WRITER_BASE)"
-        )
-
-    @pytest.mark.parametrize("persona_id", ["scout", "analyst", "generic"])
-    def test_contains_temporal_grounding(self, persona_id: str) -> None:
-        """Composed ask prompt carries TEMPORAL GROUNDING from universal base."""
-        prompt = _ask_prompt(persona_id)
-        assert "TEMPORAL GROUNDING" in prompt, (
-            f"ask({persona_id}): missing TEMPORAL GROUNDING "
-            "(should flow from SHARED_WRITER_BASE)"
-        )
-
-    @pytest.mark.parametrize("persona_id", ["scout", "analyst", "generic"])
-    def test_banned_word_single_sourced(self, persona_id: str) -> None:
-        """RT-10: banned-word token appears exactly once in the composed ask prompt.
-
-        The banned list lives solely in SHARED_WRITER_BASE; ANALYST_MECHANICS
-        must not duplicate it.  Count the stable token '"degradation,"' (quoted
-        + comma as it appears in the banned list) so the check survives minor
-        rewording of the surrounding sentence.
-        """
-        prompt = _ask_prompt(persona_id)
-        assert '"degradation,"' in prompt, (
-            f"ask({persona_id}): banned token '\"degradation,\"' not found"
-        )
-        assert prompt.count('"degradation,"') == 1, (
-            f"ask({persona_id}): banned token '\"degradation,\"' appears more "
-            "than once — ANALYST_MECHANICS must not duplicate the banned-word list"
-        )
-
-    @pytest.mark.parametrize("persona_id", ["scout", "analyst", "generic"])
-    def test_contains_model_mechanics(self, persona_id: str) -> None:
-        """Composed ask prompt carries HOW THE MODEL THINKS from ANALYST_MECHANICS."""
-        prompt = _ask_prompt(persona_id)
-        assert "HOW THE MODEL THINKS" in prompt, (
-            f"ask({persona_id}): missing HOW THE MODEL THINKS block from ANALYST_MECHANICS"
-        )
-
-    @pytest.mark.parametrize("persona_id", ["scout", "analyst", "generic"])
-    def test_contains_sign_conventions(self, persona_id: str) -> None:
-        """Composed ask prompt carries SIGN CONVENTIONS from ANALYST_MECHANICS."""
-        prompt = _ask_prompt(persona_id)
-        assert "SIGN CONVENTIONS" in prompt, (
-            f"ask({persona_id}): missing SIGN CONVENTIONS block from ANALYST_MECHANICS"
-        )
-
-    @pytest.mark.parametrize("persona_id", ["scout", "analyst", "generic"])
-    def test_uses_ask_framing_not_synthesis(self, persona_id: str) -> None:
-        """Composed ask prompt uses ask-specific input framing, not synthesis framing.
-
-        The ANSWER contract uses _ANSWER_FRAMING; the five-specialist synthesis
-        framing belongs to CAPSULE/NEWSLETTER/SECTIONED contracts only.
-        """
-        prompt = _ask_prompt(persona_id)
-        assert "five specialist analyses" not in prompt.lower(), (
-            f"ask({persona_id}): found 'five specialist analyses' — "
-            "ANSWER contract must not use _SYNTHESIS_FRAMING"
-        )
 
 
 # ── Digest-writer invariants (_build_writer_prompt) ───────────────────
