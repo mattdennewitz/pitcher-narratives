@@ -20,13 +20,16 @@ from pitcher_narratives.context import PitcherContext
 from pitcher_narratives.costs import UsageTracker
 from pitcher_narratives.curator import CurationPick, CurationSlate
 from pitcher_narratives.personas import DIGEST_ITEM, Persona, build_system_prompt
+from pitcher_narratives.pipeline import AnalyzedContext
 from pitcher_narratives.scout import ScoredAppearance
+from pitcher_narratives.signals import render_key_signals
 
 __all__ = [
     "FALLBACK_MARKER",
     "assemble_digest",
     "build_story_cue",
     "build_story_cue_from_context",
+    "enrich_cue_with_signals",
     "is_fallback_summary",
     "render_full_board",
     "write_pick_summaries",
@@ -147,6 +150,18 @@ def build_story_cue_from_context(
     return "\n".join(lines)
 
 
+def enrich_cue_with_signals(cue: str, analyzed: AnalyzedContext) -> str:
+    """Prepend key signals to a story cue if the spine produced them.
+
+    The DIGEST_ITEM writer sees both the cue facts and the cross-specialist
+    signals, letting it weave the top finding into the what-to-watch close
+    without changing its system prompt.
+    """
+    if analyzed.key_signals is None:
+        return cue
+    return render_key_signals(analyzed.key_signals) + "\n\n" + cue
+
+
 # ── Per-pick writers ────────────────────────────────────────────────
 
 
@@ -199,12 +214,16 @@ async def write_pick_summaries(
     cues: dict[int, str],
     appearances: dict[int, ScoredAppearance],
     *,
+    analyzed_contexts: dict[int, AnalyzedContext] | None = None,
     provider: str,
     persona: Persona,
     tracker: UsageTracker | None = None,
     _model_override: object = None,
 ) -> dict[int, str]:
     """Write all pick summaries concurrently. Failures degrade to fallback.
+
+    When analyzed_contexts is provided, cues are enriched with key signals
+    from the analysis spine before being passed to the writer.
 
     Returns:
         Mapping of pitcher_id to summary text (written or fallback).
@@ -213,14 +232,17 @@ async def write_pick_summaries(
 
     async def _write_one(pick: CurationPick) -> tuple[int, str]:
         name = appearances[pick.pitcher_id].pitcher_name
-        kwargs: dict = {"user_prompt": cues[pick.pitcher_id]}
+        cue = cues[pick.pitcher_id]
+        if analyzed_contexts is not None and pick.pitcher_id in analyzed_contexts:
+            cue = enrich_cue_with_signals(cue, analyzed_contexts[pick.pitcher_id])
+        kwargs: dict = {"user_prompt": cue}
         if _model_override is not None:
             kwargs["model"] = _model_override
         try:
             result = await agent.run(**kwargs)
         except Exception:
             log.error("Writer failed for %s; using fallback.", name, exc_info=True)
-            return pick.pitcher_id, _fallback_summary(pick, cues.get(pick.pitcher_id, "(cue unavailable)"))
+            return pick.pitcher_id, _fallback_summary(pick, cue)
         if tracker is not None:
             usage = result.usage()
             tracker.record(

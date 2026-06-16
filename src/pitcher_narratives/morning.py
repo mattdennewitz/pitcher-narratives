@@ -27,6 +27,7 @@ from pitcher_narratives.digest import (
     write_pick_summaries,
 )
 from pitcher_narratives.personas import PERSONAS
+from pitcher_narratives.pipeline import AnalyzedContext, make_pipeline_agents, run_analysis_spine
 from pitcher_narratives.scout import (
     ScoredAppearance,
     scout_appearances,
@@ -81,6 +82,7 @@ def run_morning(
     # would fail the first writer call.
     log.info("Selecting the slate from %d candidates...", len(candidates))
     briefing = build_selector_briefing(candidates)
+    spine_agents = make_pipeline_agents(provider, "medium", persona)
 
     async def _llm_stages():
         slate = await select_slate_async(
@@ -91,23 +93,39 @@ def run_morning(
         by_cat = Counter(p.category for p in picks)
         log.info("Slate: %d picks across categories %s.", len(picks), dict(by_cat))
 
-        cues: dict[int, str] = {}
-        for p in picks:
+        async def _build_pick(p) -> tuple[int, str, AnalyzedContext] | None:
             try:
                 ctx = _load_pitcher_context(p.pitcher_id)
-                cues[p.pitcher_id] = build_story_cue_from_context(
-                    appearances[p.pitcher_id], p, ctx,
+                analyzed = await run_analysis_spine(
+                    ctx, agents=spine_agents, _model_override=_writer_override,
                 )
+                cue = build_story_cue_from_context(appearances[p.pitcher_id], p, ctx)
+                return p.pitcher_id, cue, analyzed
             except Exception:
                 log.error(
-                    "Context load failed for pitcher_id=%d (%s); skipping pick.",
+                    "Spine failed for pitcher_id=%d (%s); skipping pick.",
                     p.pitcher_id, appearances[p.pitcher_id].pitcher_name, exc_info=True,
                 )
+                return None
+
+        log.info("Running analysis spine for %d picks...", len(picks))
+        build_results = await asyncio.gather(*(_build_pick(p) for p in picks))
+
+        cues: dict[int, str] = {}
+        analyzed_contexts: dict[int, AnalyzedContext] = {}
+        for result in build_results:
+            if result is None:
+                continue
+            pid, cue, analyzed = result
+            cues[pid] = cue
+            analyzed_contexts[pid] = analyzed
         picks = [p for p in picks if p.pitcher_id in cues]
 
         log.info("Writing %d summaries...", len(picks))
         summaries = await write_pick_summaries(
-            picks, cues, appearances, provider=provider, persona=persona,
+            picks, cues, appearances,
+            analyzed_contexts=analyzed_contexts,
+            provider=provider, persona=persona,
             tracker=tracker, _model_override=_writer_override,
         )
         return slate, picks, summaries

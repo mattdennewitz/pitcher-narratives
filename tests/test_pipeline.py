@@ -23,6 +23,7 @@ from pitcher_narratives.engine import (
 )
 from pitcher_narratives.pipeline import (
     _STUFF_SPECIALIST_PROMPT,
+    AnalyzedContext,
     AuditFlag,
     AuditResult,
     PipelineAgents,
@@ -36,6 +37,7 @@ from pitcher_narratives.pipeline import (
     check_explainer_present,
     generate_pipeline_streaming,
     make_pipeline_agents,
+    run_analysis_spine,
     run_specialists,
 )
 from pitcher_narratives.signals import KeySignals
@@ -1091,3 +1093,21 @@ def test_audit_failure_degrades_to_unaudited(ctx):
     ))
     assert clean == outputs
     assert flags == []
+
+
+def test_run_analysis_spine_returns_analyzed_context(ctx):
+    """run_analysis_spine returns a valid AnalyzedContext under TestModel."""
+    agents = make_pipeline_agents("gemini", "high")
+    # call_tools=[] prevents TestModel from auto-generating tool calls
+    # against the skill toolset (which would fail with SkillNotFoundError).
+    model = TestModel(call_tools=[], custom_output_text="Specialist analysis.")
+    result = asyncio.run(
+        run_analysis_spine(ctx, agents=agents, _model_override=model)
+    )
+    assert isinstance(result, AnalyzedContext)
+    assert result.specialists.stuff != ""
+    assert result.specialists.location != ""
+    assert result.specialists.runvalue != ""
+    assert result.specialists.trends != ""
+    assert result.specialists.game_shape != ""
+    assert isinstance(result.audit_flags, list)
