@@ -28,6 +28,7 @@ log = logging.getLogger("pitcher_narratives.personas")
 
 __all__ = [
     "ANALYST",
+    "BRIEF",
     "CAPSULE",
     "DEFAULT_PERSONA",
     "DIGEST_ITEM",
@@ -176,6 +177,38 @@ cross-specialist patterns.\
 
 
 # ═══════════════════════════════════════════════════════════════════════
+# BRIEF-INPUT FRAMING — recent-appearance-vs-window contrast, no model teaching
+# ═══════════════════════════════════════════════════════════════════════
+
+_BRIEF_FRAMING = """\
+INPUT: a ## Key Signals block of cross-specialist patterns, followed by \
+five specialist analyses of a pitcher's recent window — pitch quality \
+(S+ grades), location (P vs S), run value, trend vs. season baseline, \
+and game shape (TTO, velocity arc).
+
+These are INGREDIENTS for a tight brief, not sections to preserve. Your \
+job is to contrast the MOST RECENT appearance against how the pitcher \
+has been trending across the window: what this outing confirmed, broke \
+from, or extended.
+
+SELECTING THE THREAD: A brief gets exactly one. Do not pick by your own \
+judgment — lead with the Key Signals block's Top Improvement or Top \
+Concern, whichever is the bigger story this outing, and cite the metric \
+attached to it. The five analyses are there to support that lead with \
+evidence, not to supply a competing one. If a Sample Size Caution \
+signal is present and bears on the finding you lead with, hedge the \
+claim (tentative language) rather than stating it flatly — never \
+headline a thin-sample finding as settled. If the Key Signals block is \
+absent, fall back to the single most important shift across the five \
+analyses.
+
+Write as one voice — do not name, number, or sequence the specialists. \
+Unlike the full capsule, do NOT pause to explain the grading model; \
+there is no room. Name a metric and move on.\
+"""
+
+
+# ═══════════════════════════════════════════════════════════════════════
 # OUTPUT CONTRACTS — length + structure + input framing per output target
 # ═══════════════════════════════════════════════════════════════════════
 
@@ -268,6 +301,31 @@ improvement or concern into the what-to-watch close.
 - 150-250 words. No headline; prose only — the document supplies \
 headings.\
 """
+
+_BRIEF_STRUCTURE = """\
+Compose a 2-3 sentence brief. No headings, no bullets, no tables — \
+prose only.
+
+STRUCTURE:
+- Lead with the most recent appearance relative to the recent window: \
+what this outing did versus how the pitcher has been trending. The \
+concrete change is the story; state it first.
+- One thread only. Pick the single most important shift or \
+confirmation — do not catalog the arsenal or list multiple findings.
+- Cite at most two metrics, and only to anchor the lead claim.
+- If a close is warranted, fold what-it-means-going-forward into the \
+final sentence rather than adding one.
+
+HARD LIMIT: 3 sentences. Roughly 40-90 words. If you reach three \
+sentences, stop.\
+"""
+
+BRIEF = OutputContract(
+    id="brief",
+    length_target=(40, 90),
+    structure=_BRIEF_STRUCTURE,
+    input_framing=_BRIEF_FRAMING,
+)
 
 CAPSULE = OutputContract(
     id="capsule",

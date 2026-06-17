@@ -40,7 +40,7 @@ _DEFAULT_DATA_DIR = Path(__file__).resolve().parent.parent.parent
 _data_dir_override = os.environ.get("PITCHER_NARRATIVES_DATA_DIR")
 DATA_DIR = Path(_data_dir_override) if _data_dir_override else _DEFAULT_DATA_DIR
 _YEARS: list[int] = [2025, 2026]
-AGGS_DIR = DATA_DIR / "aggs"
+AGGS_DIR = DATA_DIR / "var" / "aggs"
 RV_DF_PATH = AGGS_DIR / "RV_df.csv"
 
 
@@ -51,7 +51,7 @@ def statcast_dir() -> Path:
     through load_dotenv() in CLI entry points is honored.
     """
     override = os.environ.get("STATCAST_PATH")
-    return Path(override) if override else DATA_DIR / "statcast"
+    return Path(override) if override else DATA_DIR / "var" / "statcast"
 
 
 def statcast_parquet_path(year: int) -> Path:

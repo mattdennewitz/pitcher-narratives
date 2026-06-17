@@ -348,6 +348,34 @@ class TestGeneratePipelineStreaming:
         from pitcher_narratives.config import MAX_REVISIONS
         assert MAX_REVISIONS >= 1, "MAX_REVISIONS must allow at least one revision"
 
+    def test_pipeline_result_includes_brief(self, ctx):
+        """The terminal layer runs the BRIEF agent and returns its text.
+
+        BRIEF is wired as an additional agent alongside the writer and
+        executive summary — same input, non-critical — so a successful run
+        populates PipelineResult.brief with non-empty text. (custom_output_text
+        can't be used here: it would force the structured auditor/anchor/signal
+        agents into plain responses, which TestModel rejects.)
+        """
+        test_model = TestModel(call_tools=[])
+        result = generate_pipeline_streaming(
+            ctx, provider="gemini", thinking="high", _model_override=test_model,
+        )
+        assert isinstance(result.brief, str)
+        assert len(result.brief) > 0
+
+    def test_brief_agent_has_no_skill_toolset(self):
+        """The brief agent stays tool-free (like the executive summary).
+
+        A 2-3 sentence synthesis of already-clean specialist text needs no
+        skills, and staying tool-free means a hallucinated skill call cannot
+        kill this non-critical concurrent agent.
+        """
+        from pitcher_narratives.agent_skills import skill_toolset
+        agents = make_pipeline_agents()
+        toolsets = list(getattr(agents.brief, "_user_toolsets", []))
+        assert skill_toolset() not in toolsets
+
 
 # ── Anchor revision loop behavioral tests ────────────────────────────
 #

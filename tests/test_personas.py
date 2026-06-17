@@ -10,6 +10,7 @@ from pitcher_narratives.context import assemble_pitcher_context
 from pitcher_narratives.data import load_pitcher_data
 from pitcher_narratives.personas import (
     ANALYST,
+    BRIEF,
     CAPSULE,
     DEFAULT_PERSONA,
     GENERIC,
@@ -21,6 +22,7 @@ from pitcher_narratives.personas import (
     SHARED_WRITER_BASE,
     OutputContract,
     Persona,
+    build_system_prompt,
     build_writer_system_prompt,
     get_persona,
 )
@@ -514,6 +516,109 @@ def test_sectioned_contract_has_hard_word_limit():
     structure = SECTIONED.structure
     assert "500 words" in structure
     assert "HARD LIMIT" in structure
+
+
+# ── BRIEF contract: 2-3 sentence recent-vs-window summary ──
+
+
+def test_brief_contract_fields():
+    """BRIEF is a valid short-form contract with a sentence-scale word target."""
+    assert isinstance(BRIEF, OutputContract)
+    assert BRIEF.id == "brief"
+    assert BRIEF.length_target == (40, 90)
+    assert all(isinstance(v, int) for v in BRIEF.length_target)
+
+
+def test_brief_structure_targets_recent_vs_window_with_sentence_cap():
+    """The BRIEF structure leads on recent-vs-window and caps at 3 sentences."""
+    structure = BRIEF.structure
+    assert "2-3 sentence" in structure
+    assert "most recent appearance" in structure
+    # The window contrast is the defining frame, not an afterthought.
+    assert "window" in structure
+    assert "HARD LIMIT" in structure
+    assert "3 sentences" in structure
+    # Short form: no tables/headers/bullets.
+    assert "prose only" in structure
+
+
+def test_brief_framing_contrasts_recent_against_window():
+    """The BRIEF input framing names the recent-vs-window contrast explicitly."""
+    framing = BRIEF.input_framing
+    assert "MOST RECENT appearance" in framing
+    assert "trending" in framing or "window" in framing
+
+
+def test_brief_framing_suppresses_model_teaching():
+    """BRIEF must NOT carry the heavy EXPLAIN-THE-MODEL directive.
+
+    The full synthesis capsule requires contextualizing the grading model on
+    first reference; that is incompatible with a 2-3 sentence brief, so BRIEF
+    uses a dedicated framing that explicitly suppresses it.
+    """
+    assert "EXPLAIN THE MODEL" not in BRIEF.input_framing
+    assert "do NOT pause to explain the grading model" in BRIEF.input_framing
+
+
+def test_brief_framing_pins_thread_to_top_signals():
+    """Selection is delegated to the upstream ranked signals, not LLM judgment.
+
+    A brief gets exactly one thread, so it must lead with the Key Signals
+    block's Top Improvement / Top Concern (the signal extractor's pre-ranked
+    pick) and cite that signal's metric — not choose a finding by its own
+    judgment.
+    """
+    framing = BRIEF.input_framing
+    assert "Top Improvement" in framing
+    assert "Top Concern" in framing
+    # The instruction must actively forbid unguided self-selection.
+    assert "Do not pick by your own judgment" in framing
+
+
+def test_brief_framing_honors_sample_size_caution():
+    """A thin-sample lead must be hedged, not headlined as settled."""
+    framing = BRIEF.input_framing
+    assert "Sample Size Caution" in framing
+    assert "hedge" in framing or "tentative" in framing
+
+
+def test_brief_framing_has_fallback_when_signals_absent():
+    """When the Key Signals block is absent, the brief falls back gracefully.
+
+    key_signals can be None (signal extractor failure), so the framing must
+    not strand the writer without a selection rule.
+    """
+    framing = BRIEF.input_framing
+    assert "absent" in framing
+    assert "fall back" in framing
+
+
+@pytest.mark.parametrize("persona_id", ["scout", "analyst", "generic"])
+def test_brief_composes_with_every_persona(persona_id: str) -> None:
+    """BRIEF composes through the voice system, honoring each persona's voice.
+
+    The composed prompt layers the universal base, BRIEF's framing, the
+    persona voice chain, and BRIEF's structure — and does not leak the heavy
+    synthesis-capsule model-teaching directive.
+    """
+    persona = get_persona(persona_id)
+    prompt = build_system_prompt(persona, BRIEF)
+    # Universal base leads; brief framing + structure are present.
+    assert prompt.startswith(SHARED_WRITER_BASE)
+    assert "MOST RECENT appearance" in prompt
+    assert "2-3 sentence" in prompt
+    # Selection mechanism survives composition (the pinned-signal directive).
+    assert "Top Improvement" in prompt
+    assert "Top Concern" in prompt
+    # Persona voice is layered in (scout voice flows to all three via the chain).
+    assert "Write like an analyst talking to another analyst" in prompt
+    # Brief stays terse — the synthesis capsule's model-teaching mandate is absent.
+    assert "Every capsule must contextualize the grading system" not in prompt
+
+
+def test_brief_is_not_a_persona_report_contract():
+    """BRIEF is an alternate output target, not any persona's canonical report."""
+    assert BRIEF not in REPORT_CONTRACTS.values()
 
 
 # ── Generic shape assertion helper (Phase 08: TEST-06) ──

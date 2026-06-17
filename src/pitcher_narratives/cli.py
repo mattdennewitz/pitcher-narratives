@@ -279,6 +279,15 @@ def _run_report_command(args: argparse.Namespace) -> None:
     else:
         print("_Summary unavailable — no bullets produced._")
 
+    # Brief — a 2-3 sentence recent-vs-window summary. Always emit the heading
+    # to keep the output format stable; show a fallback if the (non-critical)
+    # brief agent produced nothing.
+    print("\n\n# Brief\n")
+    if pipe_result.brief:
+        print(pipe_result.brief)
+    else:
+        print("_Brief unavailable — no text produced._")
+
     # Stuff analysis
     print(f"\n\n# Stuff Analysis\n\n{pipe_result.specialists.stuff}")
 

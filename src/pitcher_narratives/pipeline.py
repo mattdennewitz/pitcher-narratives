@@ -75,8 +75,10 @@ from pitcher_narratives.engine import (
     render_league_baselines,
 )
 from pitcher_narratives.personas import (
+    BRIEF,
     DEFAULT_PERSONA,
     Persona,
+    build_system_prompt,
     build_writer_system_prompt,
     get_persona,
 )
@@ -974,6 +976,13 @@ def _render_pipeline_data_sections(
         "[Receives: same input as writer]\n"
     )
 
+    sections.append(f"\n{sep}\nBRIEF\n{sep}\n")
+    sections.append(f"## System Prompt\n\n{build_system_prompt(persona_obj, BRIEF)}\n")
+    sections.append(
+        "## User Message\n\n"
+        "[Receives: same input as writer — key signals + all 5 specialist outputs]\n"
+    )
+
     sections.append(f"\n{sep}\nANCHOR CHECK\n{sep}\n")
     sections.append(f"## System Prompt\n\n{ANCHOR_PROMPT}\n")
     sections.append(
@@ -1033,6 +1042,7 @@ class PipelineResult(BaseModel):
     """Result from the multi-agent pipeline."""
     narrative: str
     executive_summary: list[str] = []
+    brief: str = ""
     specialists: SpecialistOutputs
     key_signals: KeySignals | None = None
     audit_flags: list[AuditFlag] = []
@@ -1057,6 +1067,7 @@ class PipelineAgents(NamedTuple):
     anchor: Agent[None, AnchorResult]
     summary: Agent[None, str]
     signal_extractor: Agent[None, KeySignals]
+    brief: Agent[None, str]
     mini_model_name: str = ""  # bare model name for UsageTracker calls in the spine
 
     def specialist_dict(self) -> dict[str, Agent[None, str]]:
@@ -1120,6 +1131,16 @@ def make_pipeline_agents(
                      model_settings=writer_settings, toolsets=skills, retries=3,
                      defer_model_check=True)
 
+    def _brief(prompt: str) -> Agent[None, str]:
+        # Main model for voice parity with the writer (BRIEF honors --persona),
+        # but tool-free: it synthesizes already-clean specialist text and a
+        # 2-3 sentence output has no need to consult skills. Staying tool-free
+        # also means a hallucinated skill call can't kill this non-critical
+        # concurrent extra. retries=3 mirrors the writer's resilience.
+        return Agent(model, output_type=str, system_prompt=prompt,
+                     model_settings=writer_settings, retries=3,
+                     defer_model_check=True)
+
     return PipelineAgents(
         stuff=_specialist(_STUFF_SPECIALIST_PROMPT),
         location=_mini_specialist(_LOCATION_SPECIALIST_PROMPT),
@@ -1135,6 +1156,7 @@ def make_pipeline_agents(
                       model_settings=summary_settings, defer_model_check=True),
         signal_extractor=Agent(mini_model, output_type=KeySignals, system_prompt=SIGNAL_EXTRACTOR_PROMPT,
                                model_settings=summary_settings, retries=3, defer_model_check=True),
+        brief=_brief(build_system_prompt(persona, BRIEF)),
         mini_model_name=model_label(mini_model),
     )
 
@@ -1352,9 +1374,13 @@ async def _run_pipeline(
     )
     writer_kwargs = agent_kwargs(writer_input, _model_override)
 
-    # Run summary in background while writer streams (same input as writer)
+    # Run summary and brief in background while writer streams (same input as
+    # the writer: key signals block + clean specialist analyses).
     summary_task = asyncio.create_task(
         agents.summary.run(**agent_kwargs(writer_input, _model_override))
+    )
+    brief_task = asyncio.create_task(
+        agents.brief.run(**agent_kwargs(writer_input, _model_override))
     )
 
     async with agents.writer.run_stream(**writer_kwargs) as stream:
@@ -1378,6 +1404,14 @@ async def _run_pipeline(
     except Exception:
         log.warning("Executive summary agent failed, skipping.", exc_info=True)
         summary_bullets = []
+
+    # Await brief — non-critical, same as the executive summary
+    try:
+        brief_result = await brief_task
+        brief_text = brief_result.output.strip()
+    except Exception:
+        log.warning("Brief agent failed, skipping.", exc_info=True)
+        brief_text = ""
 
     # EXPLAIN THE MODEL post-processor (non-fatal quality gate).
     # Runs for all personas — a persona that silently drops Pitching+
@@ -1424,6 +1458,7 @@ async def _run_pipeline(
     return PipelineResult(
         narrative=capsule,
         executive_summary=summary_bullets,
+        brief=brief_text,
         specialists=specialists,
         key_signals=key_signals,
         audit_flags=audit_flags,
@@ -1611,6 +1646,13 @@ _TRADITIONAL_PATTERN = re.compile(
     r")(?=[\s,.);\-:]|$)"
 )
 
+# Stuff-side / Pitch-side variant suffix on x-metrics. The specialist and
+# writer prompts teach paired variants — xRV100_S vs xRV100_P, xWhiff_S vs
+# xWhiff_P — but _KNOWN_METRICS lists only the bare base (xRV100, xWhiff).
+# Strip a trailing _S/_P before testing membership so legitimate variants
+# the prompts themselves use don't get flagged as hallucinated.
+_VARIANT_SUFFIX = re.compile(r"_[SP]$")
+
 
 def check_hallucinated_metrics(
     report_text: str,
@@ -1660,7 +1702,16 @@ def check_hallucinated_metrics(
         persona_known = _PERSONA_KNOWN_METRICS.get(persona, frozenset())
     else:
         persona_known = frozenset()
-    unknown = sorted(found - _KNOWN_METRICS - _TRADITIONAL_STATS - persona_known)
+
+    def _is_known(metric: str) -> bool:
+        if metric in _KNOWN_METRICS or metric in _TRADITIONAL_STATS or metric in persona_known:
+            return True
+        # Tolerate Stuff/Pitch-side variant suffixes (xRV100_S, xWhiff_P) when
+        # the base metric is known. The original token is still reported if the
+        # base is genuinely unknown, so faithful flagging is preserved.
+        return _VARIANT_SUFFIX.sub("", metric) in _KNOWN_METRICS
+
+    unknown = sorted(m for m in found if not _is_known(m))
 
     traditional_found = set(_TRADITIONAL_PATTERN.findall(report_text))
     outcome_warnings = sorted(traditional_found & _TRADITIONAL_STATS)

@@ -21,24 +21,24 @@ AGGS_LOOKBACK ?= 14
 
 pull-data: pull-statcast pull-aggs
 
-# statcast/<year>.parquet  <-  pitchingplus/statcast/<year>.parquet
+# var/statcast/<year>.parquet  <-  pitchingplus/statcast/<year>.parquet
 # Downloads to a .part file and moves on success so an interrupted download
 # never leaves a corrupt parquet in place.
 pull-statcast:
-	@mkdir -p statcast
+	@mkdir -p var/statcast
 	@set -e; \
-	dest=statcast/$(YEAR).parquet; \
+	dest=var/statcast/$(YEAR).parquet; \
 	rm -f "$$dest.part"; \
 	$(WRANGLER) r2 object get $(R2_BUCKET)/statcast/$(YEAR).parquet --remote --file "$$dest.part"; \
 	mv -f "$$dest.part" "$$dest"; \
 	echo "Wrote $$dest"
 
-# aggs/  <-  pitchingplus/pitchingplus/aggs/<closest YYYY-MM-DD>/aggs.zip
+# var/aggs/  <-  pitchingplus/pitchingplus/aggs/<closest YYYY-MM-DD>/aggs.zip
 # Snapshots are daily; walk back from today to the most recent one available,
-# download the zip, unzip, and move the CSVs into aggs/. `set -e` aborts on any
+# download the zip, unzip, and move the CSVs into var/aggs/. `set -e` aborts on any
 # download/unzip/move failure; the trap cleans up the temp dir on every exit.
 pull-aggs:
-	@mkdir -p aggs
+	@mkdir -p var/aggs
 	@set -e; \
 	tmp=$$(mktemp -d); \
 	trap 'rm -rf "$$tmp"' EXIT; \
@@ -60,5 +60,5 @@ pull-aggs:
 	if [ -z "$$(find "$$tmp/unz" -name '*.csv' -print -quit)" ]; then \
 		echo "aggs.zip contained no CSV files." >&2; exit 1; \
 	fi; \
-	find "$$tmp/unz" -name '*.csv' -exec mv -f {} aggs/ \; ; \
-	echo "Aggs refreshed into aggs/"
+	find "$$tmp/unz" -name '*.csv' -exec mv -f {} var/aggs/ \; ; \
+	echo "Aggs refreshed into var/aggs/"

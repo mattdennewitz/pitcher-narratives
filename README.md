@@ -25,10 +25,10 @@ It works at two scales:
   - `ANTHROPIC_API_KEY` for `--provider claude`
 - Local data files (no Baseball Savant calls happen at runtime — everything is
   served from disk):
-  - `statcast/<year>.parquet` — pitch-level Statcast data (e.g.
-    `statcast/2025.parquet`, `statcast/2026.parquet`)
-  - `aggs/<year>-<grain>.csv` — pre-computed Pitching+ CSVs per pitcher, pitch
-    type, appearance, and platoon split, plus `aggs/RV_df.csv` (the run-values
+  - `var/statcast/<year>.parquet` — pitch-level Statcast data (e.g.
+    `var/statcast/2025.parquet`, `var/statcast/2026.parquet`)
+  - `var/aggs/<year>-<grain>.csv` — pre-computed Pitching+ CSVs per pitcher, pitch
+    type, appearance, and platoon split, plus `var/aggs/RV_df.csv` (the run-values
     lookup)
   - See [Syncing the data](#syncing-the-data) to pull these from R2, and
     `METHODOLOGY.md` for the full source breakdown.
@@ -79,7 +79,9 @@ uv run pitcher-narratives report -p 657277 -w 30 --provider claude --thinking hi
 ```
 
 Stdout is printed in this order: `# Scouting Report` (the writer's capsule,
-streamed live) → `# Executive Summary` → `# Stuff Analysis` → `# Data Audit` →
+streamed live) → `# Executive Summary` → `# Brief` (a 2-3 sentence
+recent-appearance-vs-window summary, in the selected persona's voice) →
+`# Stuff Analysis` → `# Data Audit` →
 `# Anchor Check` → `# Hallucination Check` (emitted only when the post-pipeline
 guard finds unknown metrics or traditional outcome stats). Each run also writes
 `data-{pitcher}-{provider}-pipeline.md` with the rendered prompts;
@@ -165,12 +167,12 @@ The Statcast parquet and the aggregate CSVs live in Cloudflare R2 (bucket
 
 ```bash
 make pull-data        # both of the below
-make pull-statcast    # statcast/<year>.parquet
-make pull-aggs        # latest dated aggregate snapshot -> aggs/
+make pull-statcast    # var/statcast/<year>.parquet
+make pull-aggs        # latest dated aggregate snapshot -> var/aggs/
 ```
 
 `pull-aggs` walks back from today to the most recent daily snapshot, downloads
-its zip, and unzips the CSVs into `aggs/`. **Keep the two in sync** — run
+its zip, and unzips the CSVs into `var/aggs/`. **Keep the two in sync** — run
 `make pull-data` rather than one half. If the parquet lags the aggregates, the
 role map can't classify recent starts and the scout will warn that appearances
 are defaulting to RP (run `make pull-statcast`).
@@ -222,8 +224,9 @@ pitcher-narratives/
 │   ├── agent_skills.py   # pydantic-ai skills toolset wiring
 │   ├── bench/            # LLM benchmark harness
 │   └── skills/           # agent skill definitions
-├── aggs/                 # Pitching+ CSVs + RV_df.csv (gitignored data)
-├── statcast/             # per-year Statcast parquet (gitignored data)
+├── var/                  # gitignored local data
+│   ├── aggs/             # Pitching+ CSVs + RV_df.csv
+│   └── statcast/         # per-year Statcast parquet
 ├── morning-runs/         # digest artifacts (gitignored output)
 ├── tests/                # pytest suite
 ├── Makefile              # run / scout / curate / pull-* shortcuts
@@ -245,7 +248,7 @@ Makefile shortcuts:
 make run            # uv run pitcher-narratives report -p 657277 -w 5
 make scout          # uv run pitcher-scout -n 25 --min-score 5.0 -v
 make curate         # uv run pitcher-scout -n 25 --min-score 5.0 --curate
-make pull-data      # refresh statcast/ and aggs/ from R2
+make pull-data      # refresh var/statcast/ and var/aggs/ from R2
 ```
 
 ## See also
