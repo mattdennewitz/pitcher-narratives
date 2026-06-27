@@ -51,7 +51,7 @@ TOKEN_BUDGET_MEDIUM = 2048
 TOKEN_BUDGET_LARGE = 4096
 """Writer, editor, answerer, stuff explainer -- long-form prose."""
 
-MAX_REVISIONS = 3
+MAX_REVISIONS = 5
 """Maximum number of editor revision passes before accepting the capsule."""
 
 _THINKING_HEADROOM = 8192

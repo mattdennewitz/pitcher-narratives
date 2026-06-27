@@ -348,6 +348,11 @@ class TestGeneratePipelineStreaming:
         from pitcher_narratives.config import MAX_REVISIONS
         assert MAX_REVISIONS >= 1, "MAX_REVISIONS must allow at least one revision"
 
+    def test_max_revisions_is_five(self):
+        """The report anchor loop allows up to 5 revision passes."""
+        from pitcher_narratives.config import MAX_REVISIONS
+        assert MAX_REVISIONS == 5
+
     def test_pipeline_result_includes_brief(self, ctx):
         """The terminal layer runs the BRIEF agent and returns its text.
 
