@@ -175,8 +175,11 @@ class TestSummaryBulletParsing:
 
 class TestRunSummaries:
     class _BoomAgent:
-        """Stand-in agent whose run() always raises (and proves non-call)."""
+        """Stand-in agent that records invocation and raises if ever called."""
+        def __init__(self):
+            self.called = False
         async def run(self, **kwargs):
+            self.called = True
             raise RuntimeError("boom")
 
     def test_empty_capsule_skips_both_agents(self):
@@ -188,6 +191,7 @@ class TestRunSummaries:
         ))
         assert bullets == []
         assert brief == ""
+        assert boom.called is False  # the guard must skip both agents, not just swallow their errors
 
     def test_populated_capsule_runs_both(self):
         from pitcher_narratives.pipeline import _run_summaries
