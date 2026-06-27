@@ -1364,6 +1364,57 @@ async def _run_anchor_revision_loop(
     return capsule, final_result.output, revision_count
 
 
+def _parse_summary_bullets(raw: str) -> list[str]:
+    """Parse '- '-prefixed lines from summary output into clean bullets."""
+    return [
+        line.lstrip("- ").strip()
+        for line in raw.strip().splitlines()
+        if line.strip().startswith("- ")
+    ]
+
+
+async def _run_summaries(
+    *,
+    summary_agent: Agent[None, str],
+    brief_agent: Agent[None, str],
+    capsule: str,
+    writer_input: str,
+    _model_override: Any = None,
+) -> tuple[list[str], str]:
+    """Second-step summarization of the FINISHED capsule.
+
+    Runs the executive summary and BRIEF concurrently, each fed the final
+    capsule plus recover-only grounding (see build_summary_input). Returns
+    ([], "") without calling either agent when the capsule is empty/
+    whitespace. Each summarizer catches its own failure and degrades to an
+    empty value, so one failing agent never cancels the other.
+    """
+    if not capsule.strip():
+        log.warning("Final capsule is empty; skipping summarization.")
+        return [], ""
+
+    summary_input = build_summary_input(capsule, writer_input)
+
+    async def _run_summary() -> list[str]:
+        try:
+            result = await summary_agent.run(**agent_kwargs(summary_input, _model_override))
+            return _parse_summary_bullets(result.output)
+        except Exception:
+            log.warning("Executive summary agent failed, skipping.", exc_info=True)
+            return []
+
+    async def _run_brief() -> str:
+        try:
+            result = await brief_agent.run(**agent_kwargs(summary_input, _model_override))
+            return result.output.strip()
+        except Exception:
+            log.warning("Brief agent failed, skipping.", exc_info=True)
+            return ""
+
+    bullets, brief = await asyncio.gather(_run_summary(), _run_brief())
+    return bullets, brief
+
+
 async def _run_pipeline(
     ctx: PitcherContext,
     *,

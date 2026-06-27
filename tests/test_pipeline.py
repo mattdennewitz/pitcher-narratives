@@ -150,14 +150,11 @@ class TestRenderLeagueBaselines:
 
 
 class TestSummaryBulletParsing:
-    """Test the bullet parsing logic used in _run_pipeline."""
+    """Test the bullet parsing logic used by the summary step."""
 
     def _parse(self, raw: str) -> list[str]:
-        return [
-            line.lstrip("- ").strip()
-            for line in raw.strip().splitlines()
-            if line.strip().startswith("- ")
-        ]
+        from pitcher_narratives.pipeline import _parse_summary_bullets
+        return _parse_summary_bullets(raw)
 
     def test_standard_bullets(self):
         raw = "- First bullet\n- Second bullet\n- Third bullet"
@@ -174,6 +171,48 @@ class TestSummaryBulletParsing:
     def test_empty_input(self):
         assert self._parse("") == []
         assert self._parse("No bullets here") == []
+
+
+class TestRunSummaries:
+    class _BoomAgent:
+        """Stand-in agent whose run() always raises (and proves non-call)."""
+        async def run(self, **kwargs):
+            raise RuntimeError("boom")
+
+    def test_empty_capsule_skips_both_agents(self):
+        from pitcher_narratives.pipeline import _run_summaries
+        boom = self._BoomAgent()
+        bullets, brief = asyncio.run(_run_summaries(
+            summary_agent=boom, brief_agent=boom,
+            capsule="   \n  ", writer_input="ignored",
+        ))
+        assert bullets == []
+        assert brief == ""
+
+    def test_populated_capsule_runs_both(self):
+        from pitcher_narratives.pipeline import _run_summaries
+        agents = make_pipeline_agents("gemini", "high")
+        tm = TestModel(call_tools=[], custom_output_text="- one\n- two")
+        bullets, brief = asyncio.run(_run_summaries(
+            summary_agent=agents.summary, brief_agent=agents.brief,
+            capsule="A real capsule.", writer_input="grounding",
+            _model_override=tm,
+        ))
+        assert bullets == ["one", "two"]
+        assert brief == "- one\n- two"
+
+    def test_one_failure_degrades_without_cancelling_sibling(self):
+        from pitcher_narratives.pipeline import _run_summaries
+        agents = make_pipeline_agents("gemini", "high")
+        tm = TestModel(call_tools=[], custom_output_text="- kept")
+        # Summary agent booms; brief must still produce output.
+        bullets, brief = asyncio.run(_run_summaries(
+            summary_agent=self._BoomAgent(), brief_agent=agents.brief,
+            capsule="A real capsule.", writer_input="grounding",
+            _model_override=tm,
+        ))
+        assert bullets == []
+        assert brief == "- kept"
 
 
 # ── Data builder tests ───────────────────────────────────────────────
