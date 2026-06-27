@@ -109,8 +109,8 @@ __all__ = [
     "AnalyzedContext",
     "AuditFlag", "AuditResult", "ExecutiveSummary", "HallucinationReport",
     "KeySignals", "PipelineAgents", "PipelineResult",
-    "UserPrompt", "audit_and_revise_specialists", "build_writer_input",
-    "check_explainer_present", "check_hallucinated_metrics",
+    "UserPrompt", "audit_and_revise_specialists", "build_summary_input",
+    "build_writer_input", "check_explainer_present", "check_hallucinated_metrics",
     "generate_pipeline_streaming",
     "make_pipeline_agents", "run_analysis_spine", "run_specialists",
     "write_pipeline_data_file",
@@ -761,6 +761,26 @@ def build_writer_input(
         f"## Specialist Analysis 5: Game Shape\n{game_shape}",
     ])
     return "\n\n".join(parts)
+
+
+def build_summary_input(capsule: str, writer_input: str) -> str:
+    """Frame the finished report as the summary subject, with the clean
+    specialist analyses attached as recover-only grounding.
+
+    The capsule is the source of truth: summaries cite its numbers as
+    written. ``writer_input`` (Key Signals + clean specialist analyses) is
+    reference ONLY — to recover a metric the report stated qualitatively,
+    never to correct the report's numbers and never to add findings.
+    """
+    return (
+        "## FINISHED REPORT (summarize THIS; cite its numbers exactly as written)\n"
+        f"{capsule}\n\n"
+        "## SOURCE ANALYSES (the clean specialist analyses the report was built "
+        "from — reference ONLY to recover a metric the report stated "
+        "qualitatively; do NOT correct the report's numbers and do NOT add "
+        "findings absent from the report)\n"
+        f"{writer_input}"
+    )
 
 
 def _build_specialist_audit_input(ground_truth: str, specialist_output: str) -> str:

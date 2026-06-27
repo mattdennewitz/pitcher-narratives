@@ -1144,3 +1144,18 @@ def test_run_analysis_spine_returns_analyzed_context(ctx):
     assert result.specialists.trends != ""
     assert result.specialists.game_shape != ""
     assert isinstance(result.audit_flags, list)
+
+
+class TestBuildSummaryInput:
+    def test_frames_capsule_as_subject_with_grounding(self):
+        from pitcher_narratives.pipeline import build_summary_input
+        out = build_summary_input("CAPSULE_TEXT", "WRITER_INPUT_TEXT")
+        # Both payloads present.
+        assert "CAPSULE_TEXT" in out
+        assert "WRITER_INPUT_TEXT" in out
+        # Capsule is the subject and comes first.
+        assert out.index("CAPSULE_TEXT") < out.index("WRITER_INPUT_TEXT")
+        # Contract markers present.
+        assert "FINISHED REPORT" in out
+        assert "reference ONLY" in out.replace("reference only", "reference ONLY")
+        assert "do NOT add" in out or "do NOT correct" in out
