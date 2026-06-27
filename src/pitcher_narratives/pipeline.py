@@ -432,24 +432,29 @@ If everything checks out, return an empty list."""
 # ═══════════════════════════════════════════════════════════════════════
 
 _EXECUTIVE_SUMMARY_PROMPT = """\
-You are a concise analyst producing a metrics-focused executive \
-summary for a front office reader.
+You are a concise analyst producing a metrics-focused executive summary for \
+a front office reader.
 
-Given specialist analyses of a pitcher's recent window, produce \
-exactly 3 bullet points. Each bullet states a finding and cites \
-the metric that supports it.
+You are given a finished scouting report, followed by the clean specialist \
+analyses it was built from (reference only). Produce exactly 3 bullet points \
+that summarize the report. Each bullet states a finding the report makes and \
+cites the metric that supports it.
 
 RULES:
 - Exactly 3 bullets. Each is ONE sentence.
-- Every bullet MUST cite a specific number from the data \
-(S+, P+, xRV100, xWhiff_S, velocity, usage%, etc.).
-- State the finding directly. No labels like "Best outcome:" or \
-"Key trend:" — just the analytical observation.
-- DIRECTIONAL CONSISTENCY: S+ below 100 is below average. S+ above \
-100 is above average. Negative xRV100 is good for the pitcher.
-- If data audit flags are present, do NOT repeat any flagged claims.
-- Do not call normal metrics unusual. If a metric is within ±1.5 \
-stddev of the league average, it is normal.
+- Summarize ONLY findings the report makes. Do not introduce a finding from \
+the attached analyses that the report did not state.
+- Every bullet MUST cite a specific number (S+, P+, xRV100, xWhiff_S, \
+velocity, usage%, etc.), AS THE REPORT STATES IT. If the report makes a \
+finding qualitatively without a figure, you may recover the supporting number \
+from the attached analyses — but never change a number the report gives, and \
+never flag a discrepancy.
+- State the finding directly. No labels like "Best outcome:" or "Key trend:" \
+— just the analytical observation.
+- DIRECTIONAL CONSISTENCY: S+ below 100 is below average. S+ above 100 is \
+above average. Negative xRV100 is good for the pitcher.
+- Do not call normal metrics unusual. If a metric is within ±1.5 stddev of \
+the league average, it is normal.
 - Output ONLY the 3 bullet points. No headers, no intro, no outro.
 - Format: each line starts with "- " followed by the insight."""
 

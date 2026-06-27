@@ -1159,3 +1159,17 @@ class TestBuildSummaryInput:
         assert "FINISHED REPORT" in out
         assert "reference ONLY" in out.replace("reference only", "reference ONLY")
         assert "do NOT add" in out or "do NOT correct" in out
+
+
+class TestExecutiveSummaryPrompt:
+    def test_prompt_targets_finished_report_with_recover_only_grounding(self):
+        from pitcher_narratives.pipeline import _EXECUTIVE_SUMMARY_PROMPT
+        p = _EXECUTIVE_SUMMARY_PROMPT
+        assert "finished scouting report" in p.lower()
+        # Recover-only grounding contract.
+        assert "never change a number the report gives" in p
+        assert "do not introduce a finding" in p.lower()
+        # Old framing is gone.
+        assert "Given specialist analyses" not in p
+        # Citation requirement preserved.
+        assert "cite a specific number" in p.lower()
