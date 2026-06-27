@@ -560,37 +560,28 @@ def test_brief_framing_suppresses_model_teaching():
     assert "do NOT pause to explain the grading model" in BRIEF.input_framing
 
 
-def test_brief_framing_pins_thread_to_top_signals():
-    """Selection is delegated to the upstream ranked signals, not LLM judgment.
-
-    A brief gets exactly one thread, so it must lead with the Key Signals
-    block's Top Improvement / Top Concern (the signal extractor's pre-ranked
-    pick) and cite that signal's metric — not choose a finding by its own
-    judgment.
-    """
+def test_brief_framing_leads_with_the_reports_thread():
+    """BRIEF distills an already-anchored report, so it inherits the report's
+    thread instead of re-deriving one from raw signals."""
     framing = BRIEF.input_framing
-    assert "Top Improvement" in framing
-    assert "Top Concern" in framing
-    # The instruction must actively forbid unguided self-selection.
-    assert "Do not pick by your own judgment" in framing
+    assert "central thread" in framing
+    assert "Do not re-derive a thread of your own" in framing
 
 
-def test_brief_framing_honors_sample_size_caution():
-    """A thin-sample lead must be hedged, not headlined as settled."""
+def test_brief_framing_preserves_report_hedging():
+    """A finding the report stated tentatively must stay tentative."""
     framing = BRIEF.input_framing
-    assert "Sample Size Caution" in framing
-    assert "hedge" in framing or "tentative" in framing
+    assert "tentative" in framing
+    assert "never harden" in framing
 
 
-def test_brief_framing_has_fallback_when_signals_absent():
-    """When the Key Signals block is absent, the brief falls back gracefully.
-
-    key_signals can be None (signal extractor failure), so the framing must
-    not strand the writer without a selection rule.
-    """
+def test_brief_framing_forbids_new_findings():
+    """Grounding is recover-only: no finding the report did not make."""
     framing = BRIEF.input_framing
-    assert "absent" in framing
-    assert "fall back" in framing
+    assert "did not make" in framing
+    # The raw-signal selection machinery is gone.
+    assert "Do not pick by your own judgment" not in framing
+    assert "fall back" not in framing
 
 
 @pytest.mark.parametrize("persona_id", ["scout", "analyst", "generic"])
@@ -607,9 +598,9 @@ def test_brief_composes_with_every_persona(persona_id: str) -> None:
     assert prompt.startswith(SHARED_WRITER_BASE)
     assert "MOST RECENT appearance" in prompt
     assert "2-3 sentence" in prompt
-    # Selection mechanism survives composition (the pinned-signal directive).
-    assert "Top Improvement" in prompt
-    assert "Top Concern" in prompt
+    # Thread-inheritance directive survives composition (recover-only framing).
+    assert "central thread" in prompt
+    assert "Do not re-derive a thread of your own" in prompt
     # Persona voice is layered in (scout voice flows to all three via the chain).
     assert "Write like an analyst talking to another analyst" in prompt
     # Brief stays terse — the synthesis capsule's model-teaching mandate is absent.

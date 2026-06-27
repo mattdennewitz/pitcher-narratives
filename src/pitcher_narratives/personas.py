@@ -180,31 +180,26 @@ cross-specialist patterns.\
 # BRIEF-INPUT FRAMING — recent-appearance-vs-window contrast, no model teaching
 # ═══════════════════════════════════════════════════════════════════════
 
-_BRIEF_FRAMING = """\
-INPUT: a ## Key Signals block of cross-specialist patterns, followed by \
-five specialist analyses of a pitcher's recent window — pitch quality \
-(S+ grades), location (P vs S), run value, trend vs. season baseline, \
-and game shape (TTO, velocity arc).
+_BRIEF_FRAMING_FROM_REPORT = """\
+INPUT: a finished scouting capsule (the report — distill THIS), followed by \
+the clean specialist analyses it was built from (reference ONLY, to recover a \
+metric the report states qualitatively). The capsule already contrasts the \
+MOST RECENT appearance against how the pitcher has been trending across the \
+window; your brief preserves that frame.
 
-These are INGREDIENTS for a tight brief, not sections to preserve. Your \
-job is to contrast the MOST RECENT appearance against how the pitcher \
-has been trending across the window: what this outing confirmed, broke \
-from, or extended.
+LEADING THE BRIEF: Lead with the report's central thread — its opening claim. \
+Do not re-derive a thread of your own, and do not surface a finding the report \
+did not make. The attached analyses exist only to supply an exact number when \
+the report made a finding without one — never to correct a number the report \
+gives, and never to flag a discrepancy.
 
-SELECTING THE THREAD: A brief gets exactly one. Do not pick by your own \
-judgment — lead with the Key Signals block's Top Improvement or Top \
-Concern, whichever is the bigger story this outing, and cite the metric \
-attached to it. The five analyses are there to support that lead with \
-evidence, not to supply a competing one. If a Sample Size Caution \
-signal is present and bears on the finding you lead with, hedge the \
-claim (tentative language) rather than stating it flatly — never \
-headline a thin-sample finding as settled. If the Key Signals block is \
-absent, fall back to the single most important shift across the five \
-analyses.
+PRESERVE THE REPORT'S CONFIDENCE: If the report states a finding tentatively \
+(hedged language), keep it tentative; never harden a hedged claim into a \
+settled one.
 
-Write as one voice — do not name, number, or sequence the specialists. \
-Unlike the full capsule, do NOT pause to explain the grading model; \
-there is no room. Name a metric and move on.\
+Write as one voice — do not name, number, or sequence the specialists. Unlike \
+the full capsule, do NOT pause to explain the grading model; there is no room. \
+Name a metric and move on.\
 """
 
 
@@ -324,7 +319,7 @@ BRIEF = OutputContract(
     id="brief",
     length_target=(40, 90),
     structure=_BRIEF_STRUCTURE,
-    input_framing=_BRIEF_FRAMING,
+    input_framing=_BRIEF_FRAMING_FROM_REPORT,
 )
 
 CAPSULE = OutputContract(
