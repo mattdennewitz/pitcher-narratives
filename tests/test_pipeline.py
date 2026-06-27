@@ -414,6 +414,15 @@ class TestGeneratePipelineStreaming:
         assert isinstance(result.brief, str)
         assert len(result.brief) > 0
 
+    def test_pipeline_result_includes_executive_summary(self, ctx):
+        """The terminal layer runs the executive summary against the final
+        capsule and returns parsed bullets."""
+        test_model = TestModel(call_tools=[])
+        result = generate_pipeline_streaming(
+            ctx, provider="gemini", thinking="high", _model_override=test_model,
+        )
+        assert isinstance(result.executive_summary, list)
+
     def test_brief_agent_has_no_skill_toolset(self):
         """The brief agent stays tool-free (like the executive summary).
 

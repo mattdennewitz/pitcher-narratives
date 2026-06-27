@@ -994,18 +994,26 @@ def _render_pipeline_data_sections(
         "[Receives: key signals + all 5 specialist outputs]\n"
     )
 
-    sections.append(f"\n{sep}\nEXECUTIVE SUMMARY\n{sep}\n")
+    sections.append(f"\n{sep}\nEXECUTIVE SUMMARY (second step — summarizes the final report)\n{sep}\n")
     sections.append(f"## System Prompt\n\n{_EXECUTIVE_SUMMARY_PROMPT}\n")
     sections.append(
         "## User Message\n\n"
-        "[Receives: same input as writer]\n"
+        + build_summary_input(
+            "[final report capsule, post anchor-revision]",
+            "[writer input: key signals + clean specialist analyses]",
+        )
+        + "\n"
     )
 
-    sections.append(f"\n{sep}\nBRIEF\n{sep}\n")
+    sections.append(f"\n{sep}\nBRIEF (second step — summarizes the final report)\n{sep}\n")
     sections.append(f"## System Prompt\n\n{build_system_prompt(persona_obj, BRIEF)}\n")
     sections.append(
         "## User Message\n\n"
-        "[Receives: same input as writer — key signals + all 5 specialist outputs]\n"
+        + build_summary_input(
+            "[final report capsule, post anchor-revision]",
+            "[writer input: key signals + clean specialist analyses]",
+        )
+        + "\n"
     )
 
     sections.append(f"\n{sep}\nANCHOR CHECK\n{sep}\n")
@@ -1451,15 +1459,6 @@ async def _run_pipeline(
     )
     writer_kwargs = agent_kwargs(writer_input, _model_override)
 
-    # Run summary and brief in background while writer streams (same input as
-    # the writer: key signals block + clean specialist analyses).
-    summary_task = asyncio.create_task(
-        agents.summary.run(**agent_kwargs(writer_input, _model_override))
-    )
-    brief_task = asyncio.create_task(
-        agents.brief.run(**agent_kwargs(writer_input, _model_override))
-    )
-
     async with agents.writer.run_stream(**writer_kwargs) as stream:
         chunks: list[str] = []
         async for delta in stream.stream_text(delta=True):
@@ -1468,27 +1467,6 @@ async def _run_pipeline(
     print()
 
     capsule = "".join(chunks)
-
-    # Await executive summary — non-critical, don't crash if it fails
-    try:
-        summary_result = await summary_task
-        summary_raw = summary_result.output
-        summary_bullets = [
-            line.lstrip("- ").strip()
-            for line in summary_raw.strip().splitlines()
-            if line.strip().startswith("- ")
-        ]
-    except Exception:
-        log.warning("Executive summary agent failed, skipping.", exc_info=True)
-        summary_bullets = []
-
-    # Await brief — non-critical, same as the executive summary
-    try:
-        brief_result = await brief_task
-        brief_text = brief_result.output.strip()
-    except Exception:
-        log.warning("Brief agent failed, skipping.", exc_info=True)
-        brief_text = ""
 
     # EXPLAIN THE MODEL post-processor (non-fatal quality gate).
     # Runs for all personas — a persona that silently drops Pitching+
@@ -1514,6 +1492,7 @@ async def _run_pipeline(
         else specialist_synthesis
     )
 
+    log.info("Revising report (anchor check loop)...")
     capsule, anchor_check, revision_count = await _run_anchor_revision_loop(
         anchor_agent=agents.anchor,
         writer_agent=agents.writer,
@@ -1531,6 +1510,18 @@ async def _run_pipeline(
             "[%s] anchor revision removed model explanation content from capsule",
             persona,
         )
+
+    # Second step: summarize the FINISHED, anchored report (not the
+    # pre-revision specialist data). writer_input is attached as recover-only
+    # grounding inside _run_summaries.
+    log.info("Writing summary and brief from the final report...")
+    summary_bullets, brief_text = await _run_summaries(
+        summary_agent=agents.summary,
+        brief_agent=agents.brief,
+        capsule=capsule,
+        writer_input=writer_input,
+        _model_override=_model_override,
+    )
 
     return PipelineResult(
         narrative=capsule,
