@@ -1130,6 +1130,7 @@ def make_pipeline_agents(
     writer_settings = make_model_settings(provider, thinking, 0.7, max_tokens=TOKEN_BUDGET_LARGE)
     checker_settings = make_model_settings(provider, cap_thinking(thinking, "low"), 0.1, max_tokens=TOKEN_BUDGET_SMALL, mini=True)
     summary_settings = make_model_settings(provider, cap_thinking(thinking, "medium"), 0.3, max_tokens=TOKEN_BUDGET_SMALL, mini=True)
+    brief_settings = make_model_settings(provider, cap_thinking(thinking, "medium"), 0.6, max_tokens=TOKEN_BUDGET_SMALL, mini=True)
 
     # Prose agents carry the shared skills toolset so they can consult
     # project skills (e.g. statcast-data-conventions) on demand. The
@@ -1157,13 +1158,13 @@ def make_pipeline_agents(
                      defer_model_check=True)
 
     def _brief(prompt: str) -> Agent[None, str]:
-        # Main model for voice parity with the writer (BRIEF honors --persona),
-        # but tool-free: it synthesizes already-clean specialist text and a
-        # 2-3 sentence output has no need to consult skills. Staying tool-free
-        # also means a hallucinated skill call can't kill this non-critical
-        # concurrent extra. retries=3 mirrors the writer's resilience.
-        return Agent(model, output_type=str, system_prompt=prompt,
-                     model_settings=writer_settings, retries=3,
+        # Mini model: BRIEF distills an already-written, anchored report —
+        # cheaper than composing it. Persona voice instructions still apply
+        # via build_system_prompt(persona, BRIEF). Tool-free (a hallucinated
+        # skill call must not kill this non-critical extra); retries=3 mirrors
+        # the writer's resilience.
+        return Agent(mini_model, output_type=str, system_prompt=prompt,
+                     model_settings=brief_settings, retries=3,
                      defer_model_check=True)
 
     return PipelineAgents(

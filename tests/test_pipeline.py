@@ -236,6 +236,12 @@ class TestMakePipelineAgents:
         agents = make_pipeline_agents("gemini", "high")
         assert agents.signal_extractor is not None
 
+    def test_brief_uses_mini_model(self):
+        agents = make_pipeline_agents("gemini", "high")
+        # BRIEF distills an already-written report — a mini model suffices.
+        assert agents.brief.model == agents.summary.model
+        assert agents.brief.model != agents.writer.model
+
 
 # ── Audit loop smoke tests ───────────────────────────────────────────
 
