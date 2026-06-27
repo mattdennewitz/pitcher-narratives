@@ -177,7 +177,8 @@ cross-specialist patterns.\
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# BRIEF-INPUT FRAMING — recent-appearance-vs-window contrast, no model teaching
+# BRIEF-INPUT FRAMING — distills the finished report (report-as-source-of-truth,
+# recover-only grounding); recent-vs-window frame, no model teaching
 # ═══════════════════════════════════════════════════════════════════════
 
 _BRIEF_FRAMING_FROM_REPORT = """\

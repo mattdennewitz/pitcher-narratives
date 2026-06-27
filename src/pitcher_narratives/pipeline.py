@@ -1450,8 +1450,9 @@ async def _run_pipeline(
     key_signals = analyzed.key_signals
     log.info("Analysis spine complete.")
 
-    # Phase 2: Writer + Executive Summary run concurrently
-    # Writer gets clean specialist outputs + key signals.
+    # Phase 2: Writer streams the initial capsule from clean specialist
+    # outputs + key signals. Summarization is a separate second step that
+    # runs after the anchor revision loop (see _run_summaries below).
     writer_input = build_writer_input(
         ctx, specialists.stuff, specialists.location,
         specialists.runvalue, specialists.trends, specialists.game_shape,
