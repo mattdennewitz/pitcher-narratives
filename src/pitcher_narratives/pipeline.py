@@ -1138,7 +1138,12 @@ def make_pipeline_agents(
     writer_settings = make_model_settings(provider, thinking, 0.7, max_tokens=TOKEN_BUDGET_LARGE)
     checker_settings = make_model_settings(provider, cap_thinking(thinking, "low"), 0.1, max_tokens=TOKEN_BUDGET_SMALL, mini=True)
     summary_settings = make_model_settings(provider, cap_thinking(thinking, "medium"), 0.3, max_tokens=TOKEN_BUDGET_SMALL, mini=True)
-    brief_settings = make_model_settings(provider, cap_thinking(thinking, "medium"), 0.6, max_tokens=TOKEN_BUDGET_SMALL, mini=True)
+    # Second-step summarizers (executive summary + brief) distill the finished
+    # report from a large grounded input. Thinking is disabled so its tokens
+    # don't consume the output budget (which truncated the response), and the
+    # cap is raised to MEDIUM for headroom.
+    report_summary_settings = make_model_settings(provider, cap_thinking(thinking, "low"), 0.3, max_tokens=TOKEN_BUDGET_MEDIUM, mini=True, disable_thinking=True)
+    brief_settings = make_model_settings(provider, cap_thinking(thinking, "low"), 0.6, max_tokens=TOKEN_BUDGET_MEDIUM, mini=True, disable_thinking=True)
 
     # Prose agents carry the shared skills toolset so they can consult
     # project skills (e.g. statcast-data-conventions) on demand. The
@@ -1187,7 +1192,7 @@ def make_pipeline_agents(
         anchor=Agent(mini_model, output_type=AnchorResult, system_prompt=ANCHOR_PROMPT,
                      model_settings=checker_settings, retries=3, defer_model_check=True),
         summary=Agent(mini_model, output_type=str, system_prompt=_EXECUTIVE_SUMMARY_PROMPT,
-                      model_settings=summary_settings, defer_model_check=True),
+                      model_settings=report_summary_settings, defer_model_check=True),
         signal_extractor=Agent(mini_model, output_type=KeySignals, system_prompt=SIGNAL_EXTRACTOR_PROMPT,
                                model_settings=summary_settings, retries=3, defer_model_check=True),
         brief=_brief(build_system_prompt(persona, BRIEF)),

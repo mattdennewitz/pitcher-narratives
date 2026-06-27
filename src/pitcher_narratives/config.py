@@ -71,24 +71,34 @@ def make_model_settings(
     *,
     max_tokens: int = 16384,
     mini: bool = False,
+    disable_thinking: bool = False,
 ) -> ModelSettings:
     """Build provider-aware ModelSettings with thinking-effort translation.
 
     Args:
         mini: True when targeting a mini-tier model. Disables thinking for
               providers where mini models don't support it (Claude).
+        disable_thinking: True to turn thinking off entirely regardless of the
+              ``thinking`` arg. Used for pure distillation tasks (e.g. the
+              second-step report summarizers) where thinking tokens would
+              otherwise consume the output budget and truncate the response.
     """
     if provider == "gemini":
-        gemini_level = "high" if thinking in ("high", "xhigh") else "low"
+        if disable_thinking:
+            thinking_config = {"thinking_budget": 0}
+        else:
+            gemini_level = "high" if thinking in ("high", "xhigh") else "low"
+            thinking_config = {"thinking_level": gemini_level}
         return GoogleModelSettings(
-            google_thinking_config={"thinking_level": gemini_level},
+            google_thinking_config=thinking_config,
             temperature=temperature,
             max_tokens=max_tokens,
         )
     elif provider == "claude":
         # Claude: disable thinking for small budgets (thinking.budget_tokens
-        # would exceed max_tokens) and for mini models (Haiku).
-        if mini or max_tokens <= TOKEN_BUDGET_MEDIUM:
+        # would exceed max_tokens), for mini models (Haiku), and whenever the
+        # caller explicitly disables it.
+        if mini or disable_thinking or max_tokens <= TOKEN_BUDGET_MEDIUM:
             return ModelSettings(temperature=1, max_tokens=max_tokens)
         # Anthropic's thinking budget counts against max_tokens, so the
         # requested cap must be headroom-extended or thinking can exhaust
