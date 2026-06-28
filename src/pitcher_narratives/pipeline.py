@@ -430,23 +430,26 @@ If everything checks out, return an empty list."""
 # AuditFlag and AuditResult are defined in models.py and imported above.
 
 _CAPSULE_AUDITOR_PROMPT = """\
-You are a fact-checker for a baseball scouting report. You receive the raw \
-ground-truth data for a pitcher and the finished narrative (the capsule). \
-Verify every metric, direction, and factual claim in the capsule against the \
-ground truth.
+You are a fact-checker for a baseball scouting report. You receive the source \
+material the report was built from — raw ground-truth data tables, the \
+specialists' analyses, and the key-signals summary — and the finished narrative \
+(the capsule). Verify every metric, direction, and factual claim in the capsule \
+against that source material.
 
 Flag these problems (reuse the audit categories):
-- METRIC_CONTRADICTION: the capsule characterizes a metric in a way the data \
+- METRIC_CONTRADICTION: the capsule characterizes a metric in a way the source \
 contradicts (calls a NORMAL metric extreme, etc.).
-- DIRECTION_ERROR: the capsule states a metric/trend went one way but the data \
+- DIRECTION_ERROR: the capsule states a metric/trend went one way but the source \
 shows the other.
-- FABRICATED_DATA: the capsule cites a specific number that does not appear in \
-the ground truth.
-- UNRECONCILED / HALLUCINATED_CAUSATION: a causal claim the data does not support.
+- FABRICATED_DATA: the capsule cites a specific number that appears nowhere in \
+the source material.
+- UNRECONCILED / HALLUCINATED_CAUSATION: a causal claim the source does not support.
 
-Only flag genuine factual errors against the ground truth — not style, emphasis, \
-or legitimate synthesis (deltas, contrasts, paraphrases of grades). If the \
-capsule is faithful, return an empty list of flags."""
+Only flag genuine factual errors against the source — not style, emphasis, or \
+legitimate synthesis. The specialists' analyses already contain computed deltas, \
+contrasts, and paraphrases of grades (e.g. "S+ up 8 points", "28% above \
+average"); a number the capsule draws from those is faithful, NOT fabricated. \
+If the capsule is faithful, return an empty list of flags."""
 
 
 def _build_capsule_ground_truth(ctx: PitcherContext) -> str:
@@ -1602,7 +1605,10 @@ async def _run_pipeline(
     # EXPLAIN THE MODEL post-processor (non-fatal quality gate).
     # Runs for all personas — a persona that silently drops Pitching+
     # context produces a warning but does not fail the pipeline.
-    pre_revision_explainer_ok = check_explainer_present(capsule)
+    # capsule.strip() guards check_explainer_present, which raises on an empty
+    # capsule (writer stream yielded no text). An empty capsule degrades
+    # downstream (summaries return empty) rather than crashing the run here.
+    pre_revision_explainer_ok = bool(capsule.strip()) and check_explainer_present(capsule)
     if not pre_revision_explainer_ok:
         log.warning(
             "[%s] capsule is missing model explanation content",
@@ -1642,26 +1648,36 @@ async def _run_pipeline(
             persona,
         )
 
-    # Fact-checking layer (B then A) on the final capsule.
+    # Fact-checking layer (B then A) on the final capsule. Both check against the
+    # same source: the union of everything the writer actually saw (raw ground
+    # truth + clean specialist outputs + key signals). Feeding B the union — not
+    # just the raw tables — stops it from flagging legitimate derived numbers
+    # (key-signal deltas, plus-grade paraphrases) as fabricated and triggering a
+    # needless fact-revision. Built once and reused by B and A.
     log.info("Fact-checking the capsule against ground truth...")
+    fact_check_source = _build_parity_union(ctx, specialists, key_signals)
     capsule, capsule_audit_flags, capsule_revised = await _run_capsule_audit(
         auditor=agents.capsule_auditor,
         writer_agent=agents.writer,
-        ground_truth=_build_capsule_ground_truth(ctx),
+        ground_truth=fact_check_source,
         capsule=capsule,
         _model_override=_model_override,
     )
     # Re-check explainer after B's fact-revision, mirroring the anchor guard:
     # a fact-correction can rewrite the capsule and drop Pitching+ context.
-    if capsule_revised and pre_revision_explainer_ok and not check_explainer_present(capsule):
+    # capsule.strip() guards check_explainer_present, which raises on empty.
+    if (
+        capsule_revised
+        and pre_revision_explainer_ok
+        and capsule.strip()
+        and not check_explainer_present(capsule)
+    ):
         log.warning(
             "[%s] capsule fact-revision removed model explanation content from capsule",
             persona,
         )
 
-    value_parity = check_value_parity(
-        capsule, _build_parity_union(ctx, specialists, key_signals)
-    )
+    value_parity = check_value_parity(capsule, fact_check_source)
 
     # Second step: summarize the FINISHED, anchored report (not the
     # pre-revision specialist data). writer_input is attached as recover-only

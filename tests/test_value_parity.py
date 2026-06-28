@@ -35,6 +35,20 @@ class TestExtractMetricValues:
         # "two-seamer" must not yield a bogus value; no mph/%/grade context.
         assert extract_metric_values("his two-seamer and four-seamer") == set()
 
+    def test_percent_vs_avg_without_space(self):
+        # "13%below average" (no space) still normalizes to grade 87.
+        assert ("grade", 87.0) in extract_metric_values("13%below average")
+
+    def test_grade_label_does_not_grab_distant_number(self):
+        # A number not immediately after the grade label (here a velocity) must
+        # NOT be misclassified as a grade.
+        v = extract_metric_values("his S+ sits 95 and he throws 95 mph")
+        assert ("grade", 95.0) not in v
+        assert ("velo", 95.0) in v
+
+    def test_grade_with_of(self):
+        assert ("grade", 130.0) in extract_metric_values("an S+ of 130 slider")
+
 
 class TestCheckValueParity:
     def test_clean_when_all_values_trace_to_union(self):
@@ -72,3 +86,18 @@ class TestCheckValueParity:
     def test_indeterminate_class_not_flagged(self):
         # a bare number with no metric context has no class -> never flagged.
         assert check_value_parity("he threw 17 pitches", "").is_clean
+
+    def test_hedge_does_not_leak_across_class(self):
+        # A hedged velocity (around 95 mph) must NOT suppress a fabricated grade
+        # 95 elsewhere in the capsule. Union supports velo 95, not grade 95.
+        capsule = "he sits around 95 mph and the slider grades 95 S+"
+        report = check_value_parity(capsule, "velo 95 mph")
+        assert not report.is_clean
+        assert any("grade=95" in u for u in report.unmatched)
+        # the hedged velo 95 itself is not flagged
+        assert not any("velo=95" in u for u in report.unmatched)
+
+    def test_negative_hedged_value_not_flagged(self):
+        # "around -0.77 xRV100" is hedged; its sign must be preserved so the
+        # suppression matches and no spurious advisory is emitted.
+        assert check_value_parity("around -0.77 xRV100", "").is_clean

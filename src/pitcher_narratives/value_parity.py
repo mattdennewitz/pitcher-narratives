@@ -13,10 +13,13 @@ __all__ = ["MetricValue", "ValueParityReport", "extract_metric_values", "check_v
 MetricValue = tuple[str, float]
 """(metric_class, value). Cross-class values never match; within-class match by tolerance."""
 
-# "28% above average" -> ("grade", 128); "13% below average" -> ("grade", 87).
-_PCT_VS_AVG = re.compile(r"(\d{1,3}(?:\.\d+)?)\s*%?\s+(above|below)\s+(?:league\s+)?average", re.I)
-# grade: "S+ 130", "Stuff+ 130", "130 Stuff+", "130 S+"
-_GRADE_AFTER = re.compile(r"(?:S\+|P\+|L\+|Stuff\+|Location\+|Pitching\+)\D{0,8}(\d{2,3})\b")
+# "28% above average" -> ("grade", 128); "13%below average" -> ("grade", 87).
+# \s* (not \s+) before above/below so a missing space ("13%below") still parses.
+_PCT_VS_AVG = re.compile(r"(\d{1,3}(?:\.\d+)?)\s*%?\s*(above|below)\s+(?:league\s+)?average", re.I)
+# grade: "S+ 130", "S+ of 130", "Stuff+ 130", "130 Stuff+", "130 S+".
+# The number must immediately follow the label (optionally "of "); a wider gap
+# would capture an unrelated nearby number ("S+ sits 95" — 95 is a velocity).
+_GRADE_AFTER = re.compile(r"(?:S\+|P\+|L\+|Stuff\+|Location\+|Pitching\+)\s*(?:of\s+)?(\d{2,3})\b")
 _GRADE_BEFORE = re.compile(r"\b(\d{2,3})\s+(?:S\+|P\+|L\+|Stuff\+|Location\+|Pitching\+)")
 _VELO = re.compile(r"(\d{2,3}(?:\.\d+)?)\s*mph")
 _PCT = re.compile(r"(\d{1,3}(?:\.\d+)?)\s*(?:%|percent)")
@@ -72,23 +75,27 @@ _TOLERANCE: dict[str, float] = {
     "delta": 1.0,
 }
 
-# Hedge markers: a number within ~20 chars after is the writer signaling
-# uncertainty; not flagged regardless of union support.
+# Hedge markers: a number right after one is the writer signaling uncertainty
+# and is not flagged regardless of union support.
 _HEDGE = re.compile(r"\b(roughly|about|around|approximately)\b\s*~?\s*-?\d", re.I)
+# Characters past the hedge to scan for the hedged number + its unit/metric
+# token (xRV100 trails its value by a few chars). Kept short so a hedge doesn't
+# suppress an unrelated metric further along the sentence.
+_HEDGE_WINDOW = 16
 
 
-def _hedged_values(text: str) -> set[float]:
-    """Return numeric values that appear immediately after a hedge word.
+def _hedged_metric_values(text: str) -> set[MetricValue]:
+    """Return the (class, value) tuples the writer hedged ("around 95 mph").
 
-    The regex consumes the first digit of the number; we step back one
-    character (``m.end() - 1``) so that ``re.search`` can find the full
-    multi-digit value.
+    Each hedged value is extracted from a window starting at the hedge word, so
+    it carries the correct metric class (no cross-class suppression leak) and
+    the correct sign (the full number, including a leading '-', sits inside the
+    window). Re-using ``extract_metric_values`` keeps hedge classification
+    identical to capsule classification, so exact (class, value) membership works.
     """
-    out: set[float] = set()
+    out: set[MetricValue] = set()
     for m in _HEDGE.finditer(text):
-        num = re.search(r"-?\d+(?:\.\d+)?", text[m.end() - 1 :])
-        if num:
-            out.add(float(num.group(0)))
+        out |= extract_metric_values(text[m.start() : m.end() + _HEDGE_WINDOW])
     return out
 
 
@@ -97,10 +104,10 @@ def check_value_parity(capsule: str, union: str) -> ValueParityReport:
     anywhere in the union. Advisory; cross-class values never satisfy each
     other; hedged and indeterminate-class numbers are not flagged."""
     union_values = extract_metric_values(union)
-    hedged = _hedged_values(capsule)
+    hedged = _hedged_metric_values(capsule)
     unmatched: list[str] = []
     for cls, val in sorted(extract_metric_values(capsule)):
-        if val in hedged:
+        if (cls, val) in hedged:  # class-aware: a hedged velo can't suppress a grade
             continue
         tol = _TOLERANCE.get(cls, 0.5)  # default keeps a new class advisory, not a crash
         if any(u_cls == cls and abs(u_val - val) <= tol for u_cls, u_val in union_values):
