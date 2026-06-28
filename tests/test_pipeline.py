@@ -1250,6 +1250,61 @@ class TestExecutiveSummaryPrompt:
         assert "cite a specific number" in p.lower()
 
 
+class TestRunCapsuleAudit:
+    class _CleanAuditor:
+        async def run(self, **kwargs):
+            from pitcher_narratives.models import AuditResult
+            class _R:
+                output = AuditResult(flags=[])
+            return _R()
+
+    class _FlaggingAuditor:
+        async def run(self, **kwargs):
+            from pitcher_narratives.models import AuditResult, AuditFlag
+            class _R:
+                output = AuditResult(flags=[AuditFlag(category="FABRICATED_DATA", claim="98 mph", data_shows="95.9", suggested_fix="use 95.9")])
+            return _R()
+
+    class _Writer:
+        async def run(self, **kwargs):
+            class _R:
+                output = "corrected capsule"
+            return _R()
+
+    def test_clean_audit_no_revision(self):
+        from pitcher_narratives.pipeline import _run_capsule_audit
+        cap, flags, revised = asyncio.run(_run_capsule_audit(
+            auditor=self._CleanAuditor(), writer_agent=self._Writer(),
+            ground_truth="gt", capsule="original capsule",
+        ))
+        assert cap == "original capsule"
+        assert flags == []
+        assert revised is False
+
+    def test_flagged_audit_triggers_one_revision(self):
+        from pitcher_narratives.pipeline import _run_capsule_audit
+        cap, flags, revised = asyncio.run(_run_capsule_audit(
+            auditor=self._FlaggingAuditor(), writer_agent=self._Writer(),
+            ground_truth="gt", capsule="original capsule",
+        ))
+        assert cap == "corrected capsule"
+        assert len(flags) == 1
+        assert revised is True
+
+    def test_auditor_error_degrades_to_unchanged(self):
+        from pitcher_narratives.pipeline import _run_capsule_audit
+        class _Boom:
+            async def run(self, **kwargs):
+                raise RuntimeError("boom")
+        cap, flags, revised = asyncio.run(_run_capsule_audit(
+            auditor=_Boom(), writer_agent=self._Writer(),
+            ground_truth="gt", capsule="original capsule",
+        ))
+        assert cap == "original capsule"
+        assert flags == []
+        assert revised is False
+
+
 class TestCapsuleAuditBuilders:
     def test_capsule_ground_truth_concatenates_all_specialists(self, ctx):
         from pitcher_narratives.pipeline import _build_capsule_ground_truth

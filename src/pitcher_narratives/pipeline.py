@@ -1504,6 +1504,40 @@ async def _run_summaries(
     return bullets, brief
 
 
+async def _run_capsule_audit(
+    *,
+    auditor: Agent[None, AuditResult],
+    writer_agent: Agent[None, str],
+    ground_truth: str,
+    capsule: str,
+    _model_override: Any = None,
+) -> tuple[str, list[AuditFlag], bool]:
+    """B: fact-check the capsule against ground truth once; on flags, run one
+    writer revision. Returns (corrected_capsule, flags, revised). Degrades to
+    (capsule, [], False) on any error — non-fatal."""
+    try:
+        result = await auditor.run(
+            **agent_kwargs(_build_capsule_audit_input(ground_truth, capsule), _model_override)
+        )
+        audit = result.output
+    except Exception:
+        log.warning("Capsule auditor failed, skipping fact-check.", exc_info=True)
+        return capsule, [], False
+
+    if audit.is_clean:
+        return capsule, [], False
+
+    log.info("Capsule auditor flagged %d issue(s); running one fact revision.", len(audit.flags))
+    try:
+        revision = await writer_agent.run(
+            **agent_kwargs(build_fact_revision_message(capsule, audit.flags), _model_override)
+        )
+        return revision.output, audit.flags, True
+    except Exception:
+        log.warning("Fact revision failed, keeping pre-revision capsule.", exc_info=True)
+        return capsule, audit.flags, False
+
+
 async def _run_pipeline(
     ctx: PitcherContext,
     *,
