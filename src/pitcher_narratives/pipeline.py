@@ -45,7 +45,7 @@ from typing import Any, NamedTuple
 
 from pydantic import BaseModel
 from pydantic_ai import Agent, CachePoint
-from pydantic_ai.settings import ThinkingEffort
+from pydantic_ai.settings import ModelSettings, ThinkingEffort
 
 from pitcher_narratives.agent_skills import skill_toolset
 from pitcher_narratives.anchor import (
@@ -1138,15 +1138,17 @@ def make_pipeline_agents(
     writer_settings = make_model_settings(provider, thinking, 0.7, max_tokens=TOKEN_BUDGET_LARGE)
     checker_settings = make_model_settings(provider, cap_thinking(thinking, "low"), 0.1, max_tokens=TOKEN_BUDGET_SMALL, mini=True)
     # signal_extractor does structured cross-specialist extraction from the same
-    # large specialist-analyses payload the summarizers see. Keep thinking
-    # (extraction benefits from reasoning) but use a MEDIUM budget so thinking
-    # tokens can't truncate the structured KeySignals output.
+    # large specialist-analyses payload the summarizers see. On Gemini thinking
+    # is kept (extraction benefits from reasoning) but the MEDIUM budget gives
+    # it headroom so thinking tokens can't truncate the structured KeySignals
+    # output; on Claude mini=True already disables thinking, leaving the full
+    # MEDIUM budget for output.
     signal_settings = make_model_settings(provider, cap_thinking(thinking, "medium"), 0.3, max_tokens=TOKEN_BUDGET_MEDIUM, mini=True)
     # Second-step summarizers (executive summary + brief) distill the finished
     # report from a large grounded input. Thinking is disabled so its tokens
     # don't consume the output budget (which truncated the response); the cap is
     # MEDIUM for headroom. They differ only in temperature.
-    def _distillation_settings(temperature: float):
+    def _distillation_settings(temperature: float) -> ModelSettings:
         return make_model_settings(
             provider, cap_thinking(thinking, "low"), temperature,
             max_tokens=TOKEN_BUDGET_MEDIUM, mini=True, disable_thinking=True,
