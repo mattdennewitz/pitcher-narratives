@@ -1304,6 +1304,21 @@ class TestRunCapsuleAudit:
         assert flags == []
         assert revised is False
 
+    def test_writer_error_keeps_flags_not_revised(self):
+        # Writer-failure branch differs from auditor-failure: flags are
+        # PRESERVED (not []), and revised is False (no correction applied).
+        from pitcher_narratives.pipeline import _run_capsule_audit
+        class _BoomWriter:
+            async def run(self, **kwargs):
+                raise RuntimeError("writer boom")
+        cap, flags, revised = asyncio.run(_run_capsule_audit(
+            auditor=self._FlaggingAuditor(), writer_agent=_BoomWriter(),
+            ground_truth="gt", capsule="original capsule",
+        ))
+        assert cap == "original capsule"
+        assert len(flags) == 1   # flags preserved, not []
+        assert revised is False
+
 
 class TestCapsuleAuditBuilders:
     def test_capsule_ground_truth_concatenates_all_specialists(self, ctx):
