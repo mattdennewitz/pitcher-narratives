@@ -1,4 +1,4 @@
-from pitcher_narratives.value_parity import extract_metric_values
+from pitcher_narratives.value_parity import check_value_parity, extract_metric_values
 
 
 class TestExtractMetricValues:
@@ -34,3 +34,41 @@ class TestExtractMetricValues:
     def test_does_not_extract_word_numbers(self):
         # "two-seamer" must not yield a bogus value; no mph/%/grade context.
         assert extract_metric_values("his two-seamer and four-seamer") == set()
+
+
+class TestCheckValueParity:
+    def test_clean_when_all_values_trace_to_union(self):
+        union = "Velocity 81.3 mph. S+ 130. zone 25.0%."
+        capsule = "an 81 mph pitch grading 130 S+ in the zone 25% of the time"
+        assert check_value_parity(capsule, union).is_clean
+
+    def test_cross_class_collision_is_flagged(self):
+        # capsule cites a 95 mph velo; union only has 95 as a percentage.
+        union = "chase rate 95%"
+        report = check_value_parity("sat 95 mph", union)
+        assert not report.is_clean  # (velo,95) must NOT match (pct,95)
+
+    def test_out_of_tolerance_grade_flagged(self):
+        union = "S+ 130"
+        assert not check_value_parity("a 124 S+ slider", "S+ 130").is_clean
+
+    def test_within_tolerance_grade_clean(self):
+        # whole-number grade tolerance is +/-1
+        assert check_value_parity("a 131 S+ slider", "S+ 130").is_clean
+
+    def test_paraphrase_grade_matches_pct_above_average(self):
+        # capsule says "28% above average"; union has the grade 128.
+        assert check_value_parity("28% above average", "S+ 128").is_clean
+
+    def test_hedged_number_not_flagged(self):
+        # "around 90" is hedged; even with no union support it is not flagged.
+        assert check_value_parity("around 90 mph", "velocity 95.0 mph").is_clean
+
+    def test_fabricated_value_flagged(self):
+        report = check_value_parity("a 145 S+ monster", "S+ 130. velo 95 mph.")
+        assert not report.is_clean
+        assert any("145" in u for u in report.unmatched)
+
+    def test_indeterminate_class_not_flagged(self):
+        # a bare number with no metric context has no class -> never flagged.
+        assert check_value_parity("he threw 17 pitches", "").is_clean
