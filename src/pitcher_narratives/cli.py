@@ -303,8 +303,18 @@ def _run_report_command(args: argparse.Namespace) -> None:
     # Capsule fact-check (B)
     print("\n\n# Capsule Fact-Check\n")
     if pipe_result.capsule_audit_flags:
-        verb = "corrected" if pipe_result.capsule_revised else "flagged (not auto-corrected)"
-        print(f"Auditor {verb} {len(pipe_result.capsule_audit_flags)} issue(s):")
+        n = len(pipe_result.capsule_audit_flags)
+        if pipe_result.capsule_revised:
+            # The report streamed above is the pre-correction draft; the fix was
+            # applied to the saved report (PipelineResult.narrative), not the
+            # streamed text. Say so rather than implying the visible report was
+            # corrected.
+            print(
+                f"Auditor flagged {n} issue(s); corrected in the saved report "
+                "(the streamed report above is the pre-correction draft):"
+            )
+        else:
+            print(f"Auditor flagged {n} issue(s) (not auto-corrected):")
         for f in pipe_result.capsule_audit_flags:
             print(f"- **[{f.category}]** {f.claim}")
             print(f"  - Data shows: {f.data_shows}")

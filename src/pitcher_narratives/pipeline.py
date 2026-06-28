@@ -1651,6 +1651,14 @@ async def _run_pipeline(
         capsule=capsule,
         _model_override=_model_override,
     )
+    # Re-check explainer after B's fact-revision, mirroring the anchor guard:
+    # a fact-correction can rewrite the capsule and drop Pitching+ context.
+    if capsule_revised and pre_revision_explainer_ok and not check_explainer_present(capsule):
+        log.warning(
+            "[%s] capsule fact-revision removed model explanation content from capsule",
+            persona,
+        )
+
     value_parity = check_value_parity(
         capsule, _build_parity_union(ctx, specialists, key_signals)
     )

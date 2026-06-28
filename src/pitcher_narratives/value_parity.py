@@ -102,7 +102,7 @@ def check_value_parity(capsule: str, union: str) -> ValueParityReport:
     for cls, val in sorted(extract_metric_values(capsule)):
         if val in hedged:
             continue
-        tol = _TOLERANCE[cls]
+        tol = _TOLERANCE.get(cls, 0.5)  # default keeps a new class advisory, not a crash
         if any(u_cls == cls and abs(u_val - val) <= tol for u_cls, u_val in union_values):
             continue
         unmatched.append(f"{cls}={val:g} (no match in source data)")

@@ -1342,7 +1342,8 @@ class TestCapsuleAuditBuilders:
         out = _build_capsule_audit_input("GROUND_TRUTH", "CAPSULE_TEXT")
         assert "GROUND_TRUTH" in out
         assert "CAPSULE_TEXT" in out
-        assert out.index("GROUND_TRUTH") < out.index("CAPSULE_TEXT") or "GROUND TRUTH" in out
+        # Ground truth comes first, the capsule to fact-check second.
+        assert out.index("GROUND_TRUTH") < out.index("CAPSULE_TEXT")
 
     def test_fact_revision_message_lists_flags(self):
         from pitcher_narratives.pipeline import build_fact_revision_message
