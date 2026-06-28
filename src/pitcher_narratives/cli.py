@@ -300,6 +300,24 @@ def _run_report_command(args: argparse.Namespace) -> None:
     else:
         print("Clean — no issues found.")
 
+    # Capsule fact-check (B)
+    print("\n\n# Capsule Fact-Check\n")
+    if pipe_result.capsule_audit_flags:
+        verb = "corrected" if pipe_result.capsule_revised else "flagged (not auto-corrected)"
+        print(f"Auditor {verb} {len(pipe_result.capsule_audit_flags)} issue(s):")
+        for f in pipe_result.capsule_audit_flags:
+            print(f"- **[{f.category}]** {f.claim}")
+            print(f"  - Data shows: {f.data_shows}")
+    else:
+        print("Clean — no factual issues found.")
+
+    # Value parity (A, advisory)
+    if pipe_result.value_parity_warnings:
+        print("\n\n# Value Parity (advisory)\n")
+        print("Capsule numbers with no match in the source data:")
+        for w in pipe_result.value_parity_warnings:
+            print(f"- {w}")
+
     # Anchor check
     print("\n\n# Anchor Check\n")
     if pipe_result.revision_count == 0 and not pipe_result.anchor_warnings:

@@ -285,6 +285,7 @@ def test_cli_narrative_output_has_required_sections():
       3. # Brief                 (2-3 sentence recent-vs-window summary)
       4. # Stuff Analysis        (the stuff specialist's output)
       5. # Data Audit            (audit flags or 'Clean — no issues found.')
+      6. # Capsule Fact-Check    (capsule audit flags or 'Clean — no factual issues found.')
 
     This test locks the format in. Also verified: # Anchor Check is
     present (separate test above) since it stays in the narrative
@@ -307,6 +308,7 @@ def test_cli_narrative_output_has_required_sections():
     assert "\n# Brief\n" in stdout, "missing Brief heading"
     assert "\n# Stuff Analysis\n" in stdout, "missing Stuff Analysis heading"
     assert "\n# Data Audit\n" in stdout, "missing Data Audit heading"
+    assert "\n# Capsule Fact-Check\n" in stdout, "missing Capsule Fact-Check heading"
 
 
 # ── Integration: --print-prompts ──
