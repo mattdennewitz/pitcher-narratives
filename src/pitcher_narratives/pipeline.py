@@ -109,7 +109,8 @@ __all__ = [
     "AnalyzedContext",
     "AuditFlag", "AuditResult", "ExecutiveSummary", "HallucinationReport",
     "KeySignals", "PipelineAgents", "PipelineResult",
-    "UserPrompt", "audit_and_revise_specialists", "build_summary_input",
+    "UserPrompt", "audit_and_revise_specialists", "build_fact_revision_message",
+    "build_summary_input",
     "build_writer_input", "check_explainer_present", "check_hallucinated_metrics",
     "generate_pipeline_streaming",
     "make_pipeline_agents", "run_analysis_spine", "run_specialists",
@@ -426,6 +427,55 @@ If everything checks out, return an empty list."""
 
 
 # AuditFlag and AuditResult are defined in models.py and imported above.
+
+_CAPSULE_AUDITOR_PROMPT = """\
+You are a fact-checker for a baseball scouting report. You receive the raw \
+ground-truth data for a pitcher and the finished narrative (the capsule). \
+Verify every metric, direction, and factual claim in the capsule against the \
+ground truth.
+
+Flag these problems (reuse the audit categories):
+- METRIC_CONTRADICTION: the capsule characterizes a metric in a way the data \
+contradicts (calls a NORMAL metric extreme, etc.).
+- DIRECTION_ERROR: the capsule states a metric/trend went one way but the data \
+shows the other.
+- FABRICATED_DATA: the capsule cites a specific number that does not appear in \
+the ground truth.
+- UNRECONCILED / HALLUCINATED_CAUSATION: a causal claim the data does not support.
+
+Only flag genuine factual errors against the ground truth — not style, emphasis, \
+or legitimate synthesis (deltas, contrasts, paraphrases of grades). If the \
+capsule is faithful, return an empty list of flags."""
+
+
+def _build_capsule_ground_truth(ctx: PitcherContext) -> str:
+    """Combined raw ground truth (all five specialists' input tables)."""
+    names = ["stuff", "location", "runvalue", "trends", "game_shape"]
+    return "\n\n".join(_get_specialist_input_text(name, ctx) for name in names)
+
+
+def _build_capsule_audit_input(ground_truth: str, capsule: str) -> str:
+    """Auditor input: ground truth + the finished capsule to verify."""
+    return (
+        f"## GROUND TRUTH DATA\n{ground_truth}\n\n"
+        f"## FINISHED CAPSULE TO FACT-CHECK\n{capsule}"
+    )
+
+
+def build_fact_revision_message(capsule: str, flags: list[AuditFlag]) -> str:
+    """Ask the writer to correct ONLY the capsule's flagged factual errors."""
+    formatted = "\n".join(
+        f"- [{f.category}] \"{f.claim}\" → Data shows: {f.data_shows}. "
+        f"Fix: {f.suggested_fix}"
+        for f in flags
+    )
+    return (
+        f"## Your Capsule\n{capsule}\n\n"
+        f"## Factual Errors Found\n{formatted}\n\n"
+        "Revise the capsule to correct ONLY these factual errors. Keep all "
+        "other content, structure, voice, and length unchanged."
+    )
+
 
 # ═══════════════════════════════════════════════════════════════════════
 # EXECUTIVE SUMMARY PROMPT

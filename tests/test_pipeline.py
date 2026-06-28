@@ -1241,3 +1241,29 @@ class TestExecutiveSummaryPrompt:
         assert "Given specialist analyses" not in p
         # Citation requirement preserved.
         assert "cite a specific number" in p.lower()
+
+
+class TestCapsuleAuditBuilders:
+    def test_capsule_ground_truth_concatenates_all_specialists(self, ctx):
+        from pitcher_narratives.pipeline import _build_capsule_ground_truth
+        gt = _build_capsule_ground_truth(ctx)
+        # The stuff specialist's ground truth has the arsenal physical profile.
+        assert "Arsenal Physical Profile" in gt
+        assert "P vs S Location Impact" in gt  # location specialist's input
+
+    def test_capsule_audit_input_has_both_sections(self):
+        from pitcher_narratives.pipeline import _build_capsule_audit_input
+        out = _build_capsule_audit_input("GROUND_TRUTH", "CAPSULE_TEXT")
+        assert "GROUND_TRUTH" in out
+        assert "CAPSULE_TEXT" in out
+        assert out.index("GROUND_TRUTH") < out.index("CAPSULE_TEXT") or "GROUND TRUTH" in out
+
+    def test_fact_revision_message_lists_flags(self):
+        from pitcher_narratives.pipeline import build_fact_revision_message
+        from pitcher_narratives.models import AuditFlag
+        flags = [AuditFlag(category="FABRICATED_DATA", claim="98 mph", data_shows="95.9 mph", suggested_fix="use 95.9")]
+        msg = build_fact_revision_message("the capsule text", flags)
+        assert "the capsule text" in msg
+        assert "FABRICATED_DATA" in msg
+        assert "95.9 mph" in msg
+        assert "ONLY" in msg  # instructs to fix only flagged issues
