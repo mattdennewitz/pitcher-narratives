@@ -6,9 +6,7 @@ from __future__ import annotations
 
 import re
 
-from pydantic import BaseModel
-
-__all__ = ["MetricValue", "ValueParityReport", "extract_metric_values", "check_value_parity"]
+__all__ = ["MetricValue", "extract_metric_values"]  # extended in the matching task
 
 MetricValue = tuple[str, float]
 """(metric_class, value). Cross-class values never match; within-class match by tolerance."""
