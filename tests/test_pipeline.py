@@ -456,6 +456,15 @@ class TestGeneratePipelineStreaming:
         toolsets = list(getattr(agents.brief, "_user_toolsets", []))
         assert skill_toolset() not in toolsets
 
+    def test_pipeline_result_has_fact_check_fields(self, ctx):
+        test_model = TestModel(call_tools=[])
+        result = generate_pipeline_streaming(
+            ctx, provider="gemini", thinking="high", _model_override=test_model,
+        )
+        assert isinstance(result.capsule_audit_flags, list)
+        assert isinstance(result.capsule_revised, bool)
+        assert isinstance(result.value_parity_warnings, list)
+
 
 # ── Anchor revision loop behavioral tests ────────────────────────────
 #

@@ -104,6 +104,7 @@ from pitcher_narratives.signals import (
     KeySignals,
     render_key_signals,
 )
+from pitcher_narratives.value_parity import check_value_parity
 
 __all__ = [
     "AnalyzedContext",
@@ -452,6 +453,17 @@ def _build_capsule_ground_truth(ctx: PitcherContext) -> str:
     """Combined raw ground truth (all five specialists' input tables)."""
     names = ["stuff", "location", "runvalue", "trends", "game_shape"]
     return "\n\n".join(_get_specialist_input_text(name, ctx) for name in names)
+
+
+def _build_parity_union(ctx: PitcherContext, specialists: SpecialistOutputs, key_signals: KeySignals | None) -> str:
+    """A's source-of-truth union: everything the writer saw — raw ground truth,
+    clean specialist outputs, and the rendered key signals."""
+    parts = [_build_capsule_ground_truth(ctx)]
+    parts.extend([specialists.stuff, specialists.location, specialists.runvalue,
+                  specialists.trends, specialists.game_shape])
+    if key_signals is not None:
+        parts.append(render_key_signals(key_signals))
+    return "\n\n".join(parts)
 
 
 def _build_capsule_audit_input(ground_truth: str, capsule: str) -> str:
@@ -1131,6 +1143,9 @@ class PipelineResult(BaseModel):
     audit_flags: list[AuditFlag] = []
     anchor_warnings: list[AnchorWarning] = []
     revision_count: int = 0
+    capsule_audit_flags: list[AuditFlag] = []
+    capsule_revised: bool = False
+    value_parity_warnings: list[str] = []
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -1627,6 +1642,19 @@ async def _run_pipeline(
             persona,
         )
 
+    # Fact-checking layer (B then A) on the final capsule.
+    log.info("Fact-checking the capsule against ground truth...")
+    capsule, capsule_audit_flags, capsule_revised = await _run_capsule_audit(
+        auditor=agents.capsule_auditor,
+        writer_agent=agents.writer,
+        ground_truth=_build_capsule_ground_truth(ctx),
+        capsule=capsule,
+        _model_override=_model_override,
+    )
+    value_parity = check_value_parity(
+        capsule, _build_parity_union(ctx, specialists, key_signals)
+    )
+
     # Second step: summarize the FINISHED, anchored report (not the
     # pre-revision specialist data). writer_input is attached as recover-only
     # grounding inside _run_summaries.
@@ -1648,6 +1676,9 @@ async def _run_pipeline(
         audit_flags=audit_flags,
         anchor_warnings=anchor_check.warnings,
         revision_count=revision_count,
+        capsule_audit_flags=capsule_audit_flags,
+        capsule_revised=capsule_revised,
+        value_parity_warnings=value_parity.unmatched,
     )
 
 
