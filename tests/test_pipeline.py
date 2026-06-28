@@ -172,6 +172,16 @@ class TestSummaryBulletParsing:
         assert self._parse("") == []
         assert self._parse("No bullets here") == []
 
+    def test_preserves_leading_negative_sign(self):
+        """A bullet whose content starts with a minus keeps its sign — a
+        negative xRV100 (good for the pitcher) must not be flipped positive.
+        ``lstrip("- ")`` would eat the leading dash; ``removeprefix`` must not."""
+        raw = "- -0.77 xRV100 on the cutter saves runs\n- +0.32 xRV100 on the changeup costs runs"
+        assert self._parse(raw) == [
+            "-0.77 xRV100 on the cutter saves runs",
+            "+0.32 xRV100 on the changeup costs runs",
+        ]
+
 
 class TestRunSummaries:
     class _BoomAgent:

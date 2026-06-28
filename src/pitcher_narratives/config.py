@@ -99,7 +99,11 @@ def make_model_settings(
         # would exceed max_tokens), for mini models (Haiku), and whenever the
         # caller explicitly disables it.
         if mini or disable_thinking or max_tokens <= TOKEN_BUDGET_MEDIUM:
-            return ModelSettings(temperature=1, max_tokens=max_tokens)
+            # Thinking is off here, so the caller's temperature is honored
+            # (Anthropic only forces temperature=1 when thinking is enabled,
+            # handled by the branch below). Keeps Claude consistent with the
+            # Gemini path, which already passes temperature through.
+            return ModelSettings(temperature=temperature, max_tokens=max_tokens)
         # Anthropic's thinking budget counts against max_tokens, so the
         # requested cap must be headroom-extended or thinking can exhaust
         # it before any response text is generated.

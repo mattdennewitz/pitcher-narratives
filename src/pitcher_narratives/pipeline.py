@@ -1137,13 +1137,22 @@ def make_pipeline_agents(
     mini_specialist_compact_settings = make_model_settings(provider, cap_thinking(thinking, "medium"), 0.3, max_tokens=TOKEN_BUDGET_MEDIUM, mini=True)
     writer_settings = make_model_settings(provider, thinking, 0.7, max_tokens=TOKEN_BUDGET_LARGE)
     checker_settings = make_model_settings(provider, cap_thinking(thinking, "low"), 0.1, max_tokens=TOKEN_BUDGET_SMALL, mini=True)
-    summary_settings = make_model_settings(provider, cap_thinking(thinking, "medium"), 0.3, max_tokens=TOKEN_BUDGET_SMALL, mini=True)
+    # signal_extractor does structured cross-specialist extraction from the same
+    # large specialist-analyses payload the summarizers see. Keep thinking
+    # (extraction benefits from reasoning) but use a MEDIUM budget so thinking
+    # tokens can't truncate the structured KeySignals output.
+    signal_settings = make_model_settings(provider, cap_thinking(thinking, "medium"), 0.3, max_tokens=TOKEN_BUDGET_MEDIUM, mini=True)
     # Second-step summarizers (executive summary + brief) distill the finished
     # report from a large grounded input. Thinking is disabled so its tokens
-    # don't consume the output budget (which truncated the response), and the
-    # cap is raised to MEDIUM for headroom.
-    report_summary_settings = make_model_settings(provider, cap_thinking(thinking, "low"), 0.3, max_tokens=TOKEN_BUDGET_MEDIUM, mini=True, disable_thinking=True)
-    brief_settings = make_model_settings(provider, cap_thinking(thinking, "low"), 0.6, max_tokens=TOKEN_BUDGET_MEDIUM, mini=True, disable_thinking=True)
+    # don't consume the output budget (which truncated the response); the cap is
+    # MEDIUM for headroom. They differ only in temperature.
+    def _distillation_settings(temperature: float):
+        return make_model_settings(
+            provider, cap_thinking(thinking, "low"), temperature,
+            max_tokens=TOKEN_BUDGET_MEDIUM, mini=True, disable_thinking=True,
+        )
+    report_summary_settings = _distillation_settings(0.3)
+    brief_settings = _distillation_settings(0.6)
 
     # Prose agents carry the shared skills toolset so they can consult
     # project skills (e.g. statcast-data-conventions) on demand. The
@@ -1192,9 +1201,9 @@ def make_pipeline_agents(
         anchor=Agent(mini_model, output_type=AnchorResult, system_prompt=ANCHOR_PROMPT,
                      model_settings=checker_settings, retries=3, defer_model_check=True),
         summary=Agent(mini_model, output_type=str, system_prompt=_EXECUTIVE_SUMMARY_PROMPT,
-                      model_settings=report_summary_settings, defer_model_check=True),
+                      model_settings=report_summary_settings, retries=3, defer_model_check=True),
         signal_extractor=Agent(mini_model, output_type=KeySignals, system_prompt=SIGNAL_EXTRACTOR_PROMPT,
-                               model_settings=summary_settings, retries=3, defer_model_check=True),
+                               model_settings=signal_settings, retries=3, defer_model_check=True),
         brief=_brief(build_system_prompt(persona, BRIEF)),
         mini_model_name=model_label(mini_model),
     )
@@ -1378,11 +1387,17 @@ async def _run_anchor_revision_loop(
 
 
 def _parse_summary_bullets(raw: str) -> list[str]:
-    """Parse '- '-prefixed lines from summary output into clean bullets."""
+    """Parse '- '-prefixed lines from summary output into clean bullets.
+
+    Strips only the literal ``"- "`` marker via ``removeprefix`` — not a
+    character set — so a bullet whose content starts with a minus (e.g. a
+    negative ``-0.77 xRV100``) keeps its sign. ``lstrip("- ")`` would eat it
+    and silently invert the metric's direction.
+    """
     return [
-        line.lstrip("- ").strip()
+        stripped.removeprefix("- ").strip()
         for line in raw.strip().splitlines()
-        if line.strip().startswith("- ")
+        if (stripped := line.strip()).startswith("- ")
     ]
 
 

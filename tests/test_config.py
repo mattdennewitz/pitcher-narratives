@@ -67,6 +67,8 @@ def test_claude_disable_thinking_no_thinking_key():
     )
     assert "thinking" not in settings
     assert settings["max_tokens"] == TOKEN_BUDGET_LARGE
+    # Thinking is off, so the caller's temperature is honored (not forced to 1).
+    assert settings["temperature"] == 0.3
 
 
 def test_unknown_provider_raises():
