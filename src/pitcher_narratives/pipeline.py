@@ -1550,10 +1550,16 @@ async def _run_capsule_audit(
         revision = await writer_agent.run(
             **agent_kwargs(build_fact_revision_message(capsule, audit.flags), _model_override)
         )
-        return revision.output, audit.flags, True
     except Exception:
         log.warning("Fact revision failed, keeping pre-revision capsule.", exc_info=True)
         return capsule, audit.flags, False
+
+    # A degenerate (empty/whitespace) revision must not overwrite the validated
+    # capsule — that would blank the whole report. Keep the pre-revision text.
+    if not revision.output.strip():
+        log.warning("Fact revision returned empty output; keeping pre-revision capsule.")
+        return capsule, audit.flags, False
+    return revision.output, audit.flags, True
 
 
 async def _run_pipeline(
@@ -1642,7 +1648,7 @@ async def _run_pipeline(
     # Re-check explainer after revision loop. The anchor revision can rewrite
     # the capsule entirely, potentially dropping Pitching+ context that was
     # present before. Warn again only if state changed, to avoid duplicate logs.
-    if revision_count > 0 and pre_revision_explainer_ok and not check_explainer_present(capsule):
+    if revision_count > 0 and pre_revision_explainer_ok and _explainer_dropped(capsule):
         log.warning(
             "[%s] anchor revision removed model explanation content from capsule",
             persona,
@@ -1665,13 +1671,7 @@ async def _run_pipeline(
     )
     # Re-check explainer after B's fact-revision, mirroring the anchor guard:
     # a fact-correction can rewrite the capsule and drop Pitching+ context.
-    # capsule.strip() guards check_explainer_present, which raises on empty.
-    if (
-        capsule_revised
-        and pre_revision_explainer_ok
-        and capsule.strip()
-        and not check_explainer_present(capsule)
-    ):
+    if capsule_revised and pre_revision_explainer_ok and _explainer_dropped(capsule):
         log.warning(
             "[%s] capsule fact-revision removed model explanation content from capsule",
             persona,
@@ -1691,6 +1691,18 @@ async def _run_pipeline(
         _model_override=_model_override,
     )
 
+    # The brief and executive summary are the reader-facing outputs and may
+    # recover figures the capsule fact-check never saw, so value-parity them too
+    # against the same source. Warnings are labeled by surface so an operator can
+    # tell where an ungrounded number entered.
+    summary_parity = check_value_parity("\n".join(summary_bullets), fact_check_source)
+    brief_parity = check_value_parity(brief_text, fact_check_source)
+    value_parity_warnings = (
+        [f"[capsule] {w}" for w in value_parity.unmatched]
+        + [f"[summary] {w}" for w in summary_parity.unmatched]
+        + [f"[brief] {w}" for w in brief_parity.unmatched]
+    )
+
     return PipelineResult(
         narrative=capsule,
         executive_summary=summary_bullets,
@@ -1702,7 +1714,7 @@ async def _run_pipeline(
         revision_count=revision_count,
         capsule_audit_flags=capsule_audit_flags,
         capsule_revised=capsule_revised,
-        value_parity_warnings=value_parity.unmatched,
+        value_parity_warnings=value_parity_warnings,
     )
 
 
@@ -1997,3 +2009,15 @@ def check_explainer_present(capsule: str) -> bool:
         )
 
     return any(keyword in capsule for keyword in _EXPLAINER_KEYWORDS)
+
+
+def _explainer_dropped(capsule: str) -> bool:
+    """True when a non-empty capsule no longer contains model-explanation content.
+
+    The single guard for the "a revision removed the Pitching+ explainer"
+    check, shared by every capsule-rewrite stage (anchor loop, fact-revision)
+    so the empty-capsule guard can't be applied inconsistently. An empty or
+    whitespace capsule returns False — there is nothing to drop, and
+    check_explainer_present would otherwise raise on it.
+    """
+    return bool(capsule.strip()) and not check_explainer_present(capsule)

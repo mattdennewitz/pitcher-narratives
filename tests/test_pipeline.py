@@ -1328,6 +1328,40 @@ class TestRunCapsuleAudit:
         assert len(flags) == 1   # flags preserved, not []
         assert revised is False
 
+    def test_blank_revision_keeps_capsule(self):
+        # A degenerate (whitespace) fact-revision must NOT overwrite the good
+        # capsule — keep the pre-revision text, revised=False.
+        from pitcher_narratives.pipeline import _run_capsule_audit
+        class _BlankWriter:
+            async def run(self, **kwargs):
+                class _R:
+                    output = "   \n  "
+                return _R()
+        cap, flags, revised = asyncio.run(_run_capsule_audit(
+            auditor=self._FlaggingAuditor(), writer_agent=_BlankWriter(),
+            ground_truth="gt", capsule="original capsule",
+        ))
+        assert cap == "original capsule"
+        assert len(flags) == 1
+        assert revised is False
+
+
+class TestExplainerDropped:
+    def test_empty_capsule_not_dropped(self):
+        # Must not raise (check_explainer_present raises on empty); empty means
+        # "nothing to drop" -> False.
+        from pitcher_narratives.pipeline import _explainer_dropped
+        assert _explainer_dropped("") is False
+        assert _explainer_dropped("   \n ") is False
+
+    def test_present_not_dropped(self):
+        from pitcher_narratives.pipeline import _explainer_dropped
+        assert _explainer_dropped("the slider's S+ is strong") is False
+
+    def test_absent_is_dropped(self):
+        from pitcher_narratives.pipeline import _explainer_dropped
+        assert _explainer_dropped("the fastball just looks fast") is True
+
 
 class TestCapsuleAuditBuilders:
     def test_capsule_ground_truth_concatenates_all_specialists(self, ctx):

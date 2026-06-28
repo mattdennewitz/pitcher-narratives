@@ -321,10 +321,11 @@ def _run_report_command(args: argparse.Namespace) -> None:
     else:
         print("Clean — no factual issues found.")
 
-    # Value parity (A, advisory)
+    # Value parity (A, advisory). Covers the capsule and the reader-facing
+    # summary/brief; each warning is prefixed with its surface.
     if pipe_result.value_parity_warnings:
         print("\n\n# Value Parity (advisory)\n")
-        print("Capsule numbers with no match in the source data:")
+        print("Report numbers with no match in the source data:")
         for w in pipe_result.value_parity_warnings:
             print(f"- {w}")
 
