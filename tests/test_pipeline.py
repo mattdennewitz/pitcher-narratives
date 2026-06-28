@@ -295,6 +295,13 @@ class TestMakePipelineAgents:
         assert agents.brief.model == agents.summary.model
         assert agents.brief.model != agents.writer.model
 
+    def test_has_capsule_auditor_on_mini_model(self):
+        agents = make_pipeline_agents("gemini", "high")
+        assert agents.capsule_auditor is not None
+        # Same mini tier as the other checker agents, distinct from the writer.
+        assert agents.capsule_auditor.model == agents.auditor.model
+        assert agents.capsule_auditor.model != agents.writer.model
+
 
 # ── Audit loop smoke tests ───────────────────────────────────────────
 

@@ -1147,6 +1147,7 @@ class PipelineAgents(NamedTuple):
     game_shape: Agent[None, str]
     writer: Agent[None, str]
     auditor: Agent[None, AuditResult]
+    capsule_auditor: Agent[None, AuditResult]
     anchor: Agent[None, AnchorResult]
     summary: Agent[None, str]
     signal_extractor: Agent[None, KeySignals]
@@ -1187,6 +1188,12 @@ def make_pipeline_agents(
     mini_specialist_compact_settings = make_model_settings(provider, cap_thinking(thinking, "medium"), 0.3, max_tokens=TOKEN_BUDGET_MEDIUM, mini=True)
     writer_settings = make_model_settings(provider, thinking, 0.7, max_tokens=TOKEN_BUDGET_LARGE)
     checker_settings = make_model_settings(provider, cap_thinking(thinking, "low"), 0.1, max_tokens=TOKEN_BUDGET_SMALL, mini=True)
+    # Capsule auditor (B): checks the finished capsule against ALL ground truth
+    # at once — a large input. MEDIUM budget + thinking medium so thinking can't
+    # truncate the structured AuditResult (the report-then-summarize truncation
+    # lesson); the existing per-specialist auditor stays on SMALL because its
+    # input is one specialist's data.
+    capsule_auditor_settings = make_model_settings(provider, cap_thinking(thinking, "medium"), 0.1, max_tokens=TOKEN_BUDGET_MEDIUM, mini=True)
     # signal_extractor does structured cross-specialist extraction from the same
     # large specialist-analyses payload the summarizers see. On Gemini thinking
     # is kept (extraction benefits from reasoning) but the MEDIUM budget gives
@@ -1250,6 +1257,8 @@ def make_pipeline_agents(
         writer=_writer(build_writer_system_prompt(persona)),
         auditor=Agent(mini_model, output_type=AuditResult, system_prompt=_DATA_AUDITOR_PROMPT,
                       model_settings=checker_settings, retries=5, defer_model_check=True),
+        capsule_auditor=Agent(mini_model, output_type=AuditResult, system_prompt=_CAPSULE_AUDITOR_PROMPT,
+                              model_settings=capsule_auditor_settings, retries=5, defer_model_check=True),
         anchor=Agent(mini_model, output_type=AnchorResult, system_prompt=ANCHOR_PROMPT,
                      model_settings=checker_settings, retries=3, defer_model_check=True),
         summary=Agent(mini_model, output_type=str, system_prompt=_EXECUTIVE_SUMMARY_PROMPT,
