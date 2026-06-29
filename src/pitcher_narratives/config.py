@@ -17,6 +17,7 @@ from pydantic_ai.settings import ModelSettings, ThinkingEffort
 
 __all__ = [
     "API_KEYS",
+    "MAX_FACT_REVISIONS",
     "MAX_REVISIONS",
     "MINI_PROVIDERS",
     "PROVIDERS",
@@ -51,8 +52,14 @@ TOKEN_BUDGET_MEDIUM = 2048
 TOKEN_BUDGET_LARGE = 4096
 """Writer, editor, answerer, stuff explainer -- long-form prose."""
 
-MAX_REVISIONS = 3
+MAX_REVISIONS = 5
 """Maximum number of editor revision passes before accepting the capsule."""
+
+MAX_FACT_REVISIONS = 2
+"""Maximum capsule fact-revision passes (audit → revise → re-audit) in the
+one-shot fact-check (B). Kept small: B is a large-input mini-model call and most
+corrections converge in 1-2 passes. If flags still survive, the report is
+emitted but the CLI exits non-zero (soft block)."""
 
 _THINKING_HEADROOM = 8192
 """Extra max_tokens when extended thinking is enabled (Claude): the
@@ -71,25 +78,39 @@ def make_model_settings(
     *,
     max_tokens: int = 16384,
     mini: bool = False,
+    disable_thinking: bool = False,
 ) -> ModelSettings:
     """Build provider-aware ModelSettings with thinking-effort translation.
 
     Args:
         mini: True when targeting a mini-tier model. Disables thinking for
               providers where mini models don't support it (Claude).
+        disable_thinking: True to turn thinking off entirely regardless of the
+              ``thinking`` arg. Used for pure distillation tasks (e.g. the
+              second-step report summarizers) where thinking tokens would
+              otherwise consume the output budget and truncate the response.
     """
     if provider == "gemini":
-        gemini_level = "high" if thinking in ("high", "xhigh") else "low"
+        if disable_thinking:
+            thinking_config = {"thinking_budget": 0}
+        else:
+            gemini_level = "high" if thinking in ("high", "xhigh") else "low"
+            thinking_config = {"thinking_level": gemini_level}
         return GoogleModelSettings(
-            google_thinking_config={"thinking_level": gemini_level},
+            google_thinking_config=thinking_config,
             temperature=temperature,
             max_tokens=max_tokens,
         )
     elif provider == "claude":
         # Claude: disable thinking for small budgets (thinking.budget_tokens
-        # would exceed max_tokens) and for mini models (Haiku).
-        if mini or max_tokens <= TOKEN_BUDGET_MEDIUM:
-            return ModelSettings(temperature=1, max_tokens=max_tokens)
+        # would exceed max_tokens), for mini models (Haiku), and whenever the
+        # caller explicitly disables it.
+        if mini or disable_thinking or max_tokens <= TOKEN_BUDGET_MEDIUM:
+            # Thinking is off here, so the caller's temperature is honored
+            # (Anthropic only forces temperature=1 when thinking is enabled,
+            # handled by the branch below). Keeps Claude consistent with the
+            # Gemini path, which already passes temperature through.
+            return ModelSettings(temperature=temperature, max_tokens=max_tokens)
         # Anthropic's thinking budget counts against max_tokens, so the
         # requested cap must be headroom-extended or thinking can exhaust
         # it before any response text is generated.

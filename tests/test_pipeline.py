@@ -150,14 +150,11 @@ class TestRenderLeagueBaselines:
 
 
 class TestSummaryBulletParsing:
-    """Test the bullet parsing logic used in _run_pipeline."""
+    """Test the bullet parsing logic used by the summary step."""
 
     def _parse(self, raw: str) -> list[str]:
-        return [
-            line.lstrip("- ").strip()
-            for line in raw.strip().splitlines()
-            if line.strip().startswith("- ")
-        ]
+        from pitcher_narratives.pipeline import _parse_summary_bullets
+        return _parse_summary_bullets(raw)
 
     def test_standard_bullets(self):
         raw = "- First bullet\n- Second bullet\n- Third bullet"
@@ -174,6 +171,62 @@ class TestSummaryBulletParsing:
     def test_empty_input(self):
         assert self._parse("") == []
         assert self._parse("No bullets here") == []
+
+    def test_preserves_leading_negative_sign(self):
+        """A bullet whose content starts with a minus keeps its sign — a
+        negative xRV100 (good for the pitcher) must not be flipped positive.
+        ``lstrip("- ")`` would eat the leading dash; ``removeprefix`` must not."""
+        raw = "- -0.77 xRV100 on the cutter saves runs\n- +0.32 xRV100 on the changeup costs runs"
+        assert self._parse(raw) == [
+            "-0.77 xRV100 on the cutter saves runs",
+            "+0.32 xRV100 on the changeup costs runs",
+        ]
+
+
+class TestRunSummaries:
+    class _BoomAgent:
+        """Stand-in agent that records invocation and raises if ever called."""
+        def __init__(self):
+            self.called = False
+        async def run(self, **kwargs):
+            self.called = True
+            raise RuntimeError("boom")
+
+    def test_empty_capsule_skips_both_agents(self):
+        from pitcher_narratives.pipeline import _run_summaries
+        boom = self._BoomAgent()
+        bullets, brief = asyncio.run(_run_summaries(
+            summary_agent=boom, brief_agent=boom,
+            capsule="   \n  ", writer_input="ignored",
+        ))
+        assert bullets == []
+        assert brief == ""
+        assert boom.called is False  # the guard must skip both agents, not just swallow their errors
+
+    def test_populated_capsule_runs_both(self):
+        from pitcher_narratives.pipeline import _run_summaries
+        agents = make_pipeline_agents("gemini", "high")
+        tm = TestModel(call_tools=[], custom_output_text="- one\n- two")
+        bullets, brief = asyncio.run(_run_summaries(
+            summary_agent=agents.summary, brief_agent=agents.brief,
+            capsule="A real capsule.", writer_input="grounding",
+            _model_override=tm,
+        ))
+        assert bullets == ["one", "two"]
+        assert brief == "- one\n- two"
+
+    def test_one_failure_degrades_without_cancelling_sibling(self):
+        from pitcher_narratives.pipeline import _run_summaries
+        agents = make_pipeline_agents("gemini", "high")
+        tm = TestModel(call_tools=[], custom_output_text="- kept")
+        # Summary agent booms; brief must still produce output.
+        bullets, brief = asyncio.run(_run_summaries(
+            summary_agent=self._BoomAgent(), brief_agent=agents.brief,
+            capsule="A real capsule.", writer_input="grounding",
+            _model_override=tm,
+        ))
+        assert bullets == []
+        assert brief == "- kept"
 
 
 # ── Data builder tests ───────────────────────────────────────────────
@@ -235,6 +288,19 @@ class TestMakePipelineAgents:
     def test_has_signal_extractor(self):
         agents = make_pipeline_agents("gemini", "high")
         assert agents.signal_extractor is not None
+
+    def test_brief_uses_mini_model(self):
+        agents = make_pipeline_agents("gemini", "high")
+        # BRIEF distills an already-written report — a mini model suffices.
+        assert agents.brief.model == agents.summary.model
+        assert agents.brief.model != agents.writer.model
+
+    def test_has_capsule_auditor_on_mini_model(self):
+        agents = make_pipeline_agents("gemini", "high")
+        assert agents.capsule_auditor is not None
+        # Same mini tier as the other checker agents, distinct from the writer.
+        assert agents.capsule_auditor.model == agents.auditor.model
+        assert agents.capsule_auditor.model != agents.writer.model
 
 
 # ── Audit loop smoke tests ───────────────────────────────────────────
@@ -348,6 +414,11 @@ class TestGeneratePipelineStreaming:
         from pitcher_narratives.config import MAX_REVISIONS
         assert MAX_REVISIONS >= 1, "MAX_REVISIONS must allow at least one revision"
 
+    def test_max_revisions_is_five(self):
+        """The report anchor loop allows up to 5 revision passes."""
+        from pitcher_narratives.config import MAX_REVISIONS
+        assert MAX_REVISIONS == 5
+
     def test_pipeline_result_includes_brief(self, ctx):
         """The terminal layer runs the BRIEF agent and returns its text.
 
@@ -364,6 +435,15 @@ class TestGeneratePipelineStreaming:
         assert isinstance(result.brief, str)
         assert len(result.brief) > 0
 
+    def test_pipeline_result_includes_executive_summary(self, ctx):
+        """The terminal layer runs the executive summary against the final
+        capsule and returns parsed bullets."""
+        test_model = TestModel(call_tools=[])
+        result = generate_pipeline_streaming(
+            ctx, provider="gemini", thinking="high", _model_override=test_model,
+        )
+        assert isinstance(result.executive_summary, list)
+
     def test_brief_agent_has_no_skill_toolset(self):
         """The brief agent stays tool-free (like the executive summary).
 
@@ -375,6 +455,15 @@ class TestGeneratePipelineStreaming:
         agents = make_pipeline_agents()
         toolsets = list(getattr(agents.brief, "_user_toolsets", []))
         assert skill_toolset() not in toolsets
+
+    def test_pipeline_result_has_fact_check_fields(self, ctx):
+        test_model = TestModel(call_tools=[])
+        result = generate_pipeline_streaming(
+            ctx, provider="gemini", thinking="high", _model_override=test_model,
+        )
+        assert isinstance(result.capsule_audit_flags, list)
+        assert isinstance(result.capsule_revised, bool)
+        assert isinstance(result.value_parity_warnings, list)
 
 
 # ── Anchor revision loop behavioral tests ────────────────────────────
@@ -1139,3 +1228,289 @@ def test_run_analysis_spine_returns_analyzed_context(ctx):
     assert result.specialists.trends != ""
     assert result.specialists.game_shape != ""
     assert isinstance(result.audit_flags, list)
+
+
+class TestBuildSummaryInput:
+    def test_frames_capsule_as_subject_with_grounding(self):
+        from pitcher_narratives.pipeline import build_summary_input
+        out = build_summary_input("CAPSULE_TEXT", "WRITER_INPUT_TEXT")
+        # Both payloads present.
+        assert "CAPSULE_TEXT" in out
+        assert "WRITER_INPUT_TEXT" in out
+        # Capsule is the subject and comes first.
+        assert out.index("CAPSULE_TEXT") < out.index("WRITER_INPUT_TEXT")
+        # Contract markers present.
+        assert "FINISHED REPORT" in out
+        assert "reference ONLY" in out.replace("reference only", "reference ONLY")
+        assert "do NOT add" in out or "do NOT correct" in out
+
+
+class TestExecutiveSummaryPrompt:
+    def test_prompt_targets_finished_report_with_recover_only_grounding(self):
+        from pitcher_narratives.pipeline import _EXECUTIVE_SUMMARY_PROMPT
+        p = _EXECUTIVE_SUMMARY_PROMPT
+        assert "finished scouting report" in p.lower()
+        # Recover-only grounding contract.
+        assert "never change a number the report gives" in p
+        assert "do not introduce a finding" in p.lower()
+        # Old framing is gone.
+        assert "Given specialist analyses" not in p
+        # Citation requirement preserved.
+        assert "cite a specific number" in p.lower()
+
+
+class TestRunCapsuleAudit:
+    class _CleanAuditor:
+        async def run(self, **kwargs):
+            from pitcher_narratives.models import AuditResult
+            class _R:
+                output = AuditResult(flags=[])
+            return _R()
+
+    class _FlaggingAuditor:
+        async def run(self, **kwargs):
+            from pitcher_narratives.models import AuditResult, AuditFlag
+            class _R:
+                output = AuditResult(flags=[AuditFlag(category="FABRICATED_DATA", claim="98 mph", data_shows="95.9", suggested_fix="use 95.9")])
+            return _R()
+
+    class _Writer:
+        async def run(self, **kwargs):
+            class _R:
+                output = "corrected capsule"
+            return _R()
+
+    class _FlagThenCleanAuditor:
+        """Flags on the first audit, clean on the re-audit — the happy path."""
+        def __init__(self):
+            self.calls = 0
+        async def run(self, **kwargs):
+            from pitcher_narratives.models import AuditResult, AuditFlag
+            self.calls += 1
+            flags = [] if self.calls > 1 else [
+                AuditFlag(category="FABRICATED_DATA", claim="98 mph", data_shows="95.9", suggested_fix="use 95.9")
+            ]
+            class _R:
+                output = AuditResult(flags=flags)
+            return _R()
+
+    class _FlagUntilCleanAuditor:
+        """Flags for the first ``flag_calls`` audits, then clean — exercises
+        convergence on a later loop pass."""
+        def __init__(self, flag_calls):
+            self.flag_calls = flag_calls
+            self.calls = 0
+        async def run(self, **kwargs):
+            from pitcher_narratives.models import AuditResult, AuditFlag
+            self.calls += 1
+            flags = [
+                AuditFlag(category="FABRICATED_DATA", claim="98 mph", data_shows="95.9", suggested_fix="x")
+            ] if self.calls <= self.flag_calls else []
+            class _R:
+                output = AuditResult(flags=flags)
+            return _R()
+
+    class _CountingWriter:
+        def __init__(self):
+            self.calls = 0
+        async def run(self, **kwargs):
+            self.calls += 1
+            class _R:
+                output = "corrected capsule"
+            return _R()
+
+    def test_clean_audit_no_revision(self):
+        from pitcher_narratives.pipeline import _run_capsule_audit
+        cap, flags, revised = asyncio.run(_run_capsule_audit(
+            auditor=self._CleanAuditor(), writer_agent=self._Writer(),
+            ground_truth="gt", capsule="original capsule",
+        ))
+        assert cap == "original capsule"
+        assert flags == []
+        assert revised is False
+
+    def test_flagged_audit_triggers_one_revision(self):
+        from pitcher_narratives.pipeline import _run_capsule_audit
+        cap, flags, revised = asyncio.run(_run_capsule_audit(
+            auditor=self._FlaggingAuditor(), writer_agent=self._Writer(),
+            ground_truth="gt", capsule="original capsule",
+        ))
+        assert cap == "corrected capsule"
+        assert len(flags) == 1
+        assert revised is True
+
+    def test_auditor_error_degrades_to_unchanged(self):
+        from pitcher_narratives.pipeline import _run_capsule_audit
+        class _Boom:
+            async def run(self, **kwargs):
+                raise RuntimeError("boom")
+        cap, flags, revised = asyncio.run(_run_capsule_audit(
+            auditor=_Boom(), writer_agent=self._Writer(),
+            ground_truth="gt", capsule="original capsule",
+        ))
+        assert cap == "original capsule"
+        assert flags == []
+        assert revised is False
+
+    def test_writer_error_keeps_flags_not_revised(self):
+        # Writer-failure branch differs from auditor-failure: flags are
+        # PRESERVED (not []), and revised is False (no correction applied).
+        from pitcher_narratives.pipeline import _run_capsule_audit
+        class _BoomWriter:
+            async def run(self, **kwargs):
+                raise RuntimeError("writer boom")
+        cap, flags, revised = asyncio.run(_run_capsule_audit(
+            auditor=self._FlaggingAuditor(), writer_agent=_BoomWriter(),
+            ground_truth="gt", capsule="original capsule",
+        ))
+        assert cap == "original capsule"
+        assert len(flags) == 1   # flags preserved, not []
+        assert revised is False
+
+    def test_blank_revision_keeps_capsule(self):
+        # A degenerate (whitespace) fact-revision must NOT overwrite the good
+        # capsule — keep the pre-revision text, revised=False.
+        from pitcher_narratives.pipeline import _run_capsule_audit
+        class _BlankWriter:
+            async def run(self, **kwargs):
+                class _R:
+                    output = "   \n  "
+                return _R()
+        cap, flags, revised = asyncio.run(_run_capsule_audit(
+            auditor=self._FlaggingAuditor(), writer_agent=_BlankWriter(),
+            ground_truth="gt", capsule="original capsule",
+        ))
+        assert cap == "original capsule"
+        assert len(flags) == 1
+        assert revised is False
+
+    def test_reaudit_clean_verifies_revision(self):
+        # Flag -> revise -> re-audit clean: the revised capsule ships with NO
+        # residual flags (the revision is verified).
+        from pitcher_narratives.pipeline import _run_capsule_audit
+        auditor = self._FlagThenCleanAuditor()
+        cap, flags, revised = asyncio.run(_run_capsule_audit(
+            auditor=auditor, writer_agent=self._Writer(),
+            ground_truth="gt", capsule="original capsule",
+        ))
+        assert cap == "corrected capsule"
+        assert flags == []          # re-audit clean -> residual empty
+        assert revised is True
+        assert auditor.calls == 2   # initial audit + one re-audit
+
+    def test_reaudit_surfaces_residual(self):
+        # Auditor keeps flagging after the revision: the residual must be
+        # surfaced (not shipped unchecked), and the revised capsule is kept.
+        from pitcher_narratives.pipeline import _run_capsule_audit
+        cap, flags, revised = asyncio.run(_run_capsule_audit(
+            auditor=self._FlaggingAuditor(), writer_agent=self._Writer(),
+            ground_truth="gt", capsule="original capsule",
+        ))
+        assert cap == "corrected capsule"
+        assert len(flags) == 1      # residual from the re-audit
+        assert revised is True
+
+    def test_reaudit_error_surfaces_original_flags(self):
+        # If the re-audit call raises, degrade by surfacing the original flags
+        # (better than silently shipping the revision as clean).
+        from pitcher_narratives.pipeline import _run_capsule_audit
+        from pitcher_narratives.models import AuditResult, AuditFlag
+        class _FlagThenBoom:
+            def __init__(self):
+                self.calls = 0
+            async def run(self, **kwargs):
+                self.calls += 1
+                if self.calls > 1:
+                    raise RuntimeError("re-audit boom")
+                class _R:
+                    output = AuditResult(flags=[AuditFlag(category="FABRICATED_DATA", claim="98 mph", data_shows="95.9", suggested_fix="x")])
+                return _R()
+        cap, flags, revised = asyncio.run(_run_capsule_audit(
+            auditor=_FlagThenBoom(), writer_agent=self._Writer(),
+            ground_truth="gt", capsule="original capsule",
+        ))
+        assert cap == "corrected capsule"
+        assert len(flags) == 1
+        assert revised is True
+
+    def test_loop_converges_on_second_pass(self):
+        # Flags audits 1 and 2, clean on audit 3 -> two revisions, then verified
+        # clean. Requires the loop (a single revise would still be flagged).
+        from pitcher_narratives.pipeline import _run_capsule_audit
+        auditor = self._FlagUntilCleanAuditor(flag_calls=2)
+        writer = self._CountingWriter()
+        cap, flags, revised = asyncio.run(_run_capsule_audit(
+            auditor=auditor, writer_agent=writer,
+            ground_truth="gt", capsule="original capsule", max_fact_revisions=2,
+        ))
+        assert flags == []          # converged
+        assert revised is True
+        assert writer.calls == 2    # two fact-revisions
+        assert auditor.calls == 3   # initial + 2 re-audits
+
+    def test_loop_caps_revisions_and_surfaces_residual(self):
+        # Auditor never goes clean: the loop must stop at max_fact_revisions and
+        # surface the residual rather than spinning.
+        from pitcher_narratives.pipeline import _run_capsule_audit
+        writer = self._CountingWriter()
+        cap, flags, revised = asyncio.run(_run_capsule_audit(
+            auditor=self._FlaggingAuditor(), writer_agent=writer,
+            ground_truth="gt", capsule="original capsule", max_fact_revisions=2,
+        ))
+        assert len(flags) == 1      # residual surfaced
+        assert revised is True
+        assert writer.calls == 2    # capped at max_fact_revisions
+
+    def test_max_fact_revisions_one(self):
+        from pitcher_narratives.pipeline import _run_capsule_audit
+        writer = self._CountingWriter()
+        cap, flags, revised = asyncio.run(_run_capsule_audit(
+            auditor=self._FlaggingAuditor(), writer_agent=writer,
+            ground_truth="gt", capsule="original capsule", max_fact_revisions=1,
+        ))
+        assert writer.calls == 1
+        assert len(flags) == 1      # still flagged, surfaced
+
+
+class TestExplainerDropped:
+    def test_empty_capsule_not_dropped(self):
+        # Must not raise (check_explainer_present raises on empty); empty means
+        # "nothing to drop" -> False.
+        from pitcher_narratives.pipeline import _explainer_dropped
+        assert _explainer_dropped("") is False
+        assert _explainer_dropped("   \n ") is False
+
+    def test_present_not_dropped(self):
+        from pitcher_narratives.pipeline import _explainer_dropped
+        assert _explainer_dropped("the slider's S+ is strong") is False
+
+    def test_absent_is_dropped(self):
+        from pitcher_narratives.pipeline import _explainer_dropped
+        assert _explainer_dropped("the fastball just looks fast") is True
+
+
+class TestCapsuleAuditBuilders:
+    def test_capsule_ground_truth_concatenates_all_specialists(self, ctx):
+        from pitcher_narratives.pipeline import _build_capsule_ground_truth
+        gt = _build_capsule_ground_truth(ctx)
+        # The stuff specialist's ground truth has the arsenal physical profile.
+        assert "Arsenal Physical Profile" in gt
+        assert "P vs S Location Impact" in gt  # location specialist's input
+
+    def test_capsule_audit_input_has_both_sections(self):
+        from pitcher_narratives.pipeline import _build_capsule_audit_input
+        out = _build_capsule_audit_input("GROUND_TRUTH", "CAPSULE_TEXT")
+        assert "GROUND_TRUTH" in out
+        assert "CAPSULE_TEXT" in out
+        # Ground truth comes first, the capsule to fact-check second.
+        assert out.index("GROUND_TRUTH") < out.index("CAPSULE_TEXT")
+
+    def test_fact_revision_message_lists_flags(self):
+        from pitcher_narratives.pipeline import build_fact_revision_message
+        from pitcher_narratives.models import AuditFlag
+        flags = [AuditFlag(category="FABRICATED_DATA", claim="98 mph", data_shows="95.9 mph", suggested_fix="use 95.9")]
+        msg = build_fact_revision_message("the capsule text", flags)
+        assert "the capsule text" in msg
+        assert "FABRICATED_DATA" in msg
+        assert "95.9 mph" in msg
+        assert "ONLY" in msg  # instructs to fix only flagged issues

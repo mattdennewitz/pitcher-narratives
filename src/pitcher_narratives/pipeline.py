@@ -45,7 +45,7 @@ from typing import Any, NamedTuple
 
 from pydantic import BaseModel
 from pydantic_ai import Agent, CachePoint
-from pydantic_ai.settings import ThinkingEffort
+from pydantic_ai.settings import ModelSettings, ThinkingEffort
 
 from pitcher_narratives.agent_skills import skill_toolset
 from pitcher_narratives.anchor import (
@@ -56,6 +56,7 @@ from pitcher_narratives.anchor import (
     build_revision_message,
 )
 from pitcher_narratives.config import (
+    MAX_FACT_REVISIONS,
     MAX_REVISIONS,
     MINI_PROVIDERS,
     PROVIDERS,
@@ -104,13 +105,15 @@ from pitcher_narratives.signals import (
     KeySignals,
     render_key_signals,
 )
+from pitcher_narratives.value_parity import check_value_parity
 
 __all__ = [
     "AnalyzedContext",
     "AuditFlag", "AuditResult", "ExecutiveSummary", "HallucinationReport",
     "KeySignals", "PipelineAgents", "PipelineResult",
-    "UserPrompt", "audit_and_revise_specialists", "build_writer_input",
-    "check_explainer_present", "check_hallucinated_metrics",
+    "UserPrompt", "audit_and_revise_specialists", "build_fact_revision_message",
+    "build_summary_input",
+    "build_writer_input", "check_explainer_present", "check_hallucinated_metrics",
     "generate_pipeline_streaming",
     "make_pipeline_agents", "run_analysis_spine", "run_specialists",
     "write_pipeline_data_file",
@@ -427,29 +430,97 @@ If everything checks out, return an empty list."""
 
 # AuditFlag and AuditResult are defined in models.py and imported above.
 
+_CAPSULE_AUDITOR_PROMPT = """\
+You are a fact-checker for a baseball scouting report. You receive the source \
+material the report was built from — raw ground-truth data tables, the \
+specialists' analyses, and the key-signals summary — and the finished narrative \
+(the capsule). Verify every metric, direction, and factual claim in the capsule \
+against that source material.
+
+Flag these problems (reuse the audit categories):
+- METRIC_CONTRADICTION: the capsule characterizes a metric in a way the source \
+contradicts (calls a NORMAL metric extreme, etc.).
+- DIRECTION_ERROR: the capsule states a metric/trend went one way but the source \
+shows the other.
+- FABRICATED_DATA: the capsule cites a specific number that appears nowhere in \
+the source material.
+- UNRECONCILED / HALLUCINATED_CAUSATION: a causal claim the source does not support.
+
+Only flag genuine factual errors against the source — not style, emphasis, or \
+legitimate synthesis. The specialists' analyses already contain computed deltas, \
+contrasts, and paraphrases of grades (e.g. "S+ up 8 points", "28% above \
+average"); a number the capsule draws from those is faithful, NOT fabricated. \
+If the capsule is faithful, return an empty list of flags."""
+
+
+def _build_capsule_ground_truth(ctx: PitcherContext) -> str:
+    """Combined raw ground truth (all five specialists' input tables)."""
+    names = ["stuff", "location", "runvalue", "trends", "game_shape"]
+    return "\n\n".join(_get_specialist_input_text(name, ctx) for name in names)
+
+
+def _build_parity_union(ctx: PitcherContext, specialists: SpecialistOutputs, key_signals: KeySignals | None) -> str:
+    """A's source-of-truth union: everything the writer saw — raw ground truth,
+    clean specialist outputs, and the rendered key signals."""
+    parts = [_build_capsule_ground_truth(ctx)]
+    parts.extend([specialists.stuff, specialists.location, specialists.runvalue,
+                  specialists.trends, specialists.game_shape])
+    if key_signals is not None:
+        parts.append(render_key_signals(key_signals))
+    return "\n\n".join(parts)
+
+
+def _build_capsule_audit_input(ground_truth: str, capsule: str) -> str:
+    """Auditor input: ground truth + the finished capsule to verify."""
+    return (
+        f"## GROUND TRUTH DATA\n{ground_truth}\n\n"
+        f"## FINISHED CAPSULE TO FACT-CHECK\n{capsule}"
+    )
+
+
+def build_fact_revision_message(capsule: str, flags: list[AuditFlag]) -> str:
+    """Ask the writer to correct ONLY the capsule's flagged factual errors."""
+    formatted = "\n".join(
+        f"- [{f.category}] \"{f.claim}\" → Data shows: {f.data_shows}. "
+        f"Fix: {f.suggested_fix}"
+        for f in flags
+    )
+    return (
+        f"## Your Capsule\n{capsule}\n\n"
+        f"## Factual Errors Found\n{formatted}\n\n"
+        "Revise the capsule to correct ONLY these factual errors. Keep all "
+        "other content, structure, voice, and length unchanged."
+    )
+
+
 # ═══════════════════════════════════════════════════════════════════════
 # EXECUTIVE SUMMARY PROMPT
 # ═══════════════════════════════════════════════════════════════════════
 
 _EXECUTIVE_SUMMARY_PROMPT = """\
-You are a concise analyst producing a metrics-focused executive \
-summary for a front office reader.
+You are a concise analyst producing a metrics-focused executive summary for \
+a front office reader.
 
-Given specialist analyses of a pitcher's recent window, produce \
-exactly 3 bullet points. Each bullet states a finding and cites \
-the metric that supports it.
+You are given a finished scouting report, followed by the clean specialist \
+analyses it was built from (reference only). Produce exactly 3 bullet points \
+that summarize the report. Each bullet states a finding the report makes and \
+cites the metric that supports it.
 
 RULES:
 - Exactly 3 bullets. Each is ONE sentence.
-- Every bullet MUST cite a specific number from the data \
-(S+, P+, xRV100, xWhiff_S, velocity, usage%, etc.).
-- State the finding directly. No labels like "Best outcome:" or \
-"Key trend:" — just the analytical observation.
-- DIRECTIONAL CONSISTENCY: S+ below 100 is below average. S+ above \
-100 is above average. Negative xRV100 is good for the pitcher.
-- If data audit flags are present, do NOT repeat any flagged claims.
-- Do not call normal metrics unusual. If a metric is within ±1.5 \
-stddev of the league average, it is normal.
+- Summarize ONLY findings the report makes. Do not introduce a finding from \
+the attached analyses that the report did not state.
+- Every bullet MUST cite a specific number (S+, P+, xRV100, xWhiff_S, \
+velocity, usage%, etc.), AS THE REPORT STATES IT. If the report makes a \
+finding qualitatively without a figure, you may recover the supporting number \
+from the attached analyses — but never change a number the report gives, and \
+never flag a discrepancy.
+- State the finding directly. No labels like "Best outcome:" or "Key trend:" \
+— just the analytical observation.
+- DIRECTIONAL CONSISTENCY: S+ below 100 is below average. S+ above 100 is \
+above average. Negative xRV100 is good for the pitcher.
+- Do not call normal metrics unusual. If a metric is within ±1.5 stddev of \
+the league average, it is normal.
 - Output ONLY the 3 bullet points. No headers, no intro, no outro.
 - Format: each line starts with "- " followed by the insight."""
 
@@ -763,6 +834,26 @@ def build_writer_input(
     return "\n\n".join(parts)
 
 
+def build_summary_input(capsule: str, writer_input: str) -> str:
+    """Frame the finished report as the summary subject, with the clean
+    specialist analyses attached as recover-only grounding.
+
+    The capsule is the source of truth: summaries cite its numbers as
+    written. ``writer_input`` (Key Signals + clean specialist analyses) is
+    reference ONLY — to recover a metric the report stated qualitatively,
+    never to correct the report's numbers and never to add findings.
+    """
+    return (
+        "## FINISHED REPORT (summarize THIS; cite its numbers exactly as written)\n"
+        f"{capsule}\n\n"
+        "## SOURCE ANALYSES (the clean specialist analyses the report was built "
+        "from — reference ONLY to recover a metric the report stated "
+        "qualitatively; do NOT correct the report's numbers and do NOT add "
+        "findings absent from the report)\n"
+        f"{writer_input}"
+    )
+
+
 def _build_specialist_audit_input(ground_truth: str, specialist_output: str) -> str:
     """Build auditor input for a single specialist."""
     return (
@@ -969,18 +1060,26 @@ def _render_pipeline_data_sections(
         "[Receives: key signals + all 5 specialist outputs]\n"
     )
 
-    sections.append(f"\n{sep}\nEXECUTIVE SUMMARY\n{sep}\n")
+    sections.append(f"\n{sep}\nEXECUTIVE SUMMARY (second step — summarizes the final report)\n{sep}\n")
     sections.append(f"## System Prompt\n\n{_EXECUTIVE_SUMMARY_PROMPT}\n")
     sections.append(
         "## User Message\n\n"
-        "[Receives: same input as writer]\n"
+        + build_summary_input(
+            "[final report capsule, post anchor-revision]",
+            "[writer input: key signals + clean specialist analyses]",
+        )
+        + "\n"
     )
 
-    sections.append(f"\n{sep}\nBRIEF\n{sep}\n")
+    sections.append(f"\n{sep}\nBRIEF (second step — summarizes the final report)\n{sep}\n")
     sections.append(f"## System Prompt\n\n{build_system_prompt(persona_obj, BRIEF)}\n")
     sections.append(
         "## User Message\n\n"
-        "[Receives: same input as writer — key signals + all 5 specialist outputs]\n"
+        + build_summary_input(
+            "[final report capsule, post anchor-revision]",
+            "[writer input: key signals + clean specialist analyses]",
+        )
+        + "\n"
     )
 
     sections.append(f"\n{sep}\nANCHOR CHECK\n{sep}\n")
@@ -1048,6 +1147,9 @@ class PipelineResult(BaseModel):
     audit_flags: list[AuditFlag] = []
     anchor_warnings: list[AnchorWarning] = []
     revision_count: int = 0
+    capsule_audit_flags: list[AuditFlag] = []
+    capsule_revised: bool = False
+    value_parity_warnings: list[str] = []
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -1064,6 +1166,7 @@ class PipelineAgents(NamedTuple):
     game_shape: Agent[None, str]
     writer: Agent[None, str]
     auditor: Agent[None, AuditResult]
+    capsule_auditor: Agent[None, AuditResult]
     anchor: Agent[None, AnchorResult]
     summary: Agent[None, str]
     signal_extractor: Agent[None, KeySignals]
@@ -1104,7 +1207,30 @@ def make_pipeline_agents(
     mini_specialist_compact_settings = make_model_settings(provider, cap_thinking(thinking, "medium"), 0.3, max_tokens=TOKEN_BUDGET_MEDIUM, mini=True)
     writer_settings = make_model_settings(provider, thinking, 0.7, max_tokens=TOKEN_BUDGET_LARGE)
     checker_settings = make_model_settings(provider, cap_thinking(thinking, "low"), 0.1, max_tokens=TOKEN_BUDGET_SMALL, mini=True)
-    summary_settings = make_model_settings(provider, cap_thinking(thinking, "medium"), 0.3, max_tokens=TOKEN_BUDGET_SMALL, mini=True)
+    # Capsule auditor (B): checks the finished capsule against ALL ground truth
+    # at once — a large input. MEDIUM budget + thinking medium so thinking can't
+    # truncate the structured AuditResult (the report-then-summarize truncation
+    # lesson); the existing per-specialist auditor stays on SMALL because its
+    # input is one specialist's data.
+    capsule_auditor_settings = make_model_settings(provider, cap_thinking(thinking, "medium"), 0.1, max_tokens=TOKEN_BUDGET_MEDIUM, mini=True)
+    # signal_extractor does structured cross-specialist extraction from the same
+    # large specialist-analyses payload the summarizers see. On Gemini thinking
+    # is kept (extraction benefits from reasoning) but the MEDIUM budget gives
+    # it headroom so thinking tokens can't truncate the structured KeySignals
+    # output; on Claude mini=True already disables thinking, leaving the full
+    # MEDIUM budget for output.
+    signal_settings = make_model_settings(provider, cap_thinking(thinking, "medium"), 0.3, max_tokens=TOKEN_BUDGET_MEDIUM, mini=True)
+    # Second-step summarizers (executive summary + brief) distill the finished
+    # report from a large grounded input. Thinking is disabled so its tokens
+    # don't consume the output budget (which truncated the response); the cap is
+    # MEDIUM for headroom. They differ only in temperature.
+    def _distillation_settings(temperature: float) -> ModelSettings:
+        return make_model_settings(
+            provider, cap_thinking(thinking, "low"), temperature,
+            max_tokens=TOKEN_BUDGET_MEDIUM, mini=True, disable_thinking=True,
+        )
+    report_summary_settings = _distillation_settings(0.3)
+    brief_settings = _distillation_settings(0.6)
 
     # Prose agents carry the shared skills toolset so they can consult
     # project skills (e.g. statcast-data-conventions) on demand. The
@@ -1132,13 +1258,13 @@ def make_pipeline_agents(
                      defer_model_check=True)
 
     def _brief(prompt: str) -> Agent[None, str]:
-        # Main model for voice parity with the writer (BRIEF honors --persona),
-        # but tool-free: it synthesizes already-clean specialist text and a
-        # 2-3 sentence output has no need to consult skills. Staying tool-free
-        # also means a hallucinated skill call can't kill this non-critical
-        # concurrent extra. retries=3 mirrors the writer's resilience.
-        return Agent(model, output_type=str, system_prompt=prompt,
-                     model_settings=writer_settings, retries=3,
+        # Mini model: BRIEF distills an already-written, anchored report —
+        # cheaper than composing it. Persona voice instructions still apply
+        # via build_system_prompt(persona, BRIEF). Tool-free (a hallucinated
+        # skill call must not kill this non-critical extra); retries=3 mirrors
+        # the writer's resilience.
+        return Agent(mini_model, output_type=str, system_prompt=prompt,
+                     model_settings=brief_settings, retries=3,
                      defer_model_check=True)
 
     return PipelineAgents(
@@ -1150,12 +1276,14 @@ def make_pipeline_agents(
         writer=_writer(build_writer_system_prompt(persona)),
         auditor=Agent(mini_model, output_type=AuditResult, system_prompt=_DATA_AUDITOR_PROMPT,
                       model_settings=checker_settings, retries=5, defer_model_check=True),
+        capsule_auditor=Agent(mini_model, output_type=AuditResult, system_prompt=_CAPSULE_AUDITOR_PROMPT,
+                              model_settings=capsule_auditor_settings, retries=5, defer_model_check=True),
         anchor=Agent(mini_model, output_type=AnchorResult, system_prompt=ANCHOR_PROMPT,
                      model_settings=checker_settings, retries=3, defer_model_check=True),
         summary=Agent(mini_model, output_type=str, system_prompt=_EXECUTIVE_SUMMARY_PROMPT,
-                      model_settings=summary_settings, defer_model_check=True),
+                      model_settings=report_summary_settings, retries=3, defer_model_check=True),
         signal_extractor=Agent(mini_model, output_type=KeySignals, system_prompt=SIGNAL_EXTRACTOR_PROMPT,
-                               model_settings=summary_settings, retries=3, defer_model_check=True),
+                               model_settings=signal_settings, retries=3, defer_model_check=True),
         brief=_brief(build_system_prompt(persona, BRIEF)),
         mini_model_name=model_label(mini_model),
     )
@@ -1338,6 +1466,137 @@ async def _run_anchor_revision_loop(
     return capsule, final_result.output, revision_count
 
 
+def _parse_summary_bullets(raw: str) -> list[str]:
+    """Parse '- '-prefixed lines from summary output into clean bullets.
+
+    Strips only the literal ``"- "`` marker via ``removeprefix`` — not a
+    character set — so a bullet whose content starts with a minus (e.g. a
+    negative ``-0.77 xRV100``) keeps its sign. ``lstrip("- ")`` would eat it
+    and silently invert the metric's direction.
+    """
+    return [
+        stripped.removeprefix("- ").strip()
+        for line in raw.strip().splitlines()
+        if (stripped := line.strip()).startswith("- ")
+    ]
+
+
+async def _run_summaries(
+    *,
+    summary_agent: Agent[None, str],
+    brief_agent: Agent[None, str],
+    capsule: str,
+    writer_input: str,
+    _model_override: Any = None,
+) -> tuple[list[str], str]:
+    """Second-step summarization of the FINISHED capsule.
+
+    Runs the executive summary and BRIEF concurrently, each fed the final
+    capsule plus recover-only grounding (see build_summary_input). Returns
+    ([], "") without calling either agent when the capsule is empty/
+    whitespace. Each summarizer catches its own failure and degrades to an
+    empty value, so one failing agent never cancels the other.
+    """
+    if not capsule.strip():
+        log.warning("Final capsule is empty; skipping summarization.")
+        return [], ""
+
+    summary_input = build_summary_input(capsule, writer_input)
+
+    async def _run_summary() -> list[str]:
+        try:
+            result = await summary_agent.run(**agent_kwargs(summary_input, _model_override))
+            return _parse_summary_bullets(result.output)
+        except Exception:
+            log.warning("Executive summary agent failed, skipping.", exc_info=True)
+            return []
+
+    async def _run_brief() -> str:
+        try:
+            result = await brief_agent.run(**agent_kwargs(summary_input, _model_override))
+            return result.output.strip()
+        except Exception:
+            log.warning("Brief agent failed, skipping.", exc_info=True)
+            return ""
+
+    bullets, brief = await asyncio.gather(_run_summary(), _run_brief())
+    return bullets, brief
+
+
+async def _run_capsule_audit(
+    *,
+    auditor: Agent[None, AuditResult],
+    writer_agent: Agent[None, str],
+    ground_truth: str,
+    capsule: str,
+    max_fact_revisions: int = MAX_FACT_REVISIONS,
+    _model_override: Any = None,
+) -> tuple[str, list[AuditFlag], bool]:
+    """B: fact-check the capsule against ground truth, looping audit → revise →
+    re-audit up to ``max_fact_revisions`` times to converge.
+
+    Returns (final_capsule, residual_flags, revised):
+      - residual_flags are the issues that REMAIN in final_capsule. Empty means
+        the report is verified clean (clean on the first audit, or a revision
+        converged). Non-empty means the loop was exhausted with flags still
+        standing — the caller should treat the report as UNVERIFIED rather than
+        ship it silently.
+      - revised is True iff at least one fact-revision was applied.
+    Degrades to (capsule, current_flags, revised_so_far) on any error — non-fatal.
+    """
+    try:
+        result = await auditor.run(
+            **agent_kwargs(_build_capsule_audit_input(ground_truth, capsule), _model_override)
+        )
+        flags = result.output.flags
+    except Exception:
+        log.warning("Capsule auditor failed, skipping fact-check.", exc_info=True)
+        return capsule, [], False
+
+    if not flags:
+        return capsule, [], False
+
+    revised = False
+    for attempt in range(1, max_fact_revisions + 1):
+        log.info("Capsule auditor flagged %d issue(s); fact revision %d/%d.",
+                 len(flags), attempt, max_fact_revisions)
+        try:
+            revision = await writer_agent.run(
+                **agent_kwargs(build_fact_revision_message(capsule, flags), _model_override)
+            )
+        except Exception:
+            log.warning("Fact revision failed, keeping last capsule.", exc_info=True)
+            return capsule, flags, revised
+
+        # A degenerate (empty/whitespace) revision must not overwrite the
+        # validated capsule — that would blank the report. Keep the last text.
+        if not revision.output.strip():
+            log.warning("Fact revision returned empty output; keeping last capsule.")
+            return capsule, flags, revised
+
+        capsule = revision.output
+        revised = True
+
+        # Re-audit the revision: it can leave issues unfixed or introduce new
+        # ungrounded numbers. The residual is what actually remains.
+        try:
+            recheck = await auditor.run(
+                **agent_kwargs(_build_capsule_audit_input(ground_truth, capsule), _model_override)
+            )
+            flags = recheck.output.flags
+        except Exception:
+            log.warning("Capsule re-audit failed; surfacing the last flags.", exc_info=True)
+            return capsule, flags, revised
+
+        if not flags:
+            log.info("Capsule re-audit clean after %d revision(s).", attempt)
+            return capsule, [], revised
+
+    log.warning("Capsule fact-check exhausted %d revision(s); %d issue(s) remain.",
+                max_fact_revisions, len(flags))
+    return capsule, flags, revised
+
+
 async def _run_pipeline(
     ctx: PitcherContext,
     *,
@@ -1365,23 +1624,15 @@ async def _run_pipeline(
     key_signals = analyzed.key_signals
     log.info("Analysis spine complete.")
 
-    # Phase 2: Writer + Executive Summary run concurrently
-    # Writer gets clean specialist outputs + key signals.
+    # Phase 2: Writer streams the initial capsule from clean specialist
+    # outputs + key signals. Summarization is a separate second step that
+    # runs after the anchor revision loop (see _run_summaries below).
     writer_input = build_writer_input(
         ctx, specialists.stuff, specialists.location,
         specialists.runvalue, specialists.trends, specialists.game_shape,
         key_signals=key_signals,
     )
     writer_kwargs = agent_kwargs(writer_input, _model_override)
-
-    # Run summary and brief in background while writer streams (same input as
-    # the writer: key signals block + clean specialist analyses).
-    summary_task = asyncio.create_task(
-        agents.summary.run(**agent_kwargs(writer_input, _model_override))
-    )
-    brief_task = asyncio.create_task(
-        agents.brief.run(**agent_kwargs(writer_input, _model_override))
-    )
 
     async with agents.writer.run_stream(**writer_kwargs) as stream:
         chunks: list[str] = []
@@ -1392,31 +1643,13 @@ async def _run_pipeline(
 
     capsule = "".join(chunks)
 
-    # Await executive summary — non-critical, don't crash if it fails
-    try:
-        summary_result = await summary_task
-        summary_raw = summary_result.output
-        summary_bullets = [
-            line.lstrip("- ").strip()
-            for line in summary_raw.strip().splitlines()
-            if line.strip().startswith("- ")
-        ]
-    except Exception:
-        log.warning("Executive summary agent failed, skipping.", exc_info=True)
-        summary_bullets = []
-
-    # Await brief — non-critical, same as the executive summary
-    try:
-        brief_result = await brief_task
-        brief_text = brief_result.output.strip()
-    except Exception:
-        log.warning("Brief agent failed, skipping.", exc_info=True)
-        brief_text = ""
-
     # EXPLAIN THE MODEL post-processor (non-fatal quality gate).
     # Runs for all personas — a persona that silently drops Pitching+
     # context produces a warning but does not fail the pipeline.
-    pre_revision_explainer_ok = check_explainer_present(capsule)
+    # capsule.strip() guards check_explainer_present, which raises on an empty
+    # capsule (writer stream yielded no text). An empty capsule degrades
+    # downstream (summaries return empty) rather than crashing the run here.
+    pre_revision_explainer_ok = bool(capsule.strip()) and check_explainer_present(capsule)
     if not pre_revision_explainer_ok:
         log.warning(
             "[%s] capsule is missing model explanation content",
@@ -1437,6 +1670,7 @@ async def _run_pipeline(
         else specialist_synthesis
     )
 
+    log.info("Revising report (anchor check loop)...")
     capsule, anchor_check, revision_count = await _run_anchor_revision_loop(
         anchor_agent=agents.anchor,
         writer_agent=agents.writer,
@@ -1449,11 +1683,60 @@ async def _run_pipeline(
     # Re-check explainer after revision loop. The anchor revision can rewrite
     # the capsule entirely, potentially dropping Pitching+ context that was
     # present before. Warn again only if state changed, to avoid duplicate logs.
-    if revision_count > 0 and pre_revision_explainer_ok and not check_explainer_present(capsule):
+    if revision_count > 0 and pre_revision_explainer_ok and _explainer_dropped(capsule):
         log.warning(
             "[%s] anchor revision removed model explanation content from capsule",
             persona,
         )
+
+    # Fact-checking layer (B then A) on the final capsule. Both check against the
+    # same source: the union of everything the writer actually saw (raw ground
+    # truth + clean specialist outputs + key signals). Feeding B the union — not
+    # just the raw tables — stops it from flagging legitimate derived numbers
+    # (key-signal deltas, plus-grade paraphrases) as fabricated and triggering a
+    # needless fact-revision. Built once and reused by B and A.
+    log.info("Fact-checking the capsule against ground truth...")
+    fact_check_source = _build_parity_union(ctx, specialists, key_signals)
+    capsule, capsule_audit_flags, capsule_revised = await _run_capsule_audit(
+        auditor=agents.capsule_auditor,
+        writer_agent=agents.writer,
+        ground_truth=fact_check_source,
+        capsule=capsule,
+        _model_override=_model_override,
+    )
+    # Re-check explainer after B's fact-revision, mirroring the anchor guard:
+    # a fact-correction can rewrite the capsule and drop Pitching+ context.
+    if capsule_revised and pre_revision_explainer_ok and _explainer_dropped(capsule):
+        log.warning(
+            "[%s] capsule fact-revision removed model explanation content from capsule",
+            persona,
+        )
+
+    value_parity = check_value_parity(capsule, fact_check_source)
+
+    # Second step: summarize the FINISHED, anchored report (not the
+    # pre-revision specialist data). writer_input is attached as recover-only
+    # grounding inside _run_summaries.
+    log.info("Writing summary and brief from the final report...")
+    summary_bullets, brief_text = await _run_summaries(
+        summary_agent=agents.summary,
+        brief_agent=agents.brief,
+        capsule=capsule,
+        writer_input=writer_input,
+        _model_override=_model_override,
+    )
+
+    # The brief and executive summary are the reader-facing outputs and may
+    # recover figures the capsule fact-check never saw, so value-parity them too
+    # against the same source. Warnings are labeled by surface so an operator can
+    # tell where an ungrounded number entered.
+    summary_parity = check_value_parity("\n".join(summary_bullets), fact_check_source)
+    brief_parity = check_value_parity(brief_text, fact_check_source)
+    value_parity_warnings = (
+        [f"[capsule] {w}" for w in value_parity.unmatched]
+        + [f"[summary] {w}" for w in summary_parity.unmatched]
+        + [f"[brief] {w}" for w in brief_parity.unmatched]
+    )
 
     return PipelineResult(
         narrative=capsule,
@@ -1464,6 +1747,9 @@ async def _run_pipeline(
         audit_flags=audit_flags,
         anchor_warnings=anchor_check.warnings,
         revision_count=revision_count,
+        capsule_audit_flags=capsule_audit_flags,
+        capsule_revised=capsule_revised,
+        value_parity_warnings=value_parity_warnings,
     )
 
 
@@ -1758,3 +2044,15 @@ def check_explainer_present(capsule: str) -> bool:
         )
 
     return any(keyword in capsule for keyword in _EXPLAINER_KEYWORDS)
+
+
+def _explainer_dropped(capsule: str) -> bool:
+    """True when a non-empty capsule no longer contains model-explanation content.
+
+    The single guard for the "a revision removed the Pitching+ explainer"
+    check, shared by every capsule-rewrite stage (anchor loop, fact-revision)
+    so the empty-capsule guard can't be applied inconsistently. An empty or
+    whitespace capsule returns False — there is nothing to drop, and
+    check_explainer_present would otherwise raise on it.
+    """
+    return bool(capsule.strip()) and not check_explainer_present(capsule)

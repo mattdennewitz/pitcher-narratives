@@ -300,6 +300,43 @@ def _run_report_command(args: argparse.Namespace) -> None:
     else:
         print("Clean — no issues found.")
 
+    # Capsule fact-check (B). capsule_audit_flags is the post-re-audit residual:
+    # issues that REMAIN in the saved report. Three states:
+    #   revised + no residual  -> corrected and re-audit verified clean
+    #   residual flags present -> still-unresolved issues (list them)
+    #   neither                -> clean on first pass
+    print("\n\n# Capsule Fact-Check\n")
+    if pipe_result.capsule_revised and not pipe_result.capsule_audit_flags:
+        # The streamed report above is the pre-correction draft; the corrected
+        # text is the saved report (PipelineResult.narrative).
+        print(
+            "Auditor flagged issue(s); the fact-revision corrected them and the "
+            "re-audit is clean. (The streamed report above is the pre-correction "
+            "draft; the saved report is corrected.)"
+        )
+    elif pipe_result.capsule_audit_flags:
+        n = len(pipe_result.capsule_audit_flags)
+        if pipe_result.capsule_revised:
+            print(
+                f"Auditor revised the report, but {n} issue(s) remain after "
+                "re-audit (saved report; the streamed draft above is pre-revision):"
+            )
+        else:
+            print(f"Auditor flagged {n} issue(s) (not auto-corrected):")
+        for f in pipe_result.capsule_audit_flags:
+            print(f"- **[{f.category}]** {f.claim}")
+            print(f"  - Data shows: {f.data_shows}")
+    else:
+        print("Clean — no factual issues found.")
+
+    # Value parity (A, advisory). Covers the capsule and the reader-facing
+    # summary/brief; each warning is prefixed with its surface.
+    if pipe_result.value_parity_warnings:
+        print("\n\n# Value Parity (advisory)\n")
+        print("Report numbers with no match in the source data:")
+        for w in pipe_result.value_parity_warnings:
+            print(f"- {w}")
+
     # Anchor check
     print("\n\n# Anchor Check\n")
     if pipe_result.revision_count == 0 and not pipe_result.anchor_warnings:
@@ -333,6 +370,21 @@ def _run_report_command(args: argparse.Namespace) -> None:
                 f"(prompt warns against these): "
                 f"{', '.join(hallucination_report.outcome_stat_warnings)}"
             )
+
+    # Soft block: the report is fully printed/saved, but if the fact-check loop
+    # (B) could not ground every claim, warn loudly and exit non-zero so
+    # callers/CI catch an UNVERIFIED report rather than treating it as clean.
+    # The deterministic TestModel always emits synthetic audit flags, so the
+    # hard exit is suppressed in test mode (the banner still prints).
+    if pipe_result.capsule_audit_flags:
+        n = len(pipe_result.capsule_audit_flags)
+        print(
+            f"\n⚠️  REPORT UNVERIFIED — {n} flagged claim(s) survived the "
+            "fact-check loop. Review before use.",
+            file=sys.stderr,
+        )
+        if not os.environ.get("PITCHER_NARRATIVES_TEST_MODEL"):
+            sys.exit(1)
 
 
 def _run_morning_command(args: argparse.Namespace) -> None:
