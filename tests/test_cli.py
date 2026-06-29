@@ -218,6 +218,22 @@ def test_cli_produces_report():
     assert len(result.stdout.strip()) > 0
 
 
+def test_cli_unverified_banner_on_residual_flags():
+    """Under TestModel the capsule auditor emits synthetic flags every pass, so
+    the fact-check loop exhausts with residual flags; the UNVERIFIED banner
+    prints to stderr. (The hard exit is suppressed in test mode, so returncode
+    stays 0 — the banner is the observable soft-block signal here.)"""
+    result = subprocess.run(
+        [sys.executable, "-m", "pitcher_narratives.cli", "report", "-p", "592155"],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        env=_test_env(PITCHER_NARRATIVES_TEST_MODEL="1"),
+    )
+    assert result.returncode == 0
+    assert "REPORT UNVERIFIED" in result.stderr
+
+
 def test_cli_verbose_shows_pitcher_info():
     """Integration: -v flag shows pitcher name and game dates on stderr."""
     result = subprocess.run(

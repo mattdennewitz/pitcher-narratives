@@ -371,6 +371,21 @@ def _run_report_command(args: argparse.Namespace) -> None:
                 f"{', '.join(hallucination_report.outcome_stat_warnings)}"
             )
 
+    # Soft block: the report is fully printed/saved, but if the fact-check loop
+    # (B) could not ground every claim, warn loudly and exit non-zero so
+    # callers/CI catch an UNVERIFIED report rather than treating it as clean.
+    # The deterministic TestModel always emits synthetic audit flags, so the
+    # hard exit is suppressed in test mode (the banner still prints).
+    if pipe_result.capsule_audit_flags:
+        n = len(pipe_result.capsule_audit_flags)
+        print(
+            f"\n⚠️  REPORT UNVERIFIED — {n} flagged claim(s) survived the "
+            "fact-check loop. Review before use.",
+            file=sys.stderr,
+        )
+        if not os.environ.get("PITCHER_NARRATIVES_TEST_MODEL"):
+            sys.exit(1)
+
 
 def _run_morning_command(args: argparse.Namespace) -> None:
     """Run the morning editorial workflow."""

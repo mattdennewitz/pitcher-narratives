@@ -17,6 +17,7 @@ from pydantic_ai.settings import ModelSettings, ThinkingEffort
 
 __all__ = [
     "API_KEYS",
+    "MAX_FACT_REVISIONS",
     "MAX_REVISIONS",
     "MINI_PROVIDERS",
     "PROVIDERS",
@@ -53,6 +54,12 @@ TOKEN_BUDGET_LARGE = 4096
 
 MAX_REVISIONS = 5
 """Maximum number of editor revision passes before accepting the capsule."""
+
+MAX_FACT_REVISIONS = 2
+"""Maximum capsule fact-revision passes (audit → revise → re-audit) in the
+one-shot fact-check (B). Kept small: B is a large-input mini-model call and most
+corrections converge in 1-2 passes. If flags still survive, the report is
+emitted but the CLI exits non-zero (soft block)."""
 
 _THINKING_HEADROOM = 8192
 """Extra max_tokens when extended thinking is enabled (Claude): the

@@ -56,6 +56,7 @@ from pitcher_narratives.anchor import (
     build_revision_message,
 )
 from pitcher_narratives.config import (
+    MAX_FACT_REVISIONS,
     MAX_REVISIONS,
     MINI_PROVIDERS,
     PROVIDERS,
@@ -1528,65 +1529,72 @@ async def _run_capsule_audit(
     writer_agent: Agent[None, str],
     ground_truth: str,
     capsule: str,
+    max_fact_revisions: int = MAX_FACT_REVISIONS,
     _model_override: Any = None,
 ) -> tuple[str, list[AuditFlag], bool]:
-    """B: fact-check the capsule against ground truth; on flags, run one writer
-    revision and re-audit the result.
+    """B: fact-check the capsule against ground truth, looping audit → revise →
+    re-audit up to ``max_fact_revisions`` times to converge.
 
     Returns (final_capsule, residual_flags, revised):
-      - residual_flags are the issues that REMAIN in final_capsule. When a
-        revision happened, that is the re-audit's verdict on the revised text —
-        empty means the revision is verified clean; non-empty means the revision
-        left issues unfixed OR introduced new ones (which would otherwise ship
-        unchecked). When no revision happened, residual_flags is empty.
-      - revised is True iff a fact-revision was applied.
-    Degrades to (capsule, [], False) on any error — non-fatal.
+      - residual_flags are the issues that REMAIN in final_capsule. Empty means
+        the report is verified clean (clean on the first audit, or a revision
+        converged). Non-empty means the loop was exhausted with flags still
+        standing — the caller should treat the report as UNVERIFIED rather than
+        ship it silently.
+      - revised is True iff at least one fact-revision was applied.
+    Degrades to (capsule, current_flags, revised_so_far) on any error — non-fatal.
     """
     try:
         result = await auditor.run(
             **agent_kwargs(_build_capsule_audit_input(ground_truth, capsule), _model_override)
         )
-        audit = result.output
+        flags = result.output.flags
     except Exception:
         log.warning("Capsule auditor failed, skipping fact-check.", exc_info=True)
         return capsule, [], False
 
-    if audit.is_clean:
+    if not flags:
         return capsule, [], False
 
-    log.info("Capsule auditor flagged %d issue(s); running one fact revision.", len(audit.flags))
-    try:
-        revision = await writer_agent.run(
-            **agent_kwargs(build_fact_revision_message(capsule, audit.flags), _model_override)
-        )
-    except Exception:
-        log.warning("Fact revision failed, keeping pre-revision capsule.", exc_info=True)
-        return capsule, audit.flags, False
+    revised = False
+    for attempt in range(1, max_fact_revisions + 1):
+        log.info("Capsule auditor flagged %d issue(s); fact revision %d/%d.",
+                 len(flags), attempt, max_fact_revisions)
+        try:
+            revision = await writer_agent.run(
+                **agent_kwargs(build_fact_revision_message(capsule, flags), _model_override)
+            )
+        except Exception:
+            log.warning("Fact revision failed, keeping last capsule.", exc_info=True)
+            return capsule, flags, revised
 
-    # A degenerate (empty/whitespace) revision must not overwrite the validated
-    # capsule — that would blank the whole report. Keep the pre-revision text.
-    if not revision.output.strip():
-        log.warning("Fact revision returned empty output; keeping pre-revision capsule.")
-        return capsule, audit.flags, False
-    revised_capsule = revision.output
+        # A degenerate (empty/whitespace) revision must not overwrite the
+        # validated capsule — that would blank the report. Keep the last text.
+        if not revision.output.strip():
+            log.warning("Fact revision returned empty output; keeping last capsule.")
+            return capsule, flags, revised
 
-    # Re-audit the revised capsule: the corrective rewrite can leave issues
-    # unfixed or introduce new ungrounded numbers, which would otherwise ship
-    # unchecked. The residual flags are what actually remains in the report.
-    try:
-        recheck = await auditor.run(
-            **agent_kwargs(_build_capsule_audit_input(ground_truth, revised_capsule), _model_override)
-        )
-        residual = recheck.output.flags
-    except Exception:
-        log.warning("Capsule re-audit failed; surfacing the original flags.", exc_info=True)
-        return revised_capsule, audit.flags, True
+        capsule = revision.output
+        revised = True
 
-    if residual:
-        log.info("Capsule re-audit: %d issue(s) remain after the fact-revision.", len(residual))
-    else:
-        log.info("Capsule re-audit clean: fact-revision verified.")
-    return revised_capsule, residual, True
+        # Re-audit the revision: it can leave issues unfixed or introduce new
+        # ungrounded numbers. The residual is what actually remains.
+        try:
+            recheck = await auditor.run(
+                **agent_kwargs(_build_capsule_audit_input(ground_truth, capsule), _model_override)
+            )
+            flags = recheck.output.flags
+        except Exception:
+            log.warning("Capsule re-audit failed; surfacing the last flags.", exc_info=True)
+            return capsule, flags, revised
+
+        if not flags:
+            log.info("Capsule re-audit clean after %d revision(s).", attempt)
+            return capsule, [], revised
+
+    log.warning("Capsule fact-check exhausted %d revision(s); %d issue(s) remain.",
+                max_fact_revisions, len(flags))
+    return capsule, flags, revised
 
 
 async def _run_pipeline(

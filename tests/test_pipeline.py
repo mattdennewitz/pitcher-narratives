@@ -1294,6 +1294,31 @@ class TestRunCapsuleAudit:
                 output = AuditResult(flags=flags)
             return _R()
 
+    class _FlagUntilCleanAuditor:
+        """Flags for the first ``flag_calls`` audits, then clean — exercises
+        convergence on a later loop pass."""
+        def __init__(self, flag_calls):
+            self.flag_calls = flag_calls
+            self.calls = 0
+        async def run(self, **kwargs):
+            from pitcher_narratives.models import AuditResult, AuditFlag
+            self.calls += 1
+            flags = [
+                AuditFlag(category="FABRICATED_DATA", claim="98 mph", data_shows="95.9", suggested_fix="x")
+            ] if self.calls <= self.flag_calls else []
+            class _R:
+                output = AuditResult(flags=flags)
+            return _R()
+
+    class _CountingWriter:
+        def __init__(self):
+            self.calls = 0
+        async def run(self, **kwargs):
+            self.calls += 1
+            class _R:
+                output = "corrected capsule"
+            return _R()
+
     def test_clean_audit_no_revision(self):
         from pitcher_narratives.pipeline import _run_capsule_audit
         cap, flags, revised = asyncio.run(_run_capsule_audit(
@@ -1407,6 +1432,44 @@ class TestRunCapsuleAudit:
         assert cap == "corrected capsule"
         assert len(flags) == 1
         assert revised is True
+
+    def test_loop_converges_on_second_pass(self):
+        # Flags audits 1 and 2, clean on audit 3 -> two revisions, then verified
+        # clean. Requires the loop (a single revise would still be flagged).
+        from pitcher_narratives.pipeline import _run_capsule_audit
+        auditor = self._FlagUntilCleanAuditor(flag_calls=2)
+        writer = self._CountingWriter()
+        cap, flags, revised = asyncio.run(_run_capsule_audit(
+            auditor=auditor, writer_agent=writer,
+            ground_truth="gt", capsule="original capsule", max_fact_revisions=2,
+        ))
+        assert flags == []          # converged
+        assert revised is True
+        assert writer.calls == 2    # two fact-revisions
+        assert auditor.calls == 3   # initial + 2 re-audits
+
+    def test_loop_caps_revisions_and_surfaces_residual(self):
+        # Auditor never goes clean: the loop must stop at max_fact_revisions and
+        # surface the residual rather than spinning.
+        from pitcher_narratives.pipeline import _run_capsule_audit
+        writer = self._CountingWriter()
+        cap, flags, revised = asyncio.run(_run_capsule_audit(
+            auditor=self._FlaggingAuditor(), writer_agent=writer,
+            ground_truth="gt", capsule="original capsule", max_fact_revisions=2,
+        ))
+        assert len(flags) == 1      # residual surfaced
+        assert revised is True
+        assert writer.calls == 2    # capped at max_fact_revisions
+
+    def test_max_fact_revisions_one(self):
+        from pitcher_narratives.pipeline import _run_capsule_audit
+        writer = self._CountingWriter()
+        cap, flags, revised = asyncio.run(_run_capsule_audit(
+            auditor=self._FlaggingAuditor(), writer_agent=writer,
+            ground_truth="gt", capsule="original capsule", max_fact_revisions=1,
+        ))
+        assert writer.calls == 1
+        assert len(flags) == 1      # still flagged, surfaced
 
 
 class TestExplainerDropped:
