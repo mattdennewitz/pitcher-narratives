@@ -1280,6 +1280,20 @@ class TestRunCapsuleAudit:
                 output = "corrected capsule"
             return _R()
 
+    class _FlagThenCleanAuditor:
+        """Flags on the first audit, clean on the re-audit — the happy path."""
+        def __init__(self):
+            self.calls = 0
+        async def run(self, **kwargs):
+            from pitcher_narratives.models import AuditResult, AuditFlag
+            self.calls += 1
+            flags = [] if self.calls > 1 else [
+                AuditFlag(category="FABRICATED_DATA", claim="98 mph", data_shows="95.9", suggested_fix="use 95.9")
+            ]
+            class _R:
+                output = AuditResult(flags=flags)
+            return _R()
+
     def test_clean_audit_no_revision(self):
         from pitcher_narratives.pipeline import _run_capsule_audit
         cap, flags, revised = asyncio.run(_run_capsule_audit(
@@ -1344,6 +1358,55 @@ class TestRunCapsuleAudit:
         assert cap == "original capsule"
         assert len(flags) == 1
         assert revised is False
+
+    def test_reaudit_clean_verifies_revision(self):
+        # Flag -> revise -> re-audit clean: the revised capsule ships with NO
+        # residual flags (the revision is verified).
+        from pitcher_narratives.pipeline import _run_capsule_audit
+        auditor = self._FlagThenCleanAuditor()
+        cap, flags, revised = asyncio.run(_run_capsule_audit(
+            auditor=auditor, writer_agent=self._Writer(),
+            ground_truth="gt", capsule="original capsule",
+        ))
+        assert cap == "corrected capsule"
+        assert flags == []          # re-audit clean -> residual empty
+        assert revised is True
+        assert auditor.calls == 2   # initial audit + one re-audit
+
+    def test_reaudit_surfaces_residual(self):
+        # Auditor keeps flagging after the revision: the residual must be
+        # surfaced (not shipped unchecked), and the revised capsule is kept.
+        from pitcher_narratives.pipeline import _run_capsule_audit
+        cap, flags, revised = asyncio.run(_run_capsule_audit(
+            auditor=self._FlaggingAuditor(), writer_agent=self._Writer(),
+            ground_truth="gt", capsule="original capsule",
+        ))
+        assert cap == "corrected capsule"
+        assert len(flags) == 1      # residual from the re-audit
+        assert revised is True
+
+    def test_reaudit_error_surfaces_original_flags(self):
+        # If the re-audit call raises, degrade by surfacing the original flags
+        # (better than silently shipping the revision as clean).
+        from pitcher_narratives.pipeline import _run_capsule_audit
+        from pitcher_narratives.models import AuditResult, AuditFlag
+        class _FlagThenBoom:
+            def __init__(self):
+                self.calls = 0
+            async def run(self, **kwargs):
+                self.calls += 1
+                if self.calls > 1:
+                    raise RuntimeError("re-audit boom")
+                class _R:
+                    output = AuditResult(flags=[AuditFlag(category="FABRICATED_DATA", claim="98 mph", data_shows="95.9", suggested_fix="x")])
+                return _R()
+        cap, flags, revised = asyncio.run(_run_capsule_audit(
+            auditor=_FlagThenBoom(), writer_agent=self._Writer(),
+            ground_truth="gt", capsule="original capsule",
+        ))
+        assert cap == "corrected capsule"
+        assert len(flags) == 1
+        assert revised is True
 
 
 class TestExplainerDropped:

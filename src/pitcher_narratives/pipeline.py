@@ -1530,9 +1530,18 @@ async def _run_capsule_audit(
     capsule: str,
     _model_override: Any = None,
 ) -> tuple[str, list[AuditFlag], bool]:
-    """B: fact-check the capsule against ground truth once; on flags, run one
-    writer revision. Returns (corrected_capsule, flags, revised). Degrades to
-    (capsule, [], False) on any error — non-fatal."""
+    """B: fact-check the capsule against ground truth; on flags, run one writer
+    revision and re-audit the result.
+
+    Returns (final_capsule, residual_flags, revised):
+      - residual_flags are the issues that REMAIN in final_capsule. When a
+        revision happened, that is the re-audit's verdict on the revised text —
+        empty means the revision is verified clean; non-empty means the revision
+        left issues unfixed OR introduced new ones (which would otherwise ship
+        unchecked). When no revision happened, residual_flags is empty.
+      - revised is True iff a fact-revision was applied.
+    Degrades to (capsule, [], False) on any error — non-fatal.
+    """
     try:
         result = await auditor.run(
             **agent_kwargs(_build_capsule_audit_input(ground_truth, capsule), _model_override)
@@ -1559,7 +1568,25 @@ async def _run_capsule_audit(
     if not revision.output.strip():
         log.warning("Fact revision returned empty output; keeping pre-revision capsule.")
         return capsule, audit.flags, False
-    return revision.output, audit.flags, True
+    revised_capsule = revision.output
+
+    # Re-audit the revised capsule: the corrective rewrite can leave issues
+    # unfixed or introduce new ungrounded numbers, which would otherwise ship
+    # unchecked. The residual flags are what actually remains in the report.
+    try:
+        recheck = await auditor.run(
+            **agent_kwargs(_build_capsule_audit_input(ground_truth, revised_capsule), _model_override)
+        )
+        residual = recheck.output.flags
+    except Exception:
+        log.warning("Capsule re-audit failed; surfacing the original flags.", exc_info=True)
+        return revised_capsule, audit.flags, True
+
+    if residual:
+        log.info("Capsule re-audit: %d issue(s) remain after the fact-revision.", len(residual))
+    else:
+        log.info("Capsule re-audit clean: fact-revision verified.")
+    return revised_capsule, residual, True
 
 
 async def _run_pipeline(

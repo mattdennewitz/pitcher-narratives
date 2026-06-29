@@ -300,18 +300,26 @@ def _run_report_command(args: argparse.Namespace) -> None:
     else:
         print("Clean — no issues found.")
 
-    # Capsule fact-check (B)
+    # Capsule fact-check (B). capsule_audit_flags is the post-re-audit residual:
+    # issues that REMAIN in the saved report. Three states:
+    #   revised + no residual  -> corrected and re-audit verified clean
+    #   residual flags present -> still-unresolved issues (list them)
+    #   neither                -> clean on first pass
     print("\n\n# Capsule Fact-Check\n")
-    if pipe_result.capsule_audit_flags:
+    if pipe_result.capsule_revised and not pipe_result.capsule_audit_flags:
+        # The streamed report above is the pre-correction draft; the corrected
+        # text is the saved report (PipelineResult.narrative).
+        print(
+            "Auditor flagged issue(s); the fact-revision corrected them and the "
+            "re-audit is clean. (The streamed report above is the pre-correction "
+            "draft; the saved report is corrected.)"
+        )
+    elif pipe_result.capsule_audit_flags:
         n = len(pipe_result.capsule_audit_flags)
         if pipe_result.capsule_revised:
-            # The report streamed above is the pre-correction draft; the fix was
-            # applied to the saved report (PipelineResult.narrative), not the
-            # streamed text. Say so rather than implying the visible report was
-            # corrected.
             print(
-                f"Auditor flagged {n} issue(s); corrected in the saved report "
-                "(the streamed report above is the pre-correction draft):"
+                f"Auditor revised the report, but {n} issue(s) remain after "
+                "re-audit (saved report; the streamed draft above is pre-revision):"
             )
         else:
             print(f"Auditor flagged {n} issue(s) (not auto-corrected):")
