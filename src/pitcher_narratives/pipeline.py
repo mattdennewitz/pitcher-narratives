@@ -1404,6 +1404,8 @@ async def _run_anchor_revision_loop(
     capsule: str,
     max_revisions: int,
     _model_override: Any = None,
+    tracker: UsageTracker | None = None,
+    tracker_model: str = "",
 ) -> tuple[str, AnchorResult, int]:
     """Run the anchor check + writer revision loop to convergence.
 
@@ -1428,6 +1430,11 @@ async def _run_anchor_revision_loop(
         capsule: The current writer capsule to check.
         max_revisions: Maximum number of revision passes to attempt.
         _model_override: Optional model override (for testing with TestModel).
+        tracker: Optional UsageTracker; when set, each anchor check and
+            writer revision records its token usage (stage="anchor" /
+            "anchor_revision").
+        tracker_model: Bare model name passed to tracker.record(). Ignored
+            when tracker is None.
 
     Returns:
         Tuple of (final_capsule, final_anchor_result, revision_count).
@@ -1438,12 +1445,20 @@ async def _run_anchor_revision_loop(
         in `final_anchor_result.warnings`. `revision_count` is the
         number of revision passes actually run (0 = passed first try).
     """
+    def _rec(result: Any, stage: str) -> None:
+        if tracker is None:
+            return
+        u = result.usage()
+        tracker.record(tracker_model, u.input_tokens or 0,
+                       u.output_tokens or 0, stage=stage)
+
     revision_count = 0
 
     for _ in range(max_revisions):
         anchor_result = await anchor_agent.run(
             **agent_kwargs(build_anchor_message(synthesis, capsule), _model_override)
         )
+        _rec(anchor_result, "anchor")
         anchor_check = anchor_result.output
 
         if anchor_check.is_clean:
@@ -1455,6 +1470,7 @@ async def _run_anchor_revision_loop(
                 _model_override,
             )
         )
+        _rec(revision_result, "anchor_revision")
         capsule = revision_result.output
         revision_count += 1
 
@@ -1463,6 +1479,7 @@ async def _run_anchor_revision_loop(
     final_result = await anchor_agent.run(
         **agent_kwargs(build_anchor_message(synthesis, capsule), _model_override)
     )
+    _rec(final_result, "anchor")
     return capsule, final_result.output, revision_count
 
 

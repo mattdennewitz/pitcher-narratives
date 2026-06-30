@@ -698,6 +698,43 @@ class TestAnchorRevisionLoop:
         # And critically: the original must not appear in the second check
         assert "ORIGINAL_CAPSULE_TEXT" not in capsules_seen[1]
 
+    def test_records_usage_per_anchor_and_revision(self):
+        """With a tracker, each anchor check and writer revision is recorded."""
+        import asyncio
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock, MagicMock
+
+        from pitcher_narratives.anchor import AnchorResult, AnchorWarning
+        from pitcher_narratives.costs import UsageTracker
+        from pitcher_narratives.pipeline import _run_anchor_revision_loop
+
+        def _wrap(output, tin, tout):
+            return MagicMock(
+                output=output,
+                usage=MagicMock(return_value=SimpleNamespace(
+                    input_tokens=tin, output_tokens=tout)),
+            )
+
+        dirty = AnchorResult(warnings=[AnchorWarning(
+            category="MISSED_SIGNAL", description="x")])
+        clean = AnchorResult(warnings=[])
+        anchor = MagicMock()
+        anchor.run = AsyncMock(side_effect=[_wrap(dirty, 10, 5), _wrap(clean, 10, 5)])
+        writer = MagicMock()
+        writer.run = AsyncMock(side_effect=[_wrap("REVISED", 20, 8)])
+
+        tracker = UsageTracker()
+        asyncio.run(_run_anchor_revision_loop(
+            anchor_agent=anchor, writer_agent=writer,
+            synthesis="synth", capsule="ORIG", max_revisions=2,
+            tracker=tracker, tracker_model="m",
+        ))
+
+        stages = [r.stage for r in tracker.records]
+        assert stages == ["anchor", "anchor_revision", "anchor"]
+        assert tracker.total_input() == 40   # 10 + 20 + 10
+        assert tracker.total_output() == 18  # 5 + 8 + 5
+
     def test_specialist_outputs_populated(self, ctx):
         """All 5 specialist slots are non-empty strings."""
         test_model = TestModel(call_tools=[])
