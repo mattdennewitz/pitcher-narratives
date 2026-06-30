@@ -1546,6 +1546,36 @@ def test_capsule_audit_records_usage():
     assert stages == ["fact_audit", "fact_revision", "fact_audit"]
 
 
+def test_capsule_audit_usage_error_propagates_not_swallowed_as_auditor_failure():
+    """A usage()-recording error is a tracker/instrumentation problem, not an
+    auditor failure. It must propagate (raise) rather than be silently
+    treated as "auditor failed, skip fact-check" -- that would misattribute
+    the error and silently disable fact-checking.
+    """
+    import asyncio
+    from unittest.mock import AsyncMock, MagicMock
+
+    from pitcher_narratives.costs import UsageTracker
+    from pitcher_narratives.models import AuditResult
+    from pitcher_narratives.pipeline import _run_capsule_audit
+
+    clean = AuditResult(flags=[])
+    auditor = MagicMock()
+    auditor.run = AsyncMock(return_value=MagicMock(
+        output=clean,
+        usage=MagicMock(side_effect=RuntimeError("usage boom")),
+    ))
+    writer = MagicMock()
+
+    tracker = UsageTracker()
+    with pytest.raises(RuntimeError, match="usage boom"):
+        asyncio.run(_run_capsule_audit(
+            auditor=auditor, writer_agent=writer,
+            ground_truth="gt", capsule="CAP",
+            tracker=tracker, tracker_model="m",
+        ))
+
+
 def test_flag_summary_counts_fields():
     from pitcher_narratives.models import SpecialistOutputs
     from pitcher_narratives.pipeline import PipelineResult, flag_summary

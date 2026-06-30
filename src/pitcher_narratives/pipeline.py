@@ -138,6 +138,19 @@ def _render_user_prompt(parts: UserPrompt) -> str:
     )
 
 
+def _record_usage(
+    tracker: UsageTracker | None,
+    tracker_model: str,
+    result: Any,
+    stage: str,
+) -> None:
+    """Record one agent call's token usage on the tracker, if tracking is on."""
+    if tracker is None:
+        return
+    u = result.usage()
+    tracker.record(tracker_model, u.input_tokens or 0, u.output_tokens or 0, stage=stage)
+
+
 # ═══════════════════════════════════════════════════════════════════════
 # SPECIALIST PROMPTS
 # ═══════════════════════════════════════════════════════════════════════
@@ -938,9 +951,7 @@ async def audit_and_revise_specialists(
                 ground_truths[name], outputs[name],
             )
             result = await auditor.run(**agent_kwargs(audit_input, _model_override))
-            if tracker is not None:
-                u = result.usage()
-                tracker.record(tracker_model, u.input_tokens or 0, u.output_tokens or 0, stage="audit")
+            _record_usage(tracker, tracker_model, result, "audit")
             return name, result.output
         except Exception:
             log.error("Audit failed for %s specialist; passing through un-audited.",
@@ -975,9 +986,7 @@ async def audit_and_revise_specialists(
             )
             agent = specialist_agents[name]
             result = await agent.run(**agent_kwargs(revision_input, _model_override))
-            if tracker is not None:
-                u = result.usage()
-                tracker.record(tracker_model, u.input_tokens or 0, u.output_tokens or 0, stage="revision")
+            _record_usage(tracker, tracker_model, result, "revision")
             return name, result.output
         except Exception:
             log.warning("Revision failed for %s specialist, keeping original.", name, exc_info=True)
@@ -1462,20 +1471,13 @@ async def _run_anchor_revision_loop(
         in `final_anchor_result.warnings`. `revision_count` is the
         number of revision passes actually run (0 = passed first try).
     """
-    def _rec(result: Any, stage: str) -> None:
-        if tracker is None:
-            return
-        u = result.usage()
-        tracker.record(tracker_model, u.input_tokens or 0,
-                       u.output_tokens or 0, stage=stage)
-
     revision_count = 0
 
     for _ in range(max_revisions):
         anchor_result = await anchor_agent.run(
             **agent_kwargs(build_anchor_message(synthesis, capsule), _model_override)
         )
-        _rec(anchor_result, "anchor")
+        _record_usage(tracker, tracker_model, anchor_result, "anchor")
         anchor_check = anchor_result.output
 
         if anchor_check.is_clean:
@@ -1487,7 +1489,7 @@ async def _run_anchor_revision_loop(
                 _model_override,
             )
         )
-        _rec(revision_result, "anchor_revision")
+        _record_usage(tracker, tracker_model, revision_result, "anchor_revision")
         capsule = revision_result.output
         revision_count += 1
 
@@ -1496,7 +1498,7 @@ async def _run_anchor_revision_loop(
     final_result = await anchor_agent.run(
         **agent_kwargs(build_anchor_message(synthesis, capsule), _model_override)
     )
-    _rec(final_result, "anchor")
+    _record_usage(tracker, tracker_model, final_result, "anchor")
     return capsule, final_result.output, revision_count
 
 
@@ -1587,22 +1589,16 @@ async def _run_capsule_audit(
         tracker_model: Bare model name passed to tracker.record(). Ignored
             when tracker is None.
     """
-    def _rec(result: Any, stage: str) -> None:
-        if tracker is None:
-            return
-        u = result.usage()
-        tracker.record(tracker_model, u.input_tokens or 0,
-                       u.output_tokens or 0, stage=stage)
-
     try:
         result = await auditor.run(
             **agent_kwargs(_build_capsule_audit_input(ground_truth, capsule), _model_override)
         )
-        _rec(result, "fact_audit")
-        flags = result.output.flags
     except Exception:
         log.warning("Capsule auditor failed, skipping fact-check.", exc_info=True)
         return capsule, [], False
+
+    _record_usage(tracker, tracker_model, result, "fact_audit")
+    flags = result.output.flags
 
     if not flags:
         return capsule, [], False
@@ -1615,7 +1611,7 @@ async def _run_capsule_audit(
             revision = await writer_agent.run(
                 **agent_kwargs(build_fact_revision_message(capsule, flags), _model_override)
             )
-            _rec(revision, "fact_revision")
+            _record_usage(tracker, tracker_model, revision, "fact_revision")
         except Exception:
             log.warning("Fact revision failed, keeping last capsule.", exc_info=True)
             return capsule, flags, revised
@@ -1635,11 +1631,12 @@ async def _run_capsule_audit(
             recheck = await auditor.run(
                 **agent_kwargs(_build_capsule_audit_input(ground_truth, capsule), _model_override)
             )
-            _rec(recheck, "fact_audit")
-            flags = recheck.output.flags
         except Exception:
             log.warning("Capsule re-audit failed; surfacing the last flags.", exc_info=True)
             return capsule, flags, revised
+
+        _record_usage(tracker, tracker_model, recheck, "fact_audit")
+        flags = recheck.output.flags
 
         if not flags:
             log.info("Capsule re-audit clean after %d revision(s).", attempt)
