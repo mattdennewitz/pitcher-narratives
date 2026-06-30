@@ -377,3 +377,17 @@ def test_multi_frame_context_primary_and_for_frame(ctx):
     import pytest
     with pytest.raises(ValueError, match="season"):
         mfc.for_frame(TemporalFrame.SEASON)
+
+
+def test_assemble_multi_frame_primary_matches_single(ctx):
+    from pitcher_narratives.context import assemble_multi_frame_context
+    from pitcher_narratives.data import load_pitcher_data
+    from pitcher_narratives.temporal import TemporalFrame
+
+    data = load_pitcher_data(592155, window_days=30)
+    mfc = assemble_multi_frame_context(data)
+
+    assert set(mfc.frames) == {TemporalFrame.WINDOW_DAYS}
+    # Behavior-preserving: the wrapped frame matches the existing assembly.
+    assert mfc.primary.pitcher_id == ctx.pitcher_id
+    assert mfc.primary.to_prompt() == ctx.to_prompt()

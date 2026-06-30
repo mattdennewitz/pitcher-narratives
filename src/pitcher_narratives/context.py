@@ -47,7 +47,12 @@ from pitcher_narratives.shape import (
 )
 from pitcher_narratives.temporal import TemporalFrame
 
-__all__ = ["MultiFrameContext", "PitcherContext", "assemble_pitcher_context"]
+__all__ = [
+    "MultiFrameContext",
+    "PitcherContext",
+    "assemble_multi_frame_context",
+    "assemble_pitcher_context",
+]
 
 _MAX_PITCH_TYPES = 4
 """Token budget: keep top 4 pitch types only in arsenal and execution tables."""
@@ -183,3 +188,15 @@ class MultiFrameContext(BaseModel):
     def primary(self) -> PitcherContext:
         """The default frame current call sites read (the day-window)."""
         return self.for_frame(TemporalFrame.WINDOW_DAYS)
+
+
+def assemble_multi_frame_context(data: PitcherData) -> MultiFrameContext:
+    """Assemble the multi-frame context.
+
+    Behavior-preserving cut: only the day-window frame is built (it equals
+    today's assemble_pitcher_context output). Appearance-count frames
+    (RECENT / PRIOR / MOST_RECENT) are added when the slicer lands.
+    """
+    return MultiFrameContext(
+        frames={TemporalFrame.WINDOW_DAYS: assemble_pitcher_context(data)},
+    )
