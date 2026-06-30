@@ -45,8 +45,9 @@ from pitcher_narratives.shape import (
     PitchShapeProfile,
     compute_pitch_shape,
 )
+from pitcher_narratives.temporal import TemporalFrame
 
-__all__ = ["PitcherContext", "assemble_pitcher_context"]
+__all__ = ["MultiFrameContext", "PitcherContext", "assemble_pitcher_context"]
 
 _MAX_PITCH_TYPES = 4
 """Token budget: keep top 4 pitch types only in arsenal and execution tables."""
@@ -155,3 +156,30 @@ def assemble_pitcher_context(data: PitcherData) -> PitcherContext:
         arsenal_trend=arsenal_trend,
         pitch_shape=pitch_shape,
     )
+
+
+class MultiFrameContext(BaseModel):
+    """One PitcherContext per temporal frame.
+
+    Wrapper shape (not per-field) so every PitcherContext field keeps its
+    type and all render_/_build_*_input helpers stay unchanged. Today only
+    WINDOW_DAYS is populated; later phases add appearance-count frames.
+    """
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    frames: dict[TemporalFrame, PitcherContext]
+
+    def for_frame(self, frame: TemporalFrame) -> PitcherContext:
+        try:
+            return self.frames[frame]
+        except KeyError:
+            available = ", ".join(sorted(f.value for f in self.frames))
+            raise ValueError(
+                f"frame {frame.value!r} not assembled; available: {available}"
+            ) from None
+
+    @property
+    def primary(self) -> PitcherContext:
+        """The default frame current call sites read (the day-window)."""
+        return self.for_frame(TemporalFrame.WINDOW_DAYS)

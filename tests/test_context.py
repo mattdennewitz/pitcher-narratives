@@ -361,3 +361,19 @@ def test_to_prompt_pitch_shape_has_arm_angle(ctx):
     start = prompt.index("Pitch Shape vs Arm Slot")
     section = prompt[start : prompt.index("\n## ", start)]
     assert "deg" in section
+
+
+# ── MultiFrameContext (Phase 2) ──────────────────────────────────────
+
+
+def test_multi_frame_context_primary_and_for_frame(ctx):
+    from pitcher_narratives.context import MultiFrameContext
+    from pitcher_narratives.temporal import TemporalFrame
+
+    mfc = MultiFrameContext(frames={TemporalFrame.WINDOW_DAYS: ctx})
+    assert mfc.primary is ctx
+    assert mfc.for_frame(TemporalFrame.WINDOW_DAYS) is ctx
+
+    import pytest
+    with pytest.raises(ValueError, match="season"):
+        mfc.for_frame(TemporalFrame.SEASON)
