@@ -183,6 +183,10 @@ def run_morning(
         indent=2,
     ))
     (run_dir / "usage.json").write_text(json.dumps(tracker.to_json(), indent=2))
+    (run_dir / "validation.json").write_text(json.dumps(
+        {"picks": {}, "note": "per-item validation lands with Mode RECAP parity"},
+        indent=2,
+    ))
 
     print(digest)
     return run_dir

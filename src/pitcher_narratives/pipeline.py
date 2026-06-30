@@ -114,7 +114,7 @@ __all__ = [
     "UserPrompt", "audit_and_revise_specialists", "build_fact_revision_message",
     "build_summary_input",
     "build_writer_input", "check_explainer_present", "check_hallucinated_metrics",
-    "generate_pipeline_streaming",
+    "flag_summary", "generate_pipeline_streaming",
     "make_pipeline_agents", "run_analysis_spine", "run_specialists",
     "write_pipeline_data_file",
 ]
@@ -1150,6 +1150,23 @@ class PipelineResult(BaseModel):
     capsule_audit_flags: list[AuditFlag] = []
     capsule_revised: bool = False
     value_parity_warnings: list[str] = []
+
+
+def flag_summary(result: PipelineResult) -> dict[str, int | bool]:
+    """Countable validation outcomes for a finished pipeline result.
+
+    Persisted per run so the capsule flag/revision rate — never recorded
+    before — becomes measurable and the per-mode revision depth can be
+    calibrated from real data rather than guessed.
+    """
+    return {
+        "revision_count": result.revision_count,
+        "capsule_revised": result.capsule_revised,
+        "n_capsule_audit_flags": len(result.capsule_audit_flags),
+        "n_anchor_warnings": len(result.anchor_warnings),
+        "n_value_parity_warnings": len(result.value_parity_warnings),
+        "n_audit_flags": len(result.audit_flags),
+    }
 
 
 # ═══════════════════════════════════════════════════════════════════════

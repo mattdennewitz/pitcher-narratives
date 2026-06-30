@@ -1546,6 +1546,30 @@ def test_capsule_audit_records_usage():
     assert stages == ["fact_audit", "fact_revision", "fact_audit"]
 
 
+def test_flag_summary_counts_fields():
+    from pitcher_narratives.models import SpecialistOutputs
+    from pitcher_narratives.pipeline import PipelineResult, flag_summary
+
+    result = PipelineResult(
+        narrative="n",
+        specialists=SpecialistOutputs(
+            stuff="s", location="l", runvalue="r", trends="t", game_shape="g"),
+        revision_count=2,
+        capsule_revised=True,
+        anchor_warnings=[],
+        value_parity_warnings=["[capsule] 1.23"],
+    )
+    summary = flag_summary(result)
+    assert summary == {
+        "revision_count": 2,
+        "capsule_revised": True,
+        "n_capsule_audit_flags": 0,
+        "n_anchor_warnings": 0,
+        "n_value_parity_warnings": 1,
+        "n_audit_flags": 0,
+    }
+
+
 class TestExplainerDropped:
     def test_empty_capsule_not_dropped(self):
         # Must not raise (check_explainer_present raises on empty); empty means

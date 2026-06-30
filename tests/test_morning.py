@@ -128,6 +128,10 @@ def test_run_morning_writes_all_artifacts(tmp_path, monkeypatch):
     usage = json.loads((run_dir / "usage.json").read_text())
     assert any(rec["stage"] == "selector" for rec in usage)
 
+    assert (run_dir / "validation.json").exists()
+    validation = json.loads((run_dir / "validation.json").read_text())
+    assert "picks" in validation
+
 
 def test_run_morning_single_event_loop(tmp_path, monkeypatch):
     """Selector and writers share one event loop: provider-client state
