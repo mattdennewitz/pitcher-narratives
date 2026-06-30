@@ -1548,6 +1548,8 @@ async def _run_capsule_audit(
     capsule: str,
     max_fact_revisions: int = MAX_FACT_REVISIONS,
     _model_override: Any = None,
+    tracker: UsageTracker | None = None,
+    tracker_model: str = "",
 ) -> tuple[str, list[AuditFlag], bool]:
     """B: fact-check the capsule against ground truth, looping audit → revise →
     re-audit up to ``max_fact_revisions`` times to converge.
@@ -1560,11 +1562,26 @@ async def _run_capsule_audit(
         ship it silently.
       - revised is True iff at least one fact-revision was applied.
     Degrades to (capsule, current_flags, revised_so_far) on any error — non-fatal.
+
+    Args:
+        tracker: Optional UsageTracker; when set, each auditor run records
+            stage="fact_audit" and each writer revision records
+            stage="fact_revision".
+        tracker_model: Bare model name passed to tracker.record(). Ignored
+            when tracker is None.
     """
+    def _rec(result: Any, stage: str) -> None:
+        if tracker is None:
+            return
+        u = result.usage()
+        tracker.record(tracker_model, u.input_tokens or 0,
+                       u.output_tokens or 0, stage=stage)
+
     try:
         result = await auditor.run(
             **agent_kwargs(_build_capsule_audit_input(ground_truth, capsule), _model_override)
         )
+        _rec(result, "fact_audit")
         flags = result.output.flags
     except Exception:
         log.warning("Capsule auditor failed, skipping fact-check.", exc_info=True)
@@ -1581,6 +1598,7 @@ async def _run_capsule_audit(
             revision = await writer_agent.run(
                 **agent_kwargs(build_fact_revision_message(capsule, flags), _model_override)
             )
+            _rec(revision, "fact_revision")
         except Exception:
             log.warning("Fact revision failed, keeping last capsule.", exc_info=True)
             return capsule, flags, revised
@@ -1600,6 +1618,7 @@ async def _run_capsule_audit(
             recheck = await auditor.run(
                 **agent_kwargs(_build_capsule_audit_input(ground_truth, capsule), _model_override)
             )
+            _rec(recheck, "fact_audit")
             flags = recheck.output.flags
         except Exception:
             log.warning("Capsule re-audit failed; surfacing the last flags.", exc_info=True)

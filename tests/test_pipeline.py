@@ -1509,6 +1509,43 @@ class TestRunCapsuleAudit:
         assert len(flags) == 1      # still flagged, surfaced
 
 
+def test_capsule_audit_records_usage():
+    """Initial audit + one revision + re-audit are each recorded."""
+    import asyncio
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock, MagicMock
+
+    from pitcher_narratives.costs import UsageTracker
+    from pitcher_narratives.models import AuditFlag, AuditResult
+    from pitcher_narratives.pipeline import _run_capsule_audit
+
+    def _wrap(output, tin, tout):
+        return MagicMock(
+            output=output,
+            usage=MagicMock(return_value=SimpleNamespace(
+                input_tokens=tin, output_tokens=tout)),
+        )
+
+    flag = AuditFlag(category="FABRICATED_DATA", claim="c",
+                     data_shows="d", suggested_fix="f")
+    dirty = AuditResult(flags=[flag])
+    clean = AuditResult(flags=[])
+    auditor = MagicMock()
+    auditor.run = AsyncMock(side_effect=[_wrap(dirty, 10, 4), _wrap(clean, 10, 4)])
+    writer = MagicMock()
+    writer.run = AsyncMock(side_effect=[_wrap("FIXED CAPSULE", 20, 6)])
+
+    tracker = UsageTracker()
+    asyncio.run(_run_capsule_audit(
+        auditor=auditor, writer_agent=writer,
+        ground_truth="gt", capsule="CAP", max_fact_revisions=2,
+        tracker=tracker, tracker_model="m",
+    ))
+
+    stages = [r.stage for r in tracker.records]
+    assert stages == ["fact_audit", "fact_revision", "fact_audit"]
+
+
 class TestExplainerDropped:
     def test_empty_capsule_not_dropped(self):
         # Must not raise (check_explainer_present raises on empty); empty means
