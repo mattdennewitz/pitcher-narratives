@@ -189,7 +189,7 @@ class TemporalFrame(StrEnum):
 End state is appearance-count throughout: `RECENT` carries a per-mode count
 (REPORT's span window vs CHANGES' small recent-X both draw from it with
 different N), `PRIOR` is CHANGES' prior-M window, `MOST_RECENT` is N=1.
-`WINDOW_DAYS` exists only until phase 4.
+`WINDOW_DAYS` exists only until the window-model swap (phase 6).
 
 - **New capability:** an **appearance-count slicer** (sibling to `filter_to_window`)
   that selects the last N appearances by `game_date` ordering, feeding RECENT_X /
@@ -218,7 +218,7 @@ different N), `PRIOR` is CHANGES' prior-M window, `MOST_RECENT` is N=1.
   considered and declined in favor of a simple, documented surface.)
 - REPORT's `RECENT` span also becomes an appearance count after the swap; its
   default maps from today's 30-day window to the equivalent appearance count
-  (set during recalibration, phase 4).
+  (set during the window-model swap, phase 6).
 
 ---
 
