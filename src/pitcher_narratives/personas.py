@@ -29,20 +29,24 @@ log = logging.getLogger("pitcher_narratives.personas")
 __all__ = [
     "ANALYST",
     "BRIEF",
+    "DEFAULT_MODE",
     "DEFAULT_PERSONA",
     "DIGEST_ITEM",
     "GENERIC",
+    "NARRATION_MODES",
     "NEWSLETTER",
     "PERSONAS",
-    "REPORT_CONTRACTS",
+    "REPORT",
     "SCOUT",
     "SCOUT_REPORT",
     "SECTIONED",
     "SHARED_WRITER_BASE",
+    "NarrationMode",
     "OutputContract",
     "Persona",
     "build_system_prompt",
     "build_writer_system_prompt",
+    "get_narration_mode",
     "get_persona",
 ]
 
@@ -351,13 +355,61 @@ DIGEST_ITEM = OutputContract(
     input_framing=_CUE_FRAMING,
 )
 
-# Pairs each persona with its canonical report contract so build_writer_system_prompt
-# remains a backward-compatible shim.
-REPORT_CONTRACTS: dict[str, OutputContract] = {
-    "scout": SCOUT_REPORT,
-    "analyst": NEWSLETTER,
-    "generic": SECTIONED,
-}
+@dataclass(frozen=True)
+class NarrationMode:
+    """A top-level narration selector composed with the Persona × OutputContract
+    machinery. A mode owns the persona → report-contract mapping (which output
+    structure each voice writes in). Voice stays orthogonal: Persona picks tone,
+    NarrationMode picks the output shape.
+
+    Phase 4 carries only ``id`` and ``contracts`` — the members the REPORT path
+    consumes today. The frame selector, focus directive, input assembler, and
+    validation policy (design §4) are added by later phases (5/7/8/9) that
+    consume them; frozen-dataclass fields with defaults can be appended without
+    breaking existing construction.
+    """
+
+    id: str
+    contracts: dict[str, OutputContract]
+
+
+# REPORT reproduces today's report path: each persona's canonical output contract.
+REPORT = NarrationMode(
+    id="report",
+    contracts={
+        "scout": SCOUT_REPORT,
+        "analyst": NEWSLETTER,
+        "generic": SECTIONED,
+    },
+)
+
+_NARRATION_MODES_INTERNAL: dict[str, NarrationMode] = {"report": REPORT}
+
+# Import-time invariant: registry key must match mode.id.
+for _mid, _mode in _NARRATION_MODES_INTERNAL.items():
+    if _mode.id != _mid:
+        raise ValueError(
+            f"Registry key {_mid!r} does not match mode.id {_mode.id!r}"
+        )
+del _mid, _mode
+
+NARRATION_MODES: MappingProxyType[str, NarrationMode] = MappingProxyType(
+    _NARRATION_MODES_INTERNAL
+)
+
+DEFAULT_MODE: NarrationMode = NARRATION_MODES["report"]
+
+
+def get_narration_mode(mode_id: str) -> NarrationMode:
+    """Resolve a narration-mode id to its NarrationMode instance.
+
+    Raises ValueError (not KeyError) with the valid ids, mirroring get_persona.
+    """
+    try:
+        return NARRATION_MODES[mode_id]
+    except KeyError:
+        valid = ", ".join(sorted(NARRATION_MODES.keys()))
+        raise ValueError(f"Unknown narration mode {mode_id!r}; valid: {valid}") from None
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -527,23 +579,24 @@ def build_system_prompt(persona: Persona, contract: OutputContract) -> str:
     return "\n\n".join(parts)
 
 
-def build_writer_system_prompt(persona: Persona) -> str:
-    """Compose the report-writer prompt for a persona.
+def build_writer_system_prompt(persona: Persona, mode: NarrationMode = REPORT) -> str:
+    """Compose the report-writer prompt for a persona within a narration mode.
 
-    Thin shim over build_system_prompt that pairs the persona with the report
-    contract matching its current output format, keeping report call sites and
-    behaviour unchanged.
+    Thin shim over build_system_prompt that pairs the persona with the mode's
+    output contract for its voice, keeping report call sites and behaviour
+    unchanged (mode defaults to REPORT).
 
-    Personas not present in REPORT_CONTRACTS (e.g. newly added voice personas)
-    fall back to SCOUT_REPORT — the default report format — rather than raising a
-    KeyError.
+    Personas not present in the mode's contracts (e.g. newly added voice
+    personas) fall back to SCOUT_REPORT — the default report format — rather
+    than raising a KeyError.
     """
-    contract = REPORT_CONTRACTS.get(persona.id)
+    contract = mode.contracts.get(persona.id)
     if contract is None:
         log.warning(
-            "Persona %r has no REPORT_CONTRACTS entry; falling back to SCOUT_REPORT. "
-            "Add an entry to REPORT_CONTRACTS to suppress this warning.",
+            "Persona %r has no contract in mode %r; falling back to SCOUT_REPORT. "
+            "Add an entry to the mode's contracts to suppress this warning.",
             persona.id,
+            mode.id,
         )
         contract = SCOUT_REPORT
     return build_system_prompt(persona, contract)

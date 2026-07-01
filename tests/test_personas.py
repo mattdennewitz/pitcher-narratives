@@ -15,7 +15,7 @@ from pitcher_narratives.personas import (
     GENERIC,
     NEWSLETTER,
     PERSONAS,
-    REPORT_CONTRACTS,
+    REPORT,
     SCOUT,
     SCOUT_REPORT,
     SECTIONED,
@@ -24,6 +24,7 @@ from pitcher_narratives.personas import (
     Persona,
     build_system_prompt,
     build_writer_system_prompt,
+    get_narration_mode,
     get_persona,
 )
 from pitcher_narratives.pipeline import PipelineResult, generate_pipeline_streaming, make_pipeline_agents
@@ -113,7 +114,7 @@ def test_scout_has_expected_fields():
 
 def test_scout_report_contract_is_scout_report():
     """The scout report contract is SCOUT_REPORT with length_target (150, 350)."""
-    contract = REPORT_CONTRACTS["scout"]
+    contract = REPORT.contracts["scout"]
     assert contract is SCOUT_REPORT
     assert contract.length_target == (150, 350)
     assert all(isinstance(v, int) for v in contract.length_target)
@@ -133,6 +134,39 @@ def test_get_persona_unknown_raises_valueerror():
     """get_persona raises ValueError with the unknown id in the message."""
     with pytest.raises(ValueError, match="bogus"):
         get_persona("bogus")
+
+
+def test_report_mode_maps_personas_to_report_contracts():
+    """REPORT.contracts reproduces the legacy report-contracts mapping."""
+    assert REPORT.id == "report"
+    assert REPORT.contracts["scout"] is SCOUT_REPORT
+    assert REPORT.contracts["analyst"] is NEWSLETTER
+    assert REPORT.contracts["generic"] is SECTIONED
+
+
+def test_narration_mode_is_frozen():
+    """NarrationMode is immutable so registry identity is stable."""
+    import dataclasses
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        REPORT.id = "changed"  # type: ignore[misc]
+
+
+def test_get_narration_mode_returns_report():
+    """get_narration_mode('report') resolves to the REPORT instance."""
+    assert get_narration_mode("report") is REPORT
+
+
+def test_get_narration_mode_unknown_raises_valueerror():
+    """Unknown mode ids raise ValueError listing valid ids (not KeyError)."""
+    with pytest.raises(ValueError, match="bogus"):
+        get_narration_mode("bogus")
+
+
+def test_build_writer_system_prompt_mode_arg_is_byte_identical_to_default():
+    """Passing mode=REPORT explicitly equals the default single-arg call."""
+    for pid in ("scout", "analyst", "generic"):
+        p = get_persona(pid)
+        assert build_writer_system_prompt(p, REPORT) == build_writer_system_prompt(p)
 
 
 def test_fixture_exists():
@@ -327,7 +361,7 @@ def test_analyst_has_expected_fields():
     assert analyst.id == "analyst"
     assert analyst.display_name == "Analyst"
     assert analyst.parent == "scout"
-    assert REPORT_CONTRACTS["analyst"] is NEWSLETTER
+    assert REPORT.contracts["analyst"] is NEWSLETTER
     assert NEWSLETTER.length_target == (450, 800)
     assert "newsletter" in analyst.description.lower() or "teaching" in analyst.description.lower()
 
@@ -463,7 +497,7 @@ def test_generic_has_expected_fields():
     assert generic.id == "generic"
     assert generic.display_name == "Generic"
     assert generic.parent == "scout"
-    assert REPORT_CONTRACTS["generic"] is SECTIONED
+    assert REPORT.contracts["generic"] is SECTIONED
     assert SECTIONED.length_target == (300, 500)
     assert "structured" in generic.description.lower() or "section" in generic.description.lower()
 
@@ -609,7 +643,7 @@ def test_brief_composes_with_every_persona(persona_id: str) -> None:
 
 def test_brief_is_not_a_persona_report_contract():
     """BRIEF is an alternate output target, not any persona's canonical report."""
-    assert BRIEF not in REPORT_CONTRACTS.values()
+    assert BRIEF not in REPORT.contracts.values()
 
 
 # ── Generic shape assertion helper (Phase 08: TEST-06) ──
@@ -793,9 +827,9 @@ def test_shared_base_surfaces_arm_slot_insight():
 
 
 def test_build_writer_system_prompt_falls_back_to_scout_report_for_unknown_persona():
-    """RT-4: build_writer_system_prompt uses SCOUT_REPORT for personas not in REPORT_CONTRACTS.
+    """RT-4: build_writer_system_prompt uses SCOUT_REPORT for personas not in the mode's contracts.
 
-    A newly added voice persona whose id is not yet in REPORT_CONTRACTS must
+    A newly added voice persona whose id is not yet in the mode's contracts must
     not raise a KeyError.  It should produce a SCOUT_REPORT-shaped prompt (i.e.
     contain the structure fingerprint phrase) rather than crashing.
     """
