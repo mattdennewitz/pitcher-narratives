@@ -57,29 +57,29 @@ def ctx():
 
 class TestOutlierTag:
     def test_normal_near_mean(self):
-        result = outlier_tag(81.3, 82.9, 3.9)
+        result = outlier_tag(81.3, 82.9, 3.9, n=10)
         assert "NORMAL" in result
 
     def test_normal_at_boundary(self):
         """Value just inside ±1.5 stddev is still normal."""
-        result = outlier_tag(77.1, 82.9, 3.9)  # z ≈ -1.49
+        result = outlier_tag(77.1, 82.9, 3.9, n=10)  # z ≈ -1.49
         assert "NORMAL" in result
 
     def test_outlier_below(self):
-        result = outlier_tag(75.0, 82.9, 3.9)  # z ≈ -2.0
+        result = outlier_tag(75.0, 82.9, 3.9, n=10)  # z ≈ -2.0
         assert "OUTLIER" in result
         assert "below" in result
 
     def test_outlier_above(self):
-        result = outlier_tag(92.0, 82.9, 3.9)  # z ≈ +2.3
+        result = outlier_tag(92.0, 82.9, 3.9, n=10)  # z ≈ +2.3
         assert "OUTLIER" in result
         assert "above" in result
 
     def test_zero_std_returns_normal(self):
-        assert outlier_tag(81.0, 81.0, 0.0) == "NORMAL"
+        assert outlier_tag(81.0, 81.0, 0.0, n=10) == "NORMAL"
 
     def test_includes_z_score(self):
-        result = outlier_tag(81.3, 82.9, 3.9)
+        result = outlier_tag(81.3, 82.9, 3.9, n=10)
         assert "z=" in result
 
 

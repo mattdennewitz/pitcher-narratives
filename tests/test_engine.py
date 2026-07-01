@@ -11,6 +11,7 @@ year-over-year arsenal trend computation (added/dropped/continued pitches).
 import polars as pl
 
 from pitcher_narratives.data import PitcherData, load_pitcher_data
+from pitcher_narratives.engine.baselines import outlier_tag
 from pitcher_narratives.engine import (
     _CSW_DESCRIPTIONS,
     AppearanceWorkload,
@@ -1510,3 +1511,19 @@ def test_arsenal_summary_movement_in_inches():
     arsenal = compute_arsenal_summary(data)
     ff = next(p for p in arsenal if p.pitch_type == "FF")
     assert 10.0 < ff.season_pfx_z < 25.0
+
+
+def test_outlier_tag_suppressed_below_sample_floor():
+    # z-score would be a strong OUTLIER, but N is below the floor -> suppressed.
+    tag = outlier_tag(value=100.0, avg=92.0, std=1.0, n=4)
+    assert tag == "SMALL SAMPLE, N=4 -- untagged"
+
+
+def test_outlier_tag_normal_string_unchanged_at_floor():
+    tag = outlier_tag(value=92.5, avg=92.0, std=1.0, n=10)
+    assert tag == "NORMAL (z=+0.5)"
+
+
+def test_outlier_tag_outlier_string_unchanged_above_floor():
+    tag = outlier_tag(value=95.0, avg=92.0, std=1.0, n=25)
+    assert tag == "OUTLIER (above avg, z=+3.0)"

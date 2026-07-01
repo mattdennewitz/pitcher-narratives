@@ -587,11 +587,11 @@ def _build_stuff_input(ctx: PitcherContext) -> UserPrompt:
         b = baseline_lookup.get(p.pitch_type)
         if b is not None:
             velo_delta = p.window_velo - b.avg_velo
-            velo_tag = outlier_tag(p.window_velo, b.avg_velo, b.velo_std)
+            velo_tag = outlier_tag(p.window_velo, b.avg_velo, b.velo_std, p.n_pitches_window)
             pfx_x_delta = p.window_pfx_x - b.avg_pfx_x
-            pfx_x_tag = outlier_tag(p.window_pfx_x, b.avg_pfx_x, b.pfx_x_std)
+            pfx_x_tag = outlier_tag(p.window_pfx_x, b.avg_pfx_x, b.pfx_x_std, p.n_pitches_window)
             pfx_z_delta = p.window_pfx_z - b.avg_pfx_z
-            pfx_z_tag = outlier_tag(p.window_pfx_z, b.avg_pfx_z, b.pfx_z_std)
+            pfx_z_tag = outlier_tag(p.window_pfx_z, b.avg_pfx_z, b.pfx_z_std, p.n_pitches_window)
             data_lines.append(
                 f"- {p.pitch_name} ({p.pitch_type}):\n"
                 f"    Velocity: {p.window_velo:.1f} mph ({velo_delta:+.1f} vs league avg) [{velo_tag}]\n"
