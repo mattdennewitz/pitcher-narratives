@@ -920,6 +920,7 @@ async def audit_and_revise_specialists(
     ctx: PitcherContext,
     _model_override: Any = None,
     *,
+    names: list[str] | None = None,
     tracker: UsageTracker | None = None,
     tracker_model: str = "",
 ) -> tuple[SpecialistOutputs, list[AuditFlag]]:
@@ -928,17 +929,27 @@ async def audit_and_revise_specialists(
     Phase 1.5a: Run 5 per-specialist audits concurrently.
     Phase 1.5b: For any flagged specialist, re-run with audit feedback.
 
+    Args:
+        names: Optional subset of specialist names to audit/revise. When
+            omitted, all five specialists are audited (current behavior).
+            The returned SpecialistOutputs always carries all five fields;
+            unlisted specialists pass through unchanged.
+
     Returns:
         Tuple of (clean SpecialistOutputs, all collected AuditFlags).
     """
-    specialist_names = ["stuff", "location", "runvalue", "trends", "game_shape"]
+    all_names = ["stuff", "location", "runvalue", "trends", "game_shape"]
+    audit_names = names if names is not None else all_names
+
+    # Full output map (all five) so the returned SpecialistOutputs is always
+    # complete; only the audit_names subset is actually audited/revised.
     outputs: dict[str, str] = {
-        name: getattr(specialists, name) for name in specialist_names
+        name: getattr(specialists, name) for name in all_names
     }
 
-    # Build ground truth input per specialist (plain text for audit f-strings)
+    # Build ground truth input only for the specialists we audit.
     ground_truths = {
-        name: _get_specialist_input_text(name, ctx) for name in specialist_names
+        name: _get_specialist_input_text(name, ctx) for name in audit_names
     }
 
     # Phase 1.5a: Audit all 5 in parallel. The audit is an enhancement,
@@ -958,7 +969,7 @@ async def audit_and_revise_specialists(
                       name, exc_info=True)
             return name, AuditResult(is_clean=True, flags=[])
 
-    audit_tasks = [_audit_one(name) for name in specialist_names]
+    audit_tasks = [_audit_one(name) for name in audit_names]
     audit_results = await asyncio.gather(*audit_tasks)
 
     # Collect all flags, tag with specialist name

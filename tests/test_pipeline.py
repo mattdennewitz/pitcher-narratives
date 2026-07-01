@@ -1249,6 +1249,34 @@ def test_audit_failure_degrades_to_unaudited(ctx):
     assert flags == []
 
 
+def test_audit_names_audits_only_selected(ctx):
+    """With names=['trends'], only trends is audited; other specialists
+    pass through unchanged and no flags are raised for them."""
+    import asyncio
+    from pitcher_narratives.models import SpecialistOutputs, AuditResult
+    from pitcher_narratives.pipeline import audit_and_revise_specialists
+
+    outputs = SpecialistOutputs(stuff="s", location="l", runvalue="r",
+                                trends="t", game_shape="g")
+
+    class _CountingAuditor:
+        def __init__(self):
+            self.calls = 0
+        async def run(self, **kwargs):
+            self.calls += 1
+            class _R:
+                output = AuditResult(flags=[])
+            return _R()
+
+    auditor = _CountingAuditor()
+    clean, flags = asyncio.run(audit_and_revise_specialists(
+        outputs, {}, auditor, ctx, names=["trends"],
+    ))
+    assert auditor.calls == 1          # only one specialist audited
+    assert clean == outputs            # all five fields preserved, unchanged
+    assert flags == []
+
+
 def test_run_analysis_spine_returns_analyzed_context(ctx):
     """run_analysis_spine returns a valid AnalyzedContext under TestModel."""
     agents = make_pipeline_agents("gemini", "high")
