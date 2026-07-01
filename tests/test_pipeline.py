@@ -409,6 +409,28 @@ class TestGeneratePipelineStreaming:
             "revision loop logic is broken"
         )
 
+    def test_run_narration_modes_returns_dict_keyed_by_mode_id(self, ctx):
+        """run_narration_modes returns {mode.id: PipelineResult}; default is REPORT only."""
+        from pitcher_narratives.pipeline import run_narration_modes, PipelineResult
+        from pitcher_narratives.personas import REPORT
+        from pydantic_ai.models.test import TestModel
+
+        model = TestModel(call_tools=[])
+        results = run_narration_modes(ctx, _model_override=model)
+
+        assert set(results) == {"report"}
+        assert isinstance(results["report"], PipelineResult)
+
+    def test_run_narration_modes_explicit_report_matches_single_entry(self, ctx):
+        """Explicitly passing [REPORT] yields the same single 'report' key."""
+        from pitcher_narratives.pipeline import run_narration_modes
+        from pitcher_narratives.personas import REPORT
+        from pydantic_ai.models.test import TestModel
+
+        model = TestModel(call_tools=[])
+        results = run_narration_modes(ctx, modes=[REPORT], _model_override=model)
+        assert list(results) == ["report"]
+
     def test_max_revisions_constant_is_nonzero(self):
         """MAX_REVISIONS must allow at least one revision pass."""
         from pitcher_narratives.config import MAX_REVISIONS

@@ -118,7 +118,7 @@ __all__ = [
     "build_summary_input",
     "build_writer_input", "check_explainer_present", "check_hallucinated_metrics",
     "flag_summary", "generate_pipeline_streaming",
-    "make_pipeline_agents", "run_analysis_spine", "run_spine_core", "run_spine_tail",
+    "make_pipeline_agents", "run_analysis_spine", "run_narration_modes", "run_spine_core", "run_spine_tail",
     "run_specialists",
     "write_pipeline_data_file",
 ]
@@ -1941,6 +1941,44 @@ def generate_pipeline_streaming(
         _run_pipeline(ctx, provider=provider, thinking=thinking,
                       persona=persona, mode=mode, _model_override=_model_override)
     )
+
+
+def run_narration_modes(
+    ctx: PitcherContext,
+    *,
+    modes: list[NarrationMode] | None = None,
+    provider: str = "gemini",
+    thinking: ThinkingEffort = "high",
+    persona: str = "scout",
+    _model_override: Any = None,
+) -> dict[str, PipelineResult]:
+    """Run one or more narration modes over a single pitcher context.
+
+    The multi-mode entry point (design G10): returns a PipelineResult per mode,
+    keyed by ``mode.id`` in requested order. Each mode runs its own writer +
+    validation via generate_pipeline_streaming; the shared analysis spine is
+    re-run per mode in phase 4 (single-mode in practice). Reuse of one spine
+    across modes is a later-phase optimization (design §10).
+
+    Args:
+        ctx: Assembled pitcher context.
+        modes: Narration modes to render; defaults to [REPORT].
+        provider: LLM provider key.
+        thinking: Thinking effort level.
+        persona: Persona id string.
+        _model_override: Optional model override for testing.
+
+    Returns:
+        Mapping of mode id -> PipelineResult, insertion-ordered by ``modes``.
+    """
+    selected = modes if modes is not None else [REPORT]
+    results: dict[str, PipelineResult] = {}
+    for mode in selected:
+        results[mode.id] = generate_pipeline_streaming(
+            ctx, provider=provider, thinking=thinking,
+            persona=persona, mode=mode, _model_override=_model_override,
+        )
+    return results
 
 
 # ═══════════════════════════════════════════════════════════════════════
