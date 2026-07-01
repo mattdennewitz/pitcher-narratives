@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING
 from dotenv import load_dotenv
 
 from pitcher_narratives.config import API_KEYS, setup_logging
-from pitcher_narratives.personas import PERSONAS
+from pitcher_narratives.personas import PERSONAS, REPORT, get_narration_mode
 
 if TYPE_CHECKING:
     from pitcher_narratives.data import PitcherData
@@ -132,15 +132,17 @@ def _resolve_modes(raw: str | None) -> list["NarrationMode"]:
     """Parse the ``--mode`` flag into a list of NarrationMode instances.
 
     None (flag omitted) resolves to [REPORT]. Comma-separated ids are looked
-    up via get_narration_mode; an unknown or not-yet-available id logs an
-    error and exits non-zero (SystemExit code 2).
+    up via get_narration_mode; an unknown/not-yet-available id — or a non-None
+    but empty value (e.g. "," or " ") — logs an error and exits non-zero
+    (SystemExit code 2).
     """
-    from pitcher_narratives.personas import REPORT, get_narration_mode
-
     if raw is None:
         return [REPORT]
 
     ids = [m.strip() for m in raw.split(",") if m.strip()]
+    if not ids:
+        log.error("--mode was given but empty; expected comma-separated mode id(s).")
+        sys.exit(2)
     modes = []
     for mode_id in ids:
         try:
@@ -148,7 +150,7 @@ def _resolve_modes(raw: str | None) -> list["NarrationMode"]:
         except ValueError as e:
             log.error("%s", e)
             sys.exit(2)
-    return modes or [REPORT]
+    return modes
 
 
 def _print_personas() -> None:
@@ -300,7 +302,7 @@ def _run_report_command(args: argparse.Namespace) -> None:
     except AgentRunError as e:
         log.error("LLM call failed: %s", e)
         sys.exit(2)
-    pipe_result = results["report"]
+    pipe_result = results[selected_modes[0].id]
 
     # Executive summary — always emit the heading to keep the narrative
     # output format stable. If the summary agent failed to produce

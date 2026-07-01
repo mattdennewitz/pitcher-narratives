@@ -678,6 +678,14 @@ def test_mode_flag_rejects_unavailable_mode():
     assert exc.value.code == 2
 
 
+def test_mode_flag_rejects_empty_value():
+    """A non-None but empty --mode (e.g. ',' or ' ') exits 2, not a silent report."""
+    for raw in (",", " ", " , "):
+        with pytest.raises(SystemExit) as exc:
+            _resolve_modes(raw)
+        assert exc.value.code == 2
+
+
 def test_morning_subcommand_defaults(monkeypatch):
     monkeypatch.setattr(sys, "argv", ["cli", "morning"])
     args = parse_args()

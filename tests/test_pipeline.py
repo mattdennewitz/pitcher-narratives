@@ -430,6 +430,26 @@ class TestGeneratePipelineStreaming:
         results = run_narration_modes(ctx, modes=[REPORT], _model_override=model)
         assert list(results) == ["report"]
 
+    def test_run_narration_modes_dedupes_repeated_mode(self, ctx, monkeypatch):
+        """A repeated mode id runs the pipeline once, not per duplicate."""
+        import pitcher_narratives.pipeline as pl
+        from pitcher_narratives.personas import REPORT
+
+        calls: list[str] = []
+
+        def _fake_stream(_ctx, *, mode, **_kw):
+            calls.append(mode.id)
+            return pl.PipelineResult(
+                narrative="x", specialists=SpecialistOutputs(
+                    stuff="", location="", runvalue="", trends="", game_shape=""
+                ),
+            )
+
+        monkeypatch.setattr(pl, "generate_pipeline_streaming", _fake_stream)
+        results = pl.run_narration_modes(ctx, modes=[REPORT, REPORT])
+        assert calls == ["report"]
+        assert list(results) == ["report"]
+
     def test_max_revisions_constant_is_nonzero(self):
         """MAX_REVISIONS must allow at least one revision pass."""
         from pitcher_narratives.config import MAX_REVISIONS

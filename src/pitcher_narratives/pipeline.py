@@ -1962,7 +1962,7 @@ def run_narration_modes(
 
     Args:
         ctx: Assembled pitcher context.
-        modes: Narration modes to render; defaults to [REPORT].
+        modes: Narration modes to render; defaults to [DEFAULT_MODE].
         provider: LLM provider key.
         thinking: Thinking effort level.
         persona: Persona id string.
@@ -1974,6 +1974,10 @@ def run_narration_modes(
     selected = modes if modes is not None else [DEFAULT_MODE]
     results: dict[str, PipelineResult] = {}
     for mode in selected:
+        # Dedupe by mode id: a repeated mode (e.g. --mode report,report) must
+        # not re-run the whole LLM pipeline and stream the report twice.
+        if mode.id in results:
+            continue
         results[mode.id] = generate_pipeline_streaming(
             ctx, provider=provider, thinking=thinking,
             persona=persona, mode=mode, _model_override=_model_override,
