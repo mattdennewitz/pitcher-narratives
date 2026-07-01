@@ -8,6 +8,8 @@ workload context (rest days, IP, pitch counts, consecutive days), and
 year-over-year arsenal trend computation (added/dropped/continued pitches).
 """
 
+import dataclasses
+
 import polars as pl
 
 from pitcher_narratives.data import PitcherData, load_pitcher_data
@@ -229,6 +231,18 @@ def test_fastball_pitch_type():
     assert summary is not None
     assert summary.pitch_type in ("FF", "FC")
     assert summary.pitch_name != ""  # Should have human-readable name
+
+
+def test_compute_fastball_summary_empty_window_does_not_crash():
+    data = load_pitcher_data(TEST_PITCHER, window_days=30)
+    # Force an empty frame: no appearances in the window.
+    empty = dataclasses.replace(data, window_appearances=data.window_appearances.head(0))
+    summary = compute_fastball_summary(empty)
+    assert summary is not None
+    assert summary.window_empty is True
+    # Window values fall back to season values; no None arithmetic.
+    assert summary.window_velo == summary.season_velo
+    assert summary.velo_delta == "No data for this frame"
 
 
 # ── VelocityArc ──────────────────────────────────────────────────────

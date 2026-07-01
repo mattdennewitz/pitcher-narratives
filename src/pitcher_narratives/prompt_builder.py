@@ -173,6 +173,9 @@ def render_fastball_section(ctx: PitcherContext) -> str:
         return "## Primary Fastball\n- No standard fastball identified"
 
     lines = [f"## Primary Fastball: {fb.pitch_name} ({fb.pitch_type})"]
+    if fb.window_empty:
+        lines.append(f"- {fb.pitch_name} ({fb.pitch_type}): No data for this frame")
+        return "\n".join(lines)
     lines.append(f"- Velo: {fb.season_velo:.1f} season / {fb.window_velo:.1f} recent -- {fb.velo_delta}")
     # Pitching+ triad: P+ (overall), S+ (stuff), L+ (location)
     if fb.window_p_plus is not None:

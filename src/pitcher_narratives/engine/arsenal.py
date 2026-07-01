@@ -80,6 +80,9 @@ class FastballSummary:
     cold_start: bool
     """True when window covers the full season."""
 
+    window_empty: bool = False
+    """True when zero fastballs of the primary type fell in the window."""
+
 
 @dataclass
 class VelocityArc:
@@ -332,10 +335,16 @@ def compute_fastball_summary(data: PitcherData) -> FastballSummary | None:
     # ── Velocity ──────────────────────────────────────────────────
     season_velo = _float(fb_statcast["release_speed"].mean())
     window_fb = fb_statcast.filter(pl.col("game_date").is_in(window_dates))
-    window_velo = _float(window_fb["release_speed"].mean())
+    window_empty = len(window_fb) == 0
+    window_velo = _float(window_fb["release_speed"].mean()) if not window_empty else season_velo
     velo_delta = window_velo - season_velo
 
-    velo_delta_str = _COLD_START_STRING if cold_start else _velo_delta_string(velo_delta)
+    if window_empty:
+        velo_delta_str = "No data for this frame"
+    elif cold_start:
+        velo_delta_str = _COLD_START_STRING
+    else:
+        velo_delta_str = _velo_delta_string(velo_delta)
 
     # ── Small sample ──────────────────────────────────────────────
     small_sample = len(window_fb) < _MIN_PITCHES
@@ -371,10 +380,13 @@ def compute_fastball_summary(data: PitcherData) -> FastballSummary | None:
     # ── Movement ──────────────────────────────────────────────────
     season_pfx_x = _float(fb_statcast["pfx_x"].mean()) * _FEET_TO_INCHES
     season_pfx_z = _float(fb_statcast["pfx_z"].mean()) * _FEET_TO_INCHES
-    window_pfx_x = _float(window_fb["pfx_x"].mean()) * _FEET_TO_INCHES
-    window_pfx_z = _float(window_fb["pfx_z"].mean()) * _FEET_TO_INCHES
+    window_pfx_x = (_float(window_fb["pfx_x"].mean()) * _FEET_TO_INCHES) if not window_empty else season_pfx_x
+    window_pfx_z = (_float(window_fb["pfx_z"].mean()) * _FEET_TO_INCHES) if not window_empty else season_pfx_z
 
-    if cold_start:
+    if window_empty:
+        pfx_x_delta_str = "No data for this frame"
+        pfx_z_delta_str = "No data for this frame"
+    elif cold_start:
         pfx_x_delta_str = _COLD_START_STRING
         pfx_z_delta_str = _COLD_START_STRING
     else:
@@ -416,6 +428,7 @@ def compute_fastball_summary(data: PitcherData) -> FastballSummary | None:
         pfx_z_delta=pfx_z_delta_str,
         small_sample=small_sample,
         cold_start=cold_start,
+        window_empty=window_empty,
     )
 
 
