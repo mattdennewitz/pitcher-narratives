@@ -421,6 +421,9 @@ def render_release_point_section(ctx: PitcherContext) -> str:
                 f"| {pt.window_extension:.2f} |"
             )
         lines.append("*(season = window -- no baseline)*")
+        lines.append(
+            "*Note: window is underpowered -- treat trend comparisons as directional only.*"
+        )
     else:
         lines.append("| Pitch | Horiz (ft) | Delta | Vert (ft) | Delta | Ext (ft) | Delta |")
         lines.append("|-------|------------|-------|-----------|-------|----------|-------|")

@@ -10,11 +10,11 @@ import polars as pl
 
 from pitcher_narratives.data import PitcherData
 from pitcher_narratives.engine._common import (
-    _COLD_START_STRING,
     _MIN_PITCHES,
     _build_name_map,
     _get_window_game_dates,
-    _is_cold_start,
+    _sufficiency_delta_string,
+    frame_sufficiency,
 )
 
 # ── Release Point ─────────────────────────────────────────────────────
@@ -128,7 +128,8 @@ def compute_release_point_metrics(data: PitcherData) -> ReleasePointMetrics:
         ReleasePointMetrics with per-pitch-type entries ordered by season
         usage descending.
     """
-    cold_start = _is_cold_start(data)
+    sufficiency = frame_sufficiency(data)
+    cold_start = sufficiency != "sufficient"
     window_dates = _get_window_game_dates(data)
     name_map = _build_name_map(data.statcast)
 
@@ -170,14 +171,15 @@ def compute_release_point_metrics(data: PitcherData) -> ReleasePointMetrics:
         n_window = int(row["n_window"])
         small_sample = n_window < _MIN_PITCHES
 
-        if cold_start:
-            x_delta = _COLD_START_STRING
-            z_delta = _COLD_START_STRING
-            ext_delta = _COLD_START_STRING
-        else:
-            x_delta = _release_delta_string(row["window_x"] - row["season_x"])
-            z_delta = _release_delta_string(row["window_z"] - row["season_z"])
-            ext_delta = _extension_delta_string(row["window_ext"] - row["season_ext"])
+        x_delta = _sufficiency_delta_string(
+            sufficiency, _release_delta_string(row["window_x"] - row["season_x"])
+        )
+        z_delta = _sufficiency_delta_string(
+            sufficiency, _release_delta_string(row["window_z"] - row["season_z"])
+        )
+        ext_delta = _sufficiency_delta_string(
+            sufficiency, _extension_delta_string(row["window_ext"] - row["season_ext"])
+        )
 
         pitch_types.append(
             ReleasePointPitchType(

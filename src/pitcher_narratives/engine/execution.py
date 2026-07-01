@@ -18,8 +18,8 @@ from pitcher_narratives.engine._common import (
     _ZONE_IN,
     _ZONE_OUT,
     _build_name_map,
+    frame_sufficiency,
     _get_window_game_dates,
-    _is_cold_start,
     _weighted_window_metrics,
     _window_date_type_filter,
 )
@@ -189,7 +189,7 @@ def compute_execution_metrics(data: PitcherData) -> list[ExecutionMetrics]:
         List of ExecutionMetrics dataclasses, one per pitch type.
     """
     window_dates = _get_window_game_dates(data)
-    cold_start = _is_cold_start(data)
+    cold_start = frame_sufficiency(data) != "sufficient"
 
     # Filter statcast to window
     window_statcast = data.statcast.filter(pl.col("game_date").is_in(window_dates))
@@ -293,7 +293,7 @@ def compute_intermediate_probabilities(data: PitcherData) -> list[IntermediatePr
         n_pitches descending.
     """
     window_dates = _get_window_game_dates(data)
-    cold_start = _is_cold_start(data)
+    cold_start = frame_sufficiency(data) != "sufficient"
     name_map = _build_name_map(data.statcast)
 
     baseline = data.pitch_type_baseline.sort("n_pitches", descending=True)

@@ -337,15 +337,56 @@ def test_velocity_arc():
 
 
 def test_cold_start_fallback():
-    """When window covers full season, delta strings contain cold start message."""
+    """When window covers full season, delta strings report the thin-frame hedge."""
     # Use window_days=9999 so all appearances fall in window
     data = load_pitcher_data(TEST_PITCHER, window_days=9999)
     summary = compute_fastball_summary(data)
     assert summary is not None
     assert summary.cold_start is True
-    assert "Full season in window" in summary.velo_delta
-    assert "Full season in window" in summary.p_plus_delta
-    assert "Full season in window" in summary.pfx_x_delta
+    assert "Underpowered comparison" in summary.velo_delta
+    assert "Underpowered comparison" in summary.p_plus_delta
+    assert "Underpowered comparison" in summary.pfx_x_delta
+
+
+# ── Frame sufficiency gate (G8) ───────────────────────────────────────
+
+
+def test_frame_sufficiency_empty():
+    """Zero window appearances classify as 'empty'."""
+    from pitcher_narratives.engine._common import frame_sufficiency
+
+    data = load_pitcher_data(TEST_PITCHER, window_days=30)
+    empty = dataclasses.replace(
+        data, window_appearances=data.window_appearances.head(0)
+    )
+    assert frame_sufficiency(empty) == "empty"
+
+
+def test_frame_sufficiency_thin_low_appearances():
+    """A single-appearance window is underpowered ('thin')."""
+    from pitcher_narratives.engine._common import frame_sufficiency
+
+    data = load_pitcher_data(TEST_PITCHER, window_days=30)
+    thin = dataclasses.replace(
+        data, window_appearances=data.window_appearances.head(1)
+    )
+    assert frame_sufficiency(thin) == "thin"
+
+
+def test_frame_sufficiency_thin_full_season():
+    """A window covering the whole season has no baseline to compare -> 'thin'."""
+    from pitcher_narratives.engine._common import frame_sufficiency
+
+    data = load_pitcher_data(TEST_PITCHER, window_days=30)
+    full = dataclasses.replace(data, window_appearances=data.appearances)
+    assert frame_sufficiency(full) == "thin"
+
+
+def test_is_cold_start_removed():
+    """The day-window-shaped detector is gone after the G8 migration."""
+    from pitcher_narratives.engine import _common
+
+    assert not hasattr(_common, "_is_cold_start")
 
 
 # ── Small sample ──────────────────────────────────────────────────────
@@ -457,16 +498,16 @@ def test_single_pitch_type():
 
 
 def test_cold_start_arsenal():
-    """With large window covering full season, delta strings contain 'Full season in window'."""
+    """A window covering the full season reports the thin-frame hedge on deltas."""
     data = load_pitcher_data(TEST_PITCHER, window_days=9999)
     arsenal = compute_arsenal_summary(data)
     assert len(arsenal) > 0
     for pts in arsenal:
         assert pts.cold_start is True
-        assert "Full season in window" in pts.usage_delta
-        assert "Full season in window" in pts.p_plus_delta
-        assert "Full season in window" in pts.s_plus_delta
-        assert "Full season in window" in pts.l_plus_delta
+        assert "Underpowered comparison" in pts.usage_delta
+        assert "Underpowered comparison" in pts.p_plus_delta
+        assert "Underpowered comparison" in pts.s_plus_delta
+        assert "Underpowered comparison" in pts.l_plus_delta
 
 
 # ── Platoon Mix ──────────────────────────────────────────────────────
@@ -1034,15 +1075,15 @@ def test_release_point_delta_strings():
 
 
 def test_release_point_cold_start():
-    """With window_days=9999, cold_start=True and deltas contain 'Full season in window'."""
+    """With window_days=9999, cold_start=True and deltas report the thin-frame hedge."""
     data = load_pitcher_data(TEST_PITCHER, window_days=9999)
     rp = compute_release_point_metrics(data)
     assert rp.cold_start is True
     for pt in rp.pitch_types:
         assert pt.cold_start is True
-        assert "Full season in window" in pt.release_x_delta
-        assert "Full season in window" in pt.release_z_delta
-        assert "Full season in window" in pt.extension_delta
+        assert "Underpowered comparison" in pt.release_x_delta
+        assert "Underpowered comparison" in pt.release_z_delta
+        assert "Underpowered comparison" in pt.extension_delta
 
 
 def test_release_point_small_sample():

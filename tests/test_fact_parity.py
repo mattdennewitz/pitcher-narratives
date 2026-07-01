@@ -108,13 +108,18 @@ def _make_single_type_data() -> PitcherData:
         "pitch_number":  list(range(1, n + 1)),
     })
 
+    # 10 window appearances (all on _WINDOW_DATE) clear the G8 thin-frame
+    # floor (>= _THIN_APPEARANCES) while staying below the season total, so
+    # frame_sufficiency == "sufficient" and window-vs-season deltas compute.
+    # All window pitch data still lives on _WINDOW_DATE, so the arithmetic is
+    # unchanged from the single-appearance fixture.
     appearances = pl.DataFrame({
-        "game_pk":   [1, 2],
-        "game_date": [_SEASON_DATE, _WINDOW_DATE],
+        "game_pk":   [1] + list(range(2, 12)),
+        "game_date": [_SEASON_DATE] + [_WINDOW_DATE] * 10,
     })
     window_appearances = pl.DataFrame({
-        "game_pk":   [2],
-        "game_date": [_WINDOW_DATE],
+        "game_pk":   list(range(2, 12)),
+        "game_date": [_WINDOW_DATE] * 10,
     })
 
     pitch_type_baseline = pl.DataFrame({
@@ -183,13 +188,18 @@ def _make_two_type_data() -> PitcherData:
         "pitch_number":  list(range(1, n + 1)),
     })
 
+    # 10 window appearances (all on _WINDOW_DATE) clear the G8 thin-frame
+    # floor (>= _THIN_APPEARANCES) while staying below the season total, so
+    # frame_sufficiency == "sufficient" and window-vs-season deltas compute.
+    # All window pitch data still lives on _WINDOW_DATE, so the arithmetic is
+    # unchanged from the single-appearance fixture.
     appearances = pl.DataFrame({
-        "game_pk":   [1, 2],
-        "game_date": [_SEASON_DATE, _WINDOW_DATE],
+        "game_pk":   [1] + list(range(2, 12)),
+        "game_date": [_SEASON_DATE] + [_WINDOW_DATE] * 10,
     })
     window_appearances = pl.DataFrame({
-        "game_pk":   [2],
-        "game_date": [_WINDOW_DATE],
+        "game_pk":   list(range(2, 12)),
+        "game_date": [_WINDOW_DATE] * 10,
     })
 
     # usage_pct matches what compute_arsenal_summary derives from statcast above

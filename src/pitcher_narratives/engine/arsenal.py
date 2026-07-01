@@ -11,7 +11,7 @@ import polars as pl
 
 from pitcher_narratives.data import PitcherData
 from pitcher_narratives.engine._common import (
-    _COLD_START_STRING,
+    _EMPTY_FRAME_STRING,
     _FEET_TO_INCHES,
     _INSUFFICIENT_SAMPLE_STRING,
     _MIN_PITCHES,
@@ -21,16 +21,17 @@ from pitcher_narratives.engine._common import (
     _float,
     _get_window_game_dates,
     _identify_primary_fastball,
-    _is_cold_start,
     _most_recent_row,
     _movement_delta_string,
     _pplus_delta_string,
     _pplus_delta_strings,
     _safe_metric,
+    _sufficiency_delta_string,
     _usage_delta_string,
     _velo_delta_string,
     _weighted_window_metrics,
     _window_date_type_filter,
+    frame_sufficiency,
 )
 
 
@@ -328,7 +329,8 @@ def compute_fastball_summary(data: PitcherData) -> FastballSummary | None:
         return None
 
     window_dates = _get_window_game_dates(data)
-    cold_start = _is_cold_start(data)
+    sufficiency = frame_sufficiency(data)
+    cold_start = sufficiency != "sufficient"
 
     # Filter statcast to primary fastball type
     fb_statcast = data.statcast.filter(pl.col("pitch_type") == primary)
@@ -341,11 +343,9 @@ def compute_fastball_summary(data: PitcherData) -> FastballSummary | None:
     velo_delta = window_velo - season_velo
 
     if window_empty:
-        velo_delta_str = "No data for this frame"
-    elif cold_start:
-        velo_delta_str = _COLD_START_STRING
+        velo_delta_str = _EMPTY_FRAME_STRING
     else:
-        velo_delta_str = _velo_delta_string(velo_delta)
+        velo_delta_str = _sufficiency_delta_string(sufficiency, _velo_delta_string(velo_delta))
 
     # ── Small sample ──────────────────────────────────────────────
     small_sample = len(window_fb) < _MIN_PITCHES
@@ -369,7 +369,7 @@ def compute_fastball_summary(data: PitcherData) -> FastballSummary | None:
     window_l_plus = window_pplus["L+"]
 
     p_plus_delta_str, s_plus_delta_str, l_plus_delta_str = _pplus_delta_strings(
-        cold_start,
+        sufficiency,
         season_p_plus,
         season_s_plus,
         season_l_plus,
@@ -385,14 +385,15 @@ def compute_fastball_summary(data: PitcherData) -> FastballSummary | None:
     window_pfx_z = (_float(window_fb["pfx_z"].mean()) * _FEET_TO_INCHES) if not window_empty else season_pfx_z
 
     if window_empty:
-        pfx_x_delta_str = "No data for this frame"
-        pfx_z_delta_str = "No data for this frame"
-    elif cold_start:
-        pfx_x_delta_str = _COLD_START_STRING
-        pfx_z_delta_str = _COLD_START_STRING
+        pfx_x_delta_str = _EMPTY_FRAME_STRING
+        pfx_z_delta_str = _EMPTY_FRAME_STRING
     else:
-        pfx_x_delta_str = _movement_delta_string(window_pfx_x - season_pfx_x)
-        pfx_z_delta_str = _movement_delta_string(window_pfx_z - season_pfx_z)
+        pfx_x_delta_str = _sufficiency_delta_string(
+            sufficiency, _movement_delta_string(window_pfx_x - season_pfx_x)
+        )
+        pfx_z_delta_str = _sufficiency_delta_string(
+            sufficiency, _movement_delta_string(window_pfx_z - season_pfx_z)
+        )
 
     # ── Pitch name ────────────────────────────────────────────────
     name_rows = fb_statcast.select("pitch_name").unique()
@@ -524,7 +525,8 @@ def compute_arsenal_summary(data: PitcherData) -> list[PitchTypeSummary]:
         descending.
     """
     window_dates = _get_window_game_dates(data)
-    cold_start = _is_cold_start(data)
+    sufficiency = frame_sufficiency(data)
+    cold_start = sufficiency != "sufficient"
 
     # Get all pitch types from baseline sorted by n_pitches descending
     baseline = data.pitch_type_baseline.sort("n_pitches", descending=True)
@@ -551,8 +553,8 @@ def compute_arsenal_summary(data: PitcherData) -> list[PitchTypeSummary]:
         window_usage_pct = n_window / total_window * 100.0 if total_window > 0 else 0.0
 
         # ── Usage delta ──────────────────────────────────────────
-        if cold_start:
-            usage_delta = _COLD_START_STRING
+        if sufficiency != "sufficient":
+            usage_delta = _sufficiency_delta_string(sufficiency, "")
         elif single_type:
             usage_delta = "Only pitch type"
         else:
@@ -574,7 +576,7 @@ def compute_arsenal_summary(data: PitcherData) -> list[PitchTypeSummary]:
         window_l_plus = window_pplus["L+"]
 
         p_plus_delta, s_plus_delta, l_plus_delta = _pplus_delta_strings(
-            cold_start,
+            sufficiency,
             season_p_plus,
             season_s_plus,
             season_l_plus,
@@ -595,14 +597,15 @@ def compute_arsenal_summary(data: PitcherData) -> list[PitchTypeSummary]:
         season_pfx_z = _float(pt_season["pfx_z"].mean()) * _FEET_TO_INCHES
         window_pfx_z = _float(pt_window["pfx_z"].mean()) * _FEET_TO_INCHES if n_window > 0 else season_pfx_z
 
-        if cold_start:
-            velo_delta_str = _COLD_START_STRING
-            pfx_x_delta_str = _COLD_START_STRING
-            pfx_z_delta_str = _COLD_START_STRING
-        else:
-            velo_delta_str = _velo_delta_string(window_velo - season_velo)
-            pfx_x_delta_str = _movement_delta_string(window_pfx_x - season_pfx_x)
-            pfx_z_delta_str = _movement_delta_string(window_pfx_z - season_pfx_z)
+        velo_delta_str = _sufficiency_delta_string(
+            sufficiency, _velo_delta_string(window_velo - season_velo)
+        )
+        pfx_x_delta_str = _sufficiency_delta_string(
+            sufficiency, _movement_delta_string(window_pfx_x - season_pfx_x)
+        )
+        pfx_z_delta_str = _sufficiency_delta_string(
+            sufficiency, _movement_delta_string(window_pfx_z - season_pfx_z)
+        )
 
         # ── Small sample ─────────────────────────────────────────
         small_sample = n_window < _MIN_PITCHES
@@ -869,7 +872,8 @@ def compute_platoon_mix(data: PitcherData) -> PlatoonMix:
         PlatoonMix dataclass with list of PlatoonSplit entries.
     """
     window_dates = _get_window_game_dates(data)
-    cold_start = _is_cold_start(data)
+    sufficiency = frame_sufficiency(data)
+    cold_start = sufficiency != "sufficient"
 
     name_map = _build_name_map(data.statcast)
 
@@ -931,8 +935,8 @@ def compute_platoon_mix(data: PitcherData) -> PlatoonMix:
                 window_usage_pct = None
 
             # ── Usage delta ──
-            if cold_start:
-                usage_delta = _COLD_START_STRING
+            if sufficiency != "sufficient":
+                usage_delta = _sufficiency_delta_string(sufficiency, "")
             elif window_usage_pct is not None:
                 usage_delta = _usage_delta_string(window_usage_pct - season_usage_pct)
             else:
@@ -955,8 +959,8 @@ def compute_platoon_mix(data: PitcherData) -> PlatoonMix:
             window_p_plus = window_plat_pplus["P+"]
 
             # ── P+ delta ──
-            if cold_start:
-                p_plus_delta = _COLD_START_STRING
+            if sufficiency != "sufficient":
+                p_plus_delta = _sufficiency_delta_string(sufficiency, "")
             elif season_p_plus is not None and window_p_plus is not None:
                 p_plus_delta = _pplus_delta_string(window_p_plus - season_p_plus)
             else:
@@ -995,7 +999,8 @@ def compute_first_pitch_weaponry(data: PitcherData) -> FirstPitchWeaponry:
         descending.
     """
     window_dates = _get_window_game_dates(data)
-    cold_start = _is_cold_start(data)
+    sufficiency = frame_sufficiency(data)
+    cold_start = sufficiency != "sufficient"
 
     name_map = _build_name_map(data.statcast)
 
@@ -1025,7 +1030,9 @@ def compute_first_pitch_weaponry(data: PitcherData) -> FirstPitchWeaponry:
         n_window = window_count_map.get(pt, 0)
         window_pct = n_window / total_window * 100.0 if total_window > 0 else 0.0
 
-        delta = _COLD_START_STRING if cold_start else _usage_delta_string(window_pct - season_pct)
+        delta = _sufficiency_delta_string(
+            sufficiency, _usage_delta_string(window_pct - season_pct)
+        )
 
         entries.append(
             FirstPitchEntry(
