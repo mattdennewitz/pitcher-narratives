@@ -78,7 +78,9 @@ from pitcher_narratives.engine import (
 from pitcher_narratives.personas import (
     BRIEF,
     DEFAULT_PERSONA,
+    NarrationMode,
     Persona,
+    REPORT,
     build_system_prompt,
     build_writer_system_prompt,
     get_persona,
@@ -1232,6 +1234,7 @@ def make_pipeline_agents(
     provider: str = "gemini",
     thinking: ThinkingEffort = "high",
     persona: Persona = DEFAULT_PERSONA,
+    mode: NarrationMode = REPORT,
 ) -> PipelineAgents:
     if provider not in PROVIDERS:
         raise ValueError(f"Unknown provider {provider!r}")
@@ -1312,7 +1315,7 @@ def make_pipeline_agents(
         runvalue=_mini_specialist(_RUNVALUE_SPECIALIST_PROMPT),
         trends=_mini_specialist_compact(_TREND_SPECIALIST_PROMPT),
         game_shape=_mini_specialist_compact(_GAME_SHAPE_SPECIALIST_PROMPT),
-        writer=_writer(build_writer_system_prompt(persona)),
+        writer=_writer(build_writer_system_prompt(persona, mode)),
         auditor=Agent(mini_model, output_type=AuditResult, system_prompt=_DATA_AUDITOR_PROMPT,
                       model_settings=checker_settings, retries=5, defer_model_check=True),
         capsule_auditor=Agent(mini_model, output_type=AuditResult, system_prompt=_CAPSULE_AUDITOR_PROMPT,
@@ -1755,6 +1758,7 @@ async def _run_pipeline(
     provider: str = "gemini",
     thinking: ThinkingEffort = "high",
     persona: str = "scout",
+    mode: NarrationMode = REPORT,
     _model_override: Any = None,
 ) -> PipelineResult:
     """Async core of the multi-agent pipeline.
@@ -1766,7 +1770,7 @@ async def _run_pipeline(
     Phase 2.5: Anchor check + revision loop.
     """
     persona_obj = get_persona(persona)
-    agents = make_pipeline_agents(provider, thinking, persona_obj)
+    agents = make_pipeline_agents(provider, thinking, persona_obj, mode)
 
     # Phases 1 → 1.75: specialist → audit → signal extraction
     log.info("Running analysis spine...")
@@ -1911,6 +1915,7 @@ def generate_pipeline_streaming(
     provider: str = "gemini",
     thinking: ThinkingEffort = "high",
     persona: str = "scout",
+    mode: NarrationMode = REPORT,
     _model_override: Any = None,
 ) -> PipelineResult:
     """Generate a report using the specialist→auditor→writer multi-agent pipeline.
@@ -1926,6 +1931,7 @@ def generate_pipeline_streaming(
         provider: LLM provider key.
         thinking: Thinking effort level.
         persona: Persona id string (resolved to Persona object internally).
+        mode: Narration mode controlling writer prompt selection.
         _model_override: Optional model override for testing.
 
     Returns:
@@ -1933,7 +1939,7 @@ def generate_pipeline_streaming(
     """
     return asyncio.run(
         _run_pipeline(ctx, provider=provider, thinking=thinking,
-                      persona=persona, _model_override=_model_override)
+                      persona=persona, mode=mode, _model_override=_model_override)
     )
 
 

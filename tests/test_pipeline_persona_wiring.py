@@ -46,3 +46,18 @@ class TestPipelinePersonaWiring:
         from pitcher_narratives.pipeline import generate_pipeline_streaming
         sig = inspect.signature(generate_pipeline_streaming)
         assert "persona" in sig.parameters
+
+    def test_make_pipeline_agents_accepts_mode(self):
+        """make_pipeline_agents accepts a mode keyword defaulting to REPORT."""
+        import inspect
+        from pitcher_narratives.pipeline import make_pipeline_agents
+        from pitcher_narratives.personas import REPORT
+        sig = inspect.signature(make_pipeline_agents)
+        assert "mode" in sig.parameters
+        assert sig.parameters["mode"].default is REPORT
+
+    def test_generate_pipeline_streaming_accepts_mode(self):
+        """generate_pipeline_streaming accepts a mode keyword."""
+        import inspect
+        from pitcher_narratives.pipeline import generate_pipeline_streaming
+        assert "mode" in inspect.signature(generate_pipeline_streaming).parameters
