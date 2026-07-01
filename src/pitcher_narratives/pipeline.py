@@ -1497,9 +1497,11 @@ async def run_analysis_spine(
 ) -> AnalyzedContext:
     """Run the specialist → audit → signal-extraction spine.
 
-    Shared analysis path for report and morning. Returns a grounded
-    AnalyzedContext; does not run the writer, anchor check, or hallucination
-    check — those are terminal-layer concerns.
+    Shared analysis path for report and morning. Composes the frame-agnostic
+    core (run_spine_core) with the frame-sensitive tail (run_spine_tail) on a
+    single frame; the returned AnalyzedContext is identical to the pre-split
+    spine. Does not run the writer, anchor check, or hallucination check —
+    those are terminal-layer concerns.
 
     Args:
         ctx: Assembled pitcher context (facts, baselines, arsenal data).
@@ -1507,40 +1509,11 @@ async def run_analysis_spine(
         _model_override: Optional model override for deterministic testing.
         tracker: Optional usage tracker for accumulating per-call token costs.
     """
-    mini = agents.mini_model_name
-    raw = await run_specialists(
-        agents.stuff, agents.location, agents.runvalue,
-        agents.trends, agents.game_shape, ctx, _model_override,
-        tracker=tracker, tracker_model=mini,
+    core = await run_spine_core(
+        ctx, agents=agents, _model_override=_model_override, tracker=tracker,
     )
-    specialists, audit_flags = await audit_and_revise_specialists(
-        raw, agents.specialist_dict(), agents.auditor, ctx, _model_override,
-        tracker=tracker, tracker_model=mini,
-    )
-
-    signal_input = build_writer_input(
-        ctx, specialists.stuff, specialists.location,
-        specialists.runvalue, specialists.trends, specialists.game_shape,
-    )
-    signals_failed = False
-    try:
-        signal_result = await agents.signal_extractor.run(
-            **agent_kwargs(signal_input, _model_override)
-        )
-        if tracker is not None:
-            u = signal_result.usage()
-            tracker.record(mini, u.input_tokens or 0, u.output_tokens or 0, stage="signals")
-        key_signals = signal_result.output
-    except Exception:
-        log.warning("Signal extractor failed, continuing without key signals.", exc_info=True)
-        key_signals = None
-        signals_failed = True
-
-    return AnalyzedContext(
-        specialists=specialists,
-        key_signals=key_signals,
-        audit_flags=audit_flags,
-        signals_failed=signals_failed,
+    return await run_spine_tail(
+        core, ctx, agents=agents, _model_override=_model_override, tracker=tracker,
     )
 
 

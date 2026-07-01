@@ -1334,6 +1334,38 @@ def test_run_analysis_spine_returns_analyzed_context(ctx):
     assert isinstance(result.audit_flags, list)
 
 
+def test_run_analysis_spine_composes_core_then_tail(ctx, monkeypatch):
+    """run_analysis_spine must delegate to run_spine_core then run_spine_tail,
+    passing the produced CoreContext and the same ctx into the tail."""
+    import asyncio
+    import pitcher_narratives.pipeline as _pl
+    from pitcher_narratives.models import CoreContext, AnalyzedContext, SpecialistOutputs
+    from unittest.mock import AsyncMock
+
+    sentinel_core = CoreContext(stuff="s", location="l", runvalue="r", game_shape="g")
+    sentinel_analyzed = AnalyzedContext(
+        specialists=SpecialistOutputs(stuff="s", location="l", runvalue="r",
+                                      trends="t", game_shape="g"),
+    )
+    core_mock = AsyncMock(return_value=sentinel_core)
+    tail_mock = AsyncMock(return_value=sentinel_analyzed)
+    monkeypatch.setattr(_pl, "run_spine_core", core_mock)
+    monkeypatch.setattr(_pl, "run_spine_tail", tail_mock)
+
+    class _Agents:
+        mini_model_name = ""
+
+    result = asyncio.run(_pl.run_analysis_spine(ctx, agents=_Agents()))
+    assert result is sentinel_analyzed
+    core_mock.assert_awaited_once()
+    tail_mock.assert_awaited_once()
+    # The CoreContext from core is threaded into the tail as its first arg,
+    # and the same ctx is passed through.
+    tail_args, tail_kwargs = tail_mock.call_args
+    assert tail_args[0] is sentinel_core
+    assert tail_args[1] is ctx
+
+
 def test_run_spine_core_returns_four_clean_specialists(ctx):
     """run_spine_core runs only the four core specialists under TestModel and
     returns a CoreContext with all four populated."""
