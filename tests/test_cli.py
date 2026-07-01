@@ -671,7 +671,7 @@ def test_resolve_modes_report_explicit():
     assert _resolve_modes("report") == [REPORT]
 
 
-def test_mode_flag_rejects_unavailable_mode(capsys):
+def test_mode_flag_rejects_unavailable_mode():
     """--mode changes is rejected in phase 4 (only 'report' is registered)."""
     with pytest.raises(SystemExit) as exc:
         _resolve_modes("changes")

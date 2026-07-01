@@ -412,7 +412,6 @@ class TestGeneratePipelineStreaming:
     def test_run_narration_modes_returns_dict_keyed_by_mode_id(self, ctx):
         """run_narration_modes returns {mode.id: PipelineResult}; default is REPORT only."""
         from pitcher_narratives.pipeline import run_narration_modes, PipelineResult
-        from pitcher_narratives.personas import REPORT
         from pydantic_ai.models.test import TestModel
 
         model = TestModel(call_tools=[])
