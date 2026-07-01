@@ -1334,6 +1334,25 @@ def test_run_analysis_spine_returns_analyzed_context(ctx):
     assert isinstance(result.audit_flags, list)
 
 
+def test_run_spine_core_returns_four_clean_specialists(ctx):
+    """run_spine_core runs only the four core specialists under TestModel and
+    returns a CoreContext with all four populated."""
+    import asyncio
+    from pitcher_narratives.models import CoreContext
+    from pitcher_narratives.pipeline import run_spine_core, make_pipeline_agents
+
+    agents = make_pipeline_agents("gemini", "high")
+    model = TestModel(call_tools=[], custom_output_text="Core analysis.")
+    core = asyncio.run(run_spine_core(ctx, agents=agents, _model_override=model))
+
+    assert isinstance(core, CoreContext)
+    assert core.stuff != ""
+    assert core.location != ""
+    assert core.runvalue != ""
+    assert core.game_shape != ""
+    assert isinstance(core.audit_flags, list)
+
+
 class TestBuildSummaryInput:
     def test_frames_capsule_as_subject_with_grounding(self):
         from pitcher_narratives.pipeline import build_summary_input

@@ -98,6 +98,7 @@ from pitcher_narratives.models import (
     AnalyzedContext,
     AuditFlag,
     AuditResult,
+    CoreContext,
     SpecialistOutputs,
 )
 from pitcher_narratives.signals import (
@@ -108,14 +109,15 @@ from pitcher_narratives.signals import (
 from pitcher_narratives.value_parity import check_value_parity
 
 __all__ = [
-    "AnalyzedContext",
+    "AnalyzedContext", "CoreContext",
     "AuditFlag", "AuditResult", "ExecutiveSummary", "HallucinationReport",
     "KeySignals", "PipelineAgents", "PipelineResult",
     "UserPrompt", "audit_and_revise_specialists", "build_fact_revision_message",
     "build_summary_input",
     "build_writer_input", "check_explainer_present", "check_hallucinated_metrics",
     "flag_summary", "generate_pipeline_streaming",
-    "make_pipeline_agents", "run_analysis_spine", "run_specialists",
+    "make_pipeline_agents", "run_analysis_spine", "run_spine_core", "run_spine_tail",
+    "run_specialists",
     "write_pipeline_data_file",
 ]
 
@@ -1374,6 +1376,42 @@ async def run_specialists(
     for name, text in results:
         outputs[name] = text
     return SpecialistOutputs(**outputs)
+
+
+_CORE_SPECIALISTS = ["stuff", "location", "runvalue", "game_shape"]
+_TAIL_SPECIALISTS = ["trends"]
+
+
+async def run_spine_core(
+    ctx: PitcherContext,
+    *,
+    agents: PipelineAgents,
+    _model_override: Any = None,
+    tracker: UsageTracker | None = None,
+) -> CoreContext:
+    """Run the frame-agnostic core of the analysis spine.
+
+    Runs the stuff/location/run-value/game-shape specialists and audits them.
+    Frame-agnostic: these specialists read a single window snapshot, so the
+    core can be computed once and shared across narration modes. Trends,
+    signal extraction, and the anchor check are frame-sensitive — see
+    run_spine_tail.
+    """
+    mini = agents.mini_model_name
+    raw = await run_specialists(
+        agents.stuff, agents.location, agents.runvalue,
+        agents.trends, agents.game_shape, ctx, _model_override,
+        names=_CORE_SPECIALISTS, tracker=tracker, tracker_model=mini,
+    )
+    clean, flags = await audit_and_revise_specialists(
+        raw, agents.specialist_dict(), agents.auditor, ctx, _model_override,
+        names=_CORE_SPECIALISTS, tracker=tracker, tracker_model=mini,
+    )
+    return CoreContext(
+        stuff=clean.stuff, location=clean.location,
+        runvalue=clean.runvalue, game_shape=clean.game_shape,
+        audit_flags=flags,
+    )
 
 
 async def run_analysis_spine(
