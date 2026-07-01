@@ -1503,6 +1503,13 @@ async def run_analysis_spine(
     spine. Does not run the writer, anchor check, or hallucination check —
     those are terminal-layer concerns.
 
+    Output-preserving but NOT latency-preserving on the single-frame path: the
+    tail's trends specialist now starts only after the core's specialists and
+    their audit/revision finish, whereas the pre-split spine ran all five
+    specialists (and all five audits) concurrently. The added serial latency is
+    the deliberate cost of a reusable core — a later multi-frame mode (CHANGES)
+    runs the core once and re-runs only the tail per frame.
+
     Args:
         ctx: Assembled pitcher context (facts, baselines, arsenal data).
         agents: Pre-built pipeline agents (create once, reuse across picks).
