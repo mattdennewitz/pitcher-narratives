@@ -68,3 +68,20 @@ class AnalyzedContext(BaseModel):
     key_signals: KeySignals | None = None
     audit_flags: list[AuditFlag] = []
     signals_failed: bool = False
+
+
+class CoreContext(BaseModel):
+    """Frame-agnostic core of the analysis spine.
+
+    Holds the clean stuff/location/run-value/game-shape specialist outputs and
+    their audit flags. Trends analysis, key-signal extraction, and the anchor
+    check are frame-sensitive and produced by the tail (see run_spine_tail);
+    they are deliberately absent here so the core can be computed once and
+    shared across narration modes that differ only in temporal frame.
+    """
+
+    stuff: str
+    location: str
+    runvalue: str
+    game_shape: str
+    audit_flags: list[AuditFlag] = []
