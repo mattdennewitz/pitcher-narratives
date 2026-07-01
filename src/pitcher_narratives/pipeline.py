@@ -1339,42 +1339,41 @@ async def run_specialists(
     ctx: PitcherContext,
     _model_override: Any = None,
     *,
+    names: list[str] | None = None,
     tracker: UsageTracker | None = None,
     tracker_model: str = "",
 ) -> SpecialistOutputs:
-    """Run all 5 specialists concurrently."""
-    inputs = {
+    """Run the specialists concurrently.
+
+    By default all five run. Pass ``names`` to run only a subset (used by the
+    core/tail spine split); unlisted specialists default to an empty string in
+    the returned SpecialistOutputs.
+    """
+    all_inputs = {
         "stuff": (stuff_agent, _build_stuff_input(ctx)),
         "location": (location_agent, _build_location_input(ctx)),
         "runvalue": (runvalue_agent, _build_runvalue_input(ctx)),
         "trends": (trends_agent, _build_trend_input(ctx)),
         "game_shape": (game_shape_agent, _build_game_shape_input(ctx)),
     }
+    selected = list(all_inputs) if names is None else names
 
-    async def _run(name: str, agent: Agent[None, str], prompt: str | UserPrompt) -> str:
+    async def _run(name: str, agent: Agent[None, str], prompt: str | UserPrompt) -> tuple[str, str]:
         result = await agent.run(**agent_kwargs(prompt, _model_override))
         if tracker is not None:
             u = result.usage()
             tracker.record(tracker_model, u.input_tokens or 0, u.output_tokens or 0,
                            stage=f"specialist:{name}")
-        return result.output
-
-    tasks = {
-        name: _run(name, agent, prompt)
-        for name, (agent, prompt) in inputs.items()
-    }
+        return name, result.output
 
     results = await asyncio.gather(
-        tasks["stuff"], tasks["location"],
-        tasks["runvalue"], tasks["trends"],
-        tasks["game_shape"],
+        *(_run(name, *all_inputs[name]) for name in selected)
     )
 
-    return SpecialistOutputs(
-        stuff=results[0], location=results[1],
-        runvalue=results[2], trends=results[3],
-        game_shape=results[4],
-    )
+    outputs = {name: "" for name in all_inputs}
+    for name, text in results:
+        outputs[name] = text
+    return SpecialistOutputs(**outputs)
 
 
 async def run_analysis_spine(

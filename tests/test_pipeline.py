@@ -1230,6 +1230,45 @@ def test_run_specialists_fan_out_concurrently(ctx):
     assert tracker["peak"] > 1
 
 
+def test_run_specialists_names_runs_only_selected(ctx):
+    """With names=['trends'], only the trends agent is invoked and the other
+    SpecialistOutputs fields default to empty strings."""
+    import asyncio
+
+    class _MarkAgent:
+        def __init__(self, mark):
+            self.mark = mark
+            self.calls = 0
+        async def run(self, **kwargs):
+            self.calls += 1
+            class _R:
+                pass
+            r = _R()
+            r.output = self.mark
+            return r
+
+    stuff = _MarkAgent("STUFF")
+    location = _MarkAgent("LOC")
+    runvalue = _MarkAgent("RV")
+    trends = _MarkAgent("TRENDS")
+    game_shape = _MarkAgent("GS")
+
+    out = asyncio.run(run_specialists(
+        stuff, location, runvalue, trends, game_shape, ctx,
+        names=["trends"],
+    ))
+    assert trends.calls == 1
+    assert stuff.calls == 0
+    assert location.calls == 0
+    assert runvalue.calls == 0
+    assert game_shape.calls == 0
+    assert out.trends == "TRENDS"
+    assert out.stuff == ""
+    assert out.location == ""
+    assert out.runvalue == ""
+    assert out.game_shape == ""
+
+
 class _ExplodingAuditor:
     """Stub auditor whose every run raises (e.g. provider error body)."""
 
