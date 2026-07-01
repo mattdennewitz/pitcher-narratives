@@ -54,6 +54,9 @@ _MIN_PITCHES = 10
 _COLD_START_STRING = "Full season in window -- no trend comparison"
 """Delta string used when window covers entire season."""
 
+_INSUFFICIENT_SAMPLE_STRING = "insufficient sample"
+"""Delta string used when the window pitch count is below _MIN_PITCHES."""
+
 _CSW_DESCRIPTIONS = frozenset(
     {
         "called_strike",

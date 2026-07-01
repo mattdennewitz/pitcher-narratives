@@ -13,6 +13,7 @@ from pitcher_narratives.data import PitcherData
 from pitcher_narratives.engine._common import (
     _COLD_START_STRING,
     _FEET_TO_INCHES,
+    _INSUFFICIENT_SAMPLE_STRING,
     _MIN_PITCHES,
     _PPLUS_METRICS,
     _build_name_map,
@@ -402,6 +403,17 @@ def compute_fastball_summary(data: PitcherData) -> FastballSummary | None:
         if window_p_plus is not None
         else None
     )
+
+    # G6: below pitch-count floor, a computed delta implies confidence the
+    # sample cannot support. Suppress qualitative delta strings (empty
+    # window is already handled above via window_empty).
+    if small_sample and not window_empty:
+        velo_delta_str = _INSUFFICIENT_SAMPLE_STRING
+        p_plus_delta_str = _INSUFFICIENT_SAMPLE_STRING
+        s_plus_delta_str = _INSUFFICIENT_SAMPLE_STRING
+        l_plus_delta_str = _INSUFFICIENT_SAMPLE_STRING
+        pfx_x_delta_str = _INSUFFICIENT_SAMPLE_STRING
+        pfx_z_delta_str = _INSUFFICIENT_SAMPLE_STRING
 
     return FastballSummary(
         pitch_type=primary,

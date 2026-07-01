@@ -16,7 +16,9 @@ from __future__ import annotations
 # suite imports them from ``pitcher_narratives.engine``. Sibling concern
 # modules import from ``_common`` directly, not through this facade.
 from pitcher_narratives.engine._common import (  # noqa: F401
+    _COLD_START_STRING,
     _CSW_DESCRIPTIONS,
+    _INSUFFICIENT_SAMPLE_STRING,
     _MIN_PITCHES,
     _identify_primary_fastball,
     _most_recent_row,

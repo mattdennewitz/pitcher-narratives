@@ -233,6 +233,27 @@ def test_fastball_pitch_type():
     assert summary.pitch_name != ""  # Should have human-readable name
 
 
+def test_compute_fastball_summary_suppresses_deltas_below_floor():
+    """G6: below the pitch-count floor (but not empty), qualitative fastball
+    delta strings render 'insufficient sample' instead of a computed delta."""
+    data = load_pitcher_data(TEST_PITCHER, window_days=30)
+    # A single game_date almost always yields fewer than _MIN_PITCHES fastballs.
+    one_game = data.window_appearances.sort(
+        ["game_date", "game_pk"], descending=True, nulls_last=True
+    ).head(1)
+    thin = dataclasses.replace(data, window_appearances=one_game)
+    summary = compute_fastball_summary(thin)
+    assert summary is not None
+    assert summary.window_empty is False
+    assert summary.small_sample is True
+    assert summary.velo_delta == "insufficient sample"
+    assert summary.p_plus_delta == "insufficient sample"
+    assert summary.s_plus_delta == "insufficient sample"
+    assert summary.l_plus_delta == "insufficient sample"
+    assert summary.pfx_x_delta == "insufficient sample"
+    assert summary.pfx_z_delta == "insufficient sample"
+
+
 def test_compute_fastball_summary_empty_window_does_not_crash():
     data = load_pitcher_data(TEST_PITCHER, window_days=30)
     # Force an empty frame: no appearances in the window.
