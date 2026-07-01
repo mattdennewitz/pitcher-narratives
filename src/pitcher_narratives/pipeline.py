@@ -1414,6 +1414,80 @@ async def run_spine_core(
     )
 
 
+_SPECIALIST_ORDER = {
+    "stuff": 0, "location": 1, "runvalue": 2, "trends": 3, "game_shape": 4,
+}
+
+
+def _order_flags(flags: list[AuditFlag]) -> list[AuditFlag]:
+    """Sort audit flags into the canonical specialist order.
+
+    The core/tail split collects core flags (stuff/location/run-value/
+    game-shape) then trends flags, so a naive concatenation would place trends
+    last. Sorting restores the legacy stuff→location→run-value→trends→
+    game-shape order, keeping run_analysis_spine output identical. Stable, so
+    multiple flags from the same specialist keep their relative order.
+    """
+    return sorted(flags, key=lambda f: _SPECIALIST_ORDER.get(f.specialist, 99))
+
+
+async def run_spine_tail(
+    core: CoreContext,
+    ctx: PitcherContext,
+    *,
+    agents: PipelineAgents,
+    _model_override: Any = None,
+    tracker: UsageTracker | None = None,
+) -> AnalyzedContext:
+    """Run the frame-sensitive tail of the analysis spine.
+
+    Runs the trends specialist (+ its audit) and signal extraction over the
+    core's four specialists plus trends. Takes ``ctx`` explicitly so a later
+    phase can re-run the tail on a different temporal frame while reusing a
+    single shared core. In this phase the tail runs on the same ctx as the
+    core, so output is identical to the pre-split spine.
+    """
+    mini = agents.mini_model_name
+    raw = await run_specialists(
+        agents.stuff, agents.location, agents.runvalue,
+        agents.trends, agents.game_shape, ctx, _model_override,
+        names=_TAIL_SPECIALISTS, tracker=tracker, tracker_model=mini,
+    )
+    merged = SpecialistOutputs(
+        stuff=core.stuff, location=core.location, runvalue=core.runvalue,
+        game_shape=core.game_shape, trends=raw.trends,
+    )
+    specialists, trends_flags = await audit_and_revise_specialists(
+        merged, agents.specialist_dict(), agents.auditor, ctx, _model_override,
+        names=_TAIL_SPECIALISTS, tracker=tracker, tracker_model=mini,
+    )
+
+    signal_input = build_writer_input(
+        ctx, specialists.stuff, specialists.location,
+        specialists.runvalue, specialists.trends, specialists.game_shape,
+    )
+    signals_failed = False
+    try:
+        signal_result = await agents.signal_extractor.run(
+            **agent_kwargs(signal_input, _model_override)
+        )
+        if tracker is not None:
+            u = signal_result.usage()
+            tracker.record(mini, u.input_tokens or 0, u.output_tokens or 0, stage="signals")
+        key_signals = signal_result.output
+    except Exception:
+        log.warning("Signal extractor failed, continuing without key signals.", exc_info=True)
+        key_signals = None
+        signals_failed = True
+
+    return AnalyzedContext(
+        specialists=specialists,
+        key_signals=key_signals,
+        audit_flags=_order_flags(list(core.audit_flags) + trends_flags),
+        signals_failed=signals_failed,
+    )
+
+
 async def run_analysis_spine(
     ctx: PitcherContext,
     *,

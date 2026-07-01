@@ -1353,6 +1353,43 @@ def test_run_spine_core_returns_four_clean_specialists(ctx):
     assert isinstance(core.audit_flags, list)
 
 
+def test_run_spine_tail_assembles_full_analyzed_context(ctx):
+    """run_spine_tail runs trends + signal extraction over a CoreContext and
+    returns a complete AnalyzedContext preserving the core specialist text."""
+    import asyncio
+    from pitcher_narratives.models import CoreContext, AnalyzedContext
+    from pitcher_narratives.pipeline import run_spine_tail, make_pipeline_agents
+
+    agents = make_pipeline_agents("gemini", "high")
+    model = TestModel(call_tools=[], custom_output_text="Tail analysis.")
+    core = CoreContext(stuff="CORE_STUFF", location="CORE_LOC",
+                       runvalue="CORE_RV", game_shape="CORE_GS")
+
+    analyzed = asyncio.run(
+        run_spine_tail(core, ctx, agents=agents, _model_override=model)
+    )
+    assert isinstance(analyzed, AnalyzedContext)
+    # Core specialist text is carried through verbatim.
+    assert analyzed.specialists.stuff == "CORE_STUFF"
+    assert analyzed.specialists.game_shape == "CORE_GS"
+    # Trends was produced by the tail.
+    assert analyzed.specialists.trends != ""
+
+
+def test_order_flags_puts_specialists_in_canonical_order():
+    from pitcher_narratives.models import AuditFlag
+    from pitcher_narratives.pipeline import _order_flags
+
+    def flag(spec):
+        return AuditFlag(category="X", specialist=spec, claim="c",
+                         data_shows="d", suggested_fix="f")
+
+    # Core-first + trends-last input (as run_spine_tail concatenates) must be
+    # reordered to the legacy stuff/location/runvalue/trends/game_shape order.
+    ordered = _order_flags([flag("game_shape"), flag("trends"), flag("stuff")])
+    assert [f.specialist for f in ordered] == ["stuff", "trends", "game_shape"]
+
+
 class TestBuildSummaryInput:
     def test_frames_capsule_as_subject_with_grounding(self):
         from pitcher_narratives.pipeline import build_summary_input
