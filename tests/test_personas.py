@@ -11,13 +11,13 @@ from pitcher_narratives.data import load_pitcher_data
 from pitcher_narratives.personas import (
     ANALYST,
     BRIEF,
-    CAPSULE,
     DEFAULT_PERSONA,
     GENERIC,
     NEWSLETTER,
     PERSONAS,
     REPORT_CONTRACTS,
     SCOUT,
+    SCOUT_REPORT,
     SECTIONED,
     SHARED_WRITER_BASE,
     OutputContract,
@@ -111,10 +111,10 @@ def test_scout_has_expected_fields():
     assert scout.parent is None
 
 
-def test_scout_report_contract_is_capsule():
-    """The scout report contract is CAPSULE with length_target (150, 350)."""
+def test_scout_report_contract_is_scout_report():
+    """The scout report contract is SCOUT_REPORT with length_target (150, 350)."""
     contract = REPORT_CONTRACTS["scout"]
-    assert contract is CAPSULE
+    assert contract is SCOUT_REPORT
     assert contract.length_target == (150, 350)
     assert all(isinstance(v, int) for v in contract.length_target)
 
@@ -792,12 +792,12 @@ def test_shared_base_surfaces_arm_slot_insight():
 # ── RT-4: fallback contract for unmapped personas ─────────────────────
 
 
-def test_build_writer_system_prompt_falls_back_to_capsule_for_unknown_persona():
-    """RT-4: build_writer_system_prompt uses CAPSULE for personas not in REPORT_CONTRACTS.
+def test_build_writer_system_prompt_falls_back_to_scout_report_for_unknown_persona():
+    """RT-4: build_writer_system_prompt uses SCOUT_REPORT for personas not in REPORT_CONTRACTS.
 
     A newly added voice persona whose id is not yet in REPORT_CONTRACTS must
-    not raise a KeyError.  It should produce a CAPSULE-shaped prompt (i.e.
-    contain the CAPSULE structure phrase) rather than crashing.
+    not raise a KeyError.  It should produce a SCOUT_REPORT-shaped prompt (i.e.
+    contain the structure fingerprint phrase) rather than crashing.
     """
     unknown = Persona(
         id="future_voice",
@@ -807,8 +807,8 @@ def test_build_writer_system_prompt_falls_back_to_capsule_for_unknown_persona():
     )
     # Must not raise KeyError
     prompt = build_writer_system_prompt(unknown)
-    # CAPSULE structure is "2-3 paragraph" — the fallback contract's fingerprint
+    # SCOUT_REPORT structure is "2-3 paragraph" — the fallback contract's fingerprint
     assert "2-3 paragraph" in prompt, (
-        "build_writer_system_prompt should fall back to CAPSULE for unmapped personas; "
-        "expected CAPSULE structure phrase '2-3 paragraph' in composed prompt"
+        "build_writer_system_prompt should fall back to SCOUT_REPORT for unmapped "
+        "personas; expected structure phrase '2-3 paragraph' in composed prompt"
     )

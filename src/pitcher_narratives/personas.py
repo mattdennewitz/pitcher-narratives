@@ -29,7 +29,6 @@ log = logging.getLogger("pitcher_narratives.personas")
 __all__ = [
     "ANALYST",
     "BRIEF",
-    "CAPSULE",
     "DEFAULT_PERSONA",
     "DIGEST_ITEM",
     "GENERIC",
@@ -37,6 +36,7 @@ __all__ = [
     "PERSONAS",
     "REPORT_CONTRACTS",
     "SCOUT",
+    "SCOUT_REPORT",
     "SECTIONED",
     "SHARED_WRITER_BASE",
     "OutputContract",
@@ -323,8 +323,8 @@ BRIEF = OutputContract(
     input_framing=_BRIEF_FRAMING_FROM_REPORT,
 )
 
-CAPSULE = OutputContract(
-    id="capsule",
+SCOUT_REPORT = OutputContract(
+    id="scout_report",
     length_target=(150, 350),
     structure=_CAPSULE_STRUCTURE,
     input_framing=_SYNTHESIS_FRAMING,
@@ -354,7 +354,7 @@ DIGEST_ITEM = OutputContract(
 # Pairs each persona with its canonical report contract so build_writer_system_prompt
 # remains a backward-compatible shim.
 REPORT_CONTRACTS: dict[str, OutputContract] = {
-    "scout": CAPSULE,
+    "scout": SCOUT_REPORT,
     "analyst": NEWSLETTER,
     "generic": SECTIONED,
 }
@@ -535,15 +535,15 @@ def build_writer_system_prompt(persona: Persona) -> str:
     behaviour unchanged.
 
     Personas not present in REPORT_CONTRACTS (e.g. newly added voice personas)
-    fall back to CAPSULE — the default report format — rather than raising a
+    fall back to SCOUT_REPORT — the default report format — rather than raising a
     KeyError.
     """
     contract = REPORT_CONTRACTS.get(persona.id)
     if contract is None:
         log.warning(
-            "Persona %r has no REPORT_CONTRACTS entry; falling back to CAPSULE. "
+            "Persona %r has no REPORT_CONTRACTS entry; falling back to SCOUT_REPORT. "
             "Add an entry to REPORT_CONTRACTS to suppress this warning.",
             persona.id,
         )
-        contract = CAPSULE
+        contract = SCOUT_REPORT
     return build_system_prompt(persona, contract)
