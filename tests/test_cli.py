@@ -8,7 +8,7 @@ import sys
 
 import pytest
 
-from pitcher_narratives.cli import parse_args
+from pitcher_narratives.cli import _resolve_modes, parse_args
 
 
 def test_parse_pitcher_flag(monkeypatch):
@@ -647,6 +647,35 @@ def test_report_subcommand_parses(monkeypatch):
     assert args.command == "report"
     assert args.pitcher == 123
     assert args.window == 30
+
+
+# ── --mode scaffolding (G9/G4, phase 4: single-mode only) ──────────
+
+
+def test_mode_flag_defaults_to_none(monkeypatch):
+    """No --mode passed; argparse default is None (resolved by _resolve_modes)."""
+    monkeypatch.setattr(sys, "argv", ["cli", "report", "-p", "592155"])
+    args = parse_args()
+    assert args.mode is None
+
+
+def test_resolve_modes_defaults_to_report():
+    from pitcher_narratives.personas import REPORT
+
+    assert _resolve_modes(None) == [REPORT]
+
+
+def test_resolve_modes_report_explicit():
+    from pitcher_narratives.personas import REPORT
+
+    assert _resolve_modes("report") == [REPORT]
+
+
+def test_mode_flag_rejects_unavailable_mode(capsys):
+    """--mode changes is rejected in phase 4 (only 'report' is registered)."""
+    with pytest.raises(SystemExit) as exc:
+        _resolve_modes("changes")
+    assert exc.value.code == 2
 
 
 def test_morning_subcommand_defaults(monkeypatch):

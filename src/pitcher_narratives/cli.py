@@ -19,6 +19,7 @@ from pitcher_narratives.personas import PERSONAS
 
 if TYPE_CHECKING:
     from pitcher_narratives.data import PitcherData
+    from pitcher_narratives.personas import NarrationMode
 
 log = logging.getLogger("pitcher_narratives")
 
@@ -76,6 +77,14 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="List available personas (id, display name, description) and exit",
     )
+    report.add_argument(
+        "--mode",
+        default=None,
+        help=(
+            "Narration mode(s), comma-separated. Phase 4: only 'report' is "
+            "available (changes/recap land in later phases). Default: report."
+        ),
+    )
 
     morning = sub.add_parser("morning", help="Scout, select, and write the morning digest")
     morning.add_argument(
@@ -117,6 +126,29 @@ def parse_args() -> argparse.Namespace:
     )
 
     return parser.parse_args()
+
+
+def _resolve_modes(raw: str | None) -> list["NarrationMode"]:
+    """Parse the ``--mode`` flag into a list of NarrationMode instances.
+
+    None (flag omitted) resolves to [REPORT]. Comma-separated ids are looked
+    up via get_narration_mode; an unknown or not-yet-available id logs an
+    error and exits non-zero (SystemExit code 2).
+    """
+    from pitcher_narratives.personas import REPORT, get_narration_mode
+
+    if raw is None:
+        return [REPORT]
+
+    ids = [m.strip() for m in raw.split(",") if m.strip()]
+    modes = []
+    for mode_id in ids:
+        try:
+            modes.append(get_narration_mode(mode_id))
+        except ValueError as e:
+            log.error("%s", e)
+            sys.exit(2)
+    return modes or [REPORT]
 
 
 def _print_personas() -> None:
@@ -228,11 +260,12 @@ def _run_report_command(args: argparse.Namespace) -> None:
     from pitcher_narratives.context import assemble_pitcher_context
     from pitcher_narratives.pipeline import (
         check_hallucinated_metrics,
-        generate_pipeline_streaming,
+        run_narration_modes,
         write_pipeline_data_file,
     )
 
     ctx = assemble_pitcher_context(pitcher_data)
+    selected_modes = _resolve_modes(getattr(args, "mode", None))
 
     try:
         data_file, data_text = write_pipeline_data_file(
@@ -256,8 +289,9 @@ def _run_report_command(args: argparse.Namespace) -> None:
     # The narrative streams to stdout during this call
     print("# Scouting Report\n")
     try:
-        pipe_result = generate_pipeline_streaming(
+        results = run_narration_modes(
             ctx,
+            modes=selected_modes,
             provider=args.provider,
             thinking=args.thinking,
             persona=args.persona,
@@ -266,6 +300,7 @@ def _run_report_command(args: argparse.Namespace) -> None:
     except AgentRunError as e:
         log.error("LLM call failed: %s", e)
         sys.exit(2)
+    pipe_result = results["report"]
 
     # Executive summary — always emit the heading to keep the narrative
     # output format stable. If the summary agent failed to produce
