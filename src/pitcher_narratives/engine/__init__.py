@@ -19,6 +19,7 @@ from pitcher_narratives.engine._common import (  # noqa: F401
     _CSW_DESCRIPTIONS,
     _MIN_PITCHES,
     _identify_primary_fastball,
+    _most_recent_row,
     _movement_delta_string,
     _pplus_delta_string,
     _stand_to_platoon,

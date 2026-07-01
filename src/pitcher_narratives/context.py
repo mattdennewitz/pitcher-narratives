@@ -18,6 +18,7 @@ from pitcher_narratives.engine import (
     FirstPitchWeaponry,
     HardHitRate,
     IntermediateProbabilities,
+    _most_recent_row,
     PitchTypeSummary,
     PlatoonMix,
     ReleasePointMetrics,
@@ -135,8 +136,8 @@ def assemble_pitcher_context(data: PitcherData) -> PitcherContext:
     arsenal_trend = compute_arsenal_trends(data)
     pitch_shape = compute_pitch_shape(data)
 
-    # Determine role from most recent appearance
-    most_recent = data.appearances.sort("game_date", descending=True).row(0, named=True)
+    # Determine role from most recent appearance (deterministic tiebreak)
+    most_recent = _most_recent_row(data.appearances)
     role = most_recent["role"]
 
     return PitcherContext(

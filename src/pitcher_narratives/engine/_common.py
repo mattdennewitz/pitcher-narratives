@@ -273,6 +273,25 @@ def _get_window_game_dates(data: PitcherData) -> list[Any]:
     return data.window_appearances["game_date"].unique().to_list()
 
 
+def _most_recent_row(appearances: pl.DataFrame) -> dict[str, Any]:
+    """Return the most-recent appearance as a named dict, deterministically.
+
+    Sorts by ``game_date`` then ``game_pk`` (both descending) so doubleheaders
+    (two ``game_pk`` on one date) resolve to a single stable "most recent" pick.
+
+    Args:
+        appearances: Per-appearance DataFrame with ``game_date`` and ``game_pk``.
+
+    Returns:
+        Row 0 after the deterministic sort, as a column->value dict.
+    """
+    return (
+        appearances.sort(
+            ["game_date", "game_pk"], descending=True, nulls_last=True
+        ).row(0, named=True)
+    )
+
+
 def _is_cold_start(data: PitcherData) -> bool:
     """Check if window covers the full season (cold start).
 

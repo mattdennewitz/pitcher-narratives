@@ -35,6 +35,7 @@ from pitcher_narratives.engine import (
     WorkloadContext,
     _identify_primary_fastball,
     _movement_delta_string,
+    _most_recent_row,
     _pplus_delta_string,
     _stand_to_platoon,
     _usage_delta_string,
@@ -1454,6 +1455,32 @@ def test_arsenal_trends_pitch_names():
     for trend in [*result.added, *result.dropped, *result.continued]:
         assert trend.pitch_name, f"pitch_name should not be empty for {trend.pitch_type}"
         assert isinstance(trend.pitch_name, str)
+
+
+def test_most_recent_row_breaks_doubleheader_ties_by_game_pk():
+    # Two appearances on the same date (a doubleheader): higher game_pk wins.
+    appearances = pl.DataFrame(
+        {
+            "game_date": ["2024-05-01", "2024-05-01", "2024-04-15"],
+            "game_pk": [745002, 745001, 744000],
+            "role": ["RP", "RP", "RP"],
+        }
+    )
+    row = _most_recent_row(appearances)
+    assert row["game_pk"] == 745002
+
+
+def test_most_recent_row_picks_latest_date():
+    appearances = pl.DataFrame(
+        {
+            "game_date": ["2024-04-15", "2024-05-01"],
+            "game_pk": [744000, 745001],
+            "role": ["RP", "SP"],
+        }
+    )
+    row = _most_recent_row(appearances)
+    assert row["game_date"] == "2024-05-01"
+    assert row["role"] == "SP"
 
 
 # ── Movement units (inches, not raw Statcast feet) ───────────────────

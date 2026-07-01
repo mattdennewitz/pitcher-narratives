@@ -21,6 +21,7 @@ from pitcher_narratives.engine._common import (
     _get_window_game_dates,
     _identify_primary_fastball,
     _is_cold_start,
+    _most_recent_row,
     _movement_delta_string,
     _pplus_delta_string,
     _pplus_delta_strings,
@@ -432,8 +433,8 @@ def compute_velocity_arc(data: PitcherData, fastball_type: str) -> VelocityArc:
     Returns:
         VelocityArc dataclass with early/late velocity and drop string.
     """
-    # Find most recent appearance
-    recent = data.appearances.sort("game_date", descending=True).row(0, named=True)
+    # Find most recent appearance (deterministic doubleheader tiebreak)
+    recent = _most_recent_row(data.appearances)
     game_pk = int(recent["game_pk"])
     game_date = str(recent["game_date"])
 
