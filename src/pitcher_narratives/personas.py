@@ -21,6 +21,7 @@ Voice and output format are orthogonal concerns, composed at build time:
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
 
@@ -370,7 +371,10 @@ class NarrationMode:
     """
 
     id: str
-    contracts: dict[str, OutputContract]
+    contracts: Mapping[str, OutputContract]
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "contracts", MappingProxyType(dict(self.contracts)))
 
 
 # REPORT reproduces today's report path: each persona's canonical output contract.
@@ -579,7 +583,7 @@ def build_system_prompt(persona: Persona, contract: OutputContract) -> str:
     return "\n\n".join(parts)
 
 
-def build_writer_system_prompt(persona: Persona, mode: NarrationMode = REPORT) -> str:
+def build_writer_system_prompt(persona: Persona, mode: NarrationMode = DEFAULT_MODE) -> str:
     """Compose the report-writer prompt for a persona within a narration mode.
 
     Thin shim over build_system_prompt that pairs the persona with the mode's

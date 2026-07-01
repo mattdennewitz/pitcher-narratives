@@ -77,10 +77,10 @@ from pitcher_narratives.engine import (
 )
 from pitcher_narratives.personas import (
     BRIEF,
+    DEFAULT_MODE,
     DEFAULT_PERSONA,
     NarrationMode,
     Persona,
-    REPORT,
     build_system_prompt,
     build_writer_system_prompt,
     get_persona,
@@ -1234,7 +1234,7 @@ def make_pipeline_agents(
     provider: str = "gemini",
     thinking: ThinkingEffort = "high",
     persona: Persona = DEFAULT_PERSONA,
-    mode: NarrationMode = REPORT,
+    mode: NarrationMode = DEFAULT_MODE,
 ) -> PipelineAgents:
     if provider not in PROVIDERS:
         raise ValueError(f"Unknown provider {provider!r}")
@@ -1758,7 +1758,7 @@ async def _run_pipeline(
     provider: str = "gemini",
     thinking: ThinkingEffort = "high",
     persona: str = "scout",
-    mode: NarrationMode = REPORT,
+    mode: NarrationMode = DEFAULT_MODE,
     _model_override: Any = None,
 ) -> PipelineResult:
     """Async core of the multi-agent pipeline.
@@ -1915,7 +1915,7 @@ def generate_pipeline_streaming(
     provider: str = "gemini",
     thinking: ThinkingEffort = "high",
     persona: str = "scout",
-    mode: NarrationMode = REPORT,
+    mode: NarrationMode = DEFAULT_MODE,
     _model_override: Any = None,
 ) -> PipelineResult:
     """Generate a report using the specialist→auditor→writer multi-agent pipeline.
@@ -1971,7 +1971,7 @@ def run_narration_modes(
     Returns:
         Mapping of mode id -> PipelineResult, insertion-ordered by ``modes``.
     """
-    selected = modes if modes is not None else [REPORT]
+    selected = modes if modes is not None else [DEFAULT_MODE]
     results: dict[str, PipelineResult] = {}
     for mode in selected:
         results[mode.id] = generate_pipeline_streaming(
