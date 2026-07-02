@@ -48,7 +48,7 @@ TEST_PITCHER = 592155
 @pytest.fixture(scope="module")
 def ctx():
     """Load data once per module (read-only test data)."""
-    data = load_pitcher_data(TEST_PITCHER, window_days=30)
+    data = load_pitcher_data(TEST_PITCHER, recent_appearances=10)
     return assemble_pitcher_context(data)
 
 
@@ -337,7 +337,7 @@ class TestAuditAndReviseSpecialists:
                 "game_shape": agents.game_shape,
             }
             # Use a context with minimal data
-            data = load_pitcher_data(TEST_PITCHER, window_days=30)
+            data = load_pitcher_data(TEST_PITCHER, recent_appearances=10)
             ctx = assemble_pitcher_context(data)
 
             result, flags = await audit_and_revise_specialists(
@@ -367,7 +367,7 @@ class TestAuditAndReviseSpecialists:
                 "runvalue": agents.runvalue, "trends": agents.trends,
                 "game_shape": agents.game_shape,
             }
-            data = load_pitcher_data(TEST_PITCHER, window_days=30)
+            data = load_pitcher_data(TEST_PITCHER, recent_appearances=10)
             ctx = assemble_pitcher_context(data)
 
             result, flags = await audit_and_revise_specialists(
@@ -1121,7 +1121,7 @@ def test_run_pipeline_logs_warning_when_capsule_missing_explainer(caplog):
     from pitcher_narratives.data import load_pitcher_data
     from pitcher_narratives.pipeline import generate_pipeline_streaming
 
-    data = load_pitcher_data(592155, window_days=30)
+    data = load_pitcher_data(592155, recent_appearances=10)
     ctx = assemble_pitcher_context(data)
 
     with caplog.at_level(logging.WARNING, logger="pitcher_narratives.pipeline"):
@@ -1176,7 +1176,7 @@ def test_check_explainer_present_happy_path_is_silent(caplog, monkeypatch):
     from pitcher_narratives.context import assemble_pitcher_context
     from pitcher_narratives.data import load_pitcher_data
 
-    data = load_pitcher_data(592155, window_days=30)
+    data = load_pitcher_data(592155, recent_appearances=10)
     ctx = assemble_pitcher_context(data)
 
     with caplog.at_level(logging.WARNING, logger="pitcher_narratives.pipeline"):

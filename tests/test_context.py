@@ -14,7 +14,7 @@ TEST_PITCHER = 592155  # Booser, Cam
 @pytest.fixture(scope="module")
 def ctx():
     """Load data once per module (read-only test data)."""
-    data = load_pitcher_data(TEST_PITCHER, window_days=30)
+    data = load_pitcher_data(TEST_PITCHER, recent_appearances=10)
     return assemble_pitcher_context(data)
 
 
@@ -384,7 +384,7 @@ def test_assemble_multi_frame_primary_matches_single(ctx):
     from pitcher_narratives.data import load_pitcher_data
     from pitcher_narratives.temporal import TemporalFrame
 
-    data = load_pitcher_data(592155, window_days=30)
+    data = load_pitcher_data(592155, recent_appearances=10)
     mfc = assemble_multi_frame_context(data)
 
     assert set(mfc.frames) == {TemporalFrame.WINDOW_DAYS}

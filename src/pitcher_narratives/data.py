@@ -9,9 +9,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from datetime import date, timedelta
 from pathlib import Path
-from typing import cast
 
 import polars as pl
 
@@ -25,7 +23,6 @@ __all__ = [
     "compute_season_baseline",
     "filter_game_type",
     "filter_to_recent_appearances",
-    "filter_to_window",
     "load_agg_csvs",
     "load_all_statcast",
     "load_csv",
@@ -43,6 +40,15 @@ DATA_DIR = Path(_data_dir_override) if _data_dir_override else _DEFAULT_DATA_DIR
 _YEARS: list[int] = [2025, 2026]
 AGGS_DIR = DATA_DIR / "var" / "aggs"
 RV_DF_PATH = AGGS_DIR / "RV_df.csv"
+
+# Default analysis window, in most-recent appearances. Derived empirically
+# (~30d of a reliever's usage) and floored at the thin-frame threshold
+# (_THIN_APPEARANCES = 10); a smaller default would make every frame "thin".
+# Measured 2026-07-01: pitcher 592155 (Cam Booser, RP) = 10 appearances in
+# the last 30d; pitcher 676571 (PJ Poulin) = 13. Both clear the floor;
+# 592155's count sets the default since it is the fixture pitcher and the
+# lower of the two measured counts.
+_DEFAULT_RECENT_APPEARANCES = 10
 
 
 def statcast_dir() -> Path:
@@ -431,27 +437,6 @@ def compute_pitch_type_baseline(pitcher_type_df: pl.DataFrame) -> pl.DataFrame:
     ).drop("total_pitches")
 
 
-def filter_to_window(df: pl.DataFrame, window_days: int) -> pl.DataFrame:
-    """Filter DataFrame to rows within a lookback window from the max date.
-
-    Uses the maximum date in the data as the reference point, not the
-    current date, since data files are static.
-
-    Args:
-        df: DataFrame with a game_date column.
-        window_days: Number of days to look back from the max date.
-
-    Returns:
-        Filtered DataFrame containing only rows within the window.
-    """
-    max_date_val = df["game_date"].max()
-    if max_date_val is None:
-        return df.clear()
-    max_date = cast(date, max_date_val)
-    cutoff = max_date - timedelta(days=window_days)
-    return df.filter(pl.col("game_date") >= cutoff)
-
-
 def filter_to_recent_appearances(df: pl.DataFrame, n: int) -> pl.DataFrame:
     """Filter pitch rows to the ``n`` most-recent distinct appearances.
 
@@ -479,16 +464,19 @@ def filter_to_recent_appearances(df: pl.DataFrame, n: int) -> pl.DataFrame:
     return df.join(recent_keys, on=["game_date", "game_pk"], how="inner")
 
 
-def load_pitcher_data(pitcher_id: int, window_days: int = 30) -> PitcherData:
+def load_pitcher_data(
+    pitcher_id: int, recent_appearances: int = _DEFAULT_RECENT_APPEARANCES
+) -> PitcherData:
     """Load and process all data for a pitcher.
 
     Orchestrates all loaders: reads Statcast parquet, loads CSV aggregations,
-    classifies appearances, computes baselines, and filters to the lookback
-    window.
+    classifies appearances, computes baselines, and slices to the
+    appearance-count window.
 
     Args:
         pitcher_id: MLB pitcher ID.
-        window_days: Lookback window in days (default 30).
+        recent_appearances: Number of most-recent appearances to include in
+            the window (default _DEFAULT_RECENT_APPEARANCES).
 
     Returns:
         PitcherData bundle with all loaded and processed DataFrames.
@@ -499,7 +487,7 @@ def load_pitcher_data(pitcher_id: int, window_days: int = 30) -> PitcherData:
     statcast = load_statcast(pitcher_id)
     agg_csvs = load_agg_csvs(pitcher_id)
     appearances = classify_appearances(statcast)
-    window_appearances = filter_to_window(appearances, window_days)
+    window_appearances = filter_to_recent_appearances(appearances, recent_appearances)
     season_baseline_all = compute_season_baseline(agg_csvs["pitcher"])
     pitch_type_baseline_all = compute_pitch_type_baseline(agg_csvs["pitcher_type"])
 

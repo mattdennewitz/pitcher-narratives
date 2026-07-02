@@ -472,7 +472,7 @@ def test_cross_path_morning_cue_and_report_context_cite_same_numbers() -> None:
     from pitcher_narratives.digest import build_story_cue_from_context
     from pitcher_narratives.scout import ScoredAppearance, Signal
 
-    data = load_pitcher_data(_IDENTITY_PITCHER, window_days=30)
+    data = load_pitcher_data(_IDENTITY_PITCHER, recent_appearances=10)
     ctx = assemble_pitcher_context(data)
 
     recent = data.appearances.sort("game_date", descending=True).row(0, named=True)

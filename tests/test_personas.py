@@ -296,7 +296,7 @@ def test_composed_prompt_starts_with_base():
 @pytest.fixture(scope="module")
 def ctx():
     """Load pitcher data once per module for pipeline smoke tests."""
-    data = load_pitcher_data(592155, window_days=30)
+    data = load_pitcher_data(592155, recent_appearances=10)
     return assemble_pitcher_context(data)
 
 

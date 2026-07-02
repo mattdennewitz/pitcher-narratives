@@ -167,7 +167,7 @@ class TestDataFileSignalExtractor:
         from pitcher_narratives.data import load_pitcher_data
         from pitcher_narratives.context import assemble_pitcher_context
         from pitcher_narratives.pipeline import write_pipeline_data_file
-        data = load_pitcher_data(592155, window_days=30)
+        data = load_pitcher_data(592155, recent_appearances=10)
         ctx = assemble_pitcher_context(data)
         _path, content = write_pipeline_data_file(ctx, 592155, "gemini")
         assert "SIGNAL EXTRACTOR" in content
@@ -179,7 +179,7 @@ class TestDataFileSignalExtractor:
         from pitcher_narratives.data import load_pitcher_data
         from pitcher_narratives.context import assemble_pitcher_context
         from pitcher_narratives.pipeline import write_pipeline_data_file
-        data = load_pitcher_data(592155, window_days=30)
+        data = load_pitcher_data(592155, recent_appearances=10)
         ctx = assemble_pitcher_context(data)
         _path, content = write_pipeline_data_file(ctx, 592155, "gemini")
         signal_pos = content.index("SIGNAL EXTRACTOR")

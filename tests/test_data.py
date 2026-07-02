@@ -14,7 +14,6 @@ from pitcher_narratives.data import (
     compute_season_baseline,
     filter_game_type,
     filter_to_recent_appearances,
-    filter_to_window,
     load_agg_csvs,
     load_all_statcast,
     load_csv,
@@ -119,20 +118,6 @@ def test_pitch_type_baseline():
     assert not baseline.filter(pl.col("pitch_type") == "").height
 
 
-def test_window_filter():
-    """DATA-04: Window filter restricts to N days from max date in data."""
-    df = load_statcast(TEST_PITCHER)
-    appearances = classify_appearances(df)
-    filtered = filter_to_window(appearances, window_days=7)
-    if not filtered.is_empty():
-        from datetime import date, timedelta
-        from typing import cast
-
-        max_date = cast(date, appearances["game_date"].max())
-        cutoff = max_date - timedelta(days=7)
-        assert cast(date, filtered["game_date"].min()) >= cutoff
-
-
 def test_filter_to_recent_appearances_keeps_n_latest_games():
     df = pl.DataFrame(
         {
@@ -209,13 +194,33 @@ def test_swingman_classification():
 
 def test_load_pitcher_data_returns_complete_bundle():
     """Integration: load_pitcher_data returns all expected data."""
-    data = load_pitcher_data(TEST_PITCHER, window_days=30)
+    data = load_pitcher_data(TEST_PITCHER, recent_appearances=10)
     assert hasattr(data, "statcast")
     assert hasattr(data, "appearances")
     assert hasattr(data, "season_baseline")
     assert hasattr(data, "pitch_type_baseline")
     assert hasattr(data, "agg_csvs")
     assert hasattr(data, "window_appearances")
+
+
+def test_load_pitcher_data_slices_by_appearance_count(monkeypatch):
+    """P6-T2: load_pitcher_data delegates window slicing to filter_to_recent_appearances."""
+    from pitcher_narratives import data as data_mod
+
+    captured = {}
+
+    real = data_mod.filter_to_recent_appearances
+
+    def spy(df, n):
+        captured["n"] = n
+        return real(df, n)
+
+    monkeypatch.setattr(data_mod, "filter_to_recent_appearances", spy)
+    result = data_mod.load_pitcher_data(TEST_PITCHER, recent_appearances=3)
+    assert captured["n"] == 3
+    # window_appearances holds at most 3 distinct appearances.
+    n_appts = result.window_appearances.select("game_date", "game_pk").unique().height
+    assert n_appts <= 3
 
 
 def test_filter_game_type_no_column():
