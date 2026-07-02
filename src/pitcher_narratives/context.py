@@ -169,7 +169,8 @@ class MultiFrameContext(BaseModel):
 
     Wrapper shape (not per-field) so every PitcherContext field keeps its
     type and all render_/_build_*_input helpers stay unchanged. Today only
-    WINDOW_DAYS is populated; later phases add appearance-count frames.
+    RECENT is populated; later phases add PRIOR / MOST_RECENT / SEASON
+    frames (CHANGES/RECAP modes, see §5).
     """
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
@@ -187,17 +188,17 @@ class MultiFrameContext(BaseModel):
 
     @property
     def primary(self) -> PitcherContext:
-        """The default frame current call sites read (the day-window)."""
-        return self.for_frame(TemporalFrame.WINDOW_DAYS)
+        """The default frame current call sites read (recent-appearance window)."""
+        return self.for_frame(TemporalFrame.RECENT)
 
 
 def assemble_multi_frame_context(data: PitcherData) -> MultiFrameContext:
     """Assemble the multi-frame context.
 
-    Behavior-preserving cut: only the day-window frame is built (it equals
-    today's assemble_pitcher_context output). Appearance-count frames
-    (RECENT / PRIOR / MOST_RECENT) are added when the slicer lands.
+    Currently only the recent-appearance frame is built (it equals today's
+    assemble_pitcher_context output). Other appearance-count frames
+    (PRIOR / MOST_RECENT / SEASON) are added when CHANGES/RECAP modes land.
     """
     return MultiFrameContext(
-        frames={TemporalFrame.WINDOW_DAYS: assemble_pitcher_context(data)},
+        frames={TemporalFrame.RECENT: assemble_pitcher_context(data)},
     )

@@ -16,7 +16,6 @@ class TemporalFrame(StrEnum):
     RECENT = "recent"             # recent N appearances (REPORT span / CHANGES recent-X)
     PRIOR = "prior"               # prior M appearances (CHANGES)
     SEASON = "season"             # full season baseline
-    WINDOW_DAYS = "window_days"   # TRANSITIONAL day-based lookback; removed at the slicer swap
 
 
 # Default analysis window, in most-recent appearances. Derived empirically

@@ -370,9 +370,9 @@ def test_multi_frame_context_primary_and_for_frame(ctx):
     from pitcher_narratives.context import MultiFrameContext
     from pitcher_narratives.temporal import TemporalFrame
 
-    mfc = MultiFrameContext(frames={TemporalFrame.WINDOW_DAYS: ctx})
+    mfc = MultiFrameContext(frames={TemporalFrame.RECENT: ctx})
     assert mfc.primary is ctx
-    assert mfc.for_frame(TemporalFrame.WINDOW_DAYS) is ctx
+    assert mfc.for_frame(TemporalFrame.RECENT) is ctx
 
     import pytest
     with pytest.raises(ValueError, match="season"):
@@ -387,7 +387,17 @@ def test_assemble_multi_frame_primary_matches_single(ctx):
     data = load_pitcher_data(592155, recent_appearances=10)
     mfc = assemble_multi_frame_context(data)
 
-    assert set(mfc.frames) == {TemporalFrame.WINDOW_DAYS}
+    assert set(mfc.frames) == {TemporalFrame.RECENT}
     # Behavior-preserving: the wrapped frame matches the existing assembly.
     assert mfc.primary.pitcher_id == ctx.pitcher_id
     assert mfc.primary.to_prompt() == ctx.to_prompt()
+
+
+def test_primary_frame_is_recent():
+    from pitcher_narratives.context import assemble_multi_frame_context
+    from pitcher_narratives.temporal import TemporalFrame
+
+    data = load_pitcher_data(TEST_PITCHER, recent_appearances=10)
+    mfc = assemble_multi_frame_context(data)
+    assert TemporalFrame.RECENT in mfc.frames
+    assert mfc.primary is mfc.for_frame(TemporalFrame.RECENT)
