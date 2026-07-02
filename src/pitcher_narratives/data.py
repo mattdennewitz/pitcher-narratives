@@ -24,6 +24,7 @@ __all__ = [
     "compute_pitch_type_baseline",
     "compute_season_baseline",
     "filter_game_type",
+    "filter_to_recent_appearances",
     "filter_to_window",
     "load_agg_csvs",
     "load_all_statcast",
@@ -449,6 +450,33 @@ def filter_to_window(df: pl.DataFrame, window_days: int) -> pl.DataFrame:
     max_date = cast(date, max_date_val)
     cutoff = max_date - timedelta(days=window_days)
     return df.filter(pl.col("game_date") >= cutoff)
+
+
+def filter_to_recent_appearances(df: pl.DataFrame, n: int) -> pl.DataFrame:
+    """Filter pitch rows to the ``n`` most-recent distinct appearances.
+
+    An appearance is a unique ``(game_date, game_pk)`` pair, so doubleheaders
+    on the same calendar date count as two appearances. Ordering is
+    deterministic: most-recent ``game_date`` first, ``game_pk`` descending as
+    the tiebreak (matches the Phase-5 G5 most-recent picker). When the frame
+    holds fewer than ``n`` distinct appearances, all rows are returned.
+
+    Args:
+        df: DataFrame of pitch rows with ``game_date`` and ``game_pk`` columns.
+        n: Number of most-recent appearances to retain.
+
+    Returns:
+        Pitch rows belonging to the ``n`` most-recent appearances.
+    """
+    if df.is_empty():
+        return df
+    recent_keys = (
+        df.select("game_date", "game_pk")
+        .unique()
+        .sort(["game_date", "game_pk"], descending=True, nulls_last=True)
+        .head(n)
+    )
+    return df.join(recent_keys, on=["game_date", "game_pk"], how="inner")
 
 
 def load_pitcher_data(pitcher_id: int, window_days: int = 30) -> PitcherData:

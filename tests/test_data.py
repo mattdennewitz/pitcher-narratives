@@ -1,3 +1,5 @@
+from datetime import date
+
 import polars as pl
 import pytest
 
@@ -11,6 +13,7 @@ from pitcher_narratives.data import (
     compute_pitch_type_baseline,
     compute_season_baseline,
     filter_game_type,
+    filter_to_recent_appearances,
     filter_to_window,
     load_agg_csvs,
     load_all_statcast,
@@ -128,6 +131,47 @@ def test_window_filter():
         max_date = cast(date, appearances["game_date"].max())
         cutoff = max_date - timedelta(days=7)
         assert cast(date, filtered["game_date"].min()) >= cutoff
+
+
+def test_filter_to_recent_appearances_keeps_n_latest_games():
+    df = pl.DataFrame(
+        {
+            "game_date": [date(2024, 4, 1), date(2024, 4, 1), date(2024, 4, 5), date(2024, 4, 10)],
+            "game_pk": [1, 1, 2, 3],
+            "pitch_type": ["FF", "SL", "FF", "FF"],
+        }
+    )
+    out = filter_to_recent_appearances(df, 2)
+    # The 2 most-recent appearances are 4/10 (pk 3) and 4/5 (pk 2).
+    assert sorted(out["game_pk"].unique().to_list()) == [2, 3]
+    assert len(out) == 2
+
+
+def test_filter_to_recent_appearances_distinguishes_doubleheader_by_game_pk():
+    # Same calendar date, two game_pks -> two distinct appearances.
+    df = pl.DataFrame(
+        {
+            "game_date": [date(2024, 4, 1), date(2024, 4, 1), date(2024, 3, 20)],
+            "game_pk": [10, 11, 5],
+            "pitch_type": ["FF", "FF", "FF"],
+        }
+    )
+    out = filter_to_recent_appearances(df, 2)
+    assert sorted(out["game_pk"].unique().to_list()) == [10, 11]
+
+
+def test_filter_to_recent_appearances_returns_all_when_fewer_than_n():
+    df = pl.DataFrame(
+        {"game_date": [date(2024, 4, 1)], "game_pk": [1], "pitch_type": ["FF"]}
+    )
+    assert len(filter_to_recent_appearances(df, 10)) == 1
+
+
+def test_filter_to_recent_appearances_empty_input_returns_empty():
+    df = pl.DataFrame(
+        schema={"game_date": pl.Date, "game_pk": pl.Int64, "pitch_type": pl.Utf8}
+    )
+    assert filter_to_recent_appearances(df, 5).is_empty()
 
 
 def test_classify_starter():
