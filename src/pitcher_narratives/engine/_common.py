@@ -312,8 +312,8 @@ def frame_sufficiency(data: PitcherData) -> FrameSufficiency:
     Returns ``"empty"`` (no window appearances), ``"thin"`` (non-empty but
     underpowered: the window covers the whole season -- so there is no prior
     baseline to compare against -- or it holds fewer than ``_THIN_APPEARANCES``
-    appearances), and ``"sufficient"`` otherwise. Replaces the previous
-    day-window-shaped cold-start detector (design §15 G8).
+    appearances), and ``"sufficient"`` otherwise. This appearance-count frame
+    sufficiency gate replaces the previous cold-start detector (design §15 G8).
 
     Args:
         data: PitcherData bundle.
