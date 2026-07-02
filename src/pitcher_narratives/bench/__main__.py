@@ -23,6 +23,7 @@ from pitcher_narratives.bench.rubric import AGENT_RUBRIC, CAPSULE_RUBRIC
 from pitcher_narratives.bench.runner import run_provider
 from pitcher_narratives.bench.scorecard import JudgedRecord, aggregate, render_report
 from pitcher_narratives.config import PROVIDERS, setup_logging
+from pitcher_narratives.temporal import _DEFAULT_RECENT_APPEARANCES
 
 
 def parse_args() -> argparse.Namespace:
@@ -45,7 +46,13 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--thinking", default="medium", help="Thinking effort for contestants")
     parser.add_argument("--persona", default="scout", help="Writer persona")
-    parser.add_argument("-w", "--window", type=int, default=30, help="Lookback window days")
+    parser.add_argument(
+        "-n",
+        "--recent",
+        type=int,
+        default=_DEFAULT_RECENT_APPEARANCES,
+        help="Analysis window in appearances",
+    )
     parser.add_argument("--out", default="bench-runs", help="Output directory root")
     return parser.parse_args()
 
@@ -79,7 +86,7 @@ def main() -> None:
             provider=provider,
             thinking=args.thinking,
             persona=args.persona,
-            window_days=args.window,
+            recent_appearances=args.recent,
         )
         if not run.ok:
             # One retry: provider failures observed so far are transient
@@ -90,7 +97,7 @@ def main() -> None:
                 provider=provider,
                 thinking=args.thinking,
                 persona=args.persona,
-                window_days=args.window,
+                recent_appearances=args.recent,
             )
         runs.append(run)
         pdir = run_dir / provider

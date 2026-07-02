@@ -13,6 +13,8 @@ from pathlib import Path
 
 import polars as pl
 
+from pitcher_narratives.temporal import _DEFAULT_RECENT_APPEARANCES
+
 __all__ = [
     "AGGS_DIR",
     "RV_DF_PATH",
@@ -40,15 +42,6 @@ DATA_DIR = Path(_data_dir_override) if _data_dir_override else _DEFAULT_DATA_DIR
 _YEARS: list[int] = [2025, 2026]
 AGGS_DIR = DATA_DIR / "var" / "aggs"
 RV_DF_PATH = AGGS_DIR / "RV_df.csv"
-
-# Default analysis window, in most-recent appearances. Derived empirically
-# (~30d of a reliever's usage) and floored at the thin-frame threshold
-# (_THIN_APPEARANCES = 10); a smaller default would make every frame "thin".
-# Measured 2026-07-01: pitcher 592155 (Cam Booser, RP) = 10 appearances in
-# the last 30d; pitcher 676571 (PJ Poulin) = 13. Both clear the floor;
-# 592155's count sets the default since it is the fixture pitcher and the
-# lower of the two measured counts.
-_DEFAULT_RECENT_APPEARANCES = 10
 
 
 def statcast_dir() -> Path:

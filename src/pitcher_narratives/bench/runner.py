@@ -25,6 +25,7 @@ from pitcher_narratives.pipeline import (
     build_writer_input,
     generate_pipeline_streaming,
 )
+from pitcher_narratives.temporal import _DEFAULT_RECENT_APPEARANCES
 
 __all__ = ["CapturedRun", "run_provider"]
 
@@ -58,7 +59,7 @@ def run_provider(
     provider: str,
     thinking: str = "medium",
     persona: str = "scout",
-    window_days: int = 30,
+    recent_appearances: int = _DEFAULT_RECENT_APPEARANCES,
     _model_override: object = None,
 ) -> CapturedRun:
     """Run the full pipeline for one provider and capture all outputs.
@@ -66,7 +67,7 @@ def run_provider(
     A failed run is returned as ok=False with the error message; the
     bench continues with other providers.
     """
-    data = load_pitcher_data(pitcher_id, window_days=window_days)
+    data = load_pitcher_data(pitcher_id, recent_appearances=recent_appearances)
     ctx = assemble_pitcher_context(data)
     ground_truth = ctx.to_prompt()
 

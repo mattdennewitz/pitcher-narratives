@@ -16,6 +16,7 @@ from dotenv import load_dotenv
 
 from pitcher_narratives.config import API_KEYS, setup_logging
 from pitcher_narratives.personas import PERSONAS, REPORT, get_narration_mode
+from pitcher_narratives.temporal import _DEFAULT_RECENT_APPEARANCES
 
 if TYPE_CHECKING:
     from pitcher_narratives.data import PitcherData
@@ -36,11 +37,11 @@ def parse_args() -> argparse.Namespace:
     # _run_report_command() re-asserts that -p is present when --list-personas is not used.
     report.add_argument("-p", "--pitcher", type=int, required=False, help="MLB pitcher ID (e.g., 592155)")
     report.add_argument(
-        "-w",
-        "--window",
+        "-n",
+        "--recent",
         type=int,
-        default=30,
-        help="Lookback window in days (default: 30)",
+        default=_DEFAULT_RECENT_APPEARANCES,
+        help=f"Analysis window in most-recent appearances (default: {_DEFAULT_RECENT_APPEARANCES})",
     )
     report.add_argument(
         "-v",
@@ -218,7 +219,7 @@ def _run_report_command(args: argparse.Namespace) -> None:
     from pitcher_narratives.data import load_pitcher_data
 
     try:
-        pitcher_data = load_pitcher_data(args.pitcher, args.window)
+        pitcher_data = load_pitcher_data(args.pitcher, args.recent)
     except ValueError as e:
         # "Pitcher not found" and other user-input validation errors.
         log.error("%s", e)

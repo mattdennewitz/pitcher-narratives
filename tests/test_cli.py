@@ -25,18 +25,18 @@ def test_parse_pitcher_long_flag(monkeypatch):
     assert args.pitcher == 592155
 
 
-def test_window_default(monkeypatch):
-    """CLI-02: -w defaults to 30 when omitted."""
+def test_report_accepts_recent_appearance_count(monkeypatch):
+    """-n/--recent parses as an int appearance count."""
+    monkeypatch.setattr(sys, "argv", ["main.py", "report", "-p", "592155", "--recent", "5"])
+    args = parse_args()
+    assert args.recent == 5
+
+
+def test_report_recent_defaults_to_appearance_span(monkeypatch):
+    """--recent defaults to the empirically-derived appearance count, not 30."""
     monkeypatch.setattr(sys, "argv", ["main.py", "report", "-p", "592155"])
     args = parse_args()
-    assert args.window == 30
-
-
-def test_window_custom(monkeypatch):
-    """CLI-02: -w flag overrides default."""
-    monkeypatch.setattr(sys, "argv", ["main.py", "report", "-p", "592155", "-w", "14"])
-    args = parse_args()
-    assert args.window == 14
+    assert args.recent >= 10
 
 
 def test_verbose_flag_default(monkeypatch):
@@ -176,10 +176,10 @@ def test_cli_invalid_pitcher_exit_1():
     assert "Pitcher 9999999 not found" in result.stderr
 
 
-def test_cli_custom_window():
-    """Integration: -w flag changes lookback window (pipeline completes)."""
+def test_cli_custom_recent():
+    """Integration: -n flag changes recent-appearances window (pipeline completes)."""
     result = subprocess.run(
-        [sys.executable, "-m", "pitcher_narratives.cli", "report", "-p", "592155", "-w", "7"],
+        [sys.executable, "-m", "pitcher_narratives.cli", "report", "-p", "592155", "-n", "7"],
         capture_output=True,
         text=True,
         timeout=60,
@@ -646,7 +646,7 @@ def test_report_subcommand_parses(monkeypatch):
     args = parse_args()
     assert args.command == "report"
     assert args.pitcher == 123
-    assert args.window == 30
+    assert args.recent == 10
 
 
 # ── --mode scaffolding (G9/G4, phase 4: single-mode only) ──────────
