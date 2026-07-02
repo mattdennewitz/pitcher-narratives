@@ -431,20 +431,22 @@ def compute_pitch_type_baseline(pitcher_type_df: pl.DataFrame) -> pl.DataFrame:
 
 
 def filter_to_recent_appearances(df: pl.DataFrame, n: int) -> pl.DataFrame:
-    """Filter pitch rows to the ``n`` most-recent distinct appearances.
+    """Filter rows to the ``n`` most-recent distinct appearances.
 
     An appearance is a unique ``(game_date, game_pk)`` pair, so doubleheaders
     on the same calendar date count as two appearances. Ordering is
     deterministic: most-recent ``game_date`` first, ``game_pk`` descending as
     the tiebreak (matches the Phase-5 G5 most-recent picker). When the frame
-    holds fewer than ``n`` distinct appearances, all rows are returned.
+    holds fewer than ``n`` distinct appearances, all rows are returned. Works
+    at any row granularity (appearance-level or pitch-level) — it dedups on
+    the two keys and joins the originals back.
 
     Args:
-        df: DataFrame of pitch rows with ``game_date`` and ``game_pk`` columns.
+        df: DataFrame with ``game_date`` and ``game_pk`` columns.
         n: Number of most-recent appearances to retain.
 
     Returns:
-        Pitch rows belonging to the ``n`` most-recent appearances.
+        The rows belonging to the ``n`` most-recent appearances.
     """
     if df.is_empty():
         return df
