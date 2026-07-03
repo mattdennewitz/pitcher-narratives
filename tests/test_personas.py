@@ -943,6 +943,36 @@ def test_changes_mandate_references_trend_analysis_not_specialist_block():
     assert "over-read a release-point move" in _CHANGES_MANDATE
 
 
+def test_recap_writer_prompt_has_no_explain_the_model_overlay_line():
+    """RECAP contract's input_framing lacks EXPLAIN THE MODEL, so the
+
+    persona overlay's EXPLAIN THE MODEL addendum must not leak into the
+    composed recap prompt either -- a 40-90 word recap has no room for
+    instructions about a section (EXPLAIN THE MODEL) it never writes.
+    """
+    from pitcher_narratives.personas import PERSONAS, RECAP, build_writer_system_prompt
+
+    for persona_id in ("scout", "analyst", "generic"):
+        prompt = build_writer_system_prompt(PERSONAS[persona_id], RECAP)
+        assert "EXPLAIN THE MODEL" not in prompt
+
+
+def test_scout_report_prompt_retains_explain_the_model_framing_and_overlay():
+    """Scout REPORT prompt still carries both the framing block (from
+
+    _SYNTHESIS_FRAMING) and the persona overlay's EXPLAIN THE MODEL line --
+    proving the recap fix didn't regress REPORT/CHANGES prompts.
+    """
+    from pitcher_narratives.personas import PERSONAS, REPORT, build_writer_system_prompt
+
+    prompt = build_writer_system_prompt(PERSONAS["scout"], REPORT)
+    assert prompt.count("EXPLAIN THE MODEL") == 2
+    assert (
+        "keep model explanations terse — a parenthetical or subordinate "
+        "clause, not a dedicated paragraph." in prompt
+    )
+
+
 def test_recap_writer_prompt_uses_brief_structure_not_report_structure():
     """The composed RECAP writer prompt must carry the brief structure and the
     synthesis framing — proving the mode selects the recap contract, not the

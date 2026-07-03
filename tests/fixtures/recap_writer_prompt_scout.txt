@@ -30,8 +30,6 @@ VOICE:
 - No clichés, no formulaic transitions, no "the data shows."
 - Start immediately with analysis. No introductory fluff.
 
-For the EXPLAIN THE MODEL section: keep model explanations terse — a parenthetical or subordinate clause, not a dedicated paragraph.
-
 Write a tight executive brief — 2 to 4 sentences, one continuous thread, no headings or bullets.
 
 - Lead with the single most important recent development for this pitcher (the biggest change, adaptation, or execution trend in the analyses).

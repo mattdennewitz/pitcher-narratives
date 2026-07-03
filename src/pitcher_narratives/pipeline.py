@@ -1048,10 +1048,13 @@ async def audit_and_revise_specialists(
         for name in audit_names
     }
 
-    # Phase 1.5a: Audit all 5 in parallel. The audit is an enhancement,
-    # not core: a failed audit call (provider error, rate limit) degrades
-    # to passing that specialist through un-audited rather than killing
-    # the whole pipeline run.
+    # Phase 1.5a: Audit all 5 in parallel. Fail closed: a failed audit call
+    # (provider error, rate limit) does not pass that specialist through
+    # un-audited. It returns (name, None), which the collector below turns
+    # into an AUDIT_FAILED sentinel flag on the report — the specialist is
+    # never revised against a nonexistent audit result, and the sentinel
+    # is visible in the pipeline's audit_flags rather than being silently
+    # swallowed.
     async def _audit_one(name: str, text: str) -> tuple[str, AuditResult | None]:
         try:
             audit_input = _build_specialist_audit_input(
@@ -1078,7 +1081,16 @@ async def audit_and_revise_specialists(
     for name, audit_result in audit_results:
         if audit_result is None:
             # Auditor crashed for this specialist — surface the sentinel but
-            # skip revision (nothing concrete to revise against).
+            # skip revision (nothing concrete to revise against). Note the
+            # deliberate asymmetry: this FIRST-pass crash does NOT add the
+            # specialist to `residual` — its prose stays in the parity
+            # union used as fact-check ground truth. Excluding it here
+            # would collapse that ground truth down to raw tables and
+            # trigger false FABRICATED_DATA flags against otherwise-sound
+            # prose; the AUDIT_FAILED sentinel already gates verification
+            # of this specialist without penalizing the others. A crash
+            # during the RE-audit pass below (post-revision) is different
+            # and does mark the specialist residual — see there.
             all_flags.append(_audit_failed_flag(name))
             continue
         if not audit_result.is_clean:

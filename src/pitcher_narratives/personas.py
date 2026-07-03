@@ -70,6 +70,7 @@ class Persona:
     description: str
     overlay: str
     parent: str | None = None
+    explain_model_addendum: str = ""
 
     def __post_init__(self) -> None:
         if not self.overlay:
@@ -585,8 +586,10 @@ conversational.
 - Vary sentence length. Short sentences land points.
 - Use scouting language: stuff, feel, finding a groove, getting tagged.
 - No clichés, no formulaic transitions, no "the data shows."
-- Start immediately with analysis. No introductory fluff.
+- Start immediately with analysis. No introductory fluff.\
+"""
 
+_SCOUT_EXPLAIN_THE_MODEL_ADDENDUM = """\
 For the EXPLAIN THE MODEL section: keep model explanations terse — \
 a parenthetical or subordinate clause, not a dedicated paragraph.\
 """
@@ -619,8 +622,10 @@ league-average S+ on a sweeper is close to 100").
 VOCABULARY:
 - Teaching vocabulary is permitted: "playability," "tunneling gap," \
 "pitch tree," "arsenal depth," "model," "credit," "grade," \
-"below-average," "holds up," "pencils out."
+"below-average," "holds up," "pencils out."\
+"""
 
+_ANALYST_EXPLAIN_THE_MODEL_ADDENDUM = """\
 For the EXPLAIN THE MODEL section: full-sentence depth. Each plus-metric's \
 first appearance gets a sentence explaining what the metric measures and \
 why the grade is what it is. This is the teaching persona.\
@@ -638,8 +643,10 @@ conversational; accessible, not simplified.
 
 VOCABULARY:
 - Plain declarative voice. No newsletter framing ("what we're seeing \
-here"), no conversational lead ("here's the thing about the slider").
+here"), no conversational lead ("here's the thing about the slider").\
+"""
 
+_GENERIC_EXPLAIN_THE_MODEL_ADDENDUM = """\
 For the EXPLAIN THE MODEL section: each `##` section's first \
 Pitching+ reference gets one sentence of context. "S+ measures \
 physical pitch quality — 112 for the slider means the model credited \
@@ -660,6 +667,7 @@ SCOUT = Persona(
         "conversational, sabermetric voice"
     ),
     overlay=_SCOUT_OVERLAY,
+    explain_model_addendum=_SCOUT_EXPLAIN_THE_MODEL_ADDENDUM,
 )
 
 ANALYST = Persona(
@@ -671,6 +679,7 @@ ANALYST = Persona(
     ),
     overlay=_ANALYST_OVERLAY,
     parent="scout",
+    explain_model_addendum=_ANALYST_EXPLAIN_THE_MODEL_ADDENDUM,
 )
 
 GENERIC = Persona(
@@ -682,6 +691,7 @@ GENERIC = Persona(
     ),
     overlay=_GENERIC_OVERLAY,
     parent="scout",
+    explain_model_addendum=_GENERIC_EXPLAIN_THE_MODEL_ADDENDUM,
 )
 
 _PERSONAS_INTERNAL: dict[str, Persona] = {
@@ -729,11 +739,24 @@ def build_system_prompt(persona: Persona, contract: OutputContract) -> str:
     Order: universal analytical rules + contract input framing + persona voice
     chain (parent overlay first, then own overlay) + contract structure. Parent
     references resolve via get_persona for a uniform error contract.
+
+    Each overlay's EXPLAIN THE MODEL addendum is appended only when the
+    contract's input_framing actually carries an EXPLAIN THE MODEL mandate
+    (REPORT/CHANGES contracts do via _SYNTHESIS_FRAMING; RECAP does not,
+    since its framing is the bare _SYNTHESIS_RULES). This keeps a 40-90
+    word recap from being told to explain a section it never writes, while
+    leaving REPORT/CHANGES prompts byte-identical to before.
     """
+    wants_explain_model = "EXPLAIN THE MODEL" in contract.input_framing
     parts = [SHARED_WRITER_BASE, contract.input_framing]
     if persona.parent is not None:
-        parts.append(get_persona(persona.parent).overlay)
+        parent = get_persona(persona.parent)
+        parts.append(parent.overlay)
+        if wants_explain_model and parent.explain_model_addendum:
+            parts.append(parent.explain_model_addendum)
     parts.append(persona.overlay)
+    if wants_explain_model and persona.explain_model_addendum:
+        parts.append(persona.explain_model_addendum)
     parts.append(contract.structure)
     return "\n\n".join(parts)
 

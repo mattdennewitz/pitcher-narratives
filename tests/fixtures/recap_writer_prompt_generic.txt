@@ -30,14 +30,10 @@ VOICE:
 - No clichés, no formulaic transitions, no "the data shows."
 - Start immediately with analysis. No introductory fluff.
 
-For the EXPLAIN THE MODEL section: keep model explanations terse — a parenthetical or subordinate clause, not a dedicated paragraph.
-
 You are writing a structured breakdown for a general baseball fan with moderate literacy. Neutral-analytical tone — informative, not conversational; accessible, not simplified.
 
 VOCABULARY:
 - Plain declarative voice. No newsletter framing ("what we're seeing here"), no conversational lead ("here's the thing about the slider").
-
-For the EXPLAIN THE MODEL section: each `##` section's first Pitching+ reference gets one sentence of context. "S+ measures physical pitch quality — 112 for the slider means the model credited it 12 percent above league average on characteristics alone." Do not re-explain the same plus-metric within the same section.
 
 Write a tight executive brief — 2 to 4 sentences, one continuous thread, no headings or bullets.
 
