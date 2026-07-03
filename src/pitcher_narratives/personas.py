@@ -25,6 +25,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
 
+from pitcher_narratives.config import MAX_FACT_REVISIONS, MAX_REVISIONS
+
 log = logging.getLogger("pitcher_narratives.personas")
 
 __all__ = [
@@ -45,6 +47,7 @@ __all__ = [
     "NarrationMode",
     "OutputContract",
     "Persona",
+    "ValidationPolicy",
     "build_system_prompt",
     "build_writer_system_prompt",
     "get_narration_mode",
@@ -357,6 +360,23 @@ DIGEST_ITEM = OutputContract(
 )
 
 @dataclass(frozen=True)
+class ValidationPolicy:
+    """Per-mode revision-depth knobs for the shared validation stack.
+
+    Detection always runs (cheap, mandatory); only remediation depth is
+    tuned. ``depth == 0`` is valid: the loop runs its detection pass, surfaces
+    residual flags, and declines to auto-fix (design §7).
+
+    Attributes:
+        anchor_depth: Max anchor-revision passes (``max_revisions``).
+        fact_depth: Max capsule fact-revision passes (``max_fact_revisions``).
+    """
+
+    anchor_depth: int
+    fact_depth: int
+
+
+@dataclass(frozen=True)
 class NarrationMode:
     """A top-level narration selector composed with the Persona × OutputContract
     machinery. A mode owns the persona → report-contract mapping (which output
@@ -364,14 +384,18 @@ class NarrationMode:
     NarrationMode picks the output shape.
 
     Phase 4 carries only ``id`` and ``contracts`` — the members the REPORT path
-    consumes today. The frame selector, focus directive, input assembler, and
-    validation policy (design §4) are added by later phases (5/7/8/9) that
-    consume them; frozen-dataclass fields with defaults can be appended without
-    breaking existing construction.
+    consumes today. Phase 7 adds ``validation``, the per-mode revision-depth
+    knobs threaded into the shared validation stack. The frame selector, focus
+    directive, and input assembler (design §4) are added by later phases (5/8/9)
+    that consume them; frozen-dataclass fields with defaults can be appended
+    without breaking existing construction.
     """
 
     id: str
     contracts: Mapping[str, OutputContract]
+    validation: ValidationPolicy = ValidationPolicy(
+        anchor_depth=MAX_REVISIONS, fact_depth=MAX_FACT_REVISIONS
+    )
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "contracts", MappingProxyType(dict(self.contracts)))
@@ -385,6 +409,9 @@ REPORT = NarrationMode(
         "analyst": NEWSLETTER,
         "generic": SECTIONED,
     },
+    validation=ValidationPolicy(
+        anchor_depth=MAX_REVISIONS, fact_depth=MAX_FACT_REVISIONS
+    ),
 )
 
 _NARRATION_MODES_INTERNAL: dict[str, NarrationMode] = {"report": REPORT}

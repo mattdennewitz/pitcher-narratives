@@ -1834,7 +1834,7 @@ async def _run_pipeline(
         writer_agent=agents.writer,
         synthesis=synthesis,
         capsule=capsule,
-        max_revisions=MAX_REVISIONS,
+        max_revisions=mode.validation.anchor_depth,
         _model_override=_model_override,
     )
 
@@ -1860,6 +1860,7 @@ async def _run_pipeline(
         writer_agent=agents.writer,
         ground_truth=fact_check_source,
         capsule=capsule,
+        max_fact_revisions=mode.validation.fact_depth,
         _model_override=_model_override,
     )
     # Re-check explainer after B's fact-revision, mirroring the anchor guard:

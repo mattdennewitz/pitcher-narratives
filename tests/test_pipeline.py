@@ -1859,3 +1859,44 @@ class TestCapsuleAuditBuilders:
         assert "FABRICATED_DATA" in msg
         assert "95.9 mph" in msg
         assert "ONLY" in msg  # instructs to fix only flagged issues
+
+
+def test_pipeline_threads_report_validation_depths(monkeypatch):
+    """_run_pipeline must read depths from mode.validation, not the constants."""
+    from pydantic_ai.models.test import TestModel
+
+    from pitcher_narratives import pipeline
+    from pitcher_narratives.context import assemble_pitcher_context
+    from pitcher_narratives.data import load_pitcher_data
+    from pitcher_narratives.personas import REPORT
+
+    captured: dict[str, int] = {}
+
+    real_anchor = pipeline.run_anchor_revision_loop
+    real_audit = pipeline.run_capsule_audit
+
+    async def anchor_spy(*args, **kwargs):
+        captured["anchor"] = kwargs["max_revisions"]
+        return await real_anchor(*args, **kwargs)
+
+    async def audit_spy(*args, **kwargs):
+        captured["fact"] = kwargs["max_fact_revisions"]
+        return await real_audit(*args, **kwargs)
+
+    monkeypatch.setattr(pipeline, "run_anchor_revision_loop", anchor_spy)
+    monkeypatch.setattr(pipeline, "run_capsule_audit", audit_spy)
+
+    data = load_pitcher_data(592155, recent_appearances=10)
+    ctx = assemble_pitcher_context(data)
+
+    pipeline.generate_pipeline_streaming(
+        ctx,
+        provider="gemini",
+        thinking="high",
+        persona="scout",
+        mode=REPORT,
+        _model_override=TestModel(call_tools=[]),
+    )
+
+    assert captured["anchor"] == REPORT.validation.anchor_depth == 5
+    assert captured["fact"] == REPORT.validation.fact_depth == 2

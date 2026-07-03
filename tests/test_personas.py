@@ -846,3 +846,26 @@ def test_build_writer_system_prompt_falls_back_to_scout_report_for_unknown_perso
         "build_writer_system_prompt should fall back to SCOUT_REPORT for unmapped "
         "personas; expected structure phrase '2-3 paragraph' in composed prompt"
     )
+
+
+def test_report_validation_policy_matches_config_depths():
+    """REPORT keeps today's depths; config is the single source of truth."""
+    from pitcher_narratives.config import MAX_FACT_REVISIONS, MAX_REVISIONS
+    from pitcher_narratives.personas import REPORT, ValidationPolicy
+
+    assert REPORT.validation == ValidationPolicy(
+        anchor_depth=MAX_REVISIONS, fact_depth=MAX_FACT_REVISIONS
+    )
+    assert (REPORT.validation.anchor_depth, REPORT.validation.fact_depth) == (5, 2)
+
+
+def test_validation_policy_is_frozen():
+    from dataclasses import FrozenInstanceError
+
+    import pytest
+
+    from pitcher_narratives.personas import ValidationPolicy
+
+    policy = ValidationPolicy(anchor_depth=1, fact_depth=2)
+    with pytest.raises(FrozenInstanceError):
+        policy.anchor_depth = 3  # type: ignore[misc]
