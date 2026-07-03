@@ -1,0 +1,8 @@
+## Recent vs Prior Window (code-computed deltas)
+
+Deltas are recent minus prior; positive = higher in the recent window.
+
+- 4-Seam Fastball: velo +0.4 mph, S+ +7, L+ +7, usage +12.2 pts
+- Cutter: velo +0.9 mph, S+ +15, L+ -2, usage -3.0 pts
+- Sweeper: velo +1.1 mph, S+ +22, L+ +37, usage -5.0 pts
+- Changeup: insufficient sample for a recent-vs-prior delta

@@ -450,6 +450,47 @@ class TestGeneratePipelineStreaming:
         assert calls == ["report"]
         assert list(results) == ["report"]
 
+    def test_run_narration_modes_gates_prior_ctx_by_temporal_frame(self, ctx, monkeypatch):
+        """run_narration_modes([CHANGES, REPORT], prior_ctx=...) must route the
+        RECENT-vs-PRIOR comparison block into run_specialists only for CHANGES
+        (whose temporal_frame includes PRIOR); REPORT must receive None,
+        preserving byte-identical REPORT/RECAP behavior (P9B constraint)."""
+        import pitcher_narratives.pipeline as pl
+        from pitcher_narratives.context import assemble_prior_context
+        from pitcher_narratives.personas import CHANGES, REPORT
+
+        prior_ctx = assemble_prior_context(load_pitcher_data(TEST_PITCHER, 10), 10, 10)
+
+        captured: dict[str, str | None] = {}
+        real_run_specialists = pl.run_specialists
+
+        async def _spy_run_specialists(*args, **kwargs):
+            # generate_pipeline_streaming -> run_analysis_spine -> run_spine_tail
+            # -> run_specialists is the real chain we're driving end-to-end;
+            # only intercept the kwarg to record what each mode actually sent.
+            trend_fc = kwargs.get("trend_frame_comparison")
+            if trend_fc is not None:
+                captured["changes"] = trend_fc
+            else:
+                captured.setdefault("report", trend_fc)
+            return await real_run_specialists(*args, **kwargs)
+
+        monkeypatch.setattr(pl, "run_specialists", _spy_run_specialists)
+
+        model = TestModel(call_tools=[])
+        results = pl.run_narration_modes(
+            ctx, modes=[CHANGES, REPORT], prior_ctx=prior_ctx,
+            _model_override=model,
+        )
+
+        assert set(results) == {"changes", "report"}
+        # CHANGES receives the rendered comparison block.
+        assert captured.get("changes") is not None
+        assert "Recent vs Prior Window" in captured["changes"]
+        # REPORT is gated off — no prior context leaks in (byte-identical
+        # REPORT/RECAP guarantee).
+        assert captured.get("report") is None
+
     def test_max_revisions_constant_is_nonzero(self):
         """MAX_REVISIONS must allow at least one revision pass."""
         from pitcher_narratives.config import MAX_REVISIONS
