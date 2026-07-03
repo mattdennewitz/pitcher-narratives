@@ -18,8 +18,18 @@ class _PT:
 
 
 @dataclass
+class _ReleasePoint:
+    pitch_types: list
+
+
+@dataclass
 class _Ctx:
     arsenal: list
+    release_point: _ReleasePoint = None
+
+    def __post_init__(self):
+        if self.release_point is None:
+            self.release_point = _ReleasePoint(pitch_types=[])
 
 
 def _ctx(*pts):

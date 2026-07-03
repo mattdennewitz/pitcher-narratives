@@ -33,6 +33,12 @@ class PitchFrameDelta:
     usage_delta: float | None
     sufficient: bool
     dropped: bool = False
+    release_x_delta: float | None = None
+    release_z_delta: float | None = None
+    extension_delta: float | None = None
+    """Release-point deltas (feet), recent minus prior. Mechanism signal:
+    a release-point/extension shift alongside a velo or shape change points
+    to a deliberate mechanical adjustment rather than a pitch-mix change."""
 
 
 @dataclass(frozen=True)
@@ -59,6 +65,8 @@ def build_trend_frame_comparison(
     sample floor and no dropped pitch was found.
     """
     prior_by_name = {p.pitch_name: p for p in prior.arsenal}
+    recent_release_by_name = {rp.pitch_name: rp for rp in recent.release_point.pitch_types}
+    prior_release_by_name = {rp.pitch_name: rp for rp in prior.release_point.pitch_types}
     deltas: list[PitchFrameDelta] = []
     for r in recent.arsenal:
         p = prior_by_name.get(r.pitch_name)
@@ -67,6 +75,9 @@ def build_trend_frame_comparison(
             and r.n_pitches_window >= _MIN_PITCHES
             and p.n_pitches_window >= _MIN_PITCHES
         )
+        r_release = recent_release_by_name.get(r.pitch_name)
+        p_release = prior_release_by_name.get(r.pitch_name)
+        release_suff = suff and r_release is not None and p_release is not None
         deltas.append(
             PitchFrameDelta(
                 pitch_name=r.pitch_name,
@@ -75,6 +86,18 @@ def build_trend_frame_comparison(
                 l_plus_delta=_opt_delta(r.window_l_plus, p.window_l_plus) if suff else None,
                 usage_delta=_opt_delta(r.window_usage_pct, p.window_usage_pct) if suff else None,
                 sufficient=suff,
+                release_x_delta=(
+                    _opt_delta(r_release.window_release_x, p_release.window_release_x)
+                    if release_suff else None
+                ),
+                release_z_delta=(
+                    _opt_delta(r_release.window_release_z, p_release.window_release_z)
+                    if release_suff else None
+                ),
+                extension_delta=(
+                    _opt_delta(r_release.window_extension, p_release.window_extension)
+                    if release_suff else None
+                ),
             ),
         )
     recent_names = {r.pitch_name for r in recent.arsenal}
@@ -122,5 +145,19 @@ def render_trend_frame_comparison(cmp: TrendFrameComparison) -> str:
             parts.append(f"L+ {d.l_plus_delta:+.0f}")
         if d.usage_delta is not None:
             parts.append(f"usage {d.usage_delta:+.1f} pts")
+        if d.release_x_delta is not None:
+            parts.append(f"release x {d.release_x_delta:+.2f} ft")
+        if d.release_z_delta is not None:
+            parts.append(f"release z {d.release_z_delta:+.2f} ft")
+        if d.extension_delta is not None:
+            parts.append(f"extension {d.extension_delta:+.2f} ft")
         lines.append(f"- {d.pitch_name}: {', '.join(parts) if parts else 'no meaningful change'}")
+    if any(d.release_x_delta is not None or d.release_z_delta is not None or d.extension_delta is not None for d in cmp.deltas):
+        lines.append("")
+        lines.append(
+            "Release-point/extension shifts alongside a velo or shape change are a "
+            "mechanism signal — a deliberate mechanical adjustment, not just a "
+            "pitch-mix change. A shift with no accompanying velo/shape movement is "
+            "more likely mound rhythm or measurement noise; do not over-read it."
+        )
     return "\n".join(lines)

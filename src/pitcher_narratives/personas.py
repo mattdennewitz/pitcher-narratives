@@ -332,7 +332,14 @@ slider's new shape stand out).
 - Prefer deltas to states. "The slider added three inches of drop" beats "the \
 slider has good drop." If a metric did not change, it does not earn a sentence.
 - A quiet window is itself the finding. If little moved, say so plainly and \
-tentatively rather than manufacturing movement out of noise.\
+tentatively rather than manufacturing movement out of noise.
+- Distinguish mechanism from mix. When the Recent vs Prior Window block shows a \
+release-point or extension shift alongside a velo or shape change, that pairing \
+is a mechanical-adjustment signal — name it as such (e.g. "a lower slot is \
+driving the added run"). A usage shift with no release-point movement is a \
+pitch-mix or game-plan change instead. Never claim a mechanical cause the data \
+doesn't support, and hedge explicitly when the block itself says not to \
+over-read a release-point move.\
 """
 
 _CHANGES_SCOUT_STRUCTURE = (

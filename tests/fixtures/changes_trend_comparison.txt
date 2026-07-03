@@ -2,7 +2,9 @@
 
 Deltas are recent minus prior; positive = higher in the recent window.
 
-- 4-Seam Fastball: velo +0.4 mph, S+ +7, L+ +7, usage +12.2 pts
-- Cutter: velo +0.9 mph, S+ +15, L+ -2, usage -3.0 pts
-- Sweeper: velo +1.1 mph, S+ +22, L+ +37, usage -5.0 pts
+- 4-Seam Fastball: velo +0.4 mph, S+ +7, L+ +7, usage +12.2 pts, release x +0.10 ft, release z -0.14 ft, extension +0.09 ft
+- Cutter: velo +0.9 mph, S+ +15, L+ -2, usage -3.0 pts, release x +0.12 ft, release z -0.11 ft, extension +0.06 ft
+- Sweeper: velo +1.1 mph, S+ +22, L+ +37, usage -5.0 pts, release x +0.08 ft, release z -0.05 ft, extension +0.06 ft
 - Changeup: insufficient sample for a recent-vs-prior delta
+
+Release-point/extension shifts alongside a velo or shape change are a mechanism signal — a deliberate mechanical adjustment, not just a pitch-mix change. A shift with no accompanying velo/shape movement is more likely mound rhythm or measurement noise; do not over-read it.
