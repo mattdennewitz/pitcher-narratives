@@ -13,6 +13,7 @@ from pitcher_narratives.data import (
     compute_pitch_type_baseline,
     compute_season_baseline,
     filter_game_type,
+    filter_to_prior_appearances,
     filter_to_recent_appearances,
     load_agg_csvs,
     load_all_statcast,
@@ -157,6 +158,35 @@ def test_filter_to_recent_appearances_empty_input_returns_empty():
         schema={"game_date": pl.Date, "game_pk": pl.Int64, "pitch_type": pl.Utf8}
     )
     assert filter_to_recent_appearances(df, 5).is_empty()
+
+
+def _appearances(dates_pks):
+    return pl.DataFrame(
+        {"game_date": [d for d, _ in dates_pks], "game_pk": [p for _, p in dates_pks]}
+    )
+
+
+def test_filter_to_prior_appearances_selects_offset_window():
+    df = _appearances([("2024-04-01", 1), ("2024-04-05", 2), ("2024-04-10", 3),
+                       ("2024-04-15", 4), ("2024-04-20", 5)])
+    out = filter_to_prior_appearances(df, recent_n=2, prior_m=2)
+    # recent 2 = pks 5,4; prior 2 = pks 3,2
+    assert sorted(out["game_pk"].to_list()) == [2, 3]
+
+
+def test_filter_to_prior_appearances_empty_when_fewer_than_recent():
+    df = _appearances([("2024-04-01", 1), ("2024-04-05", 2)])
+    assert filter_to_prior_appearances(df, recent_n=5, prior_m=3).is_empty()
+
+
+def test_filter_to_prior_appearances_partial_when_prior_runs_out():
+    df = _appearances([("2024-04-01", 1), ("2024-04-05", 2), ("2024-04-10", 3)])
+    out = filter_to_prior_appearances(df, recent_n=2, prior_m=5)
+    assert out["game_pk"].to_list() == [1]  # only pk1 remains after recent 3,2
+
+
+def test_filter_to_prior_appearances_empty_input():
+    assert filter_to_prior_appearances(pl.DataFrame(), recent_n=1, prior_m=1).is_empty()
 
 
 def test_classify_starter():

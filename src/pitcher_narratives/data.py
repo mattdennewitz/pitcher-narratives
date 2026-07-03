@@ -459,6 +459,30 @@ def filter_to_recent_appearances(df: pl.DataFrame, n: int) -> pl.DataFrame:
     return df.join(recent_keys, on=["game_date", "game_pk"], how="inner")
 
 
+def filter_to_prior_appearances(
+    df: pl.DataFrame, recent_n: int, prior_m: int
+) -> pl.DataFrame:
+    """Filter rows to the ``prior_m`` appearances immediately older than the
+    ``recent_n`` most-recent ones.
+
+    An appearance = unique ``(game_date, game_pk)`` pair. Keys are ranked
+    most-recent ``game_date`` first, ``game_pk`` descending as tiebreak;
+    this returns the rows of the keys ranked ``[recent_n, recent_n + prior_m)``.
+    Returns an empty frame when fewer than ``recent_n`` appearances exist, and
+    fewer than ``prior_m`` rows when the prior window runs past the season's
+    oldest appearance. Works at any row granularity (appearance- or pitch-level).
+    """
+    if df.is_empty():
+        return df
+    prior_keys = (
+        df.select("game_date", "game_pk")
+        .unique()
+        .sort(["game_date", "game_pk"], descending=True, nulls_last=True)
+        .slice(recent_n, prior_m)
+    )
+    return df.join(prior_keys, on=["game_date", "game_pk"], how="inner")
+
+
 def load_pitcher_data(
     pitcher_id: int, recent_appearances: int = _DEFAULT_RECENT_APPEARANCES
 ) -> PitcherData:
