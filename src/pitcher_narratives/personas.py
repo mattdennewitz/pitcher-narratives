@@ -397,12 +397,11 @@ HARD LIMIT: Do not exceed 500 words. Concision is the voice.\
 """
 )
 
-# INTENT: BRIEF and RECAP_BRIEF are intentionally separate contracts even
-# though both produce a 40-90 word brief. BRIEF distills an already-finished
-# report capsule (report/changes modes, distill-only grounding — it summarizes
-# a draft that already exists); RECAP_BRIEF writes a standalone brief straight
-# from the specialist analyses (recap mode). Since recap skips distillation
-# (NarrationMode.distill is False), the two never co-occur in one document.
+# BRIEF vs RECAP_BRIEF: intentionally separate contracts. BRIEF distills the
+# finished report (report/changes modes, recover-only grounding); RECAP_BRIEF
+# writes a standalone brief straight from the analyses (recap mode). Since
+# recap skips distillation (NarrationMode.distill), they never co-occur in
+# one document.
 BRIEF = OutputContract(
     id="brief",
     length_target=(40, 90),
