@@ -84,7 +84,7 @@ def build_anchor_message(synthesis: str, capsule: str) -> UserPrompt:
         f"## Synthesis (Data Analyst's Briefing)\n{synthesis}",
         CachePoint(),
         f"## Capsule (Editor's Narrative)\n{capsule}\n\n"
-        "Check the capsule against the synthesis. Report any issues or respond CLEAN.",
+        "Check the capsule against the synthesis. Report any issues, or return an empty warnings list if everything checks out.",
     ]
 
 

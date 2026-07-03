@@ -50,7 +50,7 @@ def test_slate_caps_each_category_at_five():
 
 
 def test_slate_allows_five_per_category_across_categories():
-    """5 in each of the four categories (20 total, distinct ids) is valid."""
+    """5 in each of the six categories (30 total, distinct ids) is valid."""
     cats = ["clean_breakout", "lab_project", "identity_crisis", "red_flag"]
     picks = [CurationPick(**_pick_cat(i, cats[i // 5])) for i in range(20)]
     slate = CurationSlate(picks=picks)

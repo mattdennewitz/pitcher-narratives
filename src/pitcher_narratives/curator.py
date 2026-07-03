@@ -2,7 +2,7 @@
 
 Stage 1 of the morning run: one LLM call ("the editor") reads the
 flat, score-ranked candidate briefing and returns a CurationSlate —
-up to 5 picks per category across four categories, each with a story
+up to 5 picks per category across six categories, each with a story
 category, a one-sentence angle, and a conviction level. The angle is
 the cue the Stage 2 writers build from.
 """

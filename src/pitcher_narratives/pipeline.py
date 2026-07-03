@@ -24,10 +24,12 @@ Architecture:
   targets).
 
   Phase 2: Writer composes a unified capsule from clean specialist outputs
-  + key signals. Executive summary agent runs concurrently with writer.
+  + key signals.
 
   Phase 2.5: Anchor check + revision loop. Primary signals are enforced
   (MISSED_SIGNAL), secondary signals are advisory (UNDERWEIGHTED).
+
+  Phase 3: Executive summary agent runs as a second step after the anchor loop.
 
 Anti-hallucination guardrails:
   - Specialists receive pre-computed NORMAL/OUTLIER tags on every metric.
@@ -122,7 +124,7 @@ from pitcher_narratives.value_parity import check_value_parity
 
 __all__ = [
     "AnalyzedContext", "CoreContext",
-    "AuditFlag", "AuditResult", "ExecutiveSummary", "HallucinationReport",
+    "AuditFlag", "AuditResult", "HallucinationReport",
     "KeySignals", "PipelineAgents", "PipelineResult",
     "UserPrompt", "audit_and_revise_specialists", "build_capsule_audit_input",
     "build_fact_revision_message",
@@ -277,7 +279,7 @@ INTERPRETATION RULES:
 - Compare zone% and chase% against the league baselines provided. \
 Only flag a rate as high/low if it deviates meaningfully from the \
 league average for that pitch type.
-- DIRECTIONAL CONSISTENCY: L+ above 0 means location helps. The \
+- DIRECTIONAL CONSISTENCY: L+ above 100 means location helps (L+ is 100-centered, like S+/P+). The \
 P-variant xRV100 should be more negative (better) than S-variant. \
 If the data contradicts this, note the discrepancy honestly.
 - Cite deltas from league average for zone% and chase% when claiming \
@@ -334,7 +336,7 @@ Look at:
 - Velocity deltas (up, down, steady)
 - P+/S+/L+ deltas per pitch type
 - Usage rate shifts (biggest increases/decreases)
-- Movement changes (pfx_x/pfx_z deltas)
+- Movement changes for the primary fastball (pfx_x/pfx_z deltas are provided only there; assess other pitches via their P+/S+/L+ deltas, do not derive movement deltas from raw values)
 - Release point shifts
 - Hard-hit rate shifts
 
@@ -406,8 +408,7 @@ _RP_GAME_SHAPE_GUIDANCE = """\
 Additional focus for this reliever:
 - Rest day impact on velocity, S+, and L+ (back-to-back vs rested — better or worse?)
 - Primary weapon identification: what is the put-away pitch? Cite its P+/S+/L+ triad
-- Pitch count efficiency: how many pitches per batter faced?
-- Platoon-specific strengths and vulnerabilities by handedness"""
+- Platoon-specific strengths and vulnerabilities by handedness — only when the input includes TTO/platoon splits; if absent, skip this angle rather than inferring it"""
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -454,6 +455,8 @@ For each problem found, report:
 - The specific claim that is wrong
 - What the data actually shows
 - A suggested correction
+
+Checks that reference [NORMAL]/[OUTLIER] tags or S-variant metrics (xRV100_S, xWhiff_S) apply ONLY when those artifacts appear in the ground truth data. When the ground truth has no such tags or metrics (e.g. trends or game-shape data), skip those checks — do not flag their absence.
 
 If everything checks out, return an empty list."""
 
@@ -549,17 +552,9 @@ never flag a discrepancy.
 — just the analytical observation.
 - DIRECTIONAL CONSISTENCY: S+ below 100 is below average. S+ above 100 is \
 above average. Negative xRV100 is good for the pitcher.
-- Do not call normal metrics unusual. If a metric is within ±1.5 stddev of \
-the league average, it is normal.
+- Do not call normal metrics unusual. If the report or attached analyses tag a metric [NORMAL], treat it as normal.
 - Output ONLY the 3 bullet points. No headers, no intro, no outro.
 - Format: each line starts with "- " followed by the insight."""
-
-
-class ExecutiveSummary(BaseModel):
-    """Structured executive summary bullet points."""
-
-    bullets: list[str]
-
 
 
 # render_league_baselines and outlier_tag are imported from engine.py
