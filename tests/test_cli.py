@@ -689,10 +689,16 @@ def test_resolve_modes_report_explicit():
 
 
 def test_mode_flag_rejects_unavailable_mode():
-    """--mode changes is rejected in phase 4 (only 'report' is registered)."""
+    """An unregistered mode id still exits 2 via _resolve_modes."""
     with pytest.raises(SystemExit) as exc:
-        _resolve_modes("changes")
+        _resolve_modes("bogus")
     assert exc.value.code == 2
+
+
+def test_mode_flag_resolves_changes():
+    from pitcher_narratives.personas import CHANGES
+
+    assert _resolve_modes("changes") == [CHANGES]
 
 
 def test_mode_flag_rejects_empty_value():
@@ -787,6 +793,22 @@ def test_cli_recap_mode_runs_and_produces_output():
     assert result.returncode == 0, f"stderr: {result.stderr}"
     # The recap mode still emits the executive-summary section (shared emitter)
     # and produced a non-empty narrative body.
+    assert len(result.stdout.strip()) > 0
+    assert "# Executive Summary" in result.stdout
+
+
+def test_cli_changes_mode_runs_and_produces_output():
+    """`report --mode changes` renders through the full validation stack and
+    exits cleanly under TestModel."""
+    result = subprocess.run(
+        [sys.executable, "-m", "pitcher_narratives.cli",
+         "report", "-p", "592155", "--mode", "changes"],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        env=_test_env(PITCHER_NARRATIVES_TEST_MODEL="1"),
+    )
+    assert result.returncode == 0, f"stderr: {result.stderr}"
     assert len(result.stdout.strip()) > 0
     assert "# Executive Summary" in result.stdout
 

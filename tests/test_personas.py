@@ -999,3 +999,18 @@ def test_changes_writer_prompt_is_change_focused_and_distinct():
     assert "changes only" in changes_prompt.lower()
     assert changes_prompt != report_prompt
     assert changes_prompt != recap_prompt
+
+
+@pytest.mark.parametrize("persona_id", ["scout", "analyst", "generic"])
+def test_changes_writer_prompt_golden(persona_id):
+    from pitcher_narratives.personas import (
+        CHANGES,
+        PERSONAS,
+        build_writer_system_prompt,
+    )
+
+    prompt = build_writer_system_prompt(PERSONAS[persona_id], CHANGES)
+    golden = (_FIXTURES / f"changes_writer_prompt_{persona_id}.txt").read_text()
+    assert prompt == golden
+    # Anti-tautology guard: the golden must actually be change-shaped.
+    assert "changes only" in prompt.lower()

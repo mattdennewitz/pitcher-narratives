@@ -82,8 +82,8 @@ def parse_args() -> argparse.Namespace:
         "--mode",
         default=None,
         help=(
-            "Comma-separated narration modes: report, recap (default: report). "
-            "changes lands in a later phase."
+            "Comma-separated narration modes: report, recap, changes "
+            "(default: report)."
         ),
     )
 
