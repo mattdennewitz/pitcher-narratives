@@ -103,17 +103,17 @@ all specialists. Cite the pitch type and metric.
 
 SECONDARY (provide ONLY when the pattern is genuinely present, \
 otherwise leave as null):
-- development_pitch: A pitch with high S+ (>110) but low L+ (<90) \
+- development_pitch: A pitch with high S+ (110 or above) but low L+ (80 or below) \
 that would solve a documented platoon weakness. Name the pitch, \
 cite S+ and L+, and identify which platoon gap it addresses. \
 If nothing fits, null.
 - specialist_tension: Where two specialists disagree about the same \
-pitch. Example: stuff says the curveball is elite (S+ 128) but run \
+pitch. Example: stuff grades the curveball highly (S+ 128) but run \
 value shows it bleeding runs (+1.2 xRV100). Name both specialists \
 and their conflicting assessments. If all specialists agree, null.
 - arsenal_dependency: If one pitch is carrying the entire profile \
 while the rest is replacement-level. Cite the pitch and the evidence \
-(e.g., whiff share, xRV100 gap). If the arsenal is balanced, null.
+(e.g., xRV100 gap, xWhiff contrast across pitches). If the arsenal is balanced, null.
 - connected_changes: When multiple specialists are reporting different \
 facets of the same underlying shift. Example: trend sees velo drop, \
 stuff sees S+ drop, run value sees more hard contact — all one \
