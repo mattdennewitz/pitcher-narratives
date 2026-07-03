@@ -39,6 +39,22 @@ def test_report_recent_defaults_to_appearance_span(monkeypatch):
     assert args.recent >= 10
 
 
+def test_report_subcommand_accepts_prior_flag(monkeypatch):
+    """--prior parses as an int prior-window appearance count."""
+    monkeypatch.setattr(
+        sys, "argv", ["main.py", "report", "-p", "592155", "--mode", "changes", "--prior", "8"]
+    )
+    args = parse_args()
+    assert args.prior == 8
+
+
+def test_report_prior_defaults(monkeypatch):
+    """--prior defaults to _DEFAULT_PRIOR_APPEARANCES (10)."""
+    monkeypatch.setattr(sys, "argv", ["main.py", "report", "-p", "592155", "--mode", "changes"])
+    args = parse_args()
+    assert args.prior == 10  # _DEFAULT_PRIOR_APPEARANCES
+
+
 def test_verbose_flag_default(monkeypatch):
     """CLI: -v flag defaults to False when omitted."""
     monkeypatch.setattr(sys, "argv", ["main.py", "report", "-p", "592155"])
@@ -803,6 +819,23 @@ def test_cli_changes_mode_runs_and_produces_output():
     result = subprocess.run(
         [sys.executable, "-m", "pitcher_narratives.cli",
          "report", "-p", "592155", "--mode", "changes"],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        env=_test_env(PITCHER_NARRATIVES_TEST_MODEL="1"),
+    )
+    assert result.returncode == 0, f"stderr: {result.stderr}"
+    assert len(result.stdout.strip()) > 0
+    assert "# Executive Summary" in result.stdout
+
+
+def test_cli_changes_two_frame_runs():
+    """`report --mode changes --recent N --prior M` runs the two-frame
+    CHANGES engine end-to-end and exits cleanly under TestModel."""
+    result = subprocess.run(
+        [sys.executable, "-m", "pitcher_narratives.cli",
+         "report", "-p", "592155", "--mode", "changes",
+         "--recent", "10", "--prior", "10"],
         capture_output=True,
         text=True,
         timeout=60,

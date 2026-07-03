@@ -16,7 +16,7 @@ from dotenv import load_dotenv
 
 from pitcher_narratives.config import API_KEYS, setup_logging
 from pitcher_narratives.personas import PERSONAS, REPORT, get_narration_mode
-from pitcher_narratives.temporal import _DEFAULT_RECENT_APPEARANCES
+from pitcher_narratives.temporal import _DEFAULT_PRIOR_APPEARANCES, _DEFAULT_RECENT_APPEARANCES
 
 if TYPE_CHECKING:
     from pitcher_narratives.data import PitcherData
@@ -42,6 +42,16 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=_DEFAULT_RECENT_APPEARANCES,
         help=f"Analysis window in most-recent appearances (default: {_DEFAULT_RECENT_APPEARANCES})",
+    )
+    report.add_argument(
+        "--prior",
+        type=int,
+        default=_DEFAULT_PRIOR_APPEARANCES,
+        help=(
+            "Prior-window size in appearances for CHANGES mode's recent-vs-prior "
+            f"comparison (default: {_DEFAULT_PRIOR_APPEARANCES}). Ignored by "
+            "report/recap modes."
+        ),
     )
     report.add_argument(
         "-v",
@@ -379,15 +389,23 @@ def _run_report_command(args: argparse.Namespace) -> None:
         log.error("%s not set.", env_var)
         sys.exit(1)
 
-    from pitcher_narratives.context import assemble_pitcher_context
+    from pitcher_narratives.context import assemble_pitcher_context, assemble_prior_context
     from pitcher_narratives.pipeline import (
         residual_banner,
         run_narration_modes,
         write_pipeline_data_file,
     )
+    from pitcher_narratives.temporal import TemporalFrame
 
     ctx = assemble_pitcher_context(pitcher_data)
     selected_modes = _resolve_modes(getattr(args, "mode", None))
+
+    needs_prior = any(TemporalFrame.PRIOR in m.temporal_frame for m in selected_modes)
+    prior_ctx = (
+        assemble_prior_context(pitcher_data, args.recent, args.prior)
+        if needs_prior
+        else None
+    )
 
     try:
         data_file, data_text = write_pipeline_data_file(
@@ -418,6 +436,7 @@ def _run_report_command(args: argparse.Namespace) -> None:
             thinking=args.thinking,
             persona=args.persona,
             _model_override=model_override,
+            prior_ctx=prior_ctx,
         )
     except AgentRunError as e:
         log.error("LLM call failed: %s", e)
