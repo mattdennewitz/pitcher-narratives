@@ -118,8 +118,8 @@ __all__ = [
     "build_fact_revision_message",
     "build_summary_input",
     "build_writer_input", "check_explainer_present", "check_hallucinated_metrics",
-    "flag_summary", "generate_pipeline_streaming",
-    "make_pipeline_agents", "run_analysis_spine", "run_anchor_revision_loop",
+    "flag_summary", "generate_pipeline_streaming", "is_unverified",
+    "make_pipeline_agents", "residual_banner", "run_analysis_spine", "run_anchor_revision_loop",
     "run_capsule_audit", "run_narration_modes", "run_spine_core", "run_spine_tail",
     "run_specialists",
     "write_pipeline_data_file",
@@ -1193,6 +1193,32 @@ def flag_summary(result: PipelineResult) -> dict[str, int | bool]:
         "n_value_parity_warnings": len(result.value_parity_warnings),
         "n_audit_flags": len(result.audit_flags),
     }
+
+
+def is_unverified(result: PipelineResult) -> bool:
+    """Whether a mode's output shipped with unresolved fact-check flags.
+
+    A result is unverified when residual capsule-audit flags survived the
+    fact-revision loop — the same condition that soft-blocks the report CLI.
+    Extracted so every narration mode (and morning, Phase 8) shares one
+    definition for the aggregate exit policy (design §7, G4).
+    """
+    return bool(result.capsule_audit_flags)
+
+
+def residual_banner(result: PipelineResult, *, label: str = "REPORT") -> str | None:
+    """The loud UNVERIFIED banner for an unverified result, else ``None``.
+
+    ``label`` names the surface (REPORT / CHANGES / RECAP / a digest item) so
+    the same wording marks residual flags on every mode.
+    """
+    if not result.capsule_audit_flags:
+        return None
+    n = len(result.capsule_audit_flags)
+    return (
+        f"⚠️  {label} UNVERIFIED — {n} flagged claim(s) survived the "
+        "fact-check loop. Review before use."
+    )
 
 
 # ═══════════════════════════════════════════════════════════════════════
