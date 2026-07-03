@@ -125,6 +125,35 @@ Pass one mode, or several comma-separated (`--mode report,changes`); each mode
 renders its own capsule and section block, and the run exits non-zero if *any*
 of them is unverified. A duplicated mode id is de-duplicated, not double-run.
 
+#### What each mode × voice produces
+
+The mode picks the **structure and temporal frame**; the voice (`--persona`)
+picks the **tone**. Together they determine the shape of the streamed
+`# Scouting Report` capsule. The three voices are:
+
+- **`scout`** (default) — front-office scouting capsule, conversational
+  sabermetric voice.
+- **`analyst`** — newsletter-style, a teaching voice for analytically-inclined
+  fans.
+- **`generic`** — neutral-analytical breakdown for general fans.
+
+|  | `--mode report` | `--mode changes` | `--mode recap` |
+|---|---|---|---|
+| **`scout`** | 2–3 paragraph prose capsule, 150–350 words. Explains the S+/L+/P+ model on first use. Setup → verdict. | 2–3 paragraph **change log**, 150–350 words, prose only. Leads with the single biggest shift; reports deltas, omits what didn't move. | Same brief as every voice (see below). |
+| **`analyst`** | Newsletter essay, 450–800 words / 4–6 paragraphs, prose (bold lead-ins ok, no `##` headings, no tables). Narrative hook + teaching. | Change **briefing**, 450–800 words / 4–6 paragraphs, prose. Opens on the biggest shift, walks connected changes by consequence. | Same brief as every voice (see below). |
+| **`generic`** | Structured breakdown, 300–500 words: six fixed `##` sections (`Stuff`, `Location`, `Run Value & Execution`, `Trend`, `Game Shape`) **plus a `Summary Table`** (`Signal \| Key Finding \| Grade`). | Change **summary**, 300–500 words — one continuous change log, prose only. *No headings and no table* (unlike report/generic). | Same brief as every voice (see below). |
+
+`recap` collapses the voices: all three personas write the **same executive
+brief** — 2–4 sentences, 40–90 words, one thread, no headings/bullets/tables,
+model-teaching skipped. The persona overlay still nudges word choice, but the
+length and structure are identical. This is the mode `pitcher-narratives
+morning` uses for every digest pick.
+
+Every mode also emits the same post-stream diagnostic sections after the capsule
+(`# Executive Summary`, `# Brief`, `# Stuff Analysis`, `# Data Audit`,
+`# Capsule Fact-Check`, `# Value Parity`, `# Anchor Check`, and — when triggered
+— `# Hallucination Check`); only the streamed capsule changes with mode × voice.
+
 ### `pitcher-narratives morning`
 
 The editorial workflow: scout the day's appearances → select a slate by
