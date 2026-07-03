@@ -2198,7 +2198,22 @@ def test_flag_summary_counts_fields():
         "n_value_parity_warnings": 1,
         "n_audit_flags": 0,
         "n_secondary_signals": 0,
+        "signals_failed": False,
     }
+
+
+def test_pipeline_result_signals_failed_roundtrips_into_flag_summary():
+    from pitcher_narratives.models import SpecialistOutputs
+    from pitcher_narratives.pipeline import PipelineResult, flag_summary
+
+    result = PipelineResult(
+        narrative="n",
+        specialists=SpecialistOutputs(
+            stuff="s", location="l", runvalue="r", trends="t", game_shape="g"),
+        signals_failed=True,
+    )
+    assert result.signals_failed is True
+    assert flag_summary(result)["signals_failed"] is True
 
 
 def test_flag_record_stamps_mode_context_onto_summary():
@@ -2229,6 +2244,7 @@ def test_flag_record_stamps_mode_context_onto_summary():
         "n_value_parity_warnings": 1,
         "n_audit_flags": 0,
         "n_secondary_signals": 0,
+        "signals_failed": False,
     }
 
 
@@ -2266,14 +2282,36 @@ class TestCapsuleAuditBuilders:
         assert out.index("GROUND_TRUTH") < out.index("CAPSULE_TEXT")
 
     def test_fact_revision_message_lists_flags(self):
+        from pitcher_narratives.pipeline import CachePoint, build_fact_revision_message
+        from pitcher_narratives.models import AuditFlag
+        flags = [AuditFlag(category="FABRICATED_DATA", claim="98 mph", data_shows="95.9 mph", suggested_fix="use 95.9")]
+        msg = build_fact_revision_message("GROUND_TRUTH_TEXT", "the capsule text", flags)
+        assert isinstance(msg, list)
+        assert any(isinstance(p, CachePoint) for p in msg)
+        joined = "\n".join(p for p in msg if isinstance(p, str))
+        assert "GROUND_TRUTH_TEXT" in joined
+        assert "the capsule text" in joined
+        assert "FABRICATED_DATA" in joined
+        assert "95.9 mph" in joined
+        assert "ONLY" in joined  # instructs to fix only flagged issues
+
+    def test_fact_revision_message_ground_truth_before_cache_point(self):
+        from pitcher_narratives.pipeline import CachePoint, build_fact_revision_message
+        from pitcher_narratives.models import AuditFlag
+        flags = [AuditFlag(category="FABRICATED_DATA", claim="98 mph", data_shows="95.9 mph", suggested_fix="use 95.9")]
+        msg = build_fact_revision_message("GROUND_TRUTH_TEXT", "the capsule text", flags)
+        cp_index = next(i for i, p in enumerate(msg) if isinstance(p, CachePoint))
+        assert "GROUND_TRUTH_TEXT" in msg[0]
+        assert cp_index == 1
+
+    def test_fact_revision_message_instructs_follow_ground_truth(self):
         from pitcher_narratives.pipeline import build_fact_revision_message
         from pitcher_narratives.models import AuditFlag
         flags = [AuditFlag(category="FABRICATED_DATA", claim="98 mph", data_shows="95.9 mph", suggested_fix="use 95.9")]
-        msg = build_fact_revision_message("the capsule text", flags)
-        assert "the capsule text" in msg
-        assert "FABRICATED_DATA" in msg
-        assert "95.9 mph" in msg
-        assert "ONLY" in msg  # instructs to fix only flagged issues
+        msg = build_fact_revision_message("GROUND_TRUTH_TEXT", "the capsule text", flags)
+        joined = "\n".join(p for p in msg if isinstance(p, str))
+        assert "Ground Truth" in joined
+        assert "follow the ground truth" in joined
 
 
 def test_pipeline_threads_report_validation_depths(monkeypatch):

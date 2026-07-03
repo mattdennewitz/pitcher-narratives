@@ -197,6 +197,24 @@ def test_hallucination_guard_hardhit_pct_still_known():
     assert result.is_clean
 
 
+def test_hallucination_guard_workload_ip_not_flagged():
+    """Bare 'IP' in a workload line (e.g. '5.2 IP') is not a false-positive
+    traditional-stat flag."""
+    text = "He went 5.2 IP over 89 pitches, his longest outing of the year."
+    result = check_hallucinated_metrics(text)
+    assert "IP" not in result.outcome_stat_warnings
+    assert result.is_clean
+
+
+def test_hallucination_guard_other_traditional_stats_still_flagged():
+    """Dropping IP from the pattern must not affect ERA/WHIP/W-L detection."""
+    text = "ERA of 3.50, WHIP of 1.20, and a W-L of 12-8."
+    result = check_hallucinated_metrics(text)
+    assert "ERA" in result.outcome_stat_warnings
+    assert "WHIP" in result.outcome_stat_warnings
+    assert "W-L" in result.outcome_stat_warnings
+
+
 # -- Per-persona regression vectors (Phase 07: TEST-07, analyst portion) --
 
 

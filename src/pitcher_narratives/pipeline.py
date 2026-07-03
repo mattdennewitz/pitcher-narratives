@@ -533,19 +533,31 @@ def build_capsule_audit_input(ground_truth: str, capsule: str) -> str:
     )
 
 
-def build_fact_revision_message(capsule: str, flags: list[AuditFlag]) -> str:
-    """Ask the writer to correct ONLY the capsule's flagged factual errors."""
+def build_fact_revision_message(
+    ground_truth: str, capsule: str, flags: list[AuditFlag]
+) -> UserPrompt:
+    """Ask the writer to correct ONLY the capsule's flagged factual errors.
+
+    Carries the ground truth alongside the auditor's flagged claims (mirrors
+    ``anchor.build_revision_message``) so the writer can check the auditor's
+    claim strings against the source instead of faithfully inserting a
+    mis-stated value. Cache breakpoint after the ground-truth part.
+    """
     formatted = "\n".join(
         f"- [{f.category}] \"{f.claim}\" → Data shows: {f.data_shows}. "
         f"Fix: {f.suggested_fix}"
         for f in flags
     )
-    return (
+    return [
+        f"## Ground Truth\n{ground_truth}",
+        CachePoint(),
         f"## Your Capsule\n{capsule}\n\n"
         f"## Factual Errors Found\n{formatted}\n\n"
         "Revise the capsule to correct ONLY these factual errors. Keep all "
-        "other content, structure, voice, and length unchanged."
-    )
+        "other content, structure, voice, and length unchanged. Use the "
+        "Ground Truth section for the correct values; if a listed fix "
+        "contradicts the ground truth, follow the ground truth.",
+    ]
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -1303,6 +1315,7 @@ class PipelineResult(BaseModel):
     capsule_audit_flags: list[AuditFlag] = []
     capsule_revised: bool = False
     value_parity_warnings: list[str] = []
+    signals_failed: bool = False
 
 
 def flag_summary(result: PipelineResult) -> dict[str, int | bool]:
@@ -1320,6 +1333,7 @@ def flag_summary(result: PipelineResult) -> dict[str, int | bool]:
         "n_value_parity_warnings": len(result.value_parity_warnings),
         "n_audit_flags": len(result.audit_flags),
         "n_secondary_signals": count_secondary_signals(result.key_signals),
+        "signals_failed": result.signals_failed,
     }
 
 
@@ -1943,7 +1957,7 @@ async def run_capsule_audit(
                  len(flags), attempt, max_fact_revisions)
         try:
             revision = await writer_agent.run(
-                **agent_kwargs(build_fact_revision_message(capsule, flags), _model_override)
+                **agent_kwargs(build_fact_revision_message(ground_truth, capsule, flags), _model_override)
             )
             _record_usage(tracker, tracker_model, revision, "fact_revision")
         except Exception:
@@ -2205,6 +2219,7 @@ async def render_recap(
         capsule_audit_flags=rc.capsule_audit_flags,
         capsule_revised=rc.capsule_revised,
         value_parity_warnings=[f"[recap] {w}" for w in value_parity.unmatched],
+        signals_failed=analyzed.signals_failed,
     )
 
 
@@ -2292,6 +2307,7 @@ async def _run_pipeline(
         capsule_audit_flags=capsule_audit_flags,
         capsule_revised=capsule_revised,
         value_parity_warnings=value_parity_warnings,
+        signals_failed=analyzed.signals_failed,
     )
 
 
@@ -2522,7 +2538,6 @@ _TRADITIONAL_PATTERN = re.compile(
     r"|Wins"
     r"|Losses"
     r"|Saves"
-    r"|IP"
     r")(?=[\s,.);\-:]|$)"
 )
 

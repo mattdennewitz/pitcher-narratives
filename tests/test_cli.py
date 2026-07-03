@@ -833,6 +833,33 @@ def test_emit_mode_result_empty_narrative_is_not_unverified(capsys):
     capsys.readouterr()
 
 
+def test_emit_mode_result_runs_hallucination_guard_for_any_mode(capsys, monkeypatch):
+    """_emit_mode_result invokes check_hallucinated_metrics unconditionally.
+
+    It is mode-agnostic (no mode/narration-mode parameter at all), so the
+    single call site at cli.py's report-command dispatch loop already covers
+    every selected narration mode (report, changes, recap) identically —
+    there is no per-mode gate to bypass the guard.
+    """
+    import pitcher_narratives.cli as cli_module
+
+    calls = []
+    from pitcher_narratives import pipeline as pipeline_module
+
+    def _spy(text, *, persona=None):
+        calls.append((text, persona))
+        return pipeline_module.HallucinationReport(unknown_metrics=[], outcome_stat_warnings=[])
+
+    monkeypatch.setattr(pipeline_module, "check_hallucinated_metrics", _spy)
+
+    clean = _pipe_result_with_flags(0)
+    cli_module._emit_mode_result(clean, persona="scout")
+    capsys.readouterr()
+
+    assert len(calls) == 1
+    assert calls[0][0] == clean.narrative
+
+
 def test_morning_subcommand_defaults(monkeypatch):
     monkeypatch.setattr(sys, "argv", ["cli", "morning"])
     args = parse_args()
