@@ -2,6 +2,7 @@
 
 import pytest
 
+from pitcher_narratives.config import MINI_PROVIDERS, PROVIDERS
 from pitcher_narratives.costs import PRICING, UsageTracker, model_label
 
 
@@ -12,15 +13,12 @@ def test_model_label_strips_provider_prefix():
     assert model_label("claude-haiku-4-5") == "claude-haiku-4-5"
 
 
-def test_pricing_covers_the_four_run_models():
+def test_pricing_covers_all_run_models():
     """Both providers' full and mini tiers are priced."""
-    for model in (
-        "claude-sonnet-4-6",
-        "claude-haiku-4-5",
-        "gemini-3.5-flash",
-        "gemini-flash-latest",
-    ):
-        assert "input" in PRICING[model] and "output" in PRICING[model]
+    run_models = {model_label(m) for m in {**PROVIDERS, **MINI_PROVIDERS}.values()}
+    for name in sorted(run_models):
+        assert name in PRICING, f"run model {name} missing from PRICING"
+        assert "input" in PRICING[name] and "output" in PRICING[name]
 
 
 def test_haiku_4_5_pricing_is_correct():
