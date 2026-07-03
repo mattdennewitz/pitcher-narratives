@@ -110,7 +110,7 @@ def aggregate(records: list[dict]) -> dict[str, ModeStats]:
         )
         fact_hits = sum(
             1 for r in rs
-            if r["fact_depth_cap"] > 0 and r["capsule_revised"]
+            if r["fact_depth_cap"] > 0 and r["n_capsule_audit_flags"] > 0
         )
         stats[mode] = ModeStats(
             n=n,

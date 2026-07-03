@@ -31,7 +31,8 @@ def test_aggregate_groups_by_mode_and_computes_rates():
     assert stats["recap"].capsule_revised_rate == 0.5
     # one of two recap records hit the anchor cap of 1 (revision_count 1 >= 1)
     assert stats["recap"].anchor_hit_cap_rate == 0.5
-    assert stats["recap"].fact_hit_cap_rate == 0.5
+    # fact_hit_cap_rate counts only when n_capsule_audit_flags > 0 (residual flags), not just any revision
+    assert stats["recap"].fact_hit_cap_rate == 0.0
     assert stats["report"].anchor_hit_cap_rate == 1.0  # 5 >= 5
 
 
@@ -80,3 +81,24 @@ def test_main_no_records_returns_nonzero(tmp_path, capsys):
     rc = main([str(tmp_path)])
     assert rc == 1
     assert "no records" in capsys.readouterr().err.lower()
+
+
+def test_fact_hit_cap_rate_counts_residual_flags_not_any_revision():
+    """fact_hit_cap_rate counts only cases where the loop exhausted with residual flags, not any revision."""
+    # Case 1: fact_depth_cap=2, capsule_revised=True, but NO residual flags
+    # -> should NOT count as hitting the cap
+    records = [
+        _rec("recap", 1, anchor_cap=2, fact_cap=2, capsule_revised=True),
+    ]
+    records[0]["n_capsule_audit_flags"] = 0  # No residual flags
+    stats = aggregate(records)
+    assert stats["recap"].fact_hit_cap_rate == 0.0
+
+    # Case 2: fact_depth_cap=2, capsule_revised=True, WITH residual flags
+    # -> SHOULD count as hitting the cap
+    records = [
+        _rec("recap", 1, anchor_cap=2, fact_cap=2, capsule_revised=True),
+    ]
+    records[0]["n_capsule_audit_flags"] = 2  # Has residual flags
+    stats = aggregate(records)
+    assert stats["recap"].fact_hit_cap_rate == 1.0

@@ -17,10 +17,15 @@ def test_pricing_covers_the_four_run_models():
     for model in (
         "claude-sonnet-4-6",
         "claude-haiku-4-5",
-        "gemini-3.1-pro-preview",
+        "gemini-3.5-flash",
         "gemini-flash-latest",
     ):
         assert "input" in PRICING[model] and "output" in PRICING[model]
+
+
+def test_haiku_4_5_pricing_is_correct():
+    """Haiku 4.5 pricing is $1.00/$5.00 per MTok, not Haiku 3.5's old $0.80/$4.00."""
+    assert PRICING["claude-haiku-4-5"] == {"input": 1.00, "output": 5.00}
 
 
 def test_tracker_records_and_totals():
