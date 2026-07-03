@@ -1347,6 +1347,13 @@ def flag_record(
     }
 
 
+_GATING_ANCHOR_CATEGORIES: tuple[str, ...] = ("MISSED_SIGNAL", "DIRECTION_ERROR")
+"""Primary/direction anchor categories whose survival past the anchor and fact
+loops means the report cannot be trusted, so they gate shipping alongside
+residual capsule-audit flags. UNDERWEIGHTED/UNSUPPORTED/OVERSTATED stay advisory
+(surfaced but non-blocking)."""
+
+
 def is_unverified(result: PipelineResult) -> bool:
     """Whether a mode's output shipped with unresolved fact-check flags.
 
@@ -1355,7 +1362,9 @@ def is_unverified(result: PipelineResult) -> bool:
     Extracted so every narration mode (and morning, Phase 8) shares one
     definition for the aggregate exit policy (design §7, G4).
     """
-    return bool(result.capsule_audit_flags)
+    return bool(result.capsule_audit_flags) or any(
+        w.category in _GATING_ANCHOR_CATEGORIES for w in result.anchor_warnings
+    )
 
 
 def residual_banner(result: PipelineResult, *, label: str = "REPORT") -> str | None:
@@ -1364,12 +1373,15 @@ def residual_banner(result: PipelineResult, *, label: str = "REPORT") -> str | N
     ``label`` names the surface (REPORT / CHANGES / RECAP / a digest item) so
     the same wording marks residual flags on every mode.
     """
-    if not result.capsule_audit_flags:
-        return None
     n = len(result.capsule_audit_flags)
+    m = sum(
+        1 for w in result.anchor_warnings if w.category in _GATING_ANCHOR_CATEGORIES
+    )
+    if not n and not m:
+        return None
     return (
-        f"⚠️  {label} UNVERIFIED — {n} flagged claim(s) survived the "
-        "fact-check loop. Review before use."
+        f"⚠️  {label} UNVERIFIED — {n} flagged claim(s) and/or {m} unresolved "
+        "primary anchor warning(s) survived validation. Review before use."
     )
 
 
@@ -1778,6 +1790,7 @@ async def run_anchor_revision_loop(
         number of revision passes actually run (0 = passed first try).
     """
     revision_count = 0
+    prev_signature: set[tuple[str, str]] | None = None
 
     for _ in range(max_revisions):
         anchor_result = await anchor_agent.run(
@@ -1788,6 +1801,16 @@ async def run_anchor_revision_loop(
 
         if anchor_check.is_clean:
             return capsule, anchor_check, revision_count
+
+        # Stall detection: if this pass reproduces the exact warnings of the
+        # previous pass, revising again will not converge — stop early rather
+        # than burn the remaining budget re-emitting the same corrections. The
+        # current anchor_check IS the latest check, so skip the post-cap final.
+        signature = {(w.category, w.description) for w in anchor_check.warnings}
+        if signature == prev_signature:
+            log.info("Anchor loop stalled (identical warnings); stopping early.")
+            return capsule, anchor_check, revision_count
+        prev_signature = signature
 
         revision_result = await writer_agent.run(
             **agent_kwargs(
@@ -2094,6 +2117,31 @@ async def _render_capsule(
             "[%s] capsule fact-revision removed model explanation content from capsule",
             persona_label,
         )
+
+    # A fact-revision can rewrite the capsule out from under the anchor result
+    # captured above, so re-anchor once against the final text and merge any new
+    # warnings into the stored result. Unlike the capsule audit (which fails
+    # closed), an anchor crash here is advisory-plus: log and keep the prior
+    # anchor_check rather than kill the pipeline.
+    if capsule_revised:
+        try:
+            recheck = await agents.anchor.run(
+                **agent_kwargs(build_anchor_message(synthesis, capsule), _model_override)
+            )
+            _record_usage(tracker, agents.mini_model_name, recheck, "anchor")
+            seen = {(w.category, w.description) for w in anchor_check.warnings}
+            merged = list(anchor_check.warnings)
+            for w in recheck.output.warnings:
+                key = (w.category, w.description)
+                if key not in seen:
+                    seen.add(key)
+                    merged.append(w)
+            anchor_check = AnchorResult(warnings=merged)
+        except Exception:
+            log.warning(
+                "Post-fact-revision anchor re-check failed; keeping prior anchor result.",
+                exc_info=True,
+            )
 
     return _RenderedCapsule(
         capsule=capsule,

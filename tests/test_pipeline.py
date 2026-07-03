@@ -717,19 +717,16 @@ class TestAnchorRevisionLoop:
         from pitcher_narratives.anchor import AnchorResult, AnchorWarning
         from pitcher_narratives.pipeline import run_anchor_revision_loop
 
-        # Build a persistent dirty result
-        persistent_dirty = AnchorResult(
-            warnings=[
-                AnchorWarning(
-                    category="UNSUPPORTED",
-                    description="invented a metric",
-                )
-            ]
-        )
+        # Each pass surfaces a DISTINCT warning so the stall-break (identical
+        # warnings) does NOT fire — this isolates genuine cap exhaustion.
+        def _dirty(desc: str) -> AnchorResult:
+            return AnchorResult(
+                warnings=[AnchorWarning(category="UNSUPPORTED", description=desc)]
+            )
 
         # 2 revisions allowed → 3 anchor calls (2 in-loop + 1 final exhaustion check)
         anchor = self._fake_anchor(
-            persistent_dirty, persistent_dirty, persistent_dirty
+            _dirty("metric one"), _dirty("metric two"), _dirty("metric three")
         )
         writer = self._fake_writer("REV_1", "REV_2")
 
@@ -852,6 +849,47 @@ class TestAnchorRevisionLoop:
         assert stages == ["anchor", "anchor_revision", "anchor"]
         assert tracker.total_input() == 40   # 10 + 20 + 10
         assert tracker.total_output() == 18  # 5 + 8 + 5
+
+    def test_stall_break_on_identical_warnings(self):
+        """If the anchor returns the SAME warnings two passes in a row, the loop
+        stops early instead of grinding to max_revisions — the writer is asked
+        to revise exactly once, and the final (stalled) result is returned."""
+        import asyncio
+
+        from pitcher_narratives.anchor import AnchorResult, AnchorWarning
+        from pitcher_narratives.pipeline import run_anchor_revision_loop
+
+        def _dirty():
+            return AnchorResult(
+                warnings=[
+                    AnchorWarning(category="MISSED_SIGNAL", description="same concern")
+                ]
+            )
+
+        # Same warnings every pass. With a generous cap (5), the stall break must
+        # halt after the second identical check (one revision), not run all 5.
+        anchor = self._fake_anchor(_dirty(), _dirty(), _dirty(), _dirty(), _dirty())
+        writer = self._fake_writer("REV_1", "REV_2", "REV_3", "REV_4")
+
+        capsule, final, count = asyncio.run(
+            run_anchor_revision_loop(
+                anchor_agent=anchor,
+                writer_agent=writer,
+                synthesis="synth",
+                capsule="ORIGINAL",
+                max_revisions=5,
+                _model_override=None,
+            )
+        )
+
+        # Pass 1: dirty → revise. Pass 2: identical → stall break.
+        assert count == 1
+        assert capsule == "REV_1"
+        assert not final.is_clean
+        assert final.warnings[0].category == "MISSED_SIGNAL"
+        # Exactly 2 anchor checks and 1 writer revision — no post-cap final check.
+        assert anchor.run.call_count == 2
+        assert writer.run.call_count == 1
 
     def test_specialist_outputs_populated(self, ctx):
         """All 5 specialist slots are non-empty strings."""
@@ -2301,14 +2339,66 @@ def test_is_unverified_tracks_residual_flags():
     assert is_unverified(_result_with_flags(3)) is True
 
 
+def _result_with_anchor_warnings(*categories: str):
+    """Minimal PipelineResult carrying anchor warnings of the given categories."""
+    from pitcher_narratives.anchor import AnchorWarning
+    from pitcher_narratives.pipeline import PipelineResult, SpecialistOutputs
+
+    return PipelineResult(
+        narrative="x",
+        specialists=SpecialistOutputs.model_construct(),
+        anchor_warnings=[
+            AnchorWarning(category=c, description=f"desc {i}")
+            for i, c in enumerate(categories)
+        ],
+    )
+
+
+def test_is_unverified_gates_on_primary_anchor_warnings():
+    """A surviving MISSED_SIGNAL / DIRECTION_ERROR anchor warning gates shipping,
+    while advisory categories (UNDERWEIGHTED etc.) do not."""
+    from pitcher_narratives.pipeline import is_unverified
+
+    assert is_unverified(_result_with_anchor_warnings("MISSED_SIGNAL")) is True
+    assert is_unverified(_result_with_anchor_warnings("DIRECTION_ERROR")) is True
+    # Advisory-only warnings stay non-blocking.
+    assert is_unverified(_result_with_anchor_warnings("UNDERWEIGHTED")) is False
+    assert (
+        is_unverified(_result_with_anchor_warnings("UNSUPPORTED", "OVERSTATED"))
+        is False
+    )
+    # Mixed: any gating category flips it to unverified.
+    assert (
+        is_unverified(_result_with_anchor_warnings("UNDERWEIGHTED", "DIRECTION_ERROR"))
+        is True
+    )
+
+
+def test_residual_banner_counts_primary_anchor_warnings():
+    """residual_banner fires and words the anchor-warning count even with zero
+    capsule-audit flags, and stays None when only advisory warnings survive."""
+    from pitcher_narratives.pipeline import residual_banner
+
+    # Advisory-only → no banner.
+    assert residual_banner(_result_with_anchor_warnings("UNDERWEIGHTED")) is None
+    # One gating warning, zero flags → banner names the anchor-warning count.
+    banner = residual_banner(
+        _result_with_anchor_warnings("MISSED_SIGNAL", "DIRECTION_ERROR")
+    )
+    assert banner == (
+        "⚠️  REPORT UNVERIFIED — 0 flagged claim(s) and/or 2 unresolved "
+        "primary anchor warning(s) survived validation. Review before use."
+    )
+
+
 def test_residual_banner_matches_report_wording():
     from pitcher_narratives.pipeline import residual_banner
 
     assert residual_banner(_result_with_flags(0)) is None
     banner = residual_banner(_result_with_flags(2))
     assert banner == (
-        "⚠️  REPORT UNVERIFIED — 2 flagged claim(s) survived the "
-        "fact-check loop. Review before use."
+        "⚠️  REPORT UNVERIFIED — 2 flagged claim(s) and/or 0 unresolved "
+        "primary anchor warning(s) survived validation. Review before use."
     )
     # label parameterizes the surface for RECAP/CHANGES/morning reuse.
     assert residual_banner(_result_with_flags(1), label="RECAP").startswith(
@@ -2339,6 +2429,66 @@ def test_render_capsule_non_streaming_returns_capsule(ctx, capsys):
     assert rc.writer_input and rc.fact_check_source
     # stream=False must NOT print the capsule to stdout.
     assert rc.capsule not in capsys.readouterr().out
+
+
+def test_render_capsule_reanchors_after_fact_revision(ctx):
+    """When the fact loop revises the capsule, _render_capsule runs ONE extra
+    anchor check on the rewritten text and merges its warnings into the stored
+    anchor result (existing first, deduped by (category, description))."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    from pitcher_narratives import pipeline
+    from pitcher_narratives.anchor import AnchorResult, AnchorWarning
+    from pitcher_narratives.models import AuditFlag, AuditResult
+
+    agents = pipeline.make_pipeline_agents("gemini", "high")
+    tm_spine = TestModel(call_tools=[], custom_output_text="Specialist analysis.")
+
+    # Anchor loop (depth 0) surfaces warning A; the post-fact re-check surfaces A
+    # again (must dedup) plus a new warning B.
+    warn_a = AnchorWarning(category="MISSED_SIGNAL", description="a")
+    warn_b = AnchorWarning(category="UNSUPPORTED", description="b")
+    fake_anchor = MagicMock()
+    fake_anchor.run = AsyncMock(side_effect=[
+        MagicMock(output=AnchorResult(warnings=[warn_a])),
+        MagicMock(output=AnchorResult(warnings=[warn_a, warn_b])),
+    ])
+
+    # Auditor: flag once → (writer revises) → re-audit clean, so capsule_revised.
+    class _FlagThenCleanAuditor:
+        def __init__(self):
+            self.calls = 0
+        async def run(self, **kwargs):
+            self.calls += 1
+            flags = ([AuditFlag(category="FABRICATED_DATA", claim="98", data_shows="95", suggested_fix="x")]
+                     if self.calls == 1 else [])
+            return MagicMock(output=AuditResult(flags=flags))
+
+    fake_writer = MagicMock()
+    fake_writer.run = AsyncMock(return_value=MagicMock(output="revised capsule text"))
+
+    agents = agents._replace(
+        anchor=fake_anchor, capsule_auditor=_FlagThenCleanAuditor(), writer=fake_writer
+    )
+
+    async def _go():
+        analyzed = await pipeline.run_analysis_spine(
+            ctx, agents=pipeline.make_pipeline_agents("gemini", "high"),
+            _model_override=tm_spine,
+        )
+        return await pipeline._render_capsule(
+            ctx, analyzed, agents=agents, anchor_depth=0, fact_depth=1,
+            stream=False, check_explainer=False,
+        )
+
+    rc = asyncio.run(_go())
+
+    assert rc.capsule_revised is True
+    # Two anchor calls: the loop's exhaustion check + the post-fact re-check.
+    assert fake_anchor.run.call_count == 2
+    # Merged, deduped, existing-first.
+    cats = [(w.category, w.description) for w in rc.anchor_check.warnings]
+    assert cats == [("MISSED_SIGNAL", "a"), ("UNSUPPORTED", "b")]
 
 
 # ── render_recap + build_recap_overlay (Phase 8B) ────────────────────
