@@ -36,7 +36,7 @@ class JudgedRecord:
 
 
 def _rubric_for(tier: str):
-    return CAPSULE_RUBRIC if tier == "capsule" else AGENT_RUBRIC
+    return CAPSULE_RUBRIC if tier.split(":", 1)[0] == "capsule" else AGENT_RUBRIC
 
 
 def aggregate(records: list[JudgedRecord]) -> dict:

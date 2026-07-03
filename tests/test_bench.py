@@ -20,7 +20,7 @@ from pitcher_narratives.bench.rubric import (
     weighted_overall,
 )
 from pitcher_narratives.bench.runner import run_provider
-from pitcher_narratives.bench.scorecard import JudgedRecord, aggregate, render_report
+from pitcher_narratives.bench.scorecard import JudgedRecord, _rubric_for, aggregate, render_report
 
 TEST_PITCHER = 592155
 
@@ -168,6 +168,16 @@ def _judged(score: int, rubric) -> JudgedOutput:
                                evidence="e") for d in rubric],
         overall_comment="c",
     )
+
+
+def test_rubric_for_namespaced_capsule_tiers():
+    """Namespaced capsule tiers resolve to CAPSULE_RUBRIC; specialists to AGENT."""
+    assert _rubric_for("capsule") is CAPSULE_RUBRIC
+    assert _rubric_for("capsule:report") is CAPSULE_RUBRIC
+    assert _rubric_for("capsule:recap") is CAPSULE_RUBRIC
+    assert _rubric_for("capsule:changes") is CAPSULE_RUBRIC
+    assert _rubric_for("specialist:stuff") is AGENT_RUBRIC
+    assert _rubric_for("specialist:trends") is AGENT_RUBRIC
 
 
 def test_aggregate_means_across_judges():
