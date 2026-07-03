@@ -924,3 +924,54 @@ def test_cli_report_changes_recap_all_run():
     assert result.returncode == 0, f"stderr: {result.stderr}"
     # Three modes, three Executive Summary sections (one per mode).
     assert result.stdout.count("# Executive Summary") == 3
+
+
+def test_report_parser_metrics_out_defaults_none(monkeypatch):
+    """--metrics-out is off by default (no calibration output unless opted in)."""
+    monkeypatch.setattr(sys, "argv", ["main.py", "report", "-p", "592155"])
+    args = parse_args()
+    assert args.metrics_out is None
+
+
+def test_append_metrics_records_writes_jsonl(tmp_path):
+    """_append_metrics_records writes one flag_record JSON line per mode."""
+    import json
+
+    from pitcher_narratives.cli import _append_metrics_records
+    from pitcher_narratives.models import SpecialistOutputs
+    from pitcher_narratives.personas import RECAP, REPORT
+    from pitcher_narratives.pipeline import PipelineResult
+
+    def _r(rev):
+        return PipelineResult(
+            narrative="x",
+            specialists=SpecialistOutputs(
+                stuff="", location="", runvalue="", trends="", game_shape=""
+            ),
+            revision_count=rev,
+        )
+
+    out = tmp_path / "metrics.jsonl"
+
+    _append_metrics_records(
+        out,
+        pitcher_id=592155,
+        span=10,
+        modes=[REPORT, RECAP],
+        results={"report": _r(4), "recap": _r(1)},
+    )
+    _append_metrics_records(
+        out,
+        pitcher_id=592155,
+        span=10,
+        modes=[REPORT],
+        results={"report": _r(2)},
+    )
+
+    lines = out.read_text().splitlines()
+    assert len(lines) == 3
+    recs = [json.loads(x) for x in lines]
+
+    assert recs[0]["revision_count"] == 4
+    assert recs[0]["anchor_depth_cap"] == REPORT.validation.anchor_depth  # REPORT: 5
+    assert recs[1]["anchor_depth_cap"] == RECAP.validation.anchor_depth  # RECAP: 1

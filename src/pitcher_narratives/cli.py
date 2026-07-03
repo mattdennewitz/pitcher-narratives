@@ -96,6 +96,14 @@ def parse_args() -> argparse.Namespace:
             "(default: report)."
         ),
     )
+    report.add_argument(
+        "--metrics-out",
+        default=None,
+        help=(
+            "Append one JSON line per (pitcher, mode) run to this path, for "
+            "offline depth calibration (see docs/calibration.md). Off by default."
+        ),
+    )
 
     morning = sub.add_parser("morning", help="Scout, select, and write the morning digest")
     morning.add_argument(
@@ -324,6 +332,36 @@ def _emit_mode_result(pipe_result, *, persona: str) -> bool:
     return is_unverified(pipe_result)
 
 
+def _append_metrics_records(
+    path,
+    *,
+    pitcher_id: int,
+    span: int,
+    modes: "list[NarrationMode]",
+    results: "dict[str, PipelineResult]",
+) -> None:
+    """Append per-mode calibration records (JSONL) to ``path``.
+
+    One line per result, opened in append mode so repeated runs accumulate
+    rather than overwrite. Mode objects supply the depth caps recorded by
+    ``flag_record``.
+    """
+    import json
+    from pathlib import Path
+
+    from pitcher_narratives.pipeline import flag_record
+
+    modes_by_id = {m.id: m for m in modes}
+    lines = [
+        json.dumps(flag_record(modes_by_id[mode_id], pitcher_id, result, span=span))
+        for mode_id, result in results.items()
+    ]
+
+    with Path(path).open("a") as f:
+        for line in lines:
+            f.write(line + "\n")
+
+
 def _run_report_command(args: argparse.Namespace) -> None:
     """Generate one pitcher's report (the pre-subcommand behavior)."""
     # --list-personas short-circuits BEFORE setup_logging, data loading,
@@ -458,6 +496,15 @@ def _run_report_command(args: argparse.Namespace) -> None:
             any_unverified = True
             banner = residual_banner(pipe_result, label=mode_id.upper())
             print(f"\n{banner}", file=sys.stderr)
+
+    if args.metrics_out:
+        _append_metrics_records(
+            args.metrics_out,
+            pitcher_id=args.pitcher,
+            span=args.recent,
+            modes=selected_modes,
+            results=results,
+        )
 
     if any_unverified and not os.environ.get("PITCHER_NARRATIVES_TEST_MODEL"):
         sys.exit(1)
