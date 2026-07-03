@@ -322,42 +322,74 @@ def test_cli_anchor_check_in_output():
         env=_test_env(PITCHER_NARRATIVES_TEST_MODEL="1"),
     )
     assert result.returncode == 0
-    assert "# Anchor Check" in result.stdout
+    assert "### Anchor Check" in result.stdout
 
 
 def test_cli_narrative_output_has_required_sections():
-    """Narrative CLI must produce all required sections.
+    """Locks in the reader-first report format:
 
-    The narrative report format is:
-      1. # Scouting Report       (streamed writer capsule — 'report context')
-      2. # Executive Summary     (3 bullets from the summary agent)
-      3. # Brief                 (2-3 sentence recent-vs-window summary)
-      4. # Stuff Analysis        (the stuff specialist's output)
-      5. # Data Audit            (audit flags or 'Clean — no issues found.')
-      6. # Capsule Fact-Check    (capsule audit flags or 'Clean — no factual issues found.')
-
-    This test locks the format in. Also verified: # Anchor Check is
-    present (separate test above) since it stays in the narrative
-    output as a debug/QA section.
+      1. # Scouting Report        (mode title H1, streamed capsule)
+      2. **Verification:** line   (in-document verification stamp)
+      3. ## Executive Summary     (distilled bullets)
+      4. ## Brief                 (2-3 sentence recent-vs-window summary)
+      5. ---  + ## Diagnostics    (demarcated QA appendix)
+      6. ### Stuff Analysis / ### Data Audit / ### Capsule Fact-Check /
+         ### Anchor Check         (demoted to appendix subsections)
     """
     result = subprocess.run(
         [sys.executable, "-m", "pitcher_narratives.cli", "report", "-p", "592155"],
-        capture_output=True,
-        text=True,
-        timeout=60,
+        capture_output=True, text=True, timeout=60,
         env=_test_env(PITCHER_NARRATIVES_TEST_MODEL="1"),
     )
     assert result.returncode == 0, f"stderr: {result.stderr}"
-    # Use "\n# Heading\n" pattern to avoid false matches on "## Heading"
-    # data subsections that may appear in the narrative prose.
-    stdout = "\n" + result.stdout  # prepend so leading headings match
+    stdout = "\n" + result.stdout
 
-    assert "\n# Scouting Report\n" in stdout, "missing Scouting Report heading"
-    assert "\n# Executive Summary\n" in stdout, "missing Executive Summary heading"
-    assert "\n# Brief\n" in stdout, "missing Brief heading"
-    assert "\n# Stuff Analysis\n" in stdout, "missing Stuff Analysis heading"
-    assert "\n# Data Audit\n" in stdout, "missing Data Audit heading"
-    assert "\n# Capsule Fact-Check\n" in stdout, "missing Capsule Fact-Check heading"
+    assert "\n# Scouting Report\n" in stdout
+    assert "\n**Verification:**" in stdout
+    assert "\n## Executive Summary\n" in stdout
+    assert "\n## Brief\n" in stdout
+    assert "\n## Diagnostics\n" in stdout
+    assert "\n### Stuff Analysis\n" in stdout
+    assert "\n### Data Audit\n" in stdout
+    assert "\n### Capsule Fact-Check\n" in stdout
+    assert "\n### Anchor Check\n" in stdout
+    # Diagnostics must come after the reader-facing sections.
+    assert stdout.index("## Diagnostics") > stdout.index("## Executive Summary")
+
+
+def test_cli_mode_blocks_are_labeled_and_contiguous():
+    """Multi-mode runs emit one labeled contiguous block per mode: each mode's
+    H1 title is followed by ITS diagnostics before the next mode's H1."""
+    result = subprocess.run(
+        [sys.executable, "-m", "pitcher_narratives.cli", "report", "-p", "592155",
+         "--mode", "report,changes"],
+        capture_output=True, text=True, timeout=120,
+        env=_test_env(PITCHER_NARRATIVES_TEST_MODEL="1"),
+    )
+    assert result.returncode == 0, f"stderr: {result.stderr}"
+    stdout = result.stdout
+    i_report = stdout.index("# Scouting Report")
+    i_changes = stdout.index("# Change Report")
+    assert i_report < i_changes
+    # The report block's diagnostics appear before the changes H1.
+    assert i_report < stdout.index("## Diagnostics") < i_changes
+    assert stdout.count("## Diagnostics") == 2
+
+
+def test_cli_recap_mode_has_no_summary_or_brief_sections():
+    """Recap's capsule IS the brief — no Executive Summary / Brief sections."""
+    result = subprocess.run(
+        [sys.executable, "-m", "pitcher_narratives.cli", "report", "-p", "592155",
+         "--mode", "recap"],
+        capture_output=True, text=True, timeout=60,
+        env=_test_env(PITCHER_NARRATIVES_TEST_MODEL="1"),
+    )
+    assert result.returncode == 0, f"stderr: {result.stderr}"
+    assert "# Recap" in result.stdout
+    assert "## Executive Summary" not in result.stdout
+    assert "## Brief" not in result.stdout
+    assert "**Verification:**" in result.stdout
+    assert "## Diagnostics" in result.stdout
 
 
 # ── Integration: --print-prompts ──
@@ -798,12 +830,13 @@ def _pipe_result_with_flags(n: int):
 def test_emit_mode_result_returns_unverified_status(capsys):
     """_emit_mode_result returns is_unverified(result) — False when clean, True when flagged."""
     from pitcher_narratives.cli import _emit_mode_result
+    from pitcher_narratives.personas import REPORT
 
     clean = _pipe_result_with_flags(0)
     flagged = _pipe_result_with_flags(2)
 
-    assert _emit_mode_result(clean, persona="scout") is False
-    assert _emit_mode_result(flagged, persona="scout") is True
+    assert _emit_mode_result(clean, persona="scout", mode=REPORT) is False
+    assert _emit_mode_result(flagged, persona="scout", mode=REPORT) is True
     capsys.readouterr()  # absorb printed sections
 
 
@@ -815,6 +848,7 @@ def test_emit_mode_result_empty_narrative_is_not_unverified(capsys):
     UNVERIFIED banner — regardless of leftover capsule_audit_flags.
     """
     from pitcher_narratives.cli import _emit_mode_result
+    from pitcher_narratives.personas import REPORT
     from pitcher_narratives.pipeline import AuditFlag, PipelineResult, SpecialistOutputs
 
     flags = [
@@ -829,19 +863,21 @@ def test_emit_mode_result_empty_narrative_is_not_unverified(capsys):
         capsule_audit_flags=flags,
     )
 
-    assert _emit_mode_result(result, persona="scout") is False
+    assert _emit_mode_result(result, persona="scout", mode=REPORT) is False
     capsys.readouterr()
 
 
 def test_emit_mode_result_runs_hallucination_guard_for_any_mode(capsys, monkeypatch):
     """_emit_mode_result invokes check_hallucinated_metrics unconditionally.
 
-    It is mode-agnostic (no mode/narration-mode parameter at all), so the
-    single call site at cli.py's report-command dispatch loop already covers
-    every selected narration mode (report, changes, recap) identically —
-    there is no per-mode gate to bypass the guard.
+    The guard runs regardless of the mode passed, so the single call site at
+    cli.py's report-command dispatch loop already covers every selected
+    narration mode (report, changes, recap) identically — there is no per-mode
+    gate to bypass the guard.
     """
     import pitcher_narratives.cli as cli_module
+
+    from pitcher_narratives.personas import REPORT
 
     calls = []
     from pitcher_narratives import pipeline as pipeline_module
@@ -853,7 +889,7 @@ def test_emit_mode_result_runs_hallucination_guard_for_any_mode(capsys, monkeypa
     monkeypatch.setattr(pipeline_module, "check_hallucinated_metrics", _spy)
 
     clean = _pipe_result_with_flags(0)
-    cli_module._emit_mode_result(clean, persona="scout")
+    cli_module._emit_mode_result(clean, persona="scout", mode=REPORT)
     capsys.readouterr()
 
     assert len(calls) == 1
@@ -884,10 +920,12 @@ def test_cli_recap_mode_runs_and_produces_output():
         env=_test_env(PITCHER_NARRATIVES_TEST_MODEL="1"),
     )
     assert result.returncode == 0, f"stderr: {result.stderr}"
-    # The recap mode still emits the executive-summary section (shared emitter)
-    # and produced a non-empty narrative body.
+    # Recap's capsule is already a brief, so it skips the distilled
+    # Executive Summary / Brief sections but still labels its block and
+    # produces a non-empty narrative body.
     assert len(result.stdout.strip()) > 0
-    assert "# Executive Summary" in result.stdout
+    assert "# Recap" in result.stdout
+    assert "## Executive Summary" not in result.stdout
 
 
 def test_cli_changes_mode_runs_and_produces_output():
@@ -939,7 +977,8 @@ def test_cli_report_and_recap_both_run():
 
 def test_cli_report_changes_recap_all_run():
     """`--mode report,changes,recap` runs all three modes; the process
-    completes and each mode emits its own Executive Summary section."""
+    completes. Only the distilling modes (report, changes) emit an Executive
+    Summary section — recap's capsule is already a brief, so it skips it."""
     result = subprocess.run(
         [sys.executable, "-m", "pitcher_narratives.cli",
          "report", "-p", "592155", "--mode", "report,changes,recap"],
@@ -949,8 +988,9 @@ def test_cli_report_changes_recap_all_run():
         env=_test_env(PITCHER_NARRATIVES_TEST_MODEL="1"),
     )
     assert result.returncode == 0, f"stderr: {result.stderr}"
-    # Three modes, three Executive Summary sections (one per mode).
-    assert result.stdout.count("# Executive Summary") == 3
+    # Two distilling modes (report, changes) → two Executive Summary sections;
+    # recap does not distill.
+    assert result.stdout.count("## Executive Summary") == 2
 
 
 def test_report_parser_metrics_out_defaults_none(monkeypatch):

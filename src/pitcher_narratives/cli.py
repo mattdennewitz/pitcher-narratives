@@ -214,41 +214,62 @@ def main() -> None:
         _run_report_command(args)
 
 
-def _emit_mode_result(pipe_result, *, persona: str) -> bool:
-    """Print one mode's post-stream sections and return whether unverified.
+def _emit_mode_result(pipe_result, *, persona: str, mode) -> bool:
+    """Print one mode's reader-facing sections + diagnostics appendix.
 
-    Byte-identical to the report command's single-mode output. The
-    empty-narrative case short-circuits the remaining sections for THIS
-    mode only (it no longer aborts sibling modes in the caller's loop).
+    Returns whether the mode shipped unverified. Called immediately after the
+    mode's capsule streamed, so the whole mode block is contiguous on stdout.
     """
     from pitcher_narratives.pipeline import check_hallucinated_metrics, is_unverified
 
-    # Executive summary — always emit the heading to keep the narrative
-    # output format stable. If the summary agent failed to produce
-    # bullets (empty list, parsing failure, or TestModel in tests), we
-    # still show the section with a fallback message instead of silently
-    # dropping it.
-    print("\n\n# Executive Summary\n")
-    if pipe_result.executive_summary:
-        for bullet in pipe_result.executive_summary:
-            print(f"- {bullet}")
+    # Corrected capsule — the streamed text above is the pre-correction draft
+    # whenever fact-revision fired. Never let the headline text be the stale
+    # one: print the verified capsule as the authoritative version.
+    if pipe_result.capsule_revised and pipe_result.narrative:
+        print("\n\n## Corrected Capsule\n")
+        print(
+            "_The streamed text above is the pre-correction draft; this is the "
+            "fact-revised capsule._\n"
+        )
+        print(pipe_result.narrative)
+
+    # Verification stamp — travels with the document (the UNVERIFIED banner
+    # on stderr and the exit code remain the CI-facing signals).
+    unverified = is_unverified(pipe_result)
+    if unverified:
+        n_fact = len(pipe_result.capsule_audit_flags)
+        n_anchor = len(pipe_result.anchor_warnings)
+        print(
+            f"\n\n**Verification:** ⚠️ UNVERIFIED — {n_fact} residual "
+            f"fact-check flag(s), {n_anchor} anchor warning(s). "
+            "See Diagnostics below."
+        )
     else:
-        print("_Summary unavailable — no bullets produced._")
+        print("\n\n**Verification:** ✅ Verified — fact-check and anchor gates clean.")
 
-    # Brief — a 2-3 sentence recent-vs-window summary. Always emit the heading
-    # to keep the output format stable; show a fallback if the (non-critical)
-    # brief agent produced nothing.
-    print("\n\n# Brief\n")
-    if pipe_result.brief:
-        print(pipe_result.brief)
-    else:
-        print("_Brief unavailable — no text produced._")
+    # Distilled sections — only for modes that ran the distillation agents.
+    # RECAP's capsule is already a brief; a summary of a summary is noise.
+    if mode.distill:
+        print("\n\n## Executive Summary\n")
+        if pipe_result.executive_summary:
+            for bullet in pipe_result.executive_summary:
+                print(f"- {bullet}")
+        else:
+            print("_Summary unavailable — no bullets produced._")
 
-    # Stuff analysis
-    print(f"\n\n# Stuff Analysis\n\n{pipe_result.specialists.stuff}")
+        print("\n\n## Brief\n")
+        if pipe_result.brief:
+            print(pipe_result.brief)
+        else:
+            print("_Brief unavailable — no text produced._")
 
-    # Data audit
-    print("\n\n# Data Audit\n")
+    # ── Diagnostics appendix ──────────────────────────────────────────
+    # Everything below is QA/pipeline output, not part of the report.
+    print("\n\n---\n\n## Diagnostics")
+
+    print(f"\n\n### Stuff Analysis\n\n{pipe_result.specialists.stuff}")
+
+    print("\n\n### Data Audit\n")
     if pipe_result.audit_flags:
         for f in pipe_result.audit_flags:
             print(f"- **[{f.category}]** {f.specialist}: {f.claim}")
@@ -256,26 +277,23 @@ def _emit_mode_result(pipe_result, *, persona: str) -> bool:
     else:
         print("Clean — no issues found.")
 
-    # Capsule fact-check (B). capsule_audit_flags is the post-re-audit residual:
+    # Capsule fact-check. capsule_audit_flags is the post-re-audit residual:
     # issues that REMAIN in the saved report. Three states:
     #   revised + no residual  -> corrected and re-audit verified clean
     #   residual flags present -> still-unresolved issues (list them)
     #   neither                -> clean on first pass
-    print("\n\n# Capsule Fact-Check\n")
+    print("\n\n### Capsule Fact-Check\n")
     if pipe_result.capsule_revised and not pipe_result.capsule_audit_flags:
-        # The streamed report above is the pre-correction draft; the corrected
-        # text is the saved report (PipelineResult.narrative).
         print(
             "Auditor flagged issue(s); the fact-revision corrected them and the "
-            "re-audit is clean. (The streamed report above is the pre-correction "
-            "draft; the saved report is corrected.)"
+            "re-audit is clean. (See the Corrected Capsule section above.)"
         )
     elif pipe_result.capsule_audit_flags:
         n = len(pipe_result.capsule_audit_flags)
         if pipe_result.capsule_revised:
             print(
                 f"Auditor revised the report, but {n} issue(s) remain after "
-                "re-audit (saved report; the streamed draft above is pre-revision):"
+                "re-audit (see the Corrected Capsule section above):"
             )
         else:
             print(f"Auditor flagged {n} issue(s) (not auto-corrected):")
@@ -285,16 +303,15 @@ def _emit_mode_result(pipe_result, *, persona: str) -> bool:
     else:
         print("Clean — no factual issues found.")
 
-    # Value parity (A, advisory). Covers the capsule and the reader-facing
+    # Value parity (advisory). Covers the capsule and the reader-facing
     # summary/brief; each warning is prefixed with its surface.
     if pipe_result.value_parity_warnings:
-        print("\n\n# Value Parity (advisory)\n")
+        print("\n\n### Value Parity (advisory)\n")
         print("Report numbers with no match in the source data:")
         for w in pipe_result.value_parity_warnings:
             print(f"- {w}")
 
-    # Anchor check
-    print("\n\n# Anchor Check\n")
+    print("\n\n### Anchor Check\n")
     if pipe_result.revision_count == 0 and not pipe_result.anchor_warnings:
         print("Passed on first draft.")
     elif pipe_result.anchor_warnings:
@@ -308,19 +325,15 @@ def _emit_mode_result(pipe_result, *, persona: str) -> bool:
     # produced nothing, which is a failure worth flagging loudly).
     if not pipe_result.narrative:
         log.warning("Pipeline produced empty narrative — skipping hallucination check")
-        # Empty narrative means the pipeline produced nothing to verify — this
-        # preserves the pre-Phase-7 exit-0 behavior (no UNVERIFIED banner) and
-        # does not abort sibling modes even if residual audit flags remain.
         return False
 
     hallucination_report = check_hallucinated_metrics(
         pipe_result.narrative, persona=persona
     )
-
     if hallucination_report.is_clean:
         log.info("Hallucination check passed (no unknown metrics or outcome stats).")
     else:
-        print("\n\n# Hallucination Check\n")
+        print("\n\n### Hallucination Check\n")
         if hallucination_report.unknown_metrics:
             print(f"Unknown metrics referenced: {', '.join(hallucination_report.unknown_metrics)}")
         if hallucination_report.outcome_stat_warnings:
@@ -330,7 +343,7 @@ def _emit_mode_result(pipe_result, *, persona: str) -> bool:
                 f"{', '.join(hallucination_report.outcome_stat_warnings)}"
             )
 
-    return is_unverified(pipe_result)
+    return unverified
 
 
 def _append_metrics_records(
@@ -465,21 +478,37 @@ def _run_report_command(args: argparse.Namespace) -> None:
     # (~330ms) and is only used in the except clause below.
     from pydantic_ai.exceptions import AgentRunError
 
-    # The narrative streams to stdout during this call
-    print("# Scouting Report\n")
-    try:
-        results = run_narration_modes(
-            ctx,
-            modes=selected_modes,
-            provider=args.provider,
-            thinking=args.thinking,
-            persona=args.persona,
-            _model_override=model_override,
-            prior_ctx=prior_ctx,
-        )
-    except AgentRunError as e:
-        log.error("LLM call failed: %s", e)
-        sys.exit(2)
+    # One contiguous labeled block per mode: H1 title, streamed capsule,
+    # reader-facing sections, diagnostics appendix. Duplicate --mode ids
+    # are deduped here so a mode never streams twice.
+    any_unverified = False
+    results: dict[str, PipelineResult] = {}
+    first = True
+    for mode in selected_modes:
+        if mode.id in results:
+            continue
+        print(f"{'' if first else chr(10) * 2}# {mode.title}\n")
+        first = False
+        try:
+            mode_results = run_narration_modes(
+                ctx,
+                modes=[mode],
+                provider=args.provider,
+                thinking=args.thinking,
+                persona=args.persona,
+                _model_override=model_override,
+                prior_ctx=prior_ctx,
+            )
+        except AgentRunError as e:
+            log.error("LLM call failed: %s", e)
+            sys.exit(2)
+        pipe_result = mode_results[mode.id]
+        results[mode.id] = pipe_result
+        if _emit_mode_result(pipe_result, persona=args.persona, mode=mode):
+            any_unverified = True
+            banner = residual_banner(pipe_result, label=mode.id.upper())
+            print(f"\n{banner}", file=sys.stderr)
+
     # Soft block: each mode's report is fully printed/saved, but if the
     # fact-check loop (B) could not ground every claim, warn loudly and exit
     # non-zero so callers/CI catch an UNVERIFIED report rather than treating
@@ -488,15 +517,8 @@ def _run_report_command(args: argparse.Namespace) -> None:
     # prints). Aggregated across all selected modes (G4): every mode's
     # sections are printed, banners for each unverified mode are emitted,
     # and the process exits non-zero once at the end if any mode was
-    # unverified.
-    any_unverified = False
-    # Iterate the deduped results (run_narration_modes collapses repeated mode
-    # ids) rather than selected_modes, so a duplicate --mode does not double-emit.
-    for mode_id, pipe_result in results.items():
-        if _emit_mode_result(pipe_result, persona=args.persona):
-            any_unverified = True
-            banner = residual_banner(pipe_result, label=mode_id.upper())
-            print(f"\n{banner}", file=sys.stderr)
+    # unverified. The per-mode emit loop above already aggregated
+    # ``any_unverified`` across the deduped results and printed each banner.
 
     if args.metrics_out:
         _append_metrics_records(
