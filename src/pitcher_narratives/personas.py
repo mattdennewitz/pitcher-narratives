@@ -26,6 +26,7 @@ from dataclasses import dataclass
 from types import MappingProxyType
 
 from pitcher_narratives.config import MAX_FACT_REVISIONS, MAX_REVISIONS
+from pitcher_narratives.temporal import TemporalFrame
 
 log = logging.getLogger("pitcher_narratives.personas")
 
@@ -477,6 +478,7 @@ class NarrationMode:
     validation: ValidationPolicy = ValidationPolicy(
         anchor_depth=MAX_REVISIONS, fact_depth=MAX_FACT_REVISIONS
     )
+    temporal_frame: frozenset[TemporalFrame] = frozenset({TemporalFrame.RECENT})
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "contracts", MappingProxyType(dict(self.contracts)))
@@ -522,6 +524,7 @@ CHANGES = NarrationMode(
     validation=ValidationPolicy(
         anchor_depth=MAX_REVISIONS, fact_depth=MAX_FACT_REVISIONS
     ),
+    temporal_frame=frozenset({TemporalFrame.RECENT, TemporalFrame.PRIOR}),
 )
 
 _NARRATION_MODES_INTERNAL: dict[str, NarrationMode] = {

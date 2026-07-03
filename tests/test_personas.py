@@ -1014,3 +1014,20 @@ def test_changes_writer_prompt_golden(persona_id):
     assert prompt == golden
     # Anti-tautology guard: the golden must actually be change-shaped.
     assert "changes only" in prompt.lower()
+
+
+def test_report_and_recap_are_single_frame():
+    from pitcher_narratives.personas import RECAP, REPORT
+    from pitcher_narratives.temporal import TemporalFrame
+
+    assert REPORT.temporal_frame == frozenset({TemporalFrame.RECENT})
+    assert RECAP.temporal_frame == frozenset({TemporalFrame.RECENT})
+
+
+def test_changes_declares_recent_and_prior_frames():
+    from pitcher_narratives.personas import CHANGES
+    from pitcher_narratives.temporal import TemporalFrame
+
+    assert CHANGES.temporal_frame == frozenset(
+        {TemporalFrame.RECENT, TemporalFrame.PRIOR}
+    )
