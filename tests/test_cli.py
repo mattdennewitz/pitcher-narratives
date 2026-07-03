@@ -825,3 +825,19 @@ def test_cli_report_and_recap_both_run():
     )
     assert result.returncode == 0, f"stderr: {result.stderr}"
     assert len(result.stdout.strip()) > 0
+
+
+def test_cli_report_changes_recap_all_run():
+    """`--mode report,changes,recap` runs all three modes; the process
+    completes and each mode emits its own Executive Summary section."""
+    result = subprocess.run(
+        [sys.executable, "-m", "pitcher_narratives.cli",
+         "report", "-p", "592155", "--mode", "report,changes,recap"],
+        capture_output=True,
+        text=True,
+        timeout=120,
+        env=_test_env(PITCHER_NARRATIVES_TEST_MODEL="1"),
+    )
+    assert result.returncode == 0, f"stderr: {result.stderr}"
+    # Three modes, three Executive Summary sections (one per mode).
+    assert result.stdout.count("# Executive Summary") == 3
