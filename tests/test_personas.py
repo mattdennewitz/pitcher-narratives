@@ -1171,3 +1171,10 @@ def test_build_system_prompt_explain_model_true_scout_byte_identical():
     assert build_system_prompt(SCOUT, SCOUT_REPORT) == build_system_prompt(
         SCOUT, SCOUT_REPORT, explain_model=True
     )
+
+
+def test_build_system_prompt_explain_model_off_no_dangling_blanks():
+    from pitcher_narratives.personas import SCOUT, SCOUT_REPORT, build_system_prompt
+
+    off = build_system_prompt(SCOUT, SCOUT_REPORT, explain_model=False)
+    assert "\n\n\n" not in off
