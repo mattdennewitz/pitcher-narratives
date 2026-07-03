@@ -1,10 +1,11 @@
 """Per-provider pipeline runs with full output capture.
 
-Runs the existing multi-agent pipeline once per provider and captures
-every judgeable text: the five specialist outputs, the executive
-summary, and the final capsule -- plus the pitcher context document
-(the judge's ground truth) and wall-clock time. PipelineResult already
-exposes all per-agent text, so no pipeline changes are needed.
+Runs every requested narration mode for one provider via the production
+dispatcher ``run_narration_modes`` and captures every judgeable text:
+the specialist outputs, and per mode the executive summary and final
+capsule under namespaced keys -- plus the pitcher context document (the
+judge's generic ground truth) and wall-clock time. Each tier carries
+the exact author input as its per-tier ground truth.
 """
 
 from __future__ import annotations
@@ -15,6 +16,10 @@ from dataclasses import dataclass, field
 
 from pitcher_narratives.context import assemble_pitcher_context, assemble_prior_context
 from pitcher_narratives.data import load_pitcher_data
+from pitcher_narratives.frame_delta import (
+    build_trend_frame_comparison,
+    render_trend_frame_comparison,
+)
 from pitcher_narratives.personas import REPORT, NarrationMode
 from pitcher_narratives.pipeline import (
     _build_game_shape_input,
@@ -49,7 +54,8 @@ class CapturedRun:
     """The pitcher context document (generic reference)."""
 
     outputs: dict[str, str] = field(default_factory=dict)
-    """tier key ('specialist:stuff', ..., 'capsule:<mode>') -> text."""
+    """tier key ('specialist:stuff', 'specialist:trends:<mode>', ...,
+    'capsule:<mode>') -> text."""
 
     ground_truths: dict[str, str] = field(default_factory=dict)
     """tier key -> the exact input that tier's author received. Judging
@@ -72,11 +78,14 @@ def run_provider(
     """Run the full pipeline for one provider and capture all outputs.
 
     Runs every requested narration mode via the production dispatcher
-    ``run_narration_modes``. The five specialist tiers are mode-agnostic
-    by construction (the spine re-runs per mode but its specialist inputs
-    do not depend on the mode) and are captured once from the first
-    mode's result; the capsule and executive summary are captured per
-    mode under namespaced keys (``capsule:<mode.id>``, ``exec_summary:<mode.id>``).
+    ``run_narration_modes``. Four specialist tiers (stuff, location,
+    runvalue, game_shape) are mode-agnostic by construction — their
+    inputs do not depend on the mode — and are captured once from the
+    first mode's result. The TRENDS specialist is captured per mode
+    (``specialist:trends:<mode.id>``) because CHANGES feeds it a prior-vs-
+    recent frame comparison the other modes do not, so its ground truth
+    differs by mode. The capsule and executive summary are captured per
+    mode (``capsule:<mode.id>``, ``exec_summary:<mode.id>``).
 
     A failed run is returned as ok=False with the error message; the
     bench continues with other providers.
@@ -85,13 +94,17 @@ def run_provider(
     data = load_pitcher_data(pitcher_id, recent_appearances=recent_appearances)
     ctx = assemble_pitcher_context(data)
     ground_truth = ctx.to_prompt()
-
-    prior_ctx = None
-    if any(TemporalFrame.PRIOR in m.temporal_frame for m in selected_modes):
-        prior_ctx = assemble_prior_context(data, recent_appearances, prior)
+    mode_by_id = {m.id: m for m in selected_modes}
 
     start = time.monotonic()
     try:
+        # Prior-window assembly can raise on pitchers with too few
+        # appearances to form a prior frame; keep it inside the try so a
+        # failure is captured as ok=False rather than aborting the bench.
+        prior_ctx = None
+        if any(TemporalFrame.PRIOR in m.temporal_frame for m in selected_modes):
+            prior_ctx = assemble_prior_context(data, recent_appearances, prior)
+
         results = run_narration_modes(
             ctx,
             modes=selected_modes,
@@ -114,23 +127,42 @@ def run_provider(
 
     wall_s = time.monotonic() - start
 
-    # Specialist tiers are mode-agnostic; capture them once from the first
-    # result. Their ground truths are deterministic functions of ctx.
+    # Four specialist tiers are mode-agnostic (their inputs don't depend
+    # on the mode); capture them once from the first result. Their ground
+    # truths are deterministic functions of ctx.
     first = next(iter(results.values()))
     outputs = {
         "specialist:stuff": first.specialists.stuff,
         "specialist:location": first.specialists.location,
         "specialist:runvalue": first.specialists.runvalue,
-        "specialist:trends": first.specialists.trends,
         "specialist:game_shape": first.specialists.game_shape,
     }
     ground_truths = {
         "specialist:stuff": _flatten_prompt(_build_stuff_input(ctx)),
         "specialist:location": _flatten_prompt(_build_location_input(ctx)),
         "specialist:runvalue": _flatten_prompt(_build_runvalue_input(ctx)),
-        "specialist:trends": _flatten_prompt(_build_trend_input(ctx)),
         "specialist:game_shape": _flatten_prompt(_build_game_shape_input(ctx)),
     }
+
+    # The TRENDS specialist differs by mode: CHANGES feeds it a prior-vs-
+    # recent frame comparison. Capture it per mode with the matching
+    # ground truth (mirroring run_narration_modes' PRIOR gating and the
+    # spine's frame-comparison derivation).
+    for mode_id, result in results.items():
+        mode_prior = (
+            prior_ctx
+            if TemporalFrame.PRIOR in mode_by_id[mode_id].temporal_frame
+            else None
+        )
+        frame_comparison = (
+            render_trend_frame_comparison(build_trend_frame_comparison(ctx, mode_prior))
+            if mode_prior is not None
+            else None
+        )
+        outputs[f"specialist:trends:{mode_id}"] = result.specialists.trends
+        ground_truths[f"specialist:trends:{mode_id}"] = _flatten_prompt(
+            _build_trend_input(ctx, frame_comparison=frame_comparison)
+        )
 
     # Per-mode capsule + exec summary. The writer-input ground truth is
     # rebuilt from THAT mode's specialists + key signals.

@@ -225,7 +225,7 @@ def test_run_provider_captures_all_tiers():
     assert captured.error is None
     assert captured.wall_s >= 0
     for key in ("specialist:stuff", "specialist:location", "specialist:runvalue",
-                "specialist:trends", "specialist:game_shape", "capsule:report"):
+                "specialist:trends:report", "specialist:game_shape", "capsule:report"):
         assert key in captured.outputs, f"missing {key}"
         assert captured.outputs[key]
         assert captured.ground_truths.get(key), f"missing ground truth for {key}"
@@ -241,21 +241,37 @@ def test_run_provider_captures_all_tiers():
     reason="statcast parquet files not present (set STATCAST_PATH)",
 )
 def test_run_provider_captures_per_mode_capsules():
-    """A multi-mode run captures a namespaced capsule + exec summary per mode
-    and one shared set of specialist tiers, each with a ground truth."""
+    """A multi-mode run captures a namespaced capsule + exec summary per mode,
+    the four mode-agnostic specialists once, and a per-mode TRENDS specialist
+    whose ground truth carries the CHANGES frame comparison."""
     from pitcher_narratives.personas import get_narration_mode
 
-    modes = [get_narration_mode("report"), get_narration_mode("recap")]
+    modes = [get_narration_mode("report"), get_narration_mode("changes")]
     captured = run_provider(
         TEST_PITCHER, provider="gemini", thinking="low", persona="scout",
         modes=modes, _model_override=TestModel(call_tools=[]),
     )
     assert captured.ok
+    # Four specialists captured once, mode-agnostic.
     for spec in ("specialist:stuff", "specialist:location", "specialist:runvalue",
-                 "specialist:trends", "specialist:game_shape"):
+                 "specialist:game_shape"):
         assert captured.outputs[spec]
         assert captured.ground_truths.get(spec), f"missing ground truth for {spec}"
-    for mode_id in ("report", "recap"):
+    # No bare, un-namespaced trends tier survives.
+    assert "specialist:trends" not in captured.outputs
+    # TRENDS is captured per mode, each with its own ground truth.
+    for mode_id in ("report", "changes"):
+        trends = f"specialist:trends:{mode_id}"
+        assert captured.outputs[trends]
+        assert captured.ground_truths.get(trends), f"missing ground truth for {trends}"
+    # The fix: the CHANGES trends ground truth carries the prior-vs-recent
+    # frame comparison the specialist actually saw; REPORT's does not.
+    changes_gt = captured.ground_truths["specialist:trends:changes"].lower()
+    report_gt = captured.ground_truths["specialist:trends:report"].lower()
+    assert "prior window" in changes_gt
+    assert "prior window" not in report_gt
+    assert changes_gt != report_gt
+    for mode_id in ("report", "changes"):
         cap = f"capsule:{mode_id}"
         assert captured.outputs.get(cap), f"missing {cap}"
         assert "Specialist Analysis" in captured.ground_truths[cap]

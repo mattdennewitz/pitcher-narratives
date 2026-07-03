@@ -19,9 +19,13 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from pitcher_narratives.bench.judge import JUDGE_MODELS, judge_text, judges_for, with_retry
-from pitcher_narratives.bench.rubric import AGENT_RUBRIC, CAPSULE_RUBRIC
 from pitcher_narratives.bench.runner import run_provider
-from pitcher_narratives.bench.scorecard import JudgedRecord, aggregate, render_report
+from pitcher_narratives.bench.scorecard import (
+    JudgedRecord,
+    _rubric_for,
+    aggregate,
+    render_report,
+)
 from pitcher_narratives.config import PROVIDERS, setup_logging
 from pitcher_narratives.personas import NarrationMode, get_narration_mode
 from pitcher_narratives.temporal import _DEFAULT_PRIOR_APPEARANCES, _DEFAULT_RECENT_APPEARANCES
@@ -159,7 +163,7 @@ def main() -> None:
         for tier, text in run.outputs.items():
             if tier.split(":", 1)[0] == "exec_summary":
                 continue
-            rubric = CAPSULE_RUBRIC if tier.split(":", 1)[0] == "capsule" else AGENT_RUBRIC
+            rubric = _rubric_for(tier)
             for judge in judges_for(run.provider, providers, args.judges):
                 print(f"Judging {run.provider}/{tier} with {judge}...", file=sys.stderr)
                 try:
