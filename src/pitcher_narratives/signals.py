@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field
 __all__ = [
     "KeySignals",
     "SIGNAL_EXTRACTOR_PROMPT",
+    "count_secondary_signals",
     "render_key_signals",
 ]
 
@@ -48,6 +49,28 @@ _FIELD_LABELS: dict[str, str] = {
     "platoon_vulnerability": "Platoon Vulnerability",
     "sample_size_caution": "Sample Size Caution",
 }
+
+_SECONDARY_FIELDS: tuple[str, ...] = (
+    "development_pitch",
+    "specialist_tension",
+    "arsenal_dependency",
+    "connected_changes",
+    "platoon_vulnerability",
+    "sample_size_caution",
+)
+
+
+def count_secondary_signals(signals: KeySignals | None) -> int:
+    """Count populated (non-None) secondary KeySignals fields.
+
+    Secondary signals are the cross-specialist insight engine; if they
+    fire rarely, narratives fall back to a thin top_improvement/top_concern
+    lead. Persisted via flag_record so calibration.py can measure the
+    real hit-rate instead of assuming these are populated.
+    """
+    if signals is None:
+        return 0
+    return sum(1 for f in _SECONDARY_FIELDS if getattr(signals, f) is not None)
 
 
 def render_key_signals(signals: KeySignals) -> str:

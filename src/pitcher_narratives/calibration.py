@@ -42,6 +42,10 @@ class ModeStats:
     mean_value_parity_warnings: float
     anchor_hit_cap_rate: float
     fact_hit_cap_rate: float
+    mean_secondary_signals: float
+    """Mean populated secondary KeySignals fields (of 6 possible) per run.
+    Low values mean narratives are running on the thin top_improvement/
+    top_concern lead only, without the cross-specialist insight signals."""
 
 
 def _records_from_obj(obj: object) -> list[dict]:
@@ -122,6 +126,8 @@ def aggregate(records: list[dict]) -> dict[str, ModeStats]:
                 [r["n_value_parity_warnings"] for r in rs]),
             anchor_hit_cap_rate=_rate(anchor_hits, n),
             fact_hit_cap_rate=_rate(fact_hits, n),
+            mean_secondary_signals=statistics.fmean(
+                [r.get("n_secondary_signals", 0) for r in rs]),
         )
     return stats
 
@@ -130,7 +136,8 @@ def format_table(stats: dict[str, ModeStats]) -> str:
     """Render a fixed-width per-mode calibration table."""
     header = (
         f"{'mode':<8} {'n':>4} {'rev_mean':>9} {'rev_med':>8} "
-        f"{'caps_rev':>9} {'anchor_hit_cap':>15} {'fact_hit_cap':>13}"
+        f"{'caps_rev':>9} {'anchor_hit_cap':>15} {'fact_hit_cap':>13} "
+        f"{'sec_signals':>11}"
     )
     lines = [header, "-" * len(header)]
     for mode in sorted(stats):
@@ -138,7 +145,8 @@ def format_table(stats: dict[str, ModeStats]) -> str:
         lines.append(
             f"{mode:<8} {s.n:>4} {s.mean_revision_count:>9.2f} "
             f"{s.median_revision_count:>8.1f} {s.capsule_revised_rate:>9.2f} "
-            f"{s.anchor_hit_cap_rate:>15.2f} {s.fact_hit_cap_rate:>13.2f}"
+            f"{s.anchor_hit_cap_rate:>15.2f} {s.fact_hit_cap_rate:>13.2f} "
+            f"{s.mean_secondary_signals:>11.2f}"
         )
     return "\n".join(lines)
 

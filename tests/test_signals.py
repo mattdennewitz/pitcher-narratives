@@ -3,8 +3,32 @@
 import pytest
 from pydantic import ValidationError
 
-from pitcher_narratives.signals import KeySignals, SIGNAL_EXTRACTOR_PROMPT, _FIELD_LABELS, render_key_signals
+from pitcher_narratives.signals import (
+    KeySignals,
+    SIGNAL_EXTRACTOR_PROMPT,
+    _FIELD_LABELS,
+    count_secondary_signals,
+    render_key_signals,
+)
 from pitcher_narratives.anchor import AnchorWarning
+
+
+class TestCountSecondarySignals:
+    def test_none_signals_counts_zero(self):
+        assert count_secondary_signals(None) == 0
+
+    def test_only_primary_populated_counts_zero(self):
+        ks = KeySignals(top_improvement="Slider S+ jumped", top_concern="Fastball velo down")
+        assert count_secondary_signals(ks) == 0
+
+    def test_counts_only_secondary_fields(self):
+        ks = KeySignals(
+            top_improvement="Slider S+ jumped",
+            top_concern="Fastball velo down",
+            development_pitch="Changeup usage rising",
+            sample_size_caution="Cutter sample thin",
+        )
+        assert count_secondary_signals(ks) == 2
 
 
 class TestAnchorWarningCategory:

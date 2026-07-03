@@ -115,6 +115,7 @@ from pitcher_narratives.models import (
 from pitcher_narratives.signals import (
     SIGNAL_EXTRACTOR_PROMPT,
     KeySignals,
+    count_secondary_signals,
     render_key_signals,
 )
 from pitcher_narratives.value_parity import check_value_parity
@@ -1217,6 +1218,7 @@ def flag_summary(result: PipelineResult) -> dict[str, int | bool]:
         "n_anchor_warnings": len(result.anchor_warnings),
         "n_value_parity_warnings": len(result.value_parity_warnings),
         "n_audit_flags": len(result.audit_flags),
+        "n_secondary_signals": count_secondary_signals(result.key_signals),
     }
 
 

@@ -1934,6 +1934,7 @@ def test_flag_summary_counts_fields():
         "n_anchor_warnings": 0,
         "n_value_parity_warnings": 1,
         "n_audit_flags": 0,
+        "n_secondary_signals": 0,
     }
 
 
@@ -1964,6 +1965,7 @@ def test_flag_record_stamps_mode_context_onto_summary():
         "n_anchor_warnings": 0,
         "n_value_parity_warnings": 1,
         "n_audit_flags": 0,
+        "n_secondary_signals": 0,
     }
 
 
