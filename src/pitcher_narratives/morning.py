@@ -137,6 +137,7 @@ def run_morning(
             pid, recap_result = result
             text = recap_result.narrative
             banner = residual_banner(recap_result, label="RECAP")
+            # Deliberately louder than is_unverified(): value-parity warnings also mark an item UNVERIFIED so no ungrounded number ships silently.
             if banner is None and recap_result.value_parity_warnings:
                 banner = (
                     "⚠️ RECAP UNVERIFIED — value-parity flags present; "
@@ -165,7 +166,7 @@ def run_morning(
     if n_unverified:
         cost_block += (
             f"\nnote: {n_unverified} recap item(s) shipped UNVERIFIED "
-            f"(residual fact-check flags)"
+            f"(residual validation flags)"
         )
     digest = assemble_digest(
         slate=slate, summaries=summaries, appearances=appearances,
