@@ -892,16 +892,55 @@ def test_recap_validation_depths():
 
 def test_recap_contract_shape_and_all_personas_mapped():
     from pitcher_narratives.personas import RECAP, RECAP_BRIEF
-    from pitcher_narratives.personas import _SYNTHESIS_FRAMING
+    from pitcher_narratives.personas import _SYNTHESIS_RULES
 
     assert RECAP_BRIEF.id == "recap"
     assert RECAP_BRIEF.length_target == (40, 90)
-    # RECAP writes FROM the analyses (synthesis framing), not by distilling a
+    # RECAP writes FROM the analyses (synthesis rules), not by distilling a
     # finished report — that is what lets it render off the shared spine.
-    assert RECAP_BRIEF.input_framing is _SYNTHESIS_FRAMING
+    # It uses the rules-only slice (no EXPLAIN THE MODEL) since the 40-90
+    # word cap can't hold grading-system exposition.
+    assert RECAP_BRIEF.input_framing is _SYNTHESIS_RULES
     # Every persona is mapped, so build_writer_system_prompt never falls back.
     assert set(RECAP.contracts) == {"scout", "analyst", "generic"}
     assert all(c is RECAP_BRIEF for c in RECAP.contracts.values())
+
+
+def test_synthesis_framing_recomposes_from_rules_and_explain_the_model():
+    """_SYNTHESIS_FRAMING splits into _SYNTHESIS_RULES + _EXPLAIN_THE_MODEL so
+    REPORT/CHANGES composed prompts stay byte-identical after the split."""
+    from pitcher_narratives.personas import (
+        SCOUT_REPORT,
+        _EXPLAIN_THE_MODEL,
+        _SYNTHESIS_FRAMING,
+        _SYNTHESIS_RULES,
+    )
+
+    assert _SYNTHESIS_FRAMING == _SYNTHESIS_RULES + "\n\n" + _EXPLAIN_THE_MODEL
+    assert SCOUT_REPORT.input_framing.endswith(_EXPLAIN_THE_MODEL)
+
+
+def test_recap_framing_lacks_explain_the_model_but_keeps_key_signals_rule():
+    """RECAP's framing must not carry the EXPLAIN THE MODEL exposition
+    directive (incompatible with the 40-90 word cap), but must still carry
+    the Key Signals synthesis rule."""
+    from pitcher_narratives.personas import RECAP_BRIEF
+
+    assert "EXPLAIN THE MODEL" not in RECAP_BRIEF.input_framing
+    assert "Use the Key Signals" in RECAP_BRIEF.input_framing
+
+
+def test_changes_mandate_references_trend_analysis_not_specialist_block():
+    """The writer only sees specialist prose, never the Recent vs Prior
+    Window block itself (that's trends-specialist-internal) — so the
+    mandate must reference 'the trend analysis' instead."""
+    from pitcher_narratives.personas import _CHANGES_MANDATE
+
+    assert "Recent vs Prior Window block" not in _CHANGES_MANDATE
+    assert "the trend analysis" in _CHANGES_MANDATE
+    # Hedging guidance must survive the reword.
+    assert "hedge explicitly" in _CHANGES_MANDATE
+    assert "over-read a release-point move" in _CHANGES_MANDATE
 
 
 def test_recap_writer_prompt_uses_brief_structure_not_report_structure():

@@ -135,7 +135,7 @@ timeline. Do not hallucinate cumulative fatigue across an offseason.
 # SYNTHESIS-INPUT FRAMING — shared by the specialist-synthesis contracts
 # ═══════════════════════════════════════════════════════════════════════
 
-_SYNTHESIS_FRAMING = """\
+_SYNTHESIS_RULES = """\
 INPUT: Five specialist analyses of a pitcher's recent window:
 1. Pitch quality analysis — physical pitch characteristics and S+ grades
 2. Location analysis — P vs S location impact per pitch
@@ -165,8 +165,10 @@ Changes, etc.) are high-value if they serve the thread — use your \
 judgment on weight. You are not required to mention every secondary \
 signal.
 - If specialists contradict each other on a pitch, acknowledge the \
-tension rather than silently picking one side.
+tension rather than silently picking one side.\
+"""
 
+_EXPLAIN_THE_MODEL = """\
 EXPLAIN THE MODEL: Every capsule must contextualize the grading system \
 when first referenced. S+ measures pitch physical quality, L+ measures \
 location, P+ is the combined Pitching+ grade. Explain what decisions \
@@ -174,6 +176,8 @@ the model made — which pitches were weighted, what baselines were \
 used — so the reader understands the analytical foundation, not just \
 the conclusions.\
 """
+
+_SYNTHESIS_FRAMING = _SYNTHESIS_RULES + "\n\n" + _EXPLAIN_THE_MODEL
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -333,12 +337,12 @@ slider's new shape stand out).
 slider has good drop." If a metric did not change, it does not earn a sentence.
 - A quiet window is itself the finding. If little moved, say so plainly and \
 tentatively rather than manufacturing movement out of noise.
-- Distinguish mechanism from mix. When the Recent vs Prior Window block shows a \
+- Distinguish mechanism from mix. When the trend analysis shows a \
 release-point or extension shift alongside a velo or shape change, that pairing \
 is a mechanical-adjustment signal — name it as such (e.g. "a lower slot is \
 driving the added run"). A usage shift with no release-point movement is a \
 pitch-mix or game-plan change instead. Never claim a mechanical cause the data \
-doesn't support, and hedge explicitly when the block itself says not to \
+doesn't support, and hedge explicitly when the trend analysis itself says not to \
 over-read a release-point move.\
 """
 
@@ -402,7 +406,7 @@ RECAP_BRIEF = OutputContract(
     id="recap",
     length_target=(40, 90),
     structure=_RECAP_STRUCTURE,
-    input_framing=_SYNTHESIS_FRAMING,
+    input_framing=_SYNTHESIS_RULES,
 )
 
 SCOUT_REPORT = OutputContract(
