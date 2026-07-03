@@ -80,6 +80,7 @@ window of recent appearances, in one or more [narration modes](#narration-modes)
 | `--thinking` | enum | `medium` | `minimal` \| `low` \| `medium` \| `high` \| `xhigh` |
 | `--persona` | enum | `scout` | Writer voice: `scout` \| `analyst` \| `generic` |
 | `--list-personas` | flag | off | Print available personas and exit |
+| `--no-explain-model` | flag | off | Skip S+/L+/P+ model explanations in the capsule (repeat readers) |
 
 ```bash
 # Default full report over the last 10 appearances
@@ -92,14 +93,18 @@ uv run pitcher-narratives report -p 657277 -n 5 --prior 10 --mode changes
 uv run pitcher-narratives report -p 657277 --mode report,changes,recap --metrics-out run.jsonl
 ```
 
-Stdout leads with `# Scouting Report` (the writer's capsule, streamed live),
-then the post-stream sections for each requested mode in `--mode` order:
-`# Executive Summary` → `# Brief` (a 2-3 sentence recent-vs-window summary in the
-selected persona's voice) → `# Stuff Analysis` → `# Data Audit` →
-`# Capsule Fact-Check` → `# Value Parity (advisory)` → `# Anchor Check` →
-`# Hallucination Check` (emitted only when the post-pipeline guard finds unknown
-metrics or traditional outcome stats). The hallucination guard now runs on
-**every** mode, not just the default report.
+Stdout emits one labeled block per requested mode, in `--mode` order. Each
+block is: `# <Mode Title>` (`Scouting Report` / `Change Report` / `Recap`), the
+streamed capsule, a `## Corrected Capsule` section when a fact-revision
+rewrote the draft (the corrected text is authoritative), a `**Verification:**`
+stamp (✅ verified / ⚠️ UNVERIFIED with counts), a distilled `## Executive
+Summary` and `## Brief` for `report`/`changes` only (recap's capsule is
+already the brief, so it skips distillation), then a `---`-demarcated
+`## Diagnostics` appendix with `### Stuff Analysis`, `### Data Audit`,
+`### Capsule Fact-Check`, `### Value Parity (advisory)` (when warnings),
+`### Anchor Check`, and `### Hallucination Check` (emitted only when the
+post-pipeline guard finds unknown metrics or traditional outcome stats). The
+hallucination guard now runs on **every** mode, not just the default report.
 
 If any mode ships an **unverified** capsule (residual anchor/fact warnings after
 the revision budget is spent), an `UNVERIFIED` banner is printed to stderr for
@@ -149,10 +154,12 @@ model-teaching skipped. The persona overlay still nudges word choice, but the
 length and structure are identical. This is the mode `pitcher-narratives
 morning` uses for every digest pick.
 
-Every mode also emits the same post-stream diagnostic sections after the capsule
-(`# Executive Summary`, `# Brief`, `# Stuff Analysis`, `# Data Audit`,
-`# Capsule Fact-Check`, `# Value Parity`, `# Anchor Check`, and — when triggered
-— `# Hallucination Check`); only the streamed capsule changes with mode × voice.
+Every mode also emits a `## Diagnostics` appendix after the capsule (`###
+Stuff Analysis`, `### Data Audit`, `### Capsule Fact-Check`, `### Value
+Parity`, `### Anchor Check`, and — when triggered — `### Hallucination
+Check`); only `report`/`changes` also distill a `## Executive Summary` and
+`## Brief` (recap skips distillation, since its capsule already is the
+brief). Only the streamed capsule changes with mode × voice.
 
 ### `pitcher-narratives morning`
 

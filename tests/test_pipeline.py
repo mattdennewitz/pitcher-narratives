@@ -548,6 +548,10 @@ class TestGeneratePipelineStreaming:
         model = TestModel(call_tools=[])
         results = run_narration_modes(ctx, modes=[REPORT], _model_override=model)
         r = results["report"]
+        # The brief assertion below is the real distillation check: TestModel
+        # text doesn't parse into bullets, so the summary can only be checked
+        # for type. If summary/brief generation is ever split into separate
+        # conditionals, give the summary its own behavioral assertion.
         assert isinstance(r.executive_summary, list)
         assert isinstance(r.brief, str) and len(r.brief) > 0
 

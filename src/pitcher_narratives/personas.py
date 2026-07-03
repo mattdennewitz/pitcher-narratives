@@ -243,6 +243,11 @@ twice if the second citation explains the first.
 HARD LIMIT: Do not exceed 800 words. If you approach 700 words, wrap up.\
 """
 
+# INTENT: the sectioned contract deliberately mirrors the five specialists.
+# It is the structured-consumer format — readers who want a labeled breakdown
+# and a summary table, not a narrative. The narrative-first thesis is carried
+# by the synthesis framing (cross-specialist threading still applies inside
+# each section); do not "fix" the section names to hide the specialists.
 _SECTIONED_STRUCTURE = """\
 TARGET: 300-500 words total across all sections. Each section is \
 2-4 sentences of concise declarative prose. The fixed sections and \
@@ -392,6 +397,12 @@ HARD LIMIT: Do not exceed 500 words. Concision is the voice.\
 """
 )
 
+# INTENT: BRIEF and RECAP_BRIEF are intentionally separate contracts even
+# though both produce a 40-90 word brief. BRIEF distills an already-finished
+# report capsule (report/changes modes, distill-only grounding — it summarizes
+# a draft that already exists); RECAP_BRIEF writes a standalone brief straight
+# from the specialist analyses (recap mode). Since recap skips distillation
+# (NarrationMode.distill is False), the two never co-occur in one document.
 BRIEF = OutputContract(
     id="brief",
     length_target=(40, 90),
