@@ -12,7 +12,7 @@ Voice and output format are orthogonal concerns, composed at build time:
 - ``SHARED_WRITER_BASE`` holds the *universal analytical rules* that every
   composed writer prompt must obey, exactly once.
 - ``_SYNTHESIS_FRAMING`` holds the framing shared by the specialist-synthesis
-  contracts (report writers); ``_CUE_FRAMING`` is for the digest contract.
+  contracts (report writers).
 
 ``build_system_prompt(persona, contract)`` composes:
 ``universal base + contract.input_framing + persona voice chain + contract.structure``.
@@ -34,7 +34,6 @@ __all__ = [
     "BRIEF",
     "DEFAULT_MODE",
     "DEFAULT_PERSONA",
-    "DIGEST_ITEM",
     "GENERIC",
     "NARRATION_MODES",
     "NEWSLETTER",
@@ -173,20 +172,6 @@ the conclusions.\
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# CUE-INPUT FRAMING — for the digest contract (one editorial cue, no specialists)
-# ═══════════════════════════════════════════════════════════════════════
-
-_CUE_FRAMING = """\
-You write one short item for a data-driven baseball morning digest.
-
-INPUT: a cue package for one pitcher's recent appearance — fired \
-scouting signals, the editor's framing (category, angle, conviction), \
-season context, and optionally a ## Key Signals block with \
-cross-specialist patterns.\
-"""
-
-
-# ═══════════════════════════════════════════════════════════════════════
 # BRIEF-INPUT FRAMING — distills the finished report (report-as-source-of-truth,
 # recover-only grounding); recent-vs-window frame, no model teaching
 # ═══════════════════════════════════════════════════════════════════════
@@ -293,21 +278,6 @@ the total metric footprint across the capsule may exceed three.
 HARD LIMIT: Do not exceed 500 words. Concision is the voice.\
 """
 
-_DIGEST_STRUCTURE = """\
-CONTRACT:
-- Lead with the editor's angle. It is the story; do not bury it.
-- Ground every claim in the cue's numbers. Do not invent statistics.
-- Scale your tone to the stated conviction: a 'low' conviction story \
-is framed as something to monitor, not a breakout.
-- Key Signals (if a ## Key Signals block is present): treat it as the \
-priority lens. State each finding once with the best evidence — do not \
-restate a metric that already appears in the cue body. Weave the top \
-improvement or concern into the what-to-watch close.
-- Close with one sentence on what to watch in the next outing.
-- 150-250 words. No headline; prose only — the document supplies \
-headings.\
-"""
-
 _BRIEF_STRUCTURE = """\
 Compose a 2-3 sentence brief. No headings, no bullets, no tables — \
 prose only.
@@ -376,13 +346,6 @@ SECTIONED = OutputContract(
     length_target=(300, 500),
     structure=_SECTIONED_STRUCTURE,
     input_framing=_SYNTHESIS_FRAMING,
-)
-
-DIGEST_ITEM = OutputContract(
-    id="digest_item",
-    length_target=(150, 250),
-    structure=_DIGEST_STRUCTURE,
-    input_framing=_CUE_FRAMING,
 )
 
 @dataclass(frozen=True)
