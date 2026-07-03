@@ -2285,27 +2285,32 @@ async def _run_pipeline(
 
     # Second step: summarize the FINISHED, anchored report (not the
     # pre-revision specialist data). writer_input is attached as recover-only
-    # grounding inside _run_summaries.
-    log.info("Writing summary and brief from the final report...")
-    summary_bullets, brief_text = await _run_summaries(
-        summary_agent=agents.summary,
-        brief_agent=agents.brief,
-        capsule=capsule,
-        writer_input=writer_input,
-        _model_override=_model_override,
-    )
+    # grounding inside _run_summaries. RECAP is already a brief-length capsule,
+    # so distilling it further would duplicate (and cost two agent calls).
+    if mode.distill:
+        log.info("Writing summary and brief from the final report...")
+        summary_bullets, brief_text = await _run_summaries(
+            summary_agent=agents.summary,
+            brief_agent=agents.brief,
+            capsule=capsule,
+            writer_input=writer_input,
+            _model_override=_model_override,
+        )
 
-    # The brief and executive summary are the reader-facing outputs and may
-    # recover figures the capsule fact-check never saw, so value-parity them too
-    # against the same source. Warnings are labeled by surface so an operator can
-    # tell where an ungrounded number entered.
-    summary_parity = check_value_parity("\n".join(summary_bullets), fact_check_source)
-    brief_parity = check_value_parity(brief_text, fact_check_source)
-    value_parity_warnings = (
-        [f"[capsule] {w}" for w in value_parity.unmatched]
-        + [f"[summary] {w}" for w in summary_parity.unmatched]
-        + [f"[brief] {w}" for w in brief_parity.unmatched]
-    )
+        # The brief and executive summary are the reader-facing outputs and may
+        # recover figures the capsule fact-check never saw, so value-parity them too
+        # against the same source. Warnings are labeled by surface so an operator can
+        # tell where an ungrounded number entered.
+        summary_parity = check_value_parity("\n".join(summary_bullets), fact_check_source)
+        brief_parity = check_value_parity(brief_text, fact_check_source)
+        value_parity_warnings = (
+            [f"[capsule] {w}" for w in value_parity.unmatched]
+            + [f"[summary] {w}" for w in summary_parity.unmatched]
+            + [f"[brief] {w}" for w in brief_parity.unmatched]
+        )
+    else:
+        summary_bullets, brief_text = [], ""
+        value_parity_warnings = [f"[capsule] {w}" for w in value_parity.unmatched]
 
     return PipelineResult(
         narrative=capsule,

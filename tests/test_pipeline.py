@@ -527,6 +527,30 @@ class TestGeneratePipelineStreaming:
         # REPORT/RECAP guarantee).
         assert captured.get("report") is None
 
+    def test_recap_mode_skips_distillation(self, ctx):
+        """RECAP mode must not run the exec-summary/brief agents: capsule IS the brief."""
+        from pydantic_ai.models.test import TestModel
+        from pitcher_narratives.personas import RECAP
+        from pitcher_narratives.pipeline import run_narration_modes
+
+        model = TestModel(call_tools=[])
+        results = run_narration_modes(ctx, modes=[RECAP], _model_override=model)
+        r = results["recap"]
+        assert r.executive_summary == []
+        assert r.brief == ""
+
+    def test_report_mode_still_distills(self, ctx):
+        """REPORT mode must still run the exec-summary/brief agents."""
+        from pydantic_ai.models.test import TestModel
+        from pitcher_narratives.personas import REPORT
+        from pitcher_narratives.pipeline import run_narration_modes
+
+        model = TestModel(call_tools=[])
+        results = run_narration_modes(ctx, modes=[REPORT], _model_override=model)
+        r = results["report"]
+        assert isinstance(r.executive_summary, list)
+        assert isinstance(r.brief, str) and len(r.brief) > 0
+
     def test_max_revisions_constant_is_nonzero(self):
         """MAX_REVISIONS must allow at least one revision pass."""
         from pitcher_narratives.config import MAX_REVISIONS
