@@ -390,7 +390,7 @@ def test_signals_failed_flag_set_on_extractor_failure(monkeypatch):
     monkeypatch.setattr(_pl, "run_specialists", AsyncMock(return_value=fake_specs))
     monkeypatch.setattr(
         _pl, "audit_and_revise_specialists",
-        AsyncMock(return_value=(fake_specs, [])),
+        AsyncMock(return_value=(fake_specs, [], set())),
     )
     monkeypatch.setattr(_pl, "build_writer_input", lambda *a, **kw: "")
 

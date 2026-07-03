@@ -493,12 +493,33 @@ def _build_capsule_ground_truth(ctx: PitcherContext) -> str:
     return "\n\n".join(_get_specialist_input_text(name, ctx) for name in names)
 
 
-def _build_parity_union(ctx: PitcherContext, specialists: SpecialistOutputs, key_signals: KeySignals | None) -> str:
+def _build_parity_union(
+    ctx: PitcherContext,
+    specialists: SpecialistOutputs,
+    key_signals: KeySignals | None,
+    *,
+    exclude: frozenset[str] = frozenset(),
+) -> str:
     """A's source-of-truth union: everything the writer saw — raw ground truth,
-    clean specialist outputs, and the rendered key signals."""
+    clean specialist outputs, and the rendered key signals.
+
+    ``exclude`` names specialists whose *prose* must NOT count as fact-check
+    ground truth — a specialist whose revision failed re-audit is unverified, so
+    a fabricated number in its prose must not launder into citable truth. Raw
+    ground-truth tables and the key signals are always included; only the
+    excluded specialists' analysis prose is dropped.
+    """
     parts = [_build_capsule_ground_truth(ctx)]
-    parts.extend([specialists.stuff, specialists.location, specialists.runvalue,
-                  specialists.trends, specialists.game_shape])
+    specialist_prose = {
+        "stuff": specialists.stuff,
+        "location": specialists.location,
+        "runvalue": specialists.runvalue,
+        "trends": specialists.trends,
+        "game_shape": specialists.game_shape,
+    }
+    parts.extend(
+        text for name, text in specialist_prose.items() if name not in exclude
+    )
     if key_signals is not None:
         parts.append(render_key_signals(key_signals))
     return "\n\n".join(parts)
@@ -917,21 +938,35 @@ def _build_specialist_revision_input(
     )
 
 
-def _get_specialist_input(name: str, ctx: PitcherContext) -> UserPrompt:
-    """Get the data input for a named specialist as a UserPrompt (with CachePoints)."""
+def _get_specialist_input(
+    name: str, ctx: PitcherContext, *, trend_frame_comparison: str | None = None
+) -> UserPrompt:
+    """Get the data input for a named specialist as a UserPrompt (with CachePoints).
+
+    ``trend_frame_comparison`` (only meaningful for the trends specialist) is
+    threaded into the trends input so audit ground truth matches what the
+    trends specialist actually saw — a CHANGES-mode frame-comparison block the
+    specialist cited must appear in the auditor's ground truth, or the auditor
+    false-flags it as FABRICATED_DATA.
+    """
+    if name == "trends":
+        return _build_trend_input(ctx, frame_comparison=trend_frame_comparison)
     builders = {
         "stuff": _build_stuff_input,
         "location": _build_location_input,
         "runvalue": _build_runvalue_input,
-        "trends": _build_trend_input,
         "game_shape": _build_game_shape_input,
     }
     return builders[name](ctx)
 
 
-def _get_specialist_input_text(name: str, ctx: PitcherContext) -> str:
+def _get_specialist_input_text(
+    name: str, ctx: PitcherContext, *, trend_frame_comparison: str | None = None
+) -> str:
     """Get specialist data input as plain text (no CachePoints)."""
-    return _flatten_prompt(_get_specialist_input(name, ctx))
+    return _flatten_prompt(
+        _get_specialist_input(name, ctx, trend_frame_comparison=trend_frame_comparison)
+    )
 
 
 def _audit_failed_flag(specialist: str = "") -> AuditFlag:
@@ -960,20 +995,29 @@ async def audit_and_revise_specialists(
     names: list[str] | None = None,
     tracker: UsageTracker | None = None,
     tracker_model: str = "",
-) -> tuple[SpecialistOutputs, list[AuditFlag]]:
+    trend_frame_comparison: str | None = None,
+) -> tuple[SpecialistOutputs, list[AuditFlag], set[str]]:
     """Audit each specialist's output independently, revise any with flags.
 
     Phase 1.5a: Run 5 per-specialist audits concurrently.
     Phase 1.5b: For any flagged specialist, re-run with audit feedback.
+    Phase 1.5c: Re-audit the revised specialists ONCE (bounded — no loop) and
+    collect a ``residual`` set of specialists whose revision still flagged or
+    whose re-audit itself failed. Their prose is unverified, so a downstream
+    fact-check must not treat it as ground truth.
 
     Args:
         names: Optional subset of specialist names to audit/revise. When
             omitted, all five specialists are audited (current behavior).
             The returned SpecialistOutputs always carries all five fields;
             unlisted specialists pass through unchanged.
+        trend_frame_comparison: CHANGES-mode frame-comparison block threaded
+            into the trends specialist's audit ground truth so the auditor sees
+            the same source the specialist did.
 
     Returns:
-        Tuple of (clean SpecialistOutputs, all collected AuditFlags).
+        Tuple of (clean SpecialistOutputs, all collected AuditFlags, residual
+        specialist-name set).
     """
     all_names = ["stuff", "location", "runvalue", "trends", "game_shape"]
     audit_names = names if names is not None else all_names
@@ -986,17 +1030,20 @@ async def audit_and_revise_specialists(
 
     # Build ground truth input only for the specialists we audit.
     ground_truths = {
-        name: _get_specialist_input_text(name, ctx) for name in audit_names
+        name: _get_specialist_input_text(
+            name, ctx, trend_frame_comparison=trend_frame_comparison
+        )
+        for name in audit_names
     }
 
     # Phase 1.5a: Audit all 5 in parallel. The audit is an enhancement,
     # not core: a failed audit call (provider error, rate limit) degrades
     # to passing that specialist through un-audited rather than killing
     # the whole pipeline run.
-    async def _audit_one(name: str) -> tuple[str, AuditResult | None]:
+    async def _audit_one(name: str, text: str) -> tuple[str, AuditResult | None]:
         try:
             audit_input = _build_specialist_audit_input(
-                ground_truths[name], outputs[name],
+                ground_truths[name], text,
             )
             result = await auditor.run(**agent_kwargs(audit_input, _model_override))
             _record_usage(tracker, tracker_model, result, "audit")
@@ -1010,7 +1057,7 @@ async def audit_and_revise_specialists(
                       name, exc_info=True)
             return name, None
 
-    audit_tasks = [_audit_one(name) for name in audit_names]
+    audit_tasks = [_audit_one(name, outputs[name]) for name in audit_names]
     audit_results = await asyncio.gather(*audit_tasks)
 
     # Collect all flags, tag with specialist name
@@ -1031,7 +1078,7 @@ async def audit_and_revise_specialists(
 
     if not flagged:
         log.info("All specialists passed audit.")
-        return specialists, all_flags
+        return specialists, all_flags, set()
 
     # Phase 1.5b: Revise flagged specialists in parallel
     log.info("Revising %d flagged specialist(s)...", len(flagged))
@@ -1056,13 +1103,40 @@ async def audit_and_revise_specialists(
 
     # Apply revisions
     clean_outputs = dict(outputs)
+    revised_names: list[str] = []
     for name, revised_text in revisions:
         clean_outputs[name] = revised_text
+        revised_names.append(name)
         log.info("Revised %s specialist.", name)
+
+    # Phase 1.5c: ONE bounded re-audit of the revised specialists (no loop).
+    # A revision is never re-checked today, so a fabricated number introduced
+    # by the revision ships un-audited. Re-audit the revised text once; any
+    # specialist still flagged — or whose re-audit itself raises — is residual:
+    # its prose is unverified and must be excluded from the fact-check ground
+    # truth. A raising re-audit also surfaces an AUDIT_FAILED sentinel (fail
+    # closed, mirroring the first pass).
+    residual: set[str] = set()
+    reaudit_results = await asyncio.gather(
+        *(_audit_one(name, clean_outputs[name]) for name in revised_names)
+    )
+    for name, audit_result in reaudit_results:
+        if audit_result is None:
+            all_flags.append(_audit_failed_flag(name))
+            residual.add(name)
+            continue
+        if not audit_result.is_clean:
+            for flag in audit_result.flags:
+                flag.specialist = name
+                all_flags.append(flag)
+            residual.add(name)
+            log.info("Re-audit still flagged %s: %d issue(s)",
+                     name, len(audit_result.flags))
 
     return (
         SpecialistOutputs(**clean_outputs),
         all_flags,
+        residual,
     )
 
 
@@ -1519,7 +1593,7 @@ async def run_spine_core(
         agents.trends, agents.game_shape, ctx, _model_override,
         names=_CORE_SPECIALISTS, tracker=tracker, tracker_model=mini,
     )
-    clean, flags = await audit_and_revise_specialists(
+    clean, flags, residual = await audit_and_revise_specialists(
         raw, agents.specialist_dict(), agents.auditor, ctx, _model_override,
         names=_CORE_SPECIALISTS, tracker=tracker, tracker_model=mini,
     )
@@ -1527,6 +1601,7 @@ async def run_spine_core(
         stuff=clean.stuff, location=clean.location,
         runvalue=clean.runvalue, game_shape=clean.game_shape,
         audit_flags=flags,
+        residual_specialists=sorted(residual),
     )
 
 
@@ -1580,9 +1655,10 @@ async def run_spine_tail(
         stuff=core.stuff, location=core.location, runvalue=core.runvalue,
         game_shape=core.game_shape, trends=raw.trends,
     )
-    specialists, trends_flags = await audit_and_revise_specialists(
+    specialists, trends_flags, trends_residual = await audit_and_revise_specialists(
         merged, agents.specialist_dict(), agents.auditor, ctx, _model_override,
         names=_TAIL_SPECIALISTS, tracker=tracker, tracker_model=mini,
+        trend_frame_comparison=trend_frame_comparison,
     )
 
     signal_input = build_writer_input(
@@ -1608,6 +1684,9 @@ async def run_spine_tail(
         key_signals=key_signals,
         audit_flags=_order_flags(list(core.audit_flags) + trends_flags),
         signals_failed=signals_failed,
+        residual_specialists=sorted(
+            set(core.residual_specialists) | trends_residual
+        ),
     )
 
 
@@ -1994,7 +2073,10 @@ async def _render_capsule(
     # (key-signal deltas, plus-grade paraphrases) as fabricated and triggering a
     # needless fact-revision. Built once and reused by B and A.
     log.info("Fact-checking the capsule against ground truth...")
-    fact_check_source = _build_parity_union(ctx, specialists, key_signals)
+    fact_check_source = _build_parity_union(
+        ctx, specialists, key_signals,
+        exclude=frozenset(analyzed.residual_specialists),
+    )
     capsule, capsule_audit_flags, capsule_revised = await run_capsule_audit(
         auditor=agents.capsule_auditor,
         writer_agent=agents.writer,

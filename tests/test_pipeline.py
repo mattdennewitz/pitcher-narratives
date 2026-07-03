@@ -340,7 +340,7 @@ class TestAuditAndReviseSpecialists:
             data = load_pitcher_data(TEST_PITCHER, recent_appearances=10)
             ctx = assemble_pitcher_context(data)
 
-            result, flags = await audit_and_revise_specialists(
+            result, flags, _residual = await audit_and_revise_specialists(
                 specialists, specialist_agents, clean_auditor, ctx,
                 _model_override=clean_model,
             )
@@ -370,7 +370,7 @@ class TestAuditAndReviseSpecialists:
             data = load_pitcher_data(TEST_PITCHER, recent_appearances=10)
             ctx = assemble_pitcher_context(data)
 
-            result, flags = await audit_and_revise_specialists(
+            result, flags, _residual = await audit_and_revise_specialists(
                 specialists, specialist_agents, auditor, ctx,
                 _model_override=test_model,
             )
@@ -408,7 +408,7 @@ class TestAuditAndReviseSpecialists:
                 names=["stuff"],
             )
 
-        result, flags = asyncio.run(_run())
+        result, flags, _residual = asyncio.run(_run())
         # Original text passes through unchanged.
         assert result.stuff == specialists.stuff
         # Exactly one AUDIT_FAILED flag, tagged with the specialist name.
@@ -1461,7 +1461,7 @@ def test_audit_failure_fails_closed(ctx):
     audit_flags) rather than silently returning zero flags."""
     outputs = SpecialistOutputs(stuff="s", location="l", runvalue="r",
                                 trends="t", game_shape="g")
-    clean, flags = asyncio.run(audit_and_revise_specialists(
+    clean, flags, _residual = asyncio.run(audit_and_revise_specialists(
         outputs, {}, _ExplodingAuditor(), ctx,
     ))
     assert clean == outputs
@@ -1493,12 +1493,164 @@ def test_audit_names_audits_only_selected(ctx):
             return _R()
 
     auditor = _CountingAuditor()
-    clean, flags = asyncio.run(audit_and_revise_specialists(
+    clean, flags, _residual = asyncio.run(audit_and_revise_specialists(
         outputs, {}, auditor, ctx, names=["trends"],
     ))
     assert auditor.calls == 1          # only one specialist audited
     assert clean == outputs            # all five fields preserved, unchanged
     assert flags == []
+
+
+class _ReviseSpecialist:
+    """Stub specialist agent returning a fixed revision string."""
+
+    def __init__(self, text="revised prose"):
+        self.text = text
+
+    async def run(self, **kwargs):
+        class _R:
+            pass
+        r = _R()
+        r.output = self.text
+        return r
+
+
+def test_reaudit_flags_revision_marks_specialist_residual(ctx):
+    """A specialist that is flagged, revised, and STILL flagged on re-audit is
+    reported as residual, and its re-audit flags are appended (specialist-tagged)
+    to the returned flags."""
+    from pitcher_narratives.models import AuditResult, AuditFlag
+
+    class _AlwaysFlags:
+        def __init__(self):
+            self.calls = 0
+        async def run(self, **kwargs):
+            self.calls += 1
+            class _R:
+                output = AuditResult(flags=[AuditFlag(
+                    category="FABRICATED_DATA", claim="98 mph",
+                    data_shows="95.9", suggested_fix="use 95.9")])
+            return _R()
+
+    outputs = SpecialistOutputs(stuff="s", location="l", runvalue="r",
+                                trends="t", game_shape="g")
+    specialist_agents = {"trends": _ReviseSpecialist()}
+    auditor = _AlwaysFlags()
+
+    clean, flags, residual = asyncio.run(audit_and_revise_specialists(
+        outputs, specialist_agents, auditor, ctx, names=["trends"],
+    ))
+    # Audited once, revised once, re-audited once.
+    assert auditor.calls == 2
+    assert clean.trends == "revised prose"      # revision applied
+    assert residual == {"trends"}               # still flagged on re-audit
+    # Both the original flag and the re-audit flag are present, tagged trends.
+    assert len(flags) == 2
+    assert all(f.specialist == "trends" for f in flags)
+
+
+def test_reaudit_clean_revision_leaves_residual_empty(ctx):
+    """A specialist flagged then revised clean on re-audit is NOT residual."""
+    from pitcher_narratives.models import AuditResult, AuditFlag
+
+    class _FlagThenClean:
+        def __init__(self):
+            self.calls = 0
+        async def run(self, **kwargs):
+            self.calls += 1
+            flags = [] if self.calls > 1 else [AuditFlag(
+                category="FABRICATED_DATA", claim="98 mph",
+                data_shows="95.9", suggested_fix="use 95.9")]
+            class _R:
+                output = AuditResult(flags=flags)
+            return _R()
+
+    outputs = SpecialistOutputs(stuff="s", location="l", runvalue="r",
+                                trends="t", game_shape="g")
+    auditor = _FlagThenClean()
+
+    clean, flags, residual = asyncio.run(audit_and_revise_specialists(
+        outputs, {"trends": _ReviseSpecialist()}, auditor, ctx, names=["trends"],
+    ))
+    assert auditor.calls == 2
+    assert clean.trends == "revised prose"
+    assert residual == set()          # re-audit came back clean
+    assert len(flags) == 1            # only the original flag
+
+
+def test_reaudit_crash_marks_residual_and_surfaces_sentinel(ctx):
+    """A re-audit that RAISES counts the specialist as residual and appends an
+    AUDIT_FAILED sentinel (fail closed)."""
+    from pitcher_narratives.models import AuditResult, AuditFlag
+
+    class _FlagThenBoom:
+        def __init__(self):
+            self.calls = 0
+        async def run(self, **kwargs):
+            self.calls += 1
+            if self.calls > 1:
+                raise RuntimeError("re-audit boom")
+            class _R:
+                output = AuditResult(flags=[AuditFlag(
+                    category="FABRICATED_DATA", claim="98 mph",
+                    data_shows="95.9", suggested_fix="x")])
+            return _R()
+
+    outputs = SpecialistOutputs(stuff="s", location="l", runvalue="r",
+                                trends="t", game_shape="g")
+    clean, flags, residual = asyncio.run(audit_and_revise_specialists(
+        outputs, {"trends": _ReviseSpecialist()}, _FlagThenBoom(), ctx,
+        names=["trends"],
+    ))
+    assert residual == {"trends"}
+    assert any(f.category == "AUDIT_FAILED" and f.specialist == "trends"
+               for f in flags)
+
+
+def test_build_parity_union_exclude_drops_specialist_prose(ctx):
+    """_build_parity_union(exclude=...) omits the excluded specialist's prose
+    but still carries raw ground truth and the other specialists."""
+    from pitcher_narratives.pipeline import _build_parity_union
+
+    specialists = SpecialistOutputs(
+        stuff="STUFF_PROSE", location="LOC_PROSE", runvalue="RV_PROSE",
+        trends="TRENDS_PROSE_UNVERIFIED", game_shape="GS_PROSE",
+    )
+    union = _build_parity_union(
+        ctx, specialists, None, exclude=frozenset({"trends"}),
+    )
+    assert "TRENDS_PROSE_UNVERIFIED" not in union   # excluded prose dropped
+    assert "STUFF_PROSE" in union                    # other specialists kept
+    assert "GS_PROSE" in union
+    # Raw ground truth (independent of specialist prose) still present.
+    from pitcher_narratives.pipeline import _build_capsule_ground_truth
+    assert _build_capsule_ground_truth(ctx) in union
+
+
+def test_trend_audit_ground_truth_includes_frame_comparison(ctx):
+    """The trends specialist's audit ground truth must include the frame
+    comparison block, or the auditor false-flags cited frame numbers as
+    FABRICATED_DATA. Captures the ground truth handed to the auditor."""
+    from pitcher_narratives.models import AuditResult
+
+    marker = "FRAME_COMPARISON_MARKER_XYZ"
+    captured = {}
+
+    class _CapturingAuditor:
+        async def run(self, **kwargs):
+            # agent_kwargs stores the prompt under 'user_prompt'.
+            captured["input"] = kwargs.get("user_prompt", "")
+            class _R:
+                output = AuditResult(flags=[])
+            return _R()
+
+    outputs = SpecialistOutputs(stuff="s", location="l", runvalue="r",
+                                trends="t", game_shape="g")
+    asyncio.run(audit_and_revise_specialists(
+        outputs, {}, _CapturingAuditor(), ctx, names=["trends"],
+        trend_frame_comparison=marker,
+    ))
+    assert marker in captured["input"]
 
 
 def test_run_analysis_spine_returns_analyzed_context(ctx):

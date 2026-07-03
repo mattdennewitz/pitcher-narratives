@@ -68,6 +68,7 @@ class AnalyzedContext(BaseModel):
     key_signals: KeySignals | None = None
     audit_flags: list[AuditFlag] = []
     signals_failed: bool = False
+    residual_specialists: list[str] = []
 
 
 class CoreContext(BaseModel):
@@ -85,3 +86,4 @@ class CoreContext(BaseModel):
     runvalue: str
     game_shape: str
     audit_flags: list[AuditFlag] = []
+    residual_specialists: list[str] = []
