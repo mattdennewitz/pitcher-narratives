@@ -225,7 +225,7 @@ def test_run_provider_captures_all_tiers():
     assert captured.error is None
     assert captured.wall_s >= 0
     for key in ("specialist:stuff", "specialist:location", "specialist:runvalue",
-                "specialist:trends", "specialist:game_shape", "capsule"):
+                "specialist:trends", "specialist:game_shape", "capsule:report"):
         assert key in captured.outputs, f"missing {key}"
         assert captured.outputs[key]
         assert captured.ground_truths.get(key), f"missing ground truth for {key}"
@@ -233,7 +233,34 @@ def test_run_provider_captures_all_tiers():
     # generic context doc -- otherwise the judge calls provided data
     # 'invented' and grounding scores are artifacts.
     assert "Arsenal Physical Profile" in captured.ground_truths["specialist:stuff"]
-    assert "Specialist Analysis" in captured.ground_truths["capsule"]
+    assert "Specialist Analysis" in captured.ground_truths["capsule:report"]
+
+
+@pytest.mark.skipif(
+    not __import__("pitcher_narratives.data", fromlist=["statcast_parquet_path"]).statcast_parquet_path(2026).exists(),
+    reason="statcast parquet files not present (set STATCAST_PATH)",
+)
+def test_run_provider_captures_per_mode_capsules():
+    """A multi-mode run captures a namespaced capsule + exec summary per mode
+    and one shared set of specialist tiers, each with a ground truth."""
+    from pitcher_narratives.personas import get_narration_mode
+
+    modes = [get_narration_mode("report"), get_narration_mode("recap")]
+    captured = run_provider(
+        TEST_PITCHER, provider="gemini", thinking="low", persona="scout",
+        modes=modes, _model_override=TestModel(call_tools=[]),
+    )
+    assert captured.ok
+    for spec in ("specialist:stuff", "specialist:location", "specialist:runvalue",
+                 "specialist:trends", "specialist:game_shape"):
+        assert captured.outputs[spec]
+        assert captured.ground_truths.get(spec), f"missing ground truth for {spec}"
+    for mode_id in ("report", "recap"):
+        cap = f"capsule:{mode_id}"
+        assert captured.outputs.get(cap), f"missing {cap}"
+        assert "Specialist Analysis" in captured.ground_truths[cap]
+    # No bare "capsule" key survives the namespacing.
+    assert "capsule" not in captured.outputs
 
 
 # ── CLI ───────────────────────────────────────────────────────────────
