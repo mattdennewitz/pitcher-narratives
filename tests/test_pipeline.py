@@ -1937,3 +1937,28 @@ def test_residual_banner_matches_report_wording():
     assert residual_banner(_result_with_flags(1), label="RECAP").startswith(
         "⚠️  RECAP UNVERIFIED — 1 flagged claim(s)"
     )
+
+
+def test_render_capsule_non_streaming_returns_capsule(ctx, capsys):
+    """_render_capsule(stream=False) captures the writer output without
+    printing to stdout, and runs the anchor + capsule-audit loops."""
+    from pitcher_narratives import pipeline
+
+    agents = pipeline.make_pipeline_agents("gemini", "high")
+    tm_spine = TestModel(call_tools=[], custom_output_text="Specialist analysis.")
+    tm = TestModel(call_tools=[])
+
+    async def _go():
+        analyzed = await pipeline.run_analysis_spine(
+            ctx, agents=agents, _model_override=tm_spine
+        )
+        return await pipeline._render_capsule(
+            ctx, analyzed, agents=agents, anchor_depth=1, fact_depth=1,
+            stream=False, check_explainer=False, _model_override=tm,
+        )
+
+    rc = asyncio.run(_go())
+    assert isinstance(rc.capsule, str) and rc.capsule  # non-empty
+    assert rc.writer_input and rc.fact_check_source
+    # stream=False must NOT print the capsule to stdout.
+    assert rc.capsule not in capsys.readouterr().out

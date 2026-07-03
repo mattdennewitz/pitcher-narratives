@@ -41,6 +41,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+from dataclasses import dataclass
 from typing import Any, NamedTuple
 
 from pydantic import BaseModel
@@ -1779,6 +1780,149 @@ async def run_capsule_audit(
     return capsule, flags, revised
 
 
+@dataclass
+class _RenderedCapsule:
+    """Result of the shared writer + anchor + capsule-audit core."""
+
+    capsule: str
+    writer_input: str
+    fact_check_source: str
+    anchor_check: AnchorResult
+    revision_count: int
+    capsule_audit_flags: list[AuditFlag]
+    capsule_revised: bool
+
+
+async def _render_capsule(
+    ctx: PitcherContext,
+    analyzed: AnalyzedContext,
+    *,
+    agents: PipelineAgents,
+    anchor_depth: int,
+    fact_depth: int,
+    stream: bool,
+    check_explainer: bool = True,
+    overlay: str | None = None,
+    persona_label: str = "",
+    _model_override: Any = None,
+    tracker: UsageTracker | None = None,
+) -> _RenderedCapsule:
+    """Writer + anchor + capsule-audit core, shared by the report pipeline and
+    the recap render. Report streams (stream=True); recap does not. ``overlay``
+    prepends editorial direction to the writer input; ``check_explainer`` gates
+    the Pitching+ explainer warnings (off for the short recap brief)."""
+    specialists = analyzed.specialists
+    key_signals = analyzed.key_signals
+
+    # Phase 2: Writer streams the initial capsule from clean specialist
+    # outputs + key signals. Summarization is a separate second step that
+    # runs after the anchor revision loop (see _run_summaries below).
+    writer_input = build_writer_input(
+        ctx, specialists.stuff, specialists.location,
+        specialists.runvalue, specialists.trends, specialists.game_shape,
+        key_signals=key_signals,
+    )
+    if overlay:
+        writer_input = f"{overlay}\n\n{writer_input}"
+    writer_kwargs = agent_kwargs(writer_input, _model_override)
+
+    if stream:
+        async with agents.writer.run_stream(**writer_kwargs) as stream_ctx:
+            chunks: list[str] = []
+            async for delta in stream_ctx.stream_text(delta=True):
+                print(delta, end="", flush=True)
+                chunks.append(delta)
+        print()
+        capsule = "".join(chunks)
+    else:
+        _res = await agents.writer.run(**writer_kwargs)
+        capsule = _res.output
+
+    # EXPLAIN THE MODEL post-processor (non-fatal quality gate).
+    # Runs for all personas — a persona that silently drops Pitching+
+    # context produces a warning but does not fail the pipeline.
+    # capsule.strip() guards check_explainer_present, which raises on an empty
+    # capsule (writer stream yielded no text). An empty capsule degrades
+    # downstream (summaries return empty) rather than crashing the run here.
+    pre_revision_explainer_ok = bool(capsule.strip()) and (
+        not check_explainer or check_explainer_present(capsule)
+    )
+    if check_explainer and not pre_revision_explainer_ok:
+        log.warning(
+            "[%s] capsule is missing model explanation content",
+            persona_label,
+        )
+
+    # Anchor check + revision loop
+    specialist_synthesis = (
+        f"STUFF:\n{specialists.stuff}\n\n"
+        f"LOCATION:\n{specialists.location}\n\n"
+        f"RUN VALUE:\n{specialists.runvalue}\n\n"
+        f"TRENDS:\n{specialists.trends}\n\n"
+        f"GAME SHAPE:\n{specialists.game_shape}"
+    )
+    synthesis = (
+        f"{render_key_signals(key_signals)}\n\n{specialist_synthesis}"
+        if key_signals is not None
+        else specialist_synthesis
+    )
+
+    log.info("Revising report (anchor check loop)...")
+    capsule, anchor_check, revision_count = await run_anchor_revision_loop(
+        anchor_agent=agents.anchor,
+        writer_agent=agents.writer,
+        synthesis=synthesis,
+        capsule=capsule,
+        max_revisions=anchor_depth,
+        _model_override=_model_override,
+        tracker=tracker,
+    )
+
+    # Re-check explainer after revision loop. The anchor revision can rewrite
+    # the capsule entirely, potentially dropping Pitching+ context that was
+    # present before. Warn again only if state changed, to avoid duplicate logs.
+    if check_explainer and revision_count > 0 and pre_revision_explainer_ok and _explainer_dropped(capsule):
+        log.warning(
+            "[%s] anchor revision removed model explanation content from capsule",
+            persona_label,
+        )
+
+    # Fact-checking layer (B then A) on the final capsule. Both check against the
+    # same source: the union of everything the writer actually saw (raw ground
+    # truth + clean specialist outputs + key signals). Feeding B the union — not
+    # just the raw tables — stops it from flagging legitimate derived numbers
+    # (key-signal deltas, plus-grade paraphrases) as fabricated and triggering a
+    # needless fact-revision. Built once and reused by B and A.
+    log.info("Fact-checking the capsule against ground truth...")
+    fact_check_source = _build_parity_union(ctx, specialists, key_signals)
+    capsule, capsule_audit_flags, capsule_revised = await run_capsule_audit(
+        auditor=agents.capsule_auditor,
+        writer_agent=agents.writer,
+        ground_truth=fact_check_source,
+        capsule=capsule,
+        max_fact_revisions=fact_depth,
+        _model_override=_model_override,
+        tracker=tracker,
+    )
+    # Re-check explainer after B's fact-revision, mirroring the anchor guard:
+    # a fact-correction can rewrite the capsule and drop Pitching+ context.
+    if check_explainer and capsule_revised and pre_revision_explainer_ok and _explainer_dropped(capsule):
+        log.warning(
+            "[%s] capsule fact-revision removed model explanation content from capsule",
+            persona_label,
+        )
+
+    return _RenderedCapsule(
+        capsule=capsule,
+        writer_input=writer_input,
+        fact_check_source=fact_check_source,
+        anchor_check=anchor_check,
+        revision_count=revision_count,
+        capsule_audit_flags=capsule_audit_flags,
+        capsule_revised=capsule_revised,
+    )
+
+
 async def _run_pipeline(
     ctx: PitcherContext,
     *,
@@ -1807,94 +1951,20 @@ async def _run_pipeline(
     key_signals = analyzed.key_signals
     log.info("Analysis spine complete.")
 
-    # Phase 2: Writer streams the initial capsule from clean specialist
-    # outputs + key signals. Summarization is a separate second step that
-    # runs after the anchor revision loop (see _run_summaries below).
-    writer_input = build_writer_input(
-        ctx, specialists.stuff, specialists.location,
-        specialists.runvalue, specialists.trends, specialists.game_shape,
-        key_signals=key_signals,
+    rc = await _render_capsule(
+        ctx, analyzed, agents=agents,
+        anchor_depth=mode.validation.anchor_depth,
+        fact_depth=mode.validation.fact_depth,
+        stream=True, check_explainer=True, overlay=None,
+        persona_label=persona, _model_override=_model_override,
     )
-    writer_kwargs = agent_kwargs(writer_input, _model_override)
-
-    async with agents.writer.run_stream(**writer_kwargs) as stream:
-        chunks: list[str] = []
-        async for delta in stream.stream_text(delta=True):
-            print(delta, end="", flush=True)
-            chunks.append(delta)
-    print()
-
-    capsule = "".join(chunks)
-
-    # EXPLAIN THE MODEL post-processor (non-fatal quality gate).
-    # Runs for all personas — a persona that silently drops Pitching+
-    # context produces a warning but does not fail the pipeline.
-    # capsule.strip() guards check_explainer_present, which raises on an empty
-    # capsule (writer stream yielded no text). An empty capsule degrades
-    # downstream (summaries return empty) rather than crashing the run here.
-    pre_revision_explainer_ok = bool(capsule.strip()) and check_explainer_present(capsule)
-    if not pre_revision_explainer_ok:
-        log.warning(
-            "[%s] capsule is missing model explanation content",
-            persona,
-        )
-
-    # Anchor check + revision loop
-    specialist_synthesis = (
-        f"STUFF:\n{specialists.stuff}\n\n"
-        f"LOCATION:\n{specialists.location}\n\n"
-        f"RUN VALUE:\n{specialists.runvalue}\n\n"
-        f"TRENDS:\n{specialists.trends}\n\n"
-        f"GAME SHAPE:\n{specialists.game_shape}"
-    )
-    synthesis = (
-        f"{render_key_signals(key_signals)}\n\n{specialist_synthesis}"
-        if key_signals is not None
-        else specialist_synthesis
-    )
-
-    log.info("Revising report (anchor check loop)...")
-    capsule, anchor_check, revision_count = await run_anchor_revision_loop(
-        anchor_agent=agents.anchor,
-        writer_agent=agents.writer,
-        synthesis=synthesis,
-        capsule=capsule,
-        max_revisions=mode.validation.anchor_depth,
-        _model_override=_model_override,
-    )
-
-    # Re-check explainer after revision loop. The anchor revision can rewrite
-    # the capsule entirely, potentially dropping Pitching+ context that was
-    # present before. Warn again only if state changed, to avoid duplicate logs.
-    if revision_count > 0 and pre_revision_explainer_ok and _explainer_dropped(capsule):
-        log.warning(
-            "[%s] anchor revision removed model explanation content from capsule",
-            persona,
-        )
-
-    # Fact-checking layer (B then A) on the final capsule. Both check against the
-    # same source: the union of everything the writer actually saw (raw ground
-    # truth + clean specialist outputs + key signals). Feeding B the union — not
-    # just the raw tables — stops it from flagging legitimate derived numbers
-    # (key-signal deltas, plus-grade paraphrases) as fabricated and triggering a
-    # needless fact-revision. Built once and reused by B and A.
-    log.info("Fact-checking the capsule against ground truth...")
-    fact_check_source = _build_parity_union(ctx, specialists, key_signals)
-    capsule, capsule_audit_flags, capsule_revised = await run_capsule_audit(
-        auditor=agents.capsule_auditor,
-        writer_agent=agents.writer,
-        ground_truth=fact_check_source,
-        capsule=capsule,
-        max_fact_revisions=mode.validation.fact_depth,
-        _model_override=_model_override,
-    )
-    # Re-check explainer after B's fact-revision, mirroring the anchor guard:
-    # a fact-correction can rewrite the capsule and drop Pitching+ context.
-    if capsule_revised and pre_revision_explainer_ok and _explainer_dropped(capsule):
-        log.warning(
-            "[%s] capsule fact-revision removed model explanation content from capsule",
-            persona,
-        )
+    capsule = rc.capsule
+    writer_input = rc.writer_input
+    fact_check_source = rc.fact_check_source
+    anchor_check = rc.anchor_check
+    revision_count = rc.revision_count
+    capsule_audit_flags = rc.capsule_audit_flags
+    capsule_revised = rc.capsule_revised
 
     value_parity = check_value_parity(capsule, fact_check_source)
 
