@@ -754,3 +754,35 @@ def test_morning_subcommand_defaults(monkeypatch):
     assert args.provider == "gemini"
     assert args.persona == "scout"
     assert args.out == "morning-runs"
+
+
+def test_cli_recap_mode_runs_and_produces_output():
+    """`report --mode recap` renders a recap through the full validation stack
+    and exits cleanly under TestModel."""
+    result = subprocess.run(
+        [sys.executable, "-m", "pitcher_narratives.cli",
+         "report", "-p", "592155", "--mode", "recap"],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        env=_test_env(PITCHER_NARRATIVES_TEST_MODEL="1"),
+    )
+    assert result.returncode == 0, f"stderr: {result.stderr}"
+    # The recap mode still emits the executive-summary section (shared emitter)
+    # and produced a non-empty narrative body.
+    assert len(result.stdout.strip()) > 0
+    assert "# Executive Summary" in result.stdout
+
+
+def test_cli_report_and_recap_both_run():
+    """`--mode report,recap` runs both modes; the process completes."""
+    result = subprocess.run(
+        [sys.executable, "-m", "pitcher_narratives.cli",
+         "report", "-p", "592155", "--mode", "report,recap"],
+        capture_output=True,
+        text=True,
+        timeout=90,
+        env=_test_env(PITCHER_NARRATIVES_TEST_MODEL="1"),
+    )
+    assert result.returncode == 0, f"stderr: {result.stderr}"
+    assert len(result.stdout.strip()) > 0

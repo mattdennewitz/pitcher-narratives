@@ -920,3 +920,17 @@ def test_recap_writer_prompt_uses_brief_structure_not_report_structure():
     # A distinctive phrase from _RECAP_STRUCTURE appears only in recap.
     assert "executive brief" in recap_prompt.lower()
     assert recap_prompt != report_prompt
+
+
+_FIXTURES = Path(__file__).parent / "fixtures"
+
+
+@pytest.mark.parametrize("persona_id", ["scout", "analyst", "generic"])
+def test_recap_writer_prompt_golden(persona_id):
+    from pitcher_narratives.personas import PERSONAS, RECAP, build_writer_system_prompt
+
+    prompt = build_writer_system_prompt(PERSONAS[persona_id], RECAP)
+    golden = (_FIXTURES / f"recap_writer_prompt_{persona_id}.txt").read_text()
+    assert prompt == golden
+    # Anti-tautology guard: the golden must actually be recap-shaped.
+    assert "executive brief" in prompt.lower()
