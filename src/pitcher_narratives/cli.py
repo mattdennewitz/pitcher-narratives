@@ -409,7 +409,7 @@ def _run_report_command(args: argparse.Namespace) -> None:
 
     try:
         data_file, data_text = write_pipeline_data_file(
-            ctx, args.pitcher, args.provider, persona=args.persona
+            ctx, args.pitcher, args.provider, persona=args.persona, prior_ctx=prior_ctx
         )
     except OSError as e:
         log.error("Failed to write prompt data file: %s", e)

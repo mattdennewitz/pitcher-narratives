@@ -2,7 +2,9 @@
 
 Deltas are computed here (never by the LLM), consistent with the project's
 "give the model deltas, not arithmetic" value. Consumed by CHANGES mode's
-two-frame engine; imported by pipeline._build_trend_input.
+two-frame engine; imported by pipeline._build_trend_input. Also surfaces
+pitches thrown meaningfully in the prior window but absent from the recent
+window ("dropped" pitches) rather than silently omitting them.
 """
 
 from __future__ import annotations
@@ -30,6 +32,7 @@ class PitchFrameDelta:
     l_plus_delta: float | None
     usage_delta: float | None
     sufficient: bool
+    dropped: bool = False
 
 
 @dataclass(frozen=True)
@@ -49,8 +52,11 @@ def build_trend_frame_comparison(
 
     A delta is suppressed (``sufficient=False``, fields ``None``) when either
     frame has fewer than ``_MIN_PITCHES`` window pitches for that pitch type,
-    or the pitch is absent from the prior frame. The prior frame is flagged
-    insufficient when it has no arsenal or no pitch clears the sample floor.
+    or the pitch is absent from the prior frame. A pitch thrown meaningfully
+    in the prior window but absent from the recent window is surfaced as a
+    ``dropped=True`` entry rather than silently omitted. The prior frame is
+    flagged insufficient when it has no arsenal or no pitch clears the
+    sample floor and no dropped pitch was found.
     """
     prior_by_name = {p.pitch_name: p for p in prior.arsenal}
     deltas: list[PitchFrameDelta] = []
@@ -64,14 +70,24 @@ def build_trend_frame_comparison(
         deltas.append(
             PitchFrameDelta(
                 pitch_name=r.pitch_name,
-                velo_delta=(r.window_velo - p.window_velo) if suff else None,
+                velo_delta=_opt_delta(r.window_velo, p.window_velo) if suff else None,
                 s_plus_delta=_opt_delta(r.window_s_plus, p.window_s_plus) if suff else None,
                 l_plus_delta=_opt_delta(r.window_l_plus, p.window_l_plus) if suff else None,
-                usage_delta=(r.window_usage_pct - p.window_usage_pct) if suff else None,
+                usage_delta=_opt_delta(r.window_usage_pct, p.window_usage_pct) if suff else None,
                 sufficient=suff,
             ),
         )
-    prior_insufficient = not prior.arsenal or all(not d.sufficient for d in deltas)
+    recent_names = {r.pitch_name for r in recent.arsenal}
+    for p in prior.arsenal:
+        if p.pitch_name not in recent_names and p.n_pitches_window >= _MIN_PITCHES:
+            deltas.append(
+                PitchFrameDelta(
+                    pitch_name=p.pitch_name,
+                    velo_delta=None, s_plus_delta=None, l_plus_delta=None,
+                    usage_delta=None, sufficient=False, dropped=True,
+                ),
+            )
+    prior_insufficient = not prior.arsenal or all(not d.sufficient and not d.dropped for d in deltas)
     return TrendFrameComparison(deltas=deltas, prior_insufficient=prior_insufficient)
 
 
@@ -91,6 +107,9 @@ def render_trend_frame_comparison(cmp: TrendFrameComparison) -> str:
         "",
     ]
     for d in cmp.deltas:
+        if d.dropped:
+            lines.append(f"- {d.pitch_name}: no longer thrown (present in prior window, absent in recent)")
+            continue
         if not d.sufficient:
             lines.append(f"- {d.pitch_name}: insufficient sample for a recent-vs-prior delta")
             continue

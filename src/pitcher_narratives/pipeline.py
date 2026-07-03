@@ -1046,6 +1046,7 @@ def _render_pipeline_data_sections(
     ctx: PitcherContext,
     *,
     persona: str = "scout",
+    prior_ctx: PitcherContext | None = None,
 ) -> list[str]:
     """Render all pipeline prompt sections as a list of strings.
 
@@ -1054,18 +1055,26 @@ def _render_pipeline_data_sections(
     (e.g. cli.py --print-prompts).
 
     The persona arg controls which composed writer prompt is rendered in
-    the WRITER section.
+    the WRITER section. When prior_ctx is provided, the TRENDS specialist
+    input includes the RECENT-vs-PRIOR comparison block; when None (the
+    default), output is unchanged from before this parameter existed.
     """
     persona_obj = get_persona(persona)
     sep = "═" * 72
     sections: list[str] = []
+
+    trend_frame_comparison = (
+        render_trend_frame_comparison(build_trend_frame_comparison(ctx, prior_ctx))
+        if prior_ctx is not None
+        else None
+    )
 
     # Phase 1: Specialist prompts + inputs
     specialist_phases = [
         ("SPECIALIST 1: STUFF", _STUFF_SPECIALIST_PROMPT, _render_user_prompt(_build_stuff_input(ctx))),
         ("SPECIALIST 2: LOCATION", _LOCATION_SPECIALIST_PROMPT, _render_user_prompt(_build_location_input(ctx))),
         ("SPECIALIST 3: RUN VALUE", _RUNVALUE_SPECIALIST_PROMPT, _render_user_prompt(_build_runvalue_input(ctx))),
-        ("SPECIALIST 4: TRENDS", _TREND_SPECIALIST_PROMPT, _render_user_prompt(_build_trend_input(ctx))),
+        ("SPECIALIST 4: TRENDS", _TREND_SPECIALIST_PROMPT, _render_user_prompt(_build_trend_input(ctx, frame_comparison=trend_frame_comparison))),
         ("SPECIALIST 5: GAME SHAPE", _GAME_SHAPE_SPECIALIST_PROMPT, _render_user_prompt(_build_game_shape_input(ctx))),
     ]
     for label, system, user in specialist_phases:
@@ -1136,6 +1145,7 @@ def write_pipeline_data_file(
     provider: str,
     *,
     persona: str = "scout",
+    prior_ctx: PitcherContext | None = None,
 ) -> tuple[str, str]:
     """Write all pipeline prompts to a data file for end-to-end tracing.
 
@@ -1148,6 +1158,9 @@ def write_pipeline_data_file(
         provider: LLM provider key for the filename.
         persona: Persona id string (default "scout"); controls which
             composed writer prompt is rendered in the WRITER section.
+        prior_ctx: Optional prior-window context; when provided, the
+            TRENDS specialist section includes the RECENT-vs-PRIOR
+            comparison block. None (default) leaves output unchanged.
 
     Returns:
         Tuple of (filename, rendered_text). Callers that need to display
@@ -1160,7 +1173,7 @@ def write_pipeline_data_file(
     """
     from pathlib import Path
 
-    sections = _render_pipeline_data_sections(ctx, persona=persona)
+    sections = _render_pipeline_data_sections(ctx, persona=persona, prior_ctx=prior_ctx)
     text = "\n".join(sections)
 
     filename = f"data-{pitcher_id}-{provider}-pipeline.md"
@@ -2149,6 +2162,9 @@ def run_narration_modes(
         thinking: Thinking effort level.
         persona: Persona id string.
         _model_override: Optional model override for testing.
+        prior_ctx: Optional prior-window context; forwarded only to modes
+            whose temporal_frame includes PRIOR (CHANGES). None for
+            report/recap.
 
     Returns:
         Mapping of mode id -> PipelineResult, insertion-ordered by ``modes``.

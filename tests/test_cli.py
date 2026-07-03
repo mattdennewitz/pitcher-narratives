@@ -397,6 +397,56 @@ def test_cli_print_prompts_dumps_prompts_and_bypasses_api_key(tmp_path):
     assert "ANCHOR CHECK" in result.stderr
 
 
+def test_cli_print_prompts_changes_mode_includes_trend_comparison(tmp_path):
+    """--print-prompts --mode changes includes the Recent vs Prior Window block."""
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pitcher_narratives.cli",
+            "report",
+            "-p",
+            "592155",
+            "--mode",
+            "changes",
+            "--recent",
+            "10",
+            "--prior",
+            "10",
+            "--print-prompts",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        cwd=tmp_path,
+        env=_test_env(),
+    )
+    assert result.returncode == 0, f"stderr: {result.stderr}"
+    assert "Recent vs Prior Window" in result.stderr
+
+
+def test_cli_print_prompts_report_mode_omits_trend_comparison(tmp_path):
+    """--print-prompts on default (report) mode does NOT include the comparison block."""
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pitcher_narratives.cli",
+            "report",
+            "-p",
+            "592155",
+            "--print-prompts",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        cwd=tmp_path,
+        env=_test_env(),
+    )
+    assert result.returncode == 0, f"stderr: {result.stderr}"
+    assert "Recent vs Prior Window" not in result.stderr
+
+
 # ── Integration: --list-personas ──
 
 

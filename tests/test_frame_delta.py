@@ -63,6 +63,35 @@ def test_render_includes_signed_deltas_and_header():
     assert "S+ +10" in text
 
 
+def test_build_comparison_surfaces_dropped_pitch():
+    recent = _ctx(_PT("Four-Seam", 95.0, 110.0, 105.0, 60.0, 40))
+    prior = _ctx(
+        _PT("Four-Seam", 93.0, 100.0, 100.0, 50.0, 40),
+        _PT("Curveball", 78.0, 90.0, 90.0, 15.0, 12),
+    )
+    cmp = build_trend_frame_comparison(recent, prior)
+    dropped = [d for d in cmp.deltas if d.pitch_name == "Curveball"]
+    assert len(dropped) == 1
+    d = dropped[0]
+    assert d.dropped is True
+    assert d.sufficient is False
+    assert d.velo_delta is None
+    assert cmp.prior_insufficient is False
+    text = render_trend_frame_comparison(cmp)
+    assert "Curveball: no longer thrown" in text
+
+
+def test_build_comparison_ignores_thin_dropped_pitch():
+    recent = _ctx(_PT("Four-Seam", 95.0, 110.0, 105.0, 60.0, 40))
+    prior = _ctx(
+        _PT("Four-Seam", 93.0, 100.0, 100.0, 50.0, 40),
+        _PT("Curveball", 78.0, 90.0, 90.0, 15.0, 4),  # < 10 pitches, too thin
+    )
+    cmp = build_trend_frame_comparison(recent, prior)
+    names = [d.pitch_name for d in cmp.deltas]
+    assert "Curveball" not in names
+
+
 def test_render_prior_insufficient_message():
     recent = _ctx(_PT("Four-Seam", 95.0, 110.0, 105.0, 60.0, 40))
     text = render_trend_frame_comparison(build_trend_frame_comparison(recent, _ctx()))
