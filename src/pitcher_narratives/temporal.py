@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from enum import StrEnum
 
-__all__ = ["TemporalFrame", "_DEFAULT_RECENT_APPEARANCES"]
+__all__ = ["TemporalFrame", "_DEFAULT_RECENT_APPEARANCES", "_DEFAULT_PRIOR_APPEARANCES"]
 
 
 class TemporalFrame(StrEnum):
