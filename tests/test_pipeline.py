@@ -1900,3 +1900,40 @@ def test_pipeline_threads_report_validation_depths(monkeypatch):
 
     assert captured["anchor"] == REPORT.validation.anchor_depth == 5
     assert captured["fact"] == REPORT.validation.fact_depth == 2
+
+
+def _result_with_flags(n: int):
+    """Minimal PipelineResult carrying n residual capsule-audit flags."""
+    from pitcher_narratives.pipeline import AuditFlag, PipelineResult, SpecialistOutputs
+
+    flags = [
+        AuditFlag(category="velocity", specialist="stuff", claim=f"c{i}", data_shows="d", suggested_fix="")
+        for i in range(n)
+    ]
+    return PipelineResult(
+        narrative="x",
+        specialists=SpecialistOutputs.model_construct(),  # empty smoke value
+        capsule_audit_flags=flags,
+    )
+
+
+def test_is_unverified_tracks_residual_flags():
+    from pitcher_narratives.pipeline import is_unverified
+
+    assert is_unverified(_result_with_flags(0)) is False
+    assert is_unverified(_result_with_flags(3)) is True
+
+
+def test_residual_banner_matches_report_wording():
+    from pitcher_narratives.pipeline import residual_banner
+
+    assert residual_banner(_result_with_flags(0)) is None
+    banner = residual_banner(_result_with_flags(2))
+    assert banner == (
+        "⚠️  REPORT UNVERIFIED — 2 flagged claim(s) survived the "
+        "fact-check loop. Review before use."
+    )
+    # label parameterizes the surface for RECAP/CHANGES/morning reuse.
+    assert residual_banner(_result_with_flags(1), label="RECAP").startswith(
+        "⚠️  RECAP UNVERIFIED — 1 flagged claim(s)"
+    )
