@@ -28,15 +28,15 @@ from pitcher_narratives.context import PitcherContext, assemble_pitcher_context
 from pitcher_narratives.costs import UsageTracker
 from pitcher_narratives.curator import build_selector_briefing, select_slate_async
 from pitcher_narratives.data import load_pitcher_data
-from pitcher_narratives.digest import (
-    assemble_digest,
-    build_story_cue_from_context,
-    is_fallback_summary,
-    write_pick_summaries,
+from pitcher_narratives.digest import assemble_digest
+from pitcher_narratives.personas import PERSONAS, RECAP
+from pitcher_narratives.pipeline import (
+    PipelineResult,
+    make_pipeline_agents,
+    render_recap,
+    residual_banner,
+    run_analysis_spine,
 )
-from pitcher_narratives.models import AnalyzedContext
-from pitcher_narratives.personas import PERSONAS
-from pitcher_narratives.pipeline import make_pipeline_agents, run_analysis_spine
 from pitcher_narratives.scout import (
     ScoredAppearance,
     scout_appearances,
@@ -94,7 +94,7 @@ def run_morning(
     briefing = build_selector_briefing(candidates)
 
     async def _llm_stages():
-        spine_agents = make_pipeline_agents(provider, "medium", persona)
+        agents = make_pipeline_agents(provider, "medium", persona, RECAP)
         spine_sem = asyncio.Semaphore(min(max_concurrency, 2))
 
         slate = await select_slate_async(
@@ -105,17 +105,20 @@ def run_morning(
         by_cat = Counter(p.category for p in picks)
         log.info("Slate: %d picks across categories %s.", len(picks), dict(by_cat))
 
-        async def _build_pick(p) -> tuple[int, str, AnalyzedContext] | None:
+        async def _build_pick(p) -> tuple[int, PipelineResult] | None:
             pitcher_name = appearances[p.pitcher_id].pitcher_name
             async with spine_sem:
                 try:
                     ctx = _load_pitcher_context(p.pitcher_id)
                     analyzed = await run_analysis_spine(
-                        ctx, agents=spine_agents, _model_override=_writer_override,
+                        ctx, agents=agents, _model_override=_writer_override,
                         tracker=tracker,
                     )
-                    cue = build_story_cue_from_context(appearances[p.pitcher_id], p, ctx)
-                    return p.pitcher_id, cue, analyzed
+                    recap_result = await render_recap(
+                        ctx, analyzed, agents=agents, pick=p,
+                        _model_override=_writer_override, tracker=tracker,
+                    )
+                    return p.pitcher_id, recap_result
                 except Exception:
                     log.error(
                         "Spine failed for pitcher_id=%d (%s); skipping pick.",
@@ -126,40 +129,43 @@ def run_morning(
         log.info("Running analysis spine for %d picks...", len(picks))
         build_results = await asyncio.gather(*(_build_pick(p) for p in picks))
 
-        cues: dict[int, str] = {}
-        analyzed_contexts: dict[int, AnalyzedContext] = {}
+        summaries: dict[int, str] = {}
+        n_unverified = 0
         for result in build_results:
             if result is None:
                 continue
-            pid, cue, analyzed = result
-            cues[pid] = cue
-            analyzed_contexts[pid] = analyzed
+            pid, recap_result = result
+            text = recap_result.narrative
+            banner = residual_banner(recap_result, label="RECAP")
+            if banner is None and recap_result.value_parity_warnings:
+                banner = (
+                    "⚠️ RECAP UNVERIFIED — value-parity flags present; "
+                    "review before use."
+                )
+            if banner:
+                text = f"{banner}\n\n{text}"
+                n_unverified += 1
+            summaries[pid] = text
         dropped_names = [
             appearances[p.pitcher_id].pitcher_name
-            for p in picks if p.pitcher_id not in cues
+            for p in picks if p.pitcher_id not in summaries
         ]
-        picks = [p for p in picks if p.pitcher_id in cues]
+        picks = [p for p in picks if p.pitcher_id in summaries]
 
-        log.info("Writing %d summaries...", len(picks))
-        summaries = await write_pick_summaries(
-            picks, cues, appearances,
-            analyzed_contexts=analyzed_contexts,
-            provider=provider, persona=persona,
-            tracker=tracker, max_concurrency=max_concurrency,
-            _model_override=_writer_override,
-        )
-        return slate, picks, summaries, dropped_names
+        if n_unverified:
+            log.warning("%d recap item(s) shipped UNVERIFIED (residual fact-check flags)", n_unverified)
 
-    slate, picks, summaries, dropped_names = asyncio.run(_llm_stages())
+        return slate, picks, summaries, dropped_names, n_unverified
+
+    slate, picks, summaries, dropped_names, n_unverified = asyncio.run(_llm_stages())
 
     # ── Assemble + persist ────────────────────────────────────────
     wall_s = time.monotonic() - started
     cost_block = tracker.render_cost_block(wall_s=wall_s)
-    failed = sum(1 for text in summaries.values() if is_fallback_summary(text))
-    if failed:
+    if n_unverified:
         cost_block += (
-            f"\nnote: {failed} writer call(s) failed and fell back; "
-            f"their token cost is not captured above"
+            f"\nnote: {n_unverified} recap item(s) shipped UNVERIFIED "
+            f"(residual fact-check flags)"
         )
     digest = assemble_digest(
         slate=slate, summaries=summaries, appearances=appearances,

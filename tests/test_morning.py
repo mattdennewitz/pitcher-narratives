@@ -110,12 +110,12 @@ def test_run_morning_writes_all_artifacts(tmp_path, monkeypatch):
         window_days=1, top_n=25, min_pitches=20,
         provider="gemini", persona_id="scout", out_root=tmp_path,
         _selector_override=_selector_model(),
-        _writer_override=TestModel(custom_output_text="A summary."),
+        _writer_override=TestModel(call_tools=[]),
     )
     assert run_dir == tmp_path / "2026-06-10"
     digest = (run_dir / "digest.md").read_text()
     assert digest.startswith("# Morning Digest — 2026-06-10")
-    assert "A summary." in digest
+    assert "success (no tool calls)" in digest  # TestModel-generated recap narrative
     assert "## The Full Board" in digest
     assert "Run cost" in digest
 
@@ -158,7 +158,7 @@ def test_run_morning_single_event_loop(tmp_path, monkeypatch):
             },
         ],
     })
-    writer = _LoopRecorder(custom_output_text="A summary.")
+    writer = _LoopRecorder(call_tools=[], custom_output_text="A summary.")
 
     _patch_data(monkeypatch)
     morning.run_morning(
@@ -170,8 +170,15 @@ def test_run_morning_single_event_loop(tmp_path, monkeypatch):
     assert all(lp is loops[0] for lp in loops)
 
 
-def test_run_morning_notes_failed_writers_in_cost_block(tmp_path, monkeypatch):
-    """A fallen-back writer is disclosed in the cost footer."""
+def test_run_morning_drops_picks_when_recap_render_fails(tmp_path, monkeypatch):
+    """A failing writer/render call drops the pick entirely (surfaced in the
+    dropped-picks footer), rather than shipping FALLBACK_MARKER text.
+
+    Behavior change (P8B Task 3): render_recap is folded into _build_pick,
+    whose existing try/except drops the pick on any exception. There is no
+    fallback-summary path any more for render failures — write_pick_summaries
+    (and its FALLBACK_MARKER) are retired from the morning flow.
+    """
 
     class _ExplodingWriter(TestModel):
         async def request(self, messages, model_settings, model_request_parameters):
@@ -185,7 +192,9 @@ def test_run_morning_notes_failed_writers_in_cost_block(tmp_path, monkeypatch):
         _writer_override=_ExplodingWriter(),
     )
     digest = (run_dir / "digest.md").read_text()
-    assert "2 writer call(s) failed" in digest
+    assert "analysis unavailable for" in digest
+    assert "Pitcher 1" in digest[digest.index("analysis unavailable for"):]
+    assert "Pitcher 2" in digest[digest.index("analysis unavailable for"):]
 
 
 def test_run_morning_quiet_day_returns_none(tmp_path, monkeypatch, capsys):
@@ -226,7 +235,7 @@ def test_full_board_lists_beyond_candidate_cap(tmp_path, monkeypatch):
         window_days=1, top_n=1, min_pitches=20,
         provider="gemini", persona_id="scout", out_root=tmp_path,
         _selector_override=selector,
-        _writer_override=TestModel(custom_output_text="A summary."),
+        _writer_override=TestModel(call_tools=[]),
     )
     digest = (run_dir / "digest.md").read_text()
     board = digest[digest.index("## The Full Board"):]
@@ -236,35 +245,31 @@ def test_full_board_lists_beyond_candidate_cap(tmp_path, monkeypatch):
     assert "Pitcher 4" not in briefing          # selector saw only the cap
 
 
-def test_morning_passes_analyzed_contexts_to_writer(tmp_path, monkeypatch):
-    """Morning populates AnalyzedContext per pick and passes them to write_pick_summaries."""
-    from pitcher_narratives.digest import write_pick_summaries as _real_write
-
+def test_morning_renders_recap_from_real_spine(tmp_path, monkeypatch):
+    """Morning runs the real analysis spine, then renders each pick through
+    render_recap (replaces the retired build_story_cue_from_context +
+    write_pick_summaries path)."""
     captured: dict = {}
+    from pitcher_narratives import pipeline as _pl
+    _real_render_recap = _pl.render_recap
 
-    async def _spy_write(picks, cues, appearances, *, analyzed_contexts=None, **kw):
-        captured["analyzed_contexts"] = analyzed_contexts
-        return await _real_write(
-            picks, cues, appearances,
-            analyzed_contexts=analyzed_contexts, **kw,
-        )
+    async def _spy_render_recap(ctx, analyzed, *, agents, pick=None, **kw):
+        captured.setdefault("analyzed", []).append(analyzed)
+        return await _real_render_recap(ctx, analyzed, agents=agents, pick=pick, **kw)
 
     # patch_spine=False: let run_analysis_spine run for real under TestModel.
     # call_tools=[] suppresses the automatic skill-toolset calls TestModel generates.
     _patch_data(monkeypatch, patch_spine=False)
-    monkeypatch.setattr(morning, "write_pick_summaries", _spy_write)
-    model = TestModel(call_tools=[], custom_output_text="A summary.")
+    monkeypatch.setattr(morning, "render_recap", _spy_render_recap)
+    model = TestModel(call_tools=[])
     morning.run_morning(
         window_days=1, top_n=25, min_pitches=20,
         provider="gemini", persona_id="scout", out_root=tmp_path,
         _selector_override=_selector_model(),
         _writer_override=model,
     )
-    assert "analyzed_contexts" in captured
-    ctx_map = captured["analyzed_contexts"]
-    assert ctx_map is not None
-    assert len(ctx_map) > 0
-    for analyzed in ctx_map.values():
+    assert len(captured.get("analyzed", [])) > 0
+    for analyzed in captured["analyzed"]:
         assert isinstance(analyzed, AnalyzedContext)
         assert analyzed.specialists.stuff != ""
 
@@ -288,7 +293,7 @@ def test_run_morning_duplicate_pitcher_keeps_highest_scored(tmp_path, monkeypatc
         window_days=2, top_n=25, min_pitches=20,
         provider="gemini", persona_id="scout", out_root=tmp_path,
         _selector_override=_selector_model(),
-        _writer_override=TestModel(custom_output_text="A summary."),
+        _writer_override=TestModel(call_tools=[]),
     )
     briefing = (run_dir / "briefing.md").read_text()
     assert "80 pitches" in briefing            # high-scored appearance present
@@ -312,7 +317,7 @@ def test_spine_failure_drops_pick_and_discloses_in_footer(tmp_path, monkeypatch)
         window_days=1, top_n=25, min_pitches=20,
         provider="gemini", persona_id="scout", out_root=tmp_path,
         _selector_override=_selector_model(),
-        _writer_override=TestModel(custom_output_text="A summary."),
+        _writer_override=TestModel(call_tools=[]),
     )
     assert run_dir is not None
     digest = (run_dir / "digest.md").read_text()
@@ -361,7 +366,7 @@ def test_semaphore_bounds_concurrency(tmp_path, monkeypatch):
         provider="gemini", persona_id="scout", out_root=tmp_path,
         max_concurrency=max_concurrency,
         _selector_override=selector,
-        _writer_override=TestModel(custom_output_text="A summary."),
+        _writer_override=TestModel(call_tools=[]),
     )
     assert peak[0] <= max_concurrency, f"peak concurrency {peak[0]} exceeded cap {max_concurrency}"
 
@@ -405,3 +410,55 @@ def test_signals_failed_flag_set_on_extractor_failure(monkeypatch):
     result = asyncio.run(run_analysis_spine(_make_minimal_context(), agents=_FakeAgents()))
     assert result.signals_failed is True
     assert result.key_signals is None
+
+
+def test_morning_marks_unverified_recap_items(tmp_path, monkeypatch):
+    """Under TestModel the capsule auditor emits synthetic residual flags
+    (same mechanism as test_cli_unverified_banner_on_residual_flags in
+    test_cli.py); morning must mark such digest items UNVERIFIED rather than
+    ship a flagged recap unmarked."""
+    _patch_data(monkeypatch)
+    run_dir = morning.run_morning(
+        window_days=1, top_n=2, min_pitches=1,
+        provider="gemini", persona_id="scout", out_root=tmp_path,
+        _selector_override=_selector_model(),
+        _writer_override=TestModel(call_tools=[]),
+    )
+    assert run_dir is not None
+    digest = (run_dir / "digest.md").read_text()
+    assert "UNVERIFIED" in digest
+
+
+def test_render_recap_threads_pick_angle_into_writer_input():
+    """P8B-M1: the editorial overlay (pick.angle) built for a CurationPick
+    must reach the writer's input, so a morning digest item leads with the
+    editor's angle rather than the analyses' own default thread."""
+    from pitcher_narratives import pipeline as _pl
+    from pitcher_narratives.curator import CurationPick
+    from pitcher_narratives.personas import RECAP, get_persona
+
+    agents = _pl.make_pipeline_agents("gemini", "medium", get_persona("scout"), RECAP)
+    ctx = _make_minimal_context()
+    analyzed = _fake_analyzed()
+    pick = CurationPick(
+        pitcher_id=0, category="clean_breakout",
+        angle="A very distinctive angle marker XYZ123",
+        conviction="medium", conviction_reason="Shape agrees.",
+    )
+
+    captured: dict = {}
+    _real_render_capsule = _pl._render_capsule
+
+    async def _spy_render_capsule(*args, overlay=None, **kwargs):
+        captured["overlay"] = overlay
+        return await _real_render_capsule(*args, overlay=overlay, **kwargs)
+
+    import unittest.mock as _mock
+    with _mock.patch.object(_pl, "_render_capsule", _spy_render_capsule):
+        asyncio.run(_pl.render_recap(
+            ctx, analyzed, agents=agents, pick=pick,
+            _model_override=TestModel(call_tools=[]),
+        ))
+
+    assert captured["overlay"] is not None
+    assert "A very distinctive angle marker XYZ123" in captured["overlay"]
