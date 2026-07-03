@@ -724,7 +724,7 @@ def _build_runvalue_input(ctx: PitcherContext) -> UserPrompt:
     return ["\n".join(header_lines), CachePoint(), "\n".join(data_lines)]
 
 
-def _build_trend_input(ctx: PitcherContext) -> UserPrompt:
+def _build_trend_input(ctx: PitcherContext, *, frame_comparison: str | None = None) -> UserPrompt:
     """Build input for the trend specialist -- arsenal deltas, release point, hard-hit.
 
     Returns a UserPrompt list with a CachePoint between the header+baselines
@@ -744,6 +744,8 @@ def _build_trend_input(ctx: PitcherContext) -> UserPrompt:
     # Cross-season context (when available) — trends specialist gets full YoY section
     if ctx.cross_season_summary is not None or ctx.arsenal_trend is not None:
         data_sections.append(render_yoy_section(ctx))
+    if frame_comparison is not None:
+        data_sections.append(frame_comparison)
     return [
         "\n\n".join(s for s in prefix_sections if s),
         CachePoint(),

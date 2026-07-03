@@ -1026,6 +1026,20 @@ class TestTrendSpecialistReceivesYoySection:
         _build_trend_input(ctx)
         p.render_yoy_section.assert_called_once()
 
+    def test_build_trend_input_default_omits_comparison(self):
+        ctx = _make_mock_ctx()
+        prompt = _build_trend_input(ctx)
+        joined = _flatten_prompt(prompt)
+        assert "Recent vs Prior Window" not in joined
+
+    def test_build_trend_input_appends_frame_comparison(self):
+        ctx = _make_mock_ctx()
+        block = "## Recent vs Prior Window (code-computed deltas)\n\n- Four-Seam: velo +2.0 mph"
+        prompt = _build_trend_input(ctx, frame_comparison=block)
+        joined = _flatten_prompt(prompt)
+        assert "Recent vs Prior Window" in joined
+        assert "velo +2.0 mph" in joined
+
 
 @pytest.mark.usefixtures("_patch_baselines", "_patch_render_sections")
 class TestGameShapeSpecialistReceivesYoyData:
