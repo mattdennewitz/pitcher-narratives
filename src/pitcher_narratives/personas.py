@@ -439,6 +439,7 @@ CHANGES_GENERIC = OutputContract(
     input_framing=_SYNTHESIS_FRAMING,
 )
 
+
 @dataclass(frozen=True)
 class ValidationPolicy:
     """Per-mode revision-depth knobs for the shared validation stack.
