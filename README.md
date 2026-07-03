@@ -14,6 +14,11 @@ It works at two scales:
   day's appearances, selects the most compelling stories by category, and
   writes a capsule for each (`pitcher-narratives morning`).
 
+Every single-pitcher run is driven by a **narration mode** — the same data spine
+rendered as a full `report`, a change-focused `changes` write-up, or a short
+`recap` brief. Pick one (or several at once) with `--mode`. See
+[Narration modes](#narration-modes).
+
 ## Requirements
 
 - Python 3.14+ (pinned in `.python-version`, enforced by
@@ -40,14 +45,13 @@ data; minor-league and WBC rows are filtered out so they never skew the norms.
 
 ```bash
 uv sync
-uv run pitcher-narratives report -p 657277 -w 5
+uv run pitcher-narratives report -p 657277 -n 10
 ```
 
-Or the Makefile shortcut, which wraps the same command:
-
-```bash
-make run   # uv run pitcher-narratives report -p 657277 -w 5
-```
+`-n/--recent` is the analysis window measured in **most-recent appearances**
+(default `10`), not calendar days. Add `--mode changes` for a
+what-moved write-up, or `--mode recap` for a short brief — details in
+[Narration modes](#narration-modes).
 
 ## The CLIs
 
@@ -61,12 +65,15 @@ The package installs two entry points via `[project.scripts]`:
 ### `pitcher-narratives report`
 
 Runs the multi-agent specialist pipeline end-to-end for a single pitcher over a
-lookback window.
+window of recent appearances, in one or more [narration modes](#narration-modes).
 
 | Flag | Type | Default | Notes |
 |---|---|---|---|
 | `-p`, `--pitcher` | int | *required* | MLB pitcher ID |
-| `-w`, `--window` | int | `30` | Lookback in days |
+| `-n`, `--recent` | int | `10` | Analysis window in **most-recent appearances** (not days) |
+| `--mode` | str | `report` | Comma-separated modes: `report` \| `changes` \| `recap` |
+| `--prior` | int | `10` | Size of the prior window (appearances) for `changes` mode's recent-vs-prior comparison; ignored by `report`/`recap` |
+| `--metrics-out` | path | *none* | Append per-mode calibration records as JSONL (see [`docs/calibration.md`](./docs/calibration.md)) |
 | `-v`, `--verbose` | flag | off | Prints pitcher name, game dates, pitch counts to stderr before running |
 | `--print-prompts` | flag | off | Renders the pipeline prompts to stderr and exits without calling the LLM |
 | `--provider` | enum | `gemini` | `gemini` \| `claude` |
@@ -75,18 +82,48 @@ lookback window.
 | `--list-personas` | flag | off | Print available personas and exit |
 
 ```bash
-uv run pitcher-narratives report -p 657277 -w 30 --provider claude --thinking high
+# Default full report over the last 10 appearances
+uv run pitcher-narratives report -p 657277 -n 10 --provider claude --thinking high
+
+# What changed in the last 5 starts vs the 10 before them
+uv run pitcher-narratives report -p 657277 -n 5 --prior 10 --mode changes
+
+# All three modes in one run, with calibration records captured
+uv run pitcher-narratives report -p 657277 --mode report,changes,recap --metrics-out run.jsonl
 ```
 
-Stdout is printed in this order: `# Scouting Report` (the writer's capsule,
-streamed live) → `# Executive Summary` → `# Brief` (a 2-3 sentence
-recent-appearance-vs-window summary, in the selected persona's voice) →
-`# Stuff Analysis` → `# Data Audit` →
-`# Anchor Check` → `# Hallucination Check` (emitted only when the post-pipeline
-guard finds unknown metrics or traditional outcome stats). Each run also writes
+Stdout leads with `# Scouting Report` (the writer's capsule, streamed live),
+then the post-stream sections for each requested mode in `--mode` order:
+`# Executive Summary` → `# Brief` (a 2-3 sentence recent-vs-window summary in the
+selected persona's voice) → `# Stuff Analysis` → `# Data Audit` →
+`# Capsule Fact-Check` → `# Value Parity (advisory)` → `# Anchor Check` →
+`# Hallucination Check` (emitted only when the post-pipeline guard finds unknown
+metrics or traditional outcome stats). The hallucination guard now runs on
+**every** mode, not just the default report.
+
+If any mode ships an **unverified** capsule (residual anchor/fact warnings after
+the revision budget is spent), an `UNVERIFIED` banner is printed to stderr for
+that mode and the process exits non-zero — so CI catches a bad report instead of
+treating it as clean. Each run also writes
 `data-{pitcher}-{provider}-pipeline.md` with the rendered prompts;
 `--print-prompts` dumps that content to stderr and exits without calling the
 model — useful when iterating on prompt wording.
+
+### Narration modes
+
+A **narration mode** selects the output shape written on top of the shared data
+spine. Voice (`--persona`) stays orthogonal: the persona picks tone, the mode
+picks structure and the temporal frame.
+
+| Mode | Temporal frame | Shape | Notes |
+|---|---|---|---|
+| `report` (default) | recent vs season | Full scouting capsule | Today's report path; deepest validation budget |
+| `changes` | recent vs **prior** window | Change-focused write-up | Two-frame engine: code-computes recent-`-n`-vs-prior-`--prior` deltas and hands the writer a "Recent vs Prior Window" comparison block |
+| `recap` | recent vs season | Short executive brief | Shallower anchor loop (less prose to drift); the mode `pitcher-narratives morning` uses per pick |
+
+Pass one mode, or several comma-separated (`--mode report,changes`); each mode
+renders its own capsule and section block, and the run exits non-zero if *any*
+of them is unverified. A duplicated mode id is de-duplicated, not double-run.
 
 ### `pitcher-narratives morning`
 
@@ -152,7 +189,8 @@ table and weights.
    | `red_flag` | An anomaly that may be a tracking artifact or a warning sign |
 
 3. **Write** — concurrent writer agents produce one capsule per pick
-   (`digest.py`).
+   (`digest.py`), each run through the `recap` narration mode so the digest
+   shares the same validated brief path as `report --mode recap`.
 4. **Assemble** — a deterministic markdown digest, grouped by category.
 
 Each run writes `<out>/<game-date>/`: `digest.md`, `slate.json`, `briefing.md`,
@@ -190,8 +228,16 @@ are defaulting to RP (run `make pull-statcast`).
   `KeySignals` object.
 - **Phase 2** — the writer (streamed) and the executive-summary agent run in
   parallel from the same synthesis.
-- **Phase 2.5** — the anchor check validates the capsule; unclean drafts are
-  revised up to `MAX_REVISIONS = 3` passes before any remaining warnings ship.
+- **Phase 2.5** — the anchor check and fact-check validate the capsule; unclean
+  drafts are revised, fact revisions carrying ground truth back to the writer,
+  up to a per-mode budget before any remaining warnings ship. Each mode sets its
+  own `anchor_depth`/`fact_depth` (a `ValidationPolicy`): `report` and `changes`
+  use the full budget, `recap` a shallower one. These caps are provisional and
+  calibrated from the `--metrics-out` records — see
+  [`docs/calibration.md`](./docs/calibration.md).
+
+For `changes` mode, a code-computed recent-vs-prior comparison (`frame_delta.py`)
+is threaded into the trends specialist and the writer before Phase 2.
 
 `METHODOLOGY.md` has the deep version: agent tiers, model settings, prompt
 structure, cache breakpoints, and the anchor-check taxonomy.
@@ -245,7 +291,7 @@ uv run ty check src      # type-check
 Makefile shortcuts:
 
 ```bash
-make run            # uv run pitcher-narratives report -p 657277 -w 5
+make run            # uv run pitcher-narratives report -p 657277 -n 10
 make scout          # uv run pitcher-scout -n 25 --min-score 5.0 -v
 make curate         # uv run pitcher-scout -n 25 --min-score 5.0 --curate
 make pull-data      # refresh var/statcast/ and var/aggs/ from R2
