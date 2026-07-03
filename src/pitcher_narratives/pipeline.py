@@ -114,11 +114,13 @@ __all__ = [
     "AnalyzedContext", "CoreContext",
     "AuditFlag", "AuditResult", "ExecutiveSummary", "HallucinationReport",
     "KeySignals", "PipelineAgents", "PipelineResult",
-    "UserPrompt", "audit_and_revise_specialists", "build_fact_revision_message",
+    "UserPrompt", "audit_and_revise_specialists", "build_capsule_audit_input",
+    "build_fact_revision_message",
     "build_summary_input",
     "build_writer_input", "check_explainer_present", "check_hallucinated_metrics",
     "flag_summary", "generate_pipeline_streaming",
-    "make_pipeline_agents", "run_analysis_spine", "run_narration_modes", "run_spine_core", "run_spine_tail",
+    "make_pipeline_agents", "run_analysis_spine", "run_anchor_revision_loop",
+    "run_capsule_audit", "run_narration_modes", "run_spine_core", "run_spine_tail",
     "run_specialists",
     "write_pipeline_data_file",
 ]
@@ -487,7 +489,7 @@ def _build_parity_union(ctx: PitcherContext, specialists: SpecialistOutputs, key
     return "\n\n".join(parts)
 
 
-def _build_capsule_audit_input(ground_truth: str, capsule: str) -> str:
+def build_capsule_audit_input(ground_truth: str, capsule: str) -> str:
     """Auditor input: ground truth + the finished capsule to verify."""
     return (
         f"## GROUND TRUTH DATA\n{ground_truth}\n\n"
@@ -1527,7 +1529,7 @@ async def run_analysis_spine(
     )
 
 
-async def _run_anchor_revision_loop(
+async def run_anchor_revision_loop(
     *,
     anchor_agent: Agent[None, AnchorResult],
     writer_agent: Agent[None, str],
@@ -1664,7 +1666,7 @@ async def _run_summaries(
     return bullets, brief
 
 
-async def _run_capsule_audit(
+async def run_capsule_audit(
     *,
     auditor: Agent[None, AuditResult],
     writer_agent: Agent[None, str],
@@ -1696,7 +1698,7 @@ async def _run_capsule_audit(
     """
     try:
         result = await auditor.run(
-            **agent_kwargs(_build_capsule_audit_input(ground_truth, capsule), _model_override)
+            **agent_kwargs(build_capsule_audit_input(ground_truth, capsule), _model_override)
         )
     except Exception:
         log.warning("Capsule auditor failed, skipping fact-check.", exc_info=True)
@@ -1734,7 +1736,7 @@ async def _run_capsule_audit(
         # ungrounded numbers. The residual is what actually remains.
         try:
             recheck = await auditor.run(
-                **agent_kwargs(_build_capsule_audit_input(ground_truth, capsule), _model_override)
+                **agent_kwargs(build_capsule_audit_input(ground_truth, capsule), _model_override)
             )
         except Exception:
             log.warning("Capsule re-audit failed; surfacing the last flags.", exc_info=True)
@@ -1827,7 +1829,7 @@ async def _run_pipeline(
     )
 
     log.info("Revising report (anchor check loop)...")
-    capsule, anchor_check, revision_count = await _run_anchor_revision_loop(
+    capsule, anchor_check, revision_count = await run_anchor_revision_loop(
         anchor_agent=agents.anchor,
         writer_agent=agents.writer,
         synthesis=synthesis,
@@ -1853,7 +1855,7 @@ async def _run_pipeline(
     # needless fact-revision. Built once and reused by B and A.
     log.info("Fact-checking the capsule against ground truth...")
     fact_check_source = _build_parity_union(ctx, specialists, key_signals)
-    capsule, capsule_audit_flags, capsule_revised = await _run_capsule_audit(
+    capsule, capsule_audit_flags, capsule_revised = await run_capsule_audit(
         auditor=agents.capsule_auditor,
         writer_agent=agents.writer,
         ground_truth=fact_check_source,

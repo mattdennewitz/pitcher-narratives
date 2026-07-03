@@ -509,7 +509,7 @@ class TestGeneratePipelineStreaming:
 
 # ── Anchor revision loop behavioral tests ────────────────────────────
 #
-# These tests exercise the extracted `_run_anchor_revision_loop` helper
+# These tests exercise the extracted `run_anchor_revision_loop` helper
 # with stateful AsyncMock agents that can return different outputs per
 # call. This is the only reliable way to test loop behavior — TestModel
 # returns the same thing every call, so it cannot verify that:
@@ -558,13 +558,13 @@ class TestAnchorRevisionLoop:
         import asyncio
 
         from pitcher_narratives.anchor import AnchorResult
-        from pitcher_narratives.pipeline import _run_anchor_revision_loop
+        from pitcher_narratives.pipeline import run_anchor_revision_loop
 
         anchor = self._fake_anchor(AnchorResult(warnings=[]))
         writer = self._fake_writer()  # should never be called
 
         capsule, final, count = asyncio.run(
-            _run_anchor_revision_loop(
+            run_anchor_revision_loop(
                 anchor_agent=anchor,
                 writer_agent=writer,
                 synthesis="synth",
@@ -590,7 +590,7 @@ class TestAnchorRevisionLoop:
         import asyncio
 
         from pitcher_narratives.anchor import AnchorResult, AnchorWarning
-        from pitcher_narratives.pipeline import _run_anchor_revision_loop
+        from pitcher_narratives.pipeline import run_anchor_revision_loop
 
         dirty = AnchorResult(
             warnings=[
@@ -606,7 +606,7 @@ class TestAnchorRevisionLoop:
         writer = self._fake_writer("REVISED_CAPSULE")
 
         capsule, final, count = asyncio.run(
-            _run_anchor_revision_loop(
+            run_anchor_revision_loop(
                 anchor_agent=anchor,
                 writer_agent=writer,
                 synthesis="synth",
@@ -638,7 +638,7 @@ class TestAnchorRevisionLoop:
         import asyncio
 
         from pitcher_narratives.anchor import AnchorResult, AnchorWarning
-        from pitcher_narratives.pipeline import _run_anchor_revision_loop
+        from pitcher_narratives.pipeline import run_anchor_revision_loop
 
         # Build a persistent dirty result
         persistent_dirty = AnchorResult(
@@ -657,7 +657,7 @@ class TestAnchorRevisionLoop:
         writer = self._fake_writer("REV_1", "REV_2")
 
         capsule, final, count = asyncio.run(
-            _run_anchor_revision_loop(
+            run_anchor_revision_loop(
                 anchor_agent=anchor,
                 writer_agent=writer,
                 synthesis="synth",
@@ -690,7 +690,7 @@ class TestAnchorRevisionLoop:
         from unittest.mock import AsyncMock, MagicMock
 
         from pitcher_narratives.anchor import AnchorResult, AnchorWarning
-        from pitcher_narratives.pipeline import _run_anchor_revision_loop
+        from pitcher_narratives.pipeline import run_anchor_revision_loop
 
         # Record the capsule passed to each anchor call so we can verify
         # the second call received the REVISED capsule.
@@ -721,7 +721,7 @@ class TestAnchorRevisionLoop:
         writer = self._fake_writer("REVISED_CAPSULE_TEXT")
 
         capsule, final, count = asyncio.run(
-            _run_anchor_revision_loop(
+            run_anchor_revision_loop(
                 anchor_agent=anchor,
                 writer_agent=writer,
                 synthesis="synth",
@@ -747,7 +747,7 @@ class TestAnchorRevisionLoop:
 
         from pitcher_narratives.anchor import AnchorResult, AnchorWarning
         from pitcher_narratives.costs import UsageTracker
-        from pitcher_narratives.pipeline import _run_anchor_revision_loop
+        from pitcher_narratives.pipeline import run_anchor_revision_loop
 
         def _wrap(output, tin, tout):
             return MagicMock(
@@ -765,7 +765,7 @@ class TestAnchorRevisionLoop:
         writer.run = AsyncMock(side_effect=[_wrap("REVISED", 20, 8)])
 
         tracker = UsageTracker()
-        asyncio.run(_run_anchor_revision_loop(
+        asyncio.run(run_anchor_revision_loop(
             anchor_agent=anchor, writer_agent=writer,
             synthesis="synth", capsule="ORIG", max_revisions=2,
             tracker=tracker, tracker_model="m",
@@ -1101,6 +1101,27 @@ class TestCheckExplainerPresent:
         """PERSONA-11: Function is in pipeline.__all__."""
         import pitcher_narratives.pipeline as p
         assert "check_explainer_present" in p.__all__
+
+
+def test_validation_loops_are_public():
+    """Phases 8/9 reuse these by name; they must be importable + exported."""
+    from pitcher_narratives import pipeline
+
+    for name in (
+        "run_anchor_revision_loop",
+        "run_capsule_audit",
+        "build_capsule_audit_input",
+    ):
+        assert hasattr(pipeline, name), f"{name} missing from pipeline"
+        assert name in pipeline.__all__, f"{name} not exported in __all__"
+
+    # The old private names must be fully gone (no aliases left behind).
+    for old in (
+        "_run_anchor_revision_loop",
+        "_run_capsule_audit",
+        "_build_capsule_audit_input",
+    ):
+        assert not hasattr(pipeline, old), f"stale private alias {old} remains"
 
 
 # ── Pipeline explainer-check integration (Phase 08: PERSONA-11) ──
@@ -1553,8 +1574,8 @@ class TestRunCapsuleAudit:
             return _R()
 
     def test_clean_audit_no_revision(self):
-        from pitcher_narratives.pipeline import _run_capsule_audit
-        cap, flags, revised = asyncio.run(_run_capsule_audit(
+        from pitcher_narratives.pipeline import run_capsule_audit
+        cap, flags, revised = asyncio.run(run_capsule_audit(
             auditor=self._CleanAuditor(), writer_agent=self._Writer(),
             ground_truth="gt", capsule="original capsule",
         ))
@@ -1563,8 +1584,8 @@ class TestRunCapsuleAudit:
         assert revised is False
 
     def test_flagged_audit_triggers_one_revision(self):
-        from pitcher_narratives.pipeline import _run_capsule_audit
-        cap, flags, revised = asyncio.run(_run_capsule_audit(
+        from pitcher_narratives.pipeline import run_capsule_audit
+        cap, flags, revised = asyncio.run(run_capsule_audit(
             auditor=self._FlaggingAuditor(), writer_agent=self._Writer(),
             ground_truth="gt", capsule="original capsule",
         ))
@@ -1573,11 +1594,11 @@ class TestRunCapsuleAudit:
         assert revised is True
 
     def test_auditor_error_degrades_to_unchanged(self):
-        from pitcher_narratives.pipeline import _run_capsule_audit
+        from pitcher_narratives.pipeline import run_capsule_audit
         class _Boom:
             async def run(self, **kwargs):
                 raise RuntimeError("boom")
-        cap, flags, revised = asyncio.run(_run_capsule_audit(
+        cap, flags, revised = asyncio.run(run_capsule_audit(
             auditor=_Boom(), writer_agent=self._Writer(),
             ground_truth="gt", capsule="original capsule",
         ))
@@ -1588,11 +1609,11 @@ class TestRunCapsuleAudit:
     def test_writer_error_keeps_flags_not_revised(self):
         # Writer-failure branch differs from auditor-failure: flags are
         # PRESERVED (not []), and revised is False (no correction applied).
-        from pitcher_narratives.pipeline import _run_capsule_audit
+        from pitcher_narratives.pipeline import run_capsule_audit
         class _BoomWriter:
             async def run(self, **kwargs):
                 raise RuntimeError("writer boom")
-        cap, flags, revised = asyncio.run(_run_capsule_audit(
+        cap, flags, revised = asyncio.run(run_capsule_audit(
             auditor=self._FlaggingAuditor(), writer_agent=_BoomWriter(),
             ground_truth="gt", capsule="original capsule",
         ))
@@ -1603,13 +1624,13 @@ class TestRunCapsuleAudit:
     def test_blank_revision_keeps_capsule(self):
         # A degenerate (whitespace) fact-revision must NOT overwrite the good
         # capsule — keep the pre-revision text, revised=False.
-        from pitcher_narratives.pipeline import _run_capsule_audit
+        from pitcher_narratives.pipeline import run_capsule_audit
         class _BlankWriter:
             async def run(self, **kwargs):
                 class _R:
                     output = "   \n  "
                 return _R()
-        cap, flags, revised = asyncio.run(_run_capsule_audit(
+        cap, flags, revised = asyncio.run(run_capsule_audit(
             auditor=self._FlaggingAuditor(), writer_agent=_BlankWriter(),
             ground_truth="gt", capsule="original capsule",
         ))
@@ -1620,9 +1641,9 @@ class TestRunCapsuleAudit:
     def test_reaudit_clean_verifies_revision(self):
         # Flag -> revise -> re-audit clean: the revised capsule ships with NO
         # residual flags (the revision is verified).
-        from pitcher_narratives.pipeline import _run_capsule_audit
+        from pitcher_narratives.pipeline import run_capsule_audit
         auditor = self._FlagThenCleanAuditor()
-        cap, flags, revised = asyncio.run(_run_capsule_audit(
+        cap, flags, revised = asyncio.run(run_capsule_audit(
             auditor=auditor, writer_agent=self._Writer(),
             ground_truth="gt", capsule="original capsule",
         ))
@@ -1634,8 +1655,8 @@ class TestRunCapsuleAudit:
     def test_reaudit_surfaces_residual(self):
         # Auditor keeps flagging after the revision: the residual must be
         # surfaced (not shipped unchecked), and the revised capsule is kept.
-        from pitcher_narratives.pipeline import _run_capsule_audit
-        cap, flags, revised = asyncio.run(_run_capsule_audit(
+        from pitcher_narratives.pipeline import run_capsule_audit
+        cap, flags, revised = asyncio.run(run_capsule_audit(
             auditor=self._FlaggingAuditor(), writer_agent=self._Writer(),
             ground_truth="gt", capsule="original capsule",
         ))
@@ -1646,7 +1667,7 @@ class TestRunCapsuleAudit:
     def test_reaudit_error_surfaces_original_flags(self):
         # If the re-audit call raises, degrade by surfacing the original flags
         # (better than silently shipping the revision as clean).
-        from pitcher_narratives.pipeline import _run_capsule_audit
+        from pitcher_narratives.pipeline import run_capsule_audit
         from pitcher_narratives.models import AuditResult, AuditFlag
         class _FlagThenBoom:
             def __init__(self):
@@ -1658,7 +1679,7 @@ class TestRunCapsuleAudit:
                 class _R:
                     output = AuditResult(flags=[AuditFlag(category="FABRICATED_DATA", claim="98 mph", data_shows="95.9", suggested_fix="x")])
                 return _R()
-        cap, flags, revised = asyncio.run(_run_capsule_audit(
+        cap, flags, revised = asyncio.run(run_capsule_audit(
             auditor=_FlagThenBoom(), writer_agent=self._Writer(),
             ground_truth="gt", capsule="original capsule",
         ))
@@ -1669,10 +1690,10 @@ class TestRunCapsuleAudit:
     def test_loop_converges_on_second_pass(self):
         # Flags audits 1 and 2, clean on audit 3 -> two revisions, then verified
         # clean. Requires the loop (a single revise would still be flagged).
-        from pitcher_narratives.pipeline import _run_capsule_audit
+        from pitcher_narratives.pipeline import run_capsule_audit
         auditor = self._FlagUntilCleanAuditor(flag_calls=2)
         writer = self._CountingWriter()
-        cap, flags, revised = asyncio.run(_run_capsule_audit(
+        cap, flags, revised = asyncio.run(run_capsule_audit(
             auditor=auditor, writer_agent=writer,
             ground_truth="gt", capsule="original capsule", max_fact_revisions=2,
         ))
@@ -1684,9 +1705,9 @@ class TestRunCapsuleAudit:
     def test_loop_caps_revisions_and_surfaces_residual(self):
         # Auditor never goes clean: the loop must stop at max_fact_revisions and
         # surface the residual rather than spinning.
-        from pitcher_narratives.pipeline import _run_capsule_audit
+        from pitcher_narratives.pipeline import run_capsule_audit
         writer = self._CountingWriter()
-        cap, flags, revised = asyncio.run(_run_capsule_audit(
+        cap, flags, revised = asyncio.run(run_capsule_audit(
             auditor=self._FlaggingAuditor(), writer_agent=writer,
             ground_truth="gt", capsule="original capsule", max_fact_revisions=2,
         ))
@@ -1695,9 +1716,9 @@ class TestRunCapsuleAudit:
         assert writer.calls == 2    # capped at max_fact_revisions
 
     def test_max_fact_revisions_one(self):
-        from pitcher_narratives.pipeline import _run_capsule_audit
+        from pitcher_narratives.pipeline import run_capsule_audit
         writer = self._CountingWriter()
-        cap, flags, revised = asyncio.run(_run_capsule_audit(
+        cap, flags, revised = asyncio.run(run_capsule_audit(
             auditor=self._FlaggingAuditor(), writer_agent=writer,
             ground_truth="gt", capsule="original capsule", max_fact_revisions=1,
         ))
@@ -1713,7 +1734,7 @@ def test_capsule_audit_records_usage():
 
     from pitcher_narratives.costs import UsageTracker
     from pitcher_narratives.models import AuditFlag, AuditResult
-    from pitcher_narratives.pipeline import _run_capsule_audit
+    from pitcher_narratives.pipeline import run_capsule_audit
 
     def _wrap(output, tin, tout):
         return MagicMock(
@@ -1732,7 +1753,7 @@ def test_capsule_audit_records_usage():
     writer.run = AsyncMock(side_effect=[_wrap("FIXED CAPSULE", 20, 6)])
 
     tracker = UsageTracker()
-    asyncio.run(_run_capsule_audit(
+    asyncio.run(run_capsule_audit(
         auditor=auditor, writer_agent=writer,
         ground_truth="gt", capsule="CAP", max_fact_revisions=2,
         tracker=tracker, tracker_model="m",
@@ -1753,7 +1774,7 @@ def test_capsule_audit_usage_error_propagates_not_swallowed_as_auditor_failure()
 
     from pitcher_narratives.costs import UsageTracker
     from pitcher_narratives.models import AuditResult
-    from pitcher_narratives.pipeline import _run_capsule_audit
+    from pitcher_narratives.pipeline import run_capsule_audit
 
     clean = AuditResult(flags=[])
     auditor = MagicMock()
@@ -1765,7 +1786,7 @@ def test_capsule_audit_usage_error_propagates_not_swallowed_as_auditor_failure()
 
     tracker = UsageTracker()
     with pytest.raises(RuntimeError, match="usage boom"):
-        asyncio.run(_run_capsule_audit(
+        asyncio.run(run_capsule_audit(
             auditor=auditor, writer_agent=writer,
             ground_truth="gt", capsule="CAP",
             tracker=tracker, tracker_model="m",
@@ -1822,8 +1843,8 @@ class TestCapsuleAuditBuilders:
         assert "P vs S Location Impact" in gt  # location specialist's input
 
     def test_capsule_audit_input_has_both_sections(self):
-        from pitcher_narratives.pipeline import _build_capsule_audit_input
-        out = _build_capsule_audit_input("GROUND_TRUTH", "CAPSULE_TEXT")
+        from pitcher_narratives.pipeline import build_capsule_audit_input
+        out = build_capsule_audit_input("GROUND_TRUTH", "CAPSULE_TEXT")
         assert "GROUND_TRUTH" in out
         assert "CAPSULE_TEXT" in out
         # Ground truth comes first, the capsule to fact-check second.
