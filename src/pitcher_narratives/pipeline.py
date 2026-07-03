@@ -127,7 +127,7 @@ __all__ = [
     "build_fact_revision_message",
     "build_summary_input",
     "build_writer_input", "build_recap_overlay", "check_explainer_present", "check_hallucinated_metrics",
-    "flag_summary", "generate_pipeline_streaming", "is_unverified",
+    "flag_record", "flag_summary", "generate_pipeline_streaming", "is_unverified",
     "make_pipeline_agents", "render_recap", "residual_banner", "run_analysis_spine",
     "run_anchor_revision_loop",
     "run_capsule_audit", "run_narration_modes", "run_spine_core", "run_spine_tail",
@@ -1217,6 +1217,30 @@ def flag_summary(result: PipelineResult) -> dict[str, int | bool]:
         "n_anchor_warnings": len(result.anchor_warnings),
         "n_value_parity_warnings": len(result.value_parity_warnings),
         "n_audit_flags": len(result.audit_flags),
+    }
+
+
+def flag_record(
+    mode: NarrationMode,
+    pitcher_id: int,
+    result: PipelineResult,
+    *,
+    span: int,
+) -> dict[str, object]:
+    """A persisted calibration record: flag_summary + calibration context.
+
+    Stamps the mode id, pitcher, analysis span (recent-appearance count), and
+    the mode's configured revision-depth caps onto ``flag_summary(result)`` so
+    the offline aggregator (``pitcher_narratives.calibration``) can compute
+    per-mode revision rates and anchor/fact hit-cap rates from real runs.
+    """
+    return {
+        "mode": mode.id,
+        "pitcher_id": pitcher_id,
+        "span": span,
+        "anchor_depth_cap": mode.validation.anchor_depth,
+        "fact_depth_cap": mode.validation.fact_depth,
+        **flag_summary(result),
     }
 
 

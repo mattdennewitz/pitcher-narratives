@@ -1937,6 +1937,36 @@ def test_flag_summary_counts_fields():
     }
 
 
+def test_flag_record_stamps_mode_context_onto_summary():
+    """flag_record = flag_summary(result) + mode id, pitcher, span, and caps."""
+    from pitcher_narratives.models import SpecialistOutputs
+    from pitcher_narratives.personas import RECAP
+    from pitcher_narratives.pipeline import PipelineResult, flag_record
+
+    result = PipelineResult(
+        narrative="n",
+        specialists=SpecialistOutputs(
+            stuff="s", location="l", runvalue="r", trends="t", game_shape="g"),
+        revision_count=1,
+        capsule_revised=False,
+        value_parity_warnings=["[capsule] 1.23"],
+    )
+    record = flag_record(RECAP, pitcher_id=592155, result=result, span=10)
+    assert record == {
+        "mode": "recap",
+        "pitcher_id": 592155,
+        "span": 10,
+        "anchor_depth_cap": 1,
+        "fact_depth_cap": 2,
+        "revision_count": 1,
+        "capsule_revised": False,
+        "n_capsule_audit_flags": 0,
+        "n_anchor_warnings": 0,
+        "n_value_parity_warnings": 1,
+        "n_audit_flags": 0,
+    }
+
+
 class TestExplainerDropped:
     def test_empty_capsule_not_dropped(self):
         # Must not raise (check_explainer_present raises on empty); empty means
