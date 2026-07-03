@@ -42,7 +42,7 @@ import asyncio
 import logging
 import re
 from dataclasses import dataclass
-from typing import Any, NamedTuple
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 from pydantic import BaseModel
 from pydantic_ai import Agent, CachePoint
@@ -79,12 +79,16 @@ from pitcher_narratives.personas import (
     BRIEF,
     DEFAULT_MODE,
     DEFAULT_PERSONA,
+    RECAP,
     NarrationMode,
     Persona,
     build_system_prompt,
     build_writer_system_prompt,
     get_persona,
 )
+
+if TYPE_CHECKING:
+    from pitcher_narratives.curator import CurationPick
 from pitcher_narratives.prompt_builder import (
     render_appearances_section,
     render_arsenal_section,
@@ -117,9 +121,10 @@ __all__ = [
     "UserPrompt", "audit_and_revise_specialists", "build_capsule_audit_input",
     "build_fact_revision_message",
     "build_summary_input",
-    "build_writer_input", "check_explainer_present", "check_hallucinated_metrics",
+    "build_writer_input", "build_recap_overlay", "check_explainer_present", "check_hallucinated_metrics",
     "flag_summary", "generate_pipeline_streaming", "is_unverified",
-    "make_pipeline_agents", "residual_banner", "run_analysis_spine", "run_anchor_revision_loop",
+    "make_pipeline_agents", "render_recap", "residual_banner", "run_analysis_spine",
+    "run_anchor_revision_loop",
     "run_capsule_audit", "run_narration_modes", "run_spine_core", "run_spine_tail",
     "run_specialists",
     "write_pipeline_data_file",
@@ -1920,6 +1925,60 @@ async def _render_capsule(
         revision_count=revision_count,
         capsule_audit_flags=capsule_audit_flags,
         capsule_revised=capsule_revised,
+    )
+
+
+def build_recap_overlay(*, angle: str, category: str) -> str:
+    """Editorial direction prepended to the recap writer input (morning path).
+
+    The recap leads with the editor's angle, grounded in the analyses.
+    """
+    return (
+        "EDITORIAL DIRECTION — lead the recap with this angle, grounded in the "
+        "analyses below (never contradict them):\n"
+        f"  Angle: {angle}\n"
+        f"  Category: {category}"
+    )
+
+
+async def render_recap(
+    ctx: PitcherContext,
+    analyzed: AnalyzedContext,
+    *,
+    agents: PipelineAgents,
+    pick: "CurationPick | None" = None,
+    _model_override: Any = None,
+    tracker: UsageTracker | None = None,
+) -> PipelineResult:
+    """Render a Mode RECAP executive brief from a pre-computed AnalyzedContext.
+
+    Reuses the shared writer+validation core (recap depths, explainer off,
+    non-streaming). When ``pick`` is provided (morning), its angle/category
+    lead the brief; standalone (pick=None) the brief leads with the analyses'
+    own thread. Returns a PipelineResult so is_unverified/residual_banner apply.
+    """
+    overlay = (
+        build_recap_overlay(angle=pick.angle, category=pick.category)
+        if pick is not None else None
+    )
+    rc = await _render_capsule(
+        ctx, analyzed, agents=agents,
+        anchor_depth=RECAP.validation.anchor_depth,
+        fact_depth=RECAP.validation.fact_depth,
+        stream=False, check_explainer=False, overlay=overlay,
+        persona_label="recap", _model_override=_model_override, tracker=tracker,
+    )
+    value_parity = check_value_parity(rc.capsule, rc.fact_check_source)
+    return PipelineResult(
+        narrative=rc.capsule,
+        specialists=analyzed.specialists,
+        key_signals=analyzed.key_signals,
+        audit_flags=analyzed.audit_flags,
+        anchor_warnings=rc.anchor_check.warnings,
+        revision_count=rc.revision_count,
+        capsule_audit_flags=rc.capsule_audit_flags,
+        capsule_revised=rc.capsule_revised,
+        value_parity_warnings=[f"[recap] {w}" for w in value_parity.unmatched],
     )
 
 

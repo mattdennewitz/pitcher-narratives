@@ -1962,3 +1962,39 @@ def test_render_capsule_non_streaming_returns_capsule(ctx, capsys):
     assert rc.writer_input and rc.fact_check_source
     # stream=False must NOT print the capsule to stdout.
     assert rc.capsule not in capsys.readouterr().out
+
+
+# ── render_recap + build_recap_overlay (Phase 8B) ────────────────────
+
+
+def test_build_recap_overlay_leads_with_angle():
+    from pitcher_narratives.pipeline import build_recap_overlay
+
+    overlay = build_recap_overlay(angle="Sweeper usage doubled", category="command_breakout")
+    assert "Sweeper usage doubled" in overlay
+    assert "command_breakout" in overlay
+
+
+def test_render_recap_produces_validated_pipeline_result(ctx):
+    """render_recap renders a recap from a pre-computed AnalyzedContext and runs
+    the validation stack (recap depths), returning a PipelineResult."""
+    from pitcher_narratives import pipeline
+    from pitcher_narratives.personas import RECAP, get_persona
+
+    agents = pipeline.make_pipeline_agents("gemini", "medium", get_persona("scout"), RECAP)
+    tm_spine = TestModel(call_tools=[], custom_output_text="Specialist analysis.")
+    tm = TestModel(call_tools=[])
+
+    async def _go():
+        analyzed = await pipeline.run_analysis_spine(ctx, agents=agents, _model_override=tm_spine)
+        return await pipeline.render_recap(ctx, analyzed, agents=agents, pick=None, _model_override=tm)
+
+    result = asyncio.run(_go())
+    from pitcher_narratives.pipeline import PipelineResult
+    assert isinstance(result, PipelineResult)
+    assert result.narrative                              # recap text present
+    assert result.executive_summary == []                # recap has no exec summary
+    assert result.brief == ""                             # recap has no # Brief
+    # is_unverified applies to a recap result just like a report result.
+    from pitcher_narratives.pipeline import is_unverified
+    assert isinstance(is_unverified(result), bool)
