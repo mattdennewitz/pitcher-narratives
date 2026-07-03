@@ -39,6 +39,8 @@ __all__ = [
     "NARRATION_MODES",
     "NEWSLETTER",
     "PERSONAS",
+    "RECAP",
+    "RECAP_BRIEF",
     "REPORT",
     "SCOUT",
     "SCOUT_REPORT",
@@ -324,11 +326,35 @@ HARD LIMIT: 3 sentences. Roughly 40-90 words. If you reach three \
 sentences, stop.\
 """
 
+_RECAP_STRUCTURE = """\
+Write a tight executive brief — 2 to 4 sentences, one continuous thread, no \
+headings or bullets.
+
+- Lead with the single most important recent development for this pitcher \
+  (the biggest change, adaptation, or execution trend in the analyses).
+- Support it with at most one or two grounding metrics drawn straight from \
+  the analyses. Do not invent numbers or reach for a second storyline.
+- Close on what it means going forward. Keep it scannable and quotable.
+
+This is a recap, not a full scouting report: depth is traded for a single \
+clear takeaway. Target 40-90 words; never exceed 4 sentences."""
+
 BRIEF = OutputContract(
     id="brief",
     length_target=(40, 90),
     structure=_BRIEF_STRUCTURE,
     input_framing=_BRIEF_FRAMING_FROM_REPORT,
+)
+
+# RECAP: an executive-brief writer contract. Same grounded synthesis framing
+# as the scouting report (writes FROM the analyses), but a brief-shaped
+# structure. Voice still comes from the persona overlay, so one contract
+# serves all personas.
+RECAP_BRIEF = OutputContract(
+    id="recap",
+    length_target=(40, 90),
+    structure=_RECAP_STRUCTURE,
+    input_framing=_SYNTHESIS_FRAMING,
 )
 
 SCOUT_REPORT = OutputContract(
@@ -414,7 +440,20 @@ REPORT = NarrationMode(
     ),
 )
 
-_NARRATION_MODES_INTERNAL: dict[str, NarrationMode] = {"report": REPORT}
+# RECAP reproduces the executive-brief path as a first-class mode. It caps the
+# anchor loop at 1 (short brief, less to drift) and keeps the fact loop at 2
+# (design §7). Standalone via `report --mode recap`; morning adopts it in 8B.
+RECAP = NarrationMode(
+    id="recap",
+    contracts={
+        "scout": RECAP_BRIEF,
+        "analyst": RECAP_BRIEF,
+        "generic": RECAP_BRIEF,
+    },
+    validation=ValidationPolicy(anchor_depth=1, fact_depth=2),
+)
+
+_NARRATION_MODES_INTERNAL: dict[str, NarrationMode] = {"report": REPORT, "recap": RECAP}
 
 # Import-time invariant: registry key must match mode.id.
 for _mid, _mode in _NARRATION_MODES_INTERNAL.items():

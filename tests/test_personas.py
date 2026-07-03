@@ -869,3 +869,54 @@ def test_validation_policy_is_frozen():
     policy = ValidationPolicy(anchor_depth=1, fact_depth=2)
     with pytest.raises(FrozenInstanceError):
         policy.anchor_depth = 3  # type: ignore[misc]
+
+
+def test_recap_mode_registered_and_resolvable():
+    from pitcher_narratives.personas import (
+        NARRATION_MODES,
+        RECAP,
+        get_narration_mode,
+    )
+
+    assert set(NARRATION_MODES) == {"report", "recap"}
+    assert get_narration_mode("recap") is RECAP
+    assert RECAP.id == "recap"
+
+
+def test_recap_validation_depths():
+    """RECAP caps anchor at 1, keeps fact at 2 (design §7)."""
+    from pitcher_narratives.personas import RECAP
+
+    assert (RECAP.validation.anchor_depth, RECAP.validation.fact_depth) == (1, 2)
+
+
+def test_recap_contract_shape_and_all_personas_mapped():
+    from pitcher_narratives.personas import RECAP, RECAP_BRIEF
+    from pitcher_narratives.personas import _SYNTHESIS_FRAMING
+
+    assert RECAP_BRIEF.id == "recap"
+    assert RECAP_BRIEF.length_target == (40, 90)
+    # RECAP writes FROM the analyses (synthesis framing), not by distilling a
+    # finished report — that is what lets it render off the shared spine.
+    assert RECAP_BRIEF.input_framing is _SYNTHESIS_FRAMING
+    # Every persona is mapped, so build_writer_system_prompt never falls back.
+    assert set(RECAP.contracts) == {"scout", "analyst", "generic"}
+    assert all(c is RECAP_BRIEF for c in RECAP.contracts.values())
+
+
+def test_recap_writer_prompt_uses_brief_structure_not_report_structure():
+    """The composed RECAP writer prompt must carry the brief structure and the
+    synthesis framing — proving the mode selects the recap contract, not the
+    report capsule structure."""
+    from pitcher_narratives.personas import (
+        PERSONAS,
+        RECAP,
+        REPORT,
+        build_writer_system_prompt,
+    )
+
+    recap_prompt = build_writer_system_prompt(PERSONAS["scout"], RECAP)
+    report_prompt = build_writer_system_prompt(PERSONAS["scout"], REPORT)
+    # A distinctive phrase from _RECAP_STRUCTURE appears only in recap.
+    assert "executive brief" in recap_prompt.lower()
+    assert recap_prompt != report_prompt
