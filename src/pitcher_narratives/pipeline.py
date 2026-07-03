@@ -1881,6 +1881,7 @@ async def _render_capsule(
         max_revisions=anchor_depth,
         _model_override=_model_override,
         tracker=tracker,
+        tracker_model=agents.mini_model_name,
     )
 
     # Re-check explainer after revision loop. The anchor revision can rewrite
@@ -1908,6 +1909,7 @@ async def _render_capsule(
         max_fact_revisions=fact_depth,
         _model_override=_model_override,
         tracker=tracker,
+        tracker_model=agents.mini_model_name,
     )
     # Re-check explainer after B's fact-revision, mirroring the anchor guard:
     # a fact-correction can rewrite the capsule and drop Pitching+ context.

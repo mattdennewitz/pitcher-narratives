@@ -508,6 +508,18 @@ def test_cross_path_recap_and_report_share_grounding() -> None:
             "in shared grounding"
         )
 
+    # Per-pitch plus grades (S+/L+) are embedded verbatim (render_fastball_section)
+    # and are core fact-check anchors for the report's value; assert they survive
+    # in the shared grounding so a fabricated plus-grade can still be caught by the
+    # capsule auditor on either path.
+    if ctx.fastball is not None:
+        assert f"Stuff+ (S+): {ctx.fastball.season_s_plus:.0f} season" in grounding, (
+            f"Expected season S+={ctx.fastball.season_s_plus:.0f} in shared grounding"
+        )
+        assert f"Location+ (L+): {ctx.fastball.season_l_plus:.0f} season" in grounding, (
+            f"Expected season L+={ctx.fastball.season_l_plus:.0f} in shared grounding"
+        )
+
     # Calling _build_parity_union twice on the same ctx (as morning's
     # render_recap and report's _run_pipeline each do inside _render_capsule)
     # produces byte-identical ground truth — the structural cross-path

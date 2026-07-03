@@ -234,6 +234,23 @@ def test_cli_unverified_banner_on_residual_flags():
     assert "REPORT UNVERIFIED" in result.stderr
 
 
+def test_cli_duplicate_mode_emits_sections_once():
+    """A repeated mode id is deduped: `--mode report,report` runs the LLM once
+    (run_narration_modes collapses by mode.id) and the emit loop must not
+    double-print sections or the UNVERIFIED banner for the single result."""
+    result = subprocess.run(
+        [sys.executable, "-m", "pitcher_narratives.cli",
+         "report", "-p", "592155", "--mode", "report,report"],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        env=_test_env(PITCHER_NARRATIVES_TEST_MODEL="1"),
+    )
+    assert result.returncode == 0, f"stderr: {result.stderr}"
+    assert result.stdout.count("# Executive Summary") == 1
+    assert result.stderr.count("REPORT UNVERIFIED") == 1
+
+
 def test_cli_verbose_shows_pitcher_info():
     """Integration: -v flag shows pitcher name and game dates on stderr."""
     result = subprocess.run(

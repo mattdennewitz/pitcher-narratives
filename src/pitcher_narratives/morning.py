@@ -140,7 +140,7 @@ def run_morning(
             # Deliberately louder than is_unverified(): value-parity warnings also mark an item UNVERIFIED so no ungrounded number ships silently.
             if banner is None and recap_result.value_parity_warnings:
                 banner = (
-                    "⚠️ RECAP UNVERIFIED — value-parity flags present; "
+                    "⚠️  RECAP UNVERIFIED — value-parity flags present; "
                     "review before use."
                 )
             if banner:

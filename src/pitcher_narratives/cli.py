@@ -432,11 +432,12 @@ def _run_report_command(args: argparse.Namespace) -> None:
     # and the process exits non-zero once at the end if any mode was
     # unverified.
     any_unverified = False
-    for mode in selected_modes:
-        pipe_result = results[mode.id]
+    # Iterate the deduped results (run_narration_modes collapses repeated mode
+    # ids) rather than selected_modes, so a duplicate --mode does not double-emit.
+    for mode_id, pipe_result in results.items():
         if _emit_mode_result(pipe_result, persona=args.persona):
             any_unverified = True
-            banner = residual_banner(pipe_result, label=mode.id.upper())
+            banner = residual_banner(pipe_result, label=mode_id.upper())
             print(f"\n{banner}", file=sys.stderr)
 
     if any_unverified and not os.environ.get("PITCHER_NARRATIVES_TEST_MODEL"):

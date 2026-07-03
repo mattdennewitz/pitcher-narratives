@@ -1998,3 +1998,36 @@ def test_render_recap_produces_validated_pipeline_result(ctx):
     # is_unverified applies to a recap result just like a report result.
     from pitcher_narratives.pipeline import is_unverified
     assert isinstance(is_unverified(result), bool)
+
+
+def test_render_recap_records_validation_calls_with_model_name(ctx, monkeypatch):
+    """render_recap must pass a non-empty tracker_model to the validation loops,
+    so morning's recap anchor/fact-check calls are priced. A blank model name
+    costs to None and silently undercounts the digest's true spend."""
+    from pitcher_narratives import pipeline
+    from pitcher_narratives.costs import UsageTracker
+    from pitcher_narratives.personas import RECAP, get_persona
+
+    agents = pipeline.make_pipeline_agents("gemini", "medium", get_persona("scout"), RECAP)
+    tm_spine = TestModel(call_tools=[], custom_output_text="Specialist analysis.")
+    tm = TestModel(call_tools=[])
+    tracker = UsageTracker()
+
+    captured: dict[str, str] = {}
+    real_audit = pipeline.run_capsule_audit
+
+    async def _spy_audit(**kw):
+        captured["tracker_model"] = kw.get("tracker_model")
+        return await real_audit(**kw)
+
+    monkeypatch.setattr(pipeline, "run_capsule_audit", _spy_audit)
+
+    async def _go():
+        analyzed = await pipeline.run_analysis_spine(ctx, agents=agents, _model_override=tm_spine)
+        await pipeline.render_recap(
+            ctx, analyzed, agents=agents, pick=None, _model_override=tm, tracker=tracker
+        )
+
+    asyncio.run(_go())
+    assert captured["tracker_model"], "render_recap passed an empty tracker_model"
+    assert captured["tracker_model"] == agents.mini_model_name
