@@ -26,3 +26,5 @@ class TemporalFrame(StrEnum):
 # 592155's count sets the default since it is the fixture pitcher and the
 # lower of the two measured counts.
 _DEFAULT_RECENT_APPEARANCES = 10
+
+_DEFAULT_PRIOR_APPEARANCES = 10

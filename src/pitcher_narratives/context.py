@@ -6,9 +6,11 @@ to_prompt() method that renders prompt-ready markdown under 2,000 tokens.
 
 from __future__ import annotations
 
+import dataclasses
+
 from pydantic import BaseModel, ConfigDict
 
-from pitcher_narratives.data import PitcherData
+from pitcher_narratives.data import PitcherData, filter_to_prior_appearances
 from pitcher_narratives.engine import (
     ArsenalTrends,
     ComponentAttribution,
@@ -53,6 +55,7 @@ __all__ = [
     "PitcherContext",
     "assemble_multi_frame_context",
     "assemble_pitcher_context",
+    "assemble_prior_context",
 ]
 
 _MAX_PITCH_TYPES = 4
@@ -202,3 +205,23 @@ def assemble_multi_frame_context(data: PitcherData) -> MultiFrameContext:
     return MultiFrameContext(
         frames={TemporalFrame.RECENT: assemble_pitcher_context(data)},
     )
+
+
+def assemble_prior_context(
+    data: PitcherData, recent_n: int, prior_m: int
+) -> PitcherContext:
+    """Assemble a PitcherContext for the PRIOR appearance-count frame.
+
+    Re-slices ``window_appearances`` to the ``prior_m`` appearances immediately
+    older than the ``recent_n`` most-recent ones, leaving statcast and all
+    baselines untouched. The engine derives window metrics by filtering
+    ``data.statcast`` to the window's game dates, so replacing
+    ``window_appearances`` is sufficient to retarget every ``window_*`` field.
+    """
+    prior_data = dataclasses.replace(
+        data,
+        window_appearances=filter_to_prior_appearances(
+            data.appearances, recent_n, prior_m
+        ),
+    )
+    return assemble_pitcher_context(prior_data)

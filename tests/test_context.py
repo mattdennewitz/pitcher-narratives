@@ -18,6 +18,31 @@ def ctx():
     return assemble_pitcher_context(data)
 
 
+def test_assemble_prior_context_differs_from_recent():
+    from pitcher_narratives.data import load_pitcher_data
+    from pitcher_narratives.context import assemble_pitcher_context, assemble_prior_context
+
+    data = load_pitcher_data(592155, recent_appearances=5)
+    recent = assemble_pitcher_context(data)
+    prior = assemble_prior_context(data, recent_n=5, prior_m=5)
+    # Both are fully-shaped PitcherContexts; the prior frame draws different
+    # appearances, so at least the window pitch counts differ.
+    assert isinstance(prior.arsenal, list)
+    recent_counts = {p.pitch_name: p.n_pitches_window for p in recent.arsenal}
+    prior_counts = {p.pitch_name: p.n_pitches_window for p in prior.arsenal}
+    assert recent_counts != prior_counts
+
+
+def test_assemble_prior_context_empty_prior_is_shaped():
+    from pitcher_narratives.data import load_pitcher_data
+    from pitcher_narratives.context import assemble_prior_context
+
+    data = load_pitcher_data(592155, recent_appearances=5)
+    # recent_n far beyond available -> prior slice empty -> still a valid ctx
+    prior = assemble_prior_context(data, recent_n=9999, prior_m=5)
+    assert prior.pitcher_name  # shaped, no crash (empty-frame guards from Phase 5)
+
+
 # ── Assembly tests ────────────────────────────────────────────────────
 
 
