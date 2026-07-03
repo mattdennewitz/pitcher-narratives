@@ -1031,3 +1031,17 @@ def test_changes_declares_recent_and_prior_frames():
     assert CHANGES.temporal_frame == frozenset(
         {TemporalFrame.RECENT, TemporalFrame.PRIOR}
     )
+
+
+_MODE_FIXTURE_PREFIX = {"report": "writer_prompt", "recap": "recap_writer_prompt",
+                        "changes": "changes_writer_prompt"}
+
+
+@pytest.mark.parametrize("mode_id", ["report", "recap", "changes"])
+@pytest.mark.parametrize("persona_id", ["scout", "analyst", "generic"])
+def test_writer_prompt_golden_matrix(mode_id, persona_id):
+    """Every (mode, persona) writer prompt matches its committed golden."""
+    prompt = build_writer_system_prompt(get_persona(persona_id), get_narration_mode(mode_id))
+    fixture = _FIXTURES / f"{_MODE_FIXTURE_PREFIX[mode_id]}_{persona_id}.txt"
+    assert fixture.exists(), f"missing golden {fixture}"
+    assert prompt == fixture.read_text()
