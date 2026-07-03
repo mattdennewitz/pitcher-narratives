@@ -1318,6 +1318,12 @@ def make_pipeline_agents(
     # Split temperature by role: specialists need precision, writer needs voice,
     # auditor/anchor need maximum determinism.
     # Thinking caps: checker=low, specialist=medium, writer=uncapped.
+    # Caveat (Claude provider): Anthropic forces temperature=1 whenever
+    # extended thinking is enabled, overriding whatever temperature is
+    # requested here. Any settings block below that wants a specific
+    # temperature to actually take effect on Claude must also pass
+    # disable_thinking=True (see curator._SELECTOR_TEMPERATURE for the
+    # canonical example of this trap).
     stuff_settings = make_model_settings(provider, cap_thinking(thinking, "medium"), 0.3, max_tokens=TOKEN_BUDGET_LARGE)
     mini_specialist_settings = make_model_settings(provider, cap_thinking(thinking, "medium"), 0.3, max_tokens=TOKEN_BUDGET_LARGE, mini=True)
     mini_specialist_compact_settings = make_model_settings(provider, cap_thinking(thinking, "medium"), 0.3, max_tokens=TOKEN_BUDGET_MEDIUM, mini=True)

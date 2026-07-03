@@ -89,6 +89,16 @@ def test_selector_settings_are_provider_aware():
     assert "google_thinking_config" in agent.model_settings
 
 
+def test_selector_claude_disables_thinking_for_determinism():
+    """The selector documents temperature=0.0 determinism; on Claude, thinking
+    must be explicitly disabled or Anthropic silently forces temperature=1."""
+    from pitcher_narratives.curator import make_selector_agent
+
+    agent = make_selector_agent("claude", [_app(1, "SP")])
+    assert agent.model_settings["temperature"] == 0.0
+    assert "thinking" not in agent.model_settings
+
+
 def test_select_slate_returns_validated_slate():
     candidates = [_app(1, "SP"), _app(2, "RP")]
     model = TestModel(custom_output_args={"picks": [_pick(1), _pick(2)]})

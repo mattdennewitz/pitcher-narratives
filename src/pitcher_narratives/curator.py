@@ -32,7 +32,12 @@ _MAX_PICKS_PER_CATEGORY = 5
 _SELECTOR_TEMPERATURE = 0.0
 """Greedy decoding: the slate (and thus its size) is reproducible run-to-run
 on identical candidate data. The briefing is already deterministic (candidates
-sorted by score), so temperature 0 removes the only source of run variance."""
+sorted by score), so temperature 0 removes the only source of run variance.
+
+On Claude, extended thinking forces temperature=1 regardless of the value
+passed here (Anthropic's API constraint) — so make_selector_agent passes
+disable_thinking=True to keep this determinism guarantee real rather than
+silently defeated."""
 _SELECTOR_MAX_TOKENS = 8192
 
 
@@ -152,7 +157,11 @@ def make_selector_agent(
         output_type=CurationSlate,
         system_prompt=_SELECTOR_PROMPT,
         model_settings=make_model_settings(
-            provider, "medium", _SELECTOR_TEMPERATURE, max_tokens=_SELECTOR_MAX_TOKENS,
+            provider,
+            "medium",
+            _SELECTOR_TEMPERATURE,
+            max_tokens=_SELECTOR_MAX_TOKENS,
+            disable_thinking=True,
         ),
         retries=3,
         defer_model_check=True,

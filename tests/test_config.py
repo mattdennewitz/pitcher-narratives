@@ -33,6 +33,16 @@ def test_claude_mini_disables_thinking_no_headroom():
     assert settings["max_tokens"] == TOKEN_BUDGET_LARGE
 
 
+def test_claude_thinking_clamped_to_supported_efforts():
+    """Sonnet 4.6 only accepts low/medium/high/max; CLI-level "xhigh" and
+    "minimal" must be clamped before reaching the API."""
+    settings = make_model_settings("claude", "xhigh", 0.7, max_tokens=4096)
+    assert settings["thinking"] == "high"
+
+    settings = make_model_settings("claude", "minimal", 0.7, max_tokens=4096)
+    assert settings["thinking"] == "low"
+
+
 def test_gemini_max_tokens_unchanged():
     """Gemini thinking is separate from max_tokens; no headroom applied."""
     settings = make_model_settings("gemini", "high", 0.3, max_tokens=TOKEN_BUDGET_MEDIUM)
