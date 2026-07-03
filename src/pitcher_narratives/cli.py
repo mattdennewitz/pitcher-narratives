@@ -378,8 +378,6 @@ def _run_report_command(args: argparse.Namespace) -> None:
 
     from pitcher_narratives.context import assemble_pitcher_context
     from pitcher_narratives.pipeline import (
-        check_hallucinated_metrics,
-        is_unverified,
         residual_banner,
         run_narration_modes,
         write_pipeline_data_file,
