@@ -1484,6 +1484,71 @@ def test_run_spine_tail_assembles_full_analyzed_context(ctx):
     assert analyzed.specialists.trends != ""
 
 
+def test_run_spine_tail_injects_frame_comparison_with_prior_ctx(ctx, monkeypatch):
+    """run_spine_tail computes a RECENT-vs-PRIOR block from prior_ctx and
+    passes it into run_specialists as trend_frame_comparison, which lands in
+    the trends specialist's prompt."""
+    import asyncio
+    from unittest.mock import AsyncMock
+
+    import pitcher_narratives.pipeline as _pl
+    from pitcher_narratives.context import assemble_prior_context
+    from pitcher_narratives.models import CoreContext, SpecialistOutputs
+    from pitcher_narratives.pipeline import make_pipeline_agents, run_spine_tail
+
+    prior_ctx = assemble_prior_context(load_pitcher_data(592155, 10), 10, 10)
+
+    captured = {}
+
+    async def _fake_run_specialists(*args, **kwargs):
+        captured["trend_frame_comparison"] = kwargs.get("trend_frame_comparison")
+        return SpecialistOutputs(stuff="s", location="l", runvalue="r", trends="TRENDS_OUT", game_shape="g")
+
+    monkeypatch.setattr(_pl, "run_specialists", _fake_run_specialists)
+
+    agents = make_pipeline_agents("gemini", "high")
+    model = TestModel(call_tools=[], custom_output_text="Tail analysis.")
+    core = CoreContext(stuff="CORE_STUFF", location="CORE_LOC",
+                       runvalue="CORE_RV", game_shape="CORE_GS")
+
+    asyncio.run(
+        run_spine_tail(core, ctx, agents=agents, _model_override=model,
+                       prior_ctx=prior_ctx)
+    )
+
+    assert captured["trend_frame_comparison"] is not None
+    assert "Recent vs Prior Window" in captured["trend_frame_comparison"]
+
+
+def test_run_spine_tail_no_frame_comparison_without_prior_ctx(ctx, monkeypatch):
+    """Without prior_ctx, run_spine_tail passes trend_frame_comparison=None
+    (byte-identical to the pre-P9B path)."""
+    import asyncio
+
+    import pitcher_narratives.pipeline as _pl
+    from pitcher_narratives.models import CoreContext, SpecialistOutputs
+    from pitcher_narratives.pipeline import make_pipeline_agents, run_spine_tail
+
+    captured = {}
+
+    async def _fake_run_specialists(*args, **kwargs):
+        captured["trend_frame_comparison"] = kwargs.get("trend_frame_comparison")
+        return SpecialistOutputs(stuff="s", location="l", runvalue="r", trends="TRENDS_OUT", game_shape="g")
+
+    monkeypatch.setattr(_pl, "run_specialists", _fake_run_specialists)
+
+    agents = make_pipeline_agents("gemini", "high")
+    model = TestModel(call_tools=[], custom_output_text="Tail analysis.")
+    core = CoreContext(stuff="CORE_STUFF", location="CORE_LOC",
+                       runvalue="CORE_RV", game_shape="CORE_GS")
+
+    asyncio.run(
+        run_spine_tail(core, ctx, agents=agents, _model_override=model)
+    )
+
+    assert captured["trend_frame_comparison"] is None
+
+
 def test_order_flags_puts_specialists_in_canonical_order():
     from pitcher_narratives.models import AuditFlag
     from pitcher_narratives.pipeline import _order_flags

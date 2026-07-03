@@ -69,6 +69,11 @@ from pitcher_narratives.config import (
 )
 from pitcher_narratives.costs import UsageTracker, model_label
 from pitcher_narratives.context import PitcherContext
+from pitcher_narratives.frame_delta import (
+    build_trend_frame_comparison,
+    render_trend_frame_comparison,
+)
+from pitcher_narratives.temporal import TemporalFrame
 from pitcher_narratives.engine import (
     compute_league_baselines,
     format_s_variant_comparisons,
@@ -1382,6 +1387,7 @@ async def run_specialists(
     names: list[str] | None = None,
     tracker: UsageTracker | None = None,
     tracker_model: str = "",
+    trend_frame_comparison: str | None = None,
 ) -> SpecialistOutputs:
     """Run the specialists concurrently.
 
@@ -1393,7 +1399,7 @@ async def run_specialists(
         "stuff": (stuff_agent, _build_stuff_input(ctx)),
         "location": (location_agent, _build_location_input(ctx)),
         "runvalue": (runvalue_agent, _build_runvalue_input(ctx)),
-        "trends": (trends_agent, _build_trend_input(ctx)),
+        "trends": (trends_agent, _build_trend_input(ctx, frame_comparison=trend_frame_comparison)),
         "game_shape": (game_shape_agent, _build_game_shape_input(ctx)),
     }
     selected = list(all_inputs) if names is None else names
@@ -1476,6 +1482,7 @@ async def run_spine_tail(
     agents: PipelineAgents,
     _model_override: Any = None,
     tracker: UsageTracker | None = None,
+    prior_ctx: PitcherContext | None = None,
 ) -> AnalyzedContext:
     """Run the frame-sensitive tail of the analysis spine.
 
@@ -1486,10 +1493,16 @@ async def run_spine_tail(
     core, so output is identical to the pre-split spine.
     """
     mini = agents.mini_model_name
+    trend_frame_comparison = (
+        render_trend_frame_comparison(build_trend_frame_comparison(ctx, prior_ctx))
+        if prior_ctx is not None
+        else None
+    )
     raw = await run_specialists(
         agents.stuff, agents.location, agents.runvalue,
         agents.trends, agents.game_shape, ctx, _model_override,
         names=_TAIL_SPECIALISTS, tracker=tracker, tracker_model=mini,
+        trend_frame_comparison=trend_frame_comparison,
     )
     merged = SpecialistOutputs(
         stuff=core.stuff, location=core.location, runvalue=core.runvalue,
@@ -1532,6 +1545,7 @@ async def run_analysis_spine(
     agents: PipelineAgents,
     _model_override: Any = None,
     tracker: UsageTracker | None = None,
+    prior_ctx: PitcherContext | None = None,
 ) -> AnalyzedContext:
     """Run the specialist → audit → signal-extraction spine.
 
@@ -1559,6 +1573,7 @@ async def run_analysis_spine(
     )
     return await run_spine_tail(
         core, ctx, agents=agents, _model_override=_model_override, tracker=tracker,
+        prior_ctx=prior_ctx,
     )
 
 
@@ -1994,6 +2009,7 @@ async def _run_pipeline(
     persona: str = "scout",
     mode: NarrationMode = DEFAULT_MODE,
     _model_override: Any = None,
+    prior_ctx: PitcherContext | None = None,
 ) -> PipelineResult:
     """Async core of the multi-agent pipeline.
 
@@ -2008,7 +2024,9 @@ async def _run_pipeline(
 
     # Phases 1 → 1.75: specialist → audit → signal extraction
     log.info("Running analysis spine...")
-    analyzed = await run_analysis_spine(ctx, agents=agents, _model_override=_model_override)
+    analyzed = await run_analysis_spine(
+        ctx, agents=agents, _model_override=_model_override, prior_ctx=prior_ctx,
+    )
     specialists = analyzed.specialists
     audit_flags = analyzed.audit_flags
     key_signals = analyzed.key_signals
@@ -2078,6 +2096,7 @@ def generate_pipeline_streaming(
     persona: str = "scout",
     mode: NarrationMode = DEFAULT_MODE,
     _model_override: Any = None,
+    prior_ctx: PitcherContext | None = None,
 ) -> PipelineResult:
     """Generate a report using the specialist→auditor→writer multi-agent pipeline.
 
@@ -2100,7 +2119,8 @@ def generate_pipeline_streaming(
     """
     return asyncio.run(
         _run_pipeline(ctx, provider=provider, thinking=thinking,
-                      persona=persona, mode=mode, _model_override=_model_override)
+                      persona=persona, mode=mode, _model_override=_model_override,
+                      prior_ctx=prior_ctx)
     )
 
 
@@ -2112,6 +2132,7 @@ def run_narration_modes(
     thinking: ThinkingEffort = "high",
     persona: str = "scout",
     _model_override: Any = None,
+    prior_ctx: PitcherContext | None = None,
 ) -> dict[str, PipelineResult]:
     """Run one or more narration modes over a single pitcher context.
 
@@ -2139,9 +2160,11 @@ def run_narration_modes(
         # not re-run the whole LLM pipeline and stream the report twice.
         if mode.id in results:
             continue
+        mode_prior = prior_ctx if TemporalFrame.PRIOR in mode.temporal_frame else None
         results[mode.id] = generate_pipeline_streaming(
             ctx, provider=provider, thinking=thinking,
             persona=persona, mode=mode, _model_override=_model_override,
+            prior_ctx=mode_prior,
         )
     return results
 
