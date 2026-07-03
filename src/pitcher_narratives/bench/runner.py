@@ -49,7 +49,7 @@ class CapturedRun:
     """The pitcher context document (generic reference)."""
 
     outputs: dict[str, str] = field(default_factory=dict)
-    """tier key ('specialist:stuff', ..., 'capsule') -> text."""
+    """tier key ('specialist:stuff', ..., 'capsule:<mode>') -> text."""
 
     ground_truths: dict[str, str] = field(default_factory=dict)
     """tier key -> the exact input that tier's author received. Judging
@@ -73,7 +73,8 @@ def run_provider(
 
     Runs every requested narration mode via the production dispatcher
     ``run_narration_modes``. The five specialist tiers are mode-agnostic
-    (the analysis spine is shared) and are captured once from the first
+    by construction (the spine re-runs per mode but its specialist inputs
+    do not depend on the mode) and are captured once from the first
     mode's result; the capsule and executive summary are captured per
     mode under namespaced keys (``capsule:<mode.id>``, ``exec_summary:<mode.id>``).
 

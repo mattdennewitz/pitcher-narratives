@@ -27,7 +27,7 @@ class JudgedRecord:
     """Author of the judged output."""
 
     tier: str
-    """'specialist:<name>' or 'capsule'."""
+    """'specialist:<name>' or 'capsule:<mode>'."""
 
     judge: str
     """Provider that produced this verdict."""
