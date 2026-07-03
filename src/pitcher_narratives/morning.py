@@ -32,6 +32,7 @@ from pitcher_narratives.digest import assemble_digest
 from pitcher_narratives.personas import PERSONAS, RECAP
 from pitcher_narratives.pipeline import (
     PipelineResult,
+    flag_record,
     make_pipeline_agents,
     render_recap,
     residual_banner,
@@ -42,6 +43,7 @@ from pitcher_narratives.scout import (
     scout_appearances,
     top_per_role,
 )
+from pitcher_narratives.temporal import _DEFAULT_RECENT_APPEARANCES
 
 __all__ = ["run_morning"]
 
@@ -53,6 +55,26 @@ def _load_pitcher_context(pitcher_id: int) -> PitcherContext:
     log.debug("Loading pitcher context for pitcher_id=%d", pitcher_id)
     data = load_pitcher_data(pitcher_id)
     return assemble_pitcher_context(data)
+
+
+def _build_validation_payload(
+    game_date: str, recap_results: dict[int, "PipelineResult"]
+) -> dict[str, object]:
+    """Per-pick calibration records for validation.json.
+
+    One ``flag_record`` per surviving pick, keyed by stringified pitcher id
+    (JSON object keys must be strings). Morning always runs RECAP on the
+    default recent-appearance span.
+    """
+    return {
+        "game_date": game_date,
+        "picks": {
+            str(pid): flag_record(
+                RECAP, pid, result, span=_DEFAULT_RECENT_APPEARANCES
+            )
+            for pid, result in recap_results.items()
+        },
+    }
 
 
 def run_morning(
@@ -130,6 +152,7 @@ def run_morning(
         build_results = await asyncio.gather(*(_build_pick(p) for p in picks))
 
         summaries: dict[int, str] = {}
+        recap_results: dict[int, PipelineResult] = {}
         n_unverified = 0
         for result in build_results:
             if result is None:
@@ -147,6 +170,7 @@ def run_morning(
                 text = f"{banner}\n\n{text}"
                 n_unverified += 1
             summaries[pid] = text
+            recap_results[pid] = recap_result
         dropped_names = [
             appearances[p.pitcher_id].pitcher_name
             for p in picks if p.pitcher_id not in summaries
@@ -156,9 +180,9 @@ def run_morning(
         if n_unverified:
             log.warning("%d recap item(s) shipped UNVERIFIED (residual fact-check flags)", n_unverified)
 
-        return slate, picks, summaries, dropped_names, n_unverified
+        return slate, picks, summaries, dropped_names, n_unverified, recap_results
 
-    slate, picks, summaries, dropped_names, n_unverified = asyncio.run(_llm_stages())
+    slate, picks, summaries, dropped_names, n_unverified, recap_results = asyncio.run(_llm_stages())
 
     # ── Assemble + persist ────────────────────────────────────────
     wall_s = time.monotonic() - started
@@ -191,7 +215,7 @@ def run_morning(
     ))
     (run_dir / "usage.json").write_text(json.dumps(tracker.to_json(), indent=2))
     (run_dir / "validation.json").write_text(json.dumps(
-        {"picks": {}, "note": "per-item validation lands with Mode RECAP parity"},
+        _build_validation_payload(str(game_date), recap_results),
         indent=2,
     ))
 

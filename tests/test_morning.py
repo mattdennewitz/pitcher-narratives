@@ -462,3 +462,27 @@ def test_render_recap_threads_pick_angle_into_writer_input():
 
     assert captured["overlay"] is not None
     assert "A very distinctive angle marker XYZ123" in captured["overlay"]
+
+
+def test_build_validation_payload_records_flags_per_pick():
+    """The validation.json payload carries one flag_record per surviving pick."""
+    from pitcher_narratives.models import SpecialistOutputs
+    from pitcher_narratives.morning import _build_validation_payload
+    from pitcher_narratives.pipeline import PipelineResult
+
+    result = PipelineResult(
+        narrative="n",
+        specialists=SpecialistOutputs(
+            stuff="s", location="l", runvalue="r", trends="t", game_shape="g"),
+        revision_count=1,
+        capsule_revised=True,
+    )
+    payload = _build_validation_payload("2026-07-03", {592155: result})
+    assert payload["game_date"] == "2026-07-03"
+    rec = payload["picks"]["592155"]
+    assert rec["mode"] == "recap"
+    assert rec["pitcher_id"] == 592155
+    assert rec["revision_count"] == 1
+    assert rec["capsule_revised"] is True
+    assert rec["anchor_depth_cap"] == 1
+    assert rec["fact_depth_cap"] == 2
