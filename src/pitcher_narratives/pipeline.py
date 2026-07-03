@@ -1453,6 +1453,7 @@ def make_pipeline_agents(
     thinking: ThinkingEffort = "high",
     persona: Persona = DEFAULT_PERSONA,
     mode: NarrationMode = DEFAULT_MODE,
+    explain_model: bool = True,
 ) -> PipelineAgents:
     if provider not in PROVIDERS:
         raise ValueError(f"Unknown provider {provider!r}")
@@ -1539,7 +1540,7 @@ def make_pipeline_agents(
         runvalue=_mini_specialist(_RUNVALUE_SPECIALIST_PROMPT),
         trends=_mini_specialist_compact(_TREND_SPECIALIST_PROMPT),
         game_shape=_mini_specialist_compact(_GAME_SHAPE_SPECIALIST_PROMPT),
-        writer=_writer(build_writer_system_prompt(persona, mode)),
+        writer=_writer(build_writer_system_prompt(persona, mode, explain_model=explain_model)),
         auditor=Agent(mini_model, output_type=AuditResult, system_prompt=_DATA_AUDITOR_PROMPT,
                       model_settings=checker_settings, retries=5, defer_model_check=True),
         capsule_auditor=Agent(mini_model, output_type=AuditResult, system_prompt=_CAPSULE_AUDITOR_PROMPT,
@@ -2242,6 +2243,7 @@ async def _run_pipeline(
     thinking: ThinkingEffort = "high",
     persona: str = "scout",
     mode: NarrationMode = DEFAULT_MODE,
+    explain_model: bool = True,
     _model_override: Any = None,
     prior_ctx: PitcherContext | None = None,
 ) -> PipelineResult:
@@ -2254,7 +2256,7 @@ async def _run_pipeline(
     Phase 2.5: Anchor check + revision loop.
     """
     persona_obj = get_persona(persona)
-    agents = make_pipeline_agents(provider, thinking, persona_obj, mode)
+    agents = make_pipeline_agents(provider, thinking, persona_obj, mode, explain_model=explain_model)
 
     # Phases 1 → 1.75: specialist → audit → signal extraction
     log.info("Running analysis spine...")
@@ -2270,7 +2272,7 @@ async def _run_pipeline(
         ctx, analyzed, agents=agents,
         anchor_depth=mode.validation.anchor_depth,
         fact_depth=mode.validation.fact_depth,
-        stream=True, check_explainer=True, overlay=None,
+        stream=True, check_explainer=explain_model, overlay=None,
         persona_label=persona, _model_override=_model_override,
     )
     capsule = rc.capsule
@@ -2335,6 +2337,7 @@ def generate_pipeline_streaming(
     thinking: ThinkingEffort = "high",
     persona: str = "scout",
     mode: NarrationMode = DEFAULT_MODE,
+    explain_model: bool = True,
     _model_override: Any = None,
     prior_ctx: PitcherContext | None = None,
 ) -> PipelineResult:
@@ -2359,8 +2362,8 @@ def generate_pipeline_streaming(
     """
     return asyncio.run(
         _run_pipeline(ctx, provider=provider, thinking=thinking,
-                      persona=persona, mode=mode, _model_override=_model_override,
-                      prior_ctx=prior_ctx)
+                      persona=persona, mode=mode, explain_model=explain_model,
+                      _model_override=_model_override, prior_ctx=prior_ctx)
     )
 
 
@@ -2371,6 +2374,7 @@ def run_narration_modes(
     provider: str = "gemini",
     thinking: ThinkingEffort = "high",
     persona: str = "scout",
+    explain_model: bool = True,
     _model_override: Any = None,
     prior_ctx: PitcherContext | None = None,
 ) -> dict[str, PipelineResult]:
@@ -2406,8 +2410,8 @@ def run_narration_modes(
         mode_prior = prior_ctx if TemporalFrame.PRIOR in mode.temporal_frame else None
         results[mode.id] = generate_pipeline_streaming(
             ctx, provider=provider, thinking=thinking,
-            persona=persona, mode=mode, _model_override=_model_override,
-            prior_ctx=mode_prior,
+            persona=persona, mode=mode, explain_model=explain_model,
+            _model_override=_model_override, prior_ctx=mode_prior,
         )
     return results
 

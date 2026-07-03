@@ -746,7 +746,9 @@ def get_persona(persona_id: str) -> Persona:
         raise ValueError(f"Unknown persona {persona_id!r}; valid: {valid}") from None
 
 
-def build_system_prompt(persona: Persona, contract: OutputContract) -> str:
+def build_system_prompt(
+    persona: Persona, contract: OutputContract, *, explain_model: bool = True
+) -> str:
     """Compose a writer system prompt from voice + output-target layers.
 
     Order: universal analytical rules + contract input framing + persona voice
@@ -759,9 +761,20 @@ def build_system_prompt(persona: Persona, contract: OutputContract) -> str:
     since its framing is the bare _SYNTHESIS_RULES). This keeps a 40-90
     word recap from being told to explain a section it never writes, while
     leaving REPORT/CHANGES prompts byte-identical to before.
+
+    ``explain_model=False`` strips the EXPLAIN THE MODEL mandate from the
+    input framing (for readers who don't need S+/L+/P+ re-taught every
+    capsule); because the per-persona addenda key off the mandate's
+    presence, they drop with it. ``explain_model=True`` is byte-identical
+    to before.
     """
-    wants_explain_model = "EXPLAIN THE MODEL" in contract.input_framing
-    parts = [SHARED_WRITER_BASE, contract.input_framing]
+    framing = contract.input_framing
+    if not explain_model:
+        framing = framing.replace("\n\n" + _EXPLAIN_THE_MODEL, "").replace(
+            _EXPLAIN_THE_MODEL, ""
+        )
+    wants_explain_model = "EXPLAIN THE MODEL" in framing
+    parts = [SHARED_WRITER_BASE, framing]
     if persona.parent is not None:
         parent = get_persona(persona.parent)
         parts.append(parent.overlay)
@@ -774,7 +787,9 @@ def build_system_prompt(persona: Persona, contract: OutputContract) -> str:
     return "\n\n".join(parts)
 
 
-def build_writer_system_prompt(persona: Persona, mode: NarrationMode = DEFAULT_MODE) -> str:
+def build_writer_system_prompt(
+    persona: Persona, mode: NarrationMode = DEFAULT_MODE, *, explain_model: bool = True
+) -> str:
     """Compose the report-writer prompt for a persona within a narration mode.
 
     Thin shim over build_system_prompt that pairs the persona with the mode's
@@ -794,4 +809,4 @@ def build_writer_system_prompt(persona: Persona, mode: NarrationMode = DEFAULT_M
             mode.id,
         )
         contract = SCOUT_REPORT
-    return build_system_prompt(persona, contract)
+    return build_system_prompt(persona, contract, explain_model=explain_model)

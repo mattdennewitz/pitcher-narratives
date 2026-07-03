@@ -106,6 +106,18 @@ def parse_args() -> argparse.Namespace:
         ),
     )
 
+    report.add_argument(
+        "--no-explain-model",
+        action="store_false",
+        dest="explain_model",
+        default=True,
+        help=(
+            "Strip the EXPLAIN THE MODEL mandate from the writer prompt so the "
+            "capsule doesn't re-teach S+/L+/P+ (for readers who already know the "
+            "grading system). On by default."
+        ),
+    )
+
     morning = sub.add_parser("morning", help="Scout, select, and write the morning digest")
     morning.add_argument(
         "-w",
@@ -496,6 +508,7 @@ def _run_report_command(args: argparse.Namespace) -> None:
                 provider=args.provider,
                 thinking=args.thinking,
                 persona=args.persona,
+                explain_model=args.explain_model,
                 _model_override=model_override,
                 prior_ctx=prior_ctx,
             )

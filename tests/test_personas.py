@@ -1141,3 +1141,33 @@ def test_mode_title_defaults_to_id():
 
     m = NarrationMode(id="custom", contracts={"scout": SCOUT_REPORT})
     assert m.title == "Custom"
+
+
+# ── explain_model opt-out ──────────────────────────────────────────────
+
+
+def test_build_system_prompt_explain_model_off_strips_mandate():
+    from pitcher_narratives.personas import SCOUT, SCOUT_REPORT, build_system_prompt
+
+    on = build_system_prompt(SCOUT, SCOUT_REPORT)
+    off = build_system_prompt(SCOUT, SCOUT_REPORT, explain_model=False)
+
+    assert "EXPLAIN THE MODEL" in on
+    assert "EXPLAIN THE MODEL" not in off
+    assert SCOUT.explain_model_addendum.strip() not in off
+
+
+def test_build_system_prompt_explain_model_default_byte_identical():
+    from pitcher_narratives.personas import ANALYST, NEWSLETTER, build_system_prompt
+
+    assert build_system_prompt(ANALYST, NEWSLETTER) == build_system_prompt(
+        ANALYST, NEWSLETTER, explain_model=True
+    )
+
+
+def test_build_system_prompt_explain_model_true_scout_byte_identical():
+    from pitcher_narratives.personas import SCOUT, SCOUT_REPORT, build_system_prompt
+
+    assert build_system_prompt(SCOUT, SCOUT_REPORT) == build_system_prompt(
+        SCOUT, SCOUT_REPORT, explain_model=True
+    )

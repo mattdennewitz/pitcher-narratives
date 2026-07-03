@@ -1042,3 +1042,15 @@ def test_append_metrics_records_writes_jsonl(tmp_path):
     assert recs[0]["revision_count"] == 4
     assert recs[0]["anchor_depth_cap"] == REPORT.validation.anchor_depth  # REPORT: 5
     assert recs[1]["anchor_depth_cap"] == RECAP.validation.anchor_depth  # RECAP: 1
+
+
+def test_report_no_explain_model_flag(monkeypatch):
+    monkeypatch.setattr(sys, "argv", ["main.py", "report", "-p", "592155", "--no-explain-model"])
+    args = parse_args()
+    assert args.explain_model is False
+
+
+def test_report_explain_model_defaults_true(monkeypatch):
+    monkeypatch.setattr(sys, "argv", ["main.py", "report", "-p", "592155"])
+    args = parse_args()
+    assert args.explain_model is True
