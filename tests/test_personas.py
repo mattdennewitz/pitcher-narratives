@@ -1114,3 +1114,30 @@ def test_writer_prompt_golden_matrix(mode_id, persona_id):
     fixture = _FIXTURES / f"{_MODE_FIXTURE_PREFIX[mode_id]}_{persona_id}.txt"
     assert fixture.exists(), f"missing golden {fixture}"
     assert prompt == fixture.read_text()
+
+
+# ── NarrationMode title / distill fields ──
+
+
+def test_mode_titles():
+    from pitcher_narratives.personas import CHANGES, RECAP, REPORT
+
+    assert REPORT.title == "Scouting Report"
+    assert CHANGES.title == "Change Report"
+    assert RECAP.title == "Recap"
+
+
+def test_mode_distill_flags():
+    from pitcher_narratives.personas import CHANGES, RECAP, REPORT
+
+    assert REPORT.distill is True
+    assert CHANGES.distill is True
+    assert RECAP.distill is False
+
+
+def test_mode_title_defaults_to_id():
+    """A mode constructed without a title falls back to id.title()."""
+    from pitcher_narratives.personas import NarrationMode, SCOUT_REPORT
+
+    m = NarrationMode(id="custom", contracts={"scout": SCOUT_REPORT})
+    assert m.title == "Custom"

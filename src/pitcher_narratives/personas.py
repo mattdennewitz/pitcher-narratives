@@ -483,6 +483,11 @@ class NarrationMode:
     directive, and input assembler (design §4) are added by later phases (5/8/9)
     that consume them; frozen-dataclass fields with defaults can be appended
     without breaking existing construction.
+
+    ``title`` is the reader-facing H1 the CLI prints above the mode's streamed
+    capsule. ``distill`` controls whether the pipeline runs the second-step
+    summarizers (executive summary + brief); RECAP's capsule *is* a brief, so
+    it skips them.
     """
 
     id: str
@@ -491,9 +496,13 @@ class NarrationMode:
         anchor_depth=MAX_REVISIONS, fact_depth=MAX_FACT_REVISIONS
     )
     temporal_frame: frozenset[TemporalFrame] = frozenset({TemporalFrame.RECENT})
+    title: str = ""
+    distill: bool = True
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "contracts", MappingProxyType(dict(self.contracts)))
+        if not self.title:
+            object.__setattr__(self, "title", self.id.title())
 
 
 # REPORT reproduces today's report path: each persona's canonical output contract.
@@ -507,6 +516,7 @@ REPORT = NarrationMode(
     validation=ValidationPolicy(
         anchor_depth=MAX_REVISIONS, fact_depth=MAX_FACT_REVISIONS
     ),
+    title="Scouting Report",
 )
 
 # RECAP reproduces the executive-brief path as a first-class mode. It caps the
@@ -520,6 +530,8 @@ RECAP = NarrationMode(
         "generic": RECAP_BRIEF,
     },
     validation=ValidationPolicy(anchor_depth=1, fact_depth=2),
+    title="Recap",
+    distill=False,
 )
 
 # CHANGES foregrounds what moved in the recent window (design §6). In 9A it
@@ -537,6 +549,7 @@ CHANGES = NarrationMode(
         anchor_depth=MAX_REVISIONS, fact_depth=MAX_FACT_REVISIONS
     ),
     temporal_frame=frozenset({TemporalFrame.RECENT, TemporalFrame.PRIOR}),
+    title="Change Report",
 )
 
 _NARRATION_MODES_INTERNAL: dict[str, NarrationMode] = {
