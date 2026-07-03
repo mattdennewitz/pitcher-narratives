@@ -103,6 +103,7 @@ from pitcher_narratives.prompt_builder import (
     render_hard_hit_section,
     render_release_point_section,
     render_role_section,
+    render_temporal_section,
     render_tto_section,
     render_yoy_section,
 )
@@ -737,6 +738,7 @@ def _build_trend_input(ctx: PitcherContext, *, frame_comparison: str | None = No
         baselines,
     ]
     data_sections = [
+        render_temporal_section(ctx),
         render_fastball_section(ctx),
         render_arsenal_section(ctx),
         render_release_point_section(ctx),
@@ -790,6 +792,7 @@ def _build_game_shape_input(ctx: PitcherContext) -> UserPrompt:
     prefix_sections.append(baselines)
 
     data_sections = [
+        render_temporal_section(ctx),
         render_tto_section(ctx),
         render_fastball_section(ctx),
         render_appearances_section(ctx),
@@ -849,6 +852,10 @@ def build_writer_input(
     a Key Signals section is prepended before the specialist analyses.
     """
     parts = [f"## Pitcher: {ctx.pitcher_name} ({ctx.throws}HP, {ctx.role})\n"]
+    if getattr(ctx, "temporal", None) is not None:
+        temporal = render_temporal_section(ctx)
+        if temporal:
+            parts.append(temporal + "\n")
     if key_signals is not None:
         parts.append(render_key_signals(key_signals) + "\n")
     parts.extend([

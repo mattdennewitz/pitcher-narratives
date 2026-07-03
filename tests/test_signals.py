@@ -154,6 +154,52 @@ class TestBuildWriterInputWithSignals:
         )
         assert "## Key Signals" not in result
 
+    def test_missing_temporal_attr_does_not_raise(self):
+        """ctx without a .temporal attribute (as used by other unit tests here)
+        must not blow up build_writer_input — the temporal section is simply
+        omitted."""
+        from types import SimpleNamespace
+        from pitcher_narratives.pipeline import build_writer_input
+
+        ctx = SimpleNamespace(pitcher_name="Test Pitcher", throws="R", role="SP")
+
+        result = build_writer_input(
+            ctx, "stuff output", "location output", "runvalue output",
+            "trends output", "game_shape output",
+        )
+        assert "## Temporal Context" not in result
+
+    def test_includes_temporal_section_when_present(self):
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock
+        from pitcher_narratives.pipeline import build_writer_input
+
+        temporal = MagicMock()
+        temporal.current_season_appearances = 12
+        temporal.current_season_ip = 55.0
+        temporal.current_season = 2026
+        temporal.current_season_first_date = "2026-04-01"
+        temporal.analysis_date = "2026-07-03"
+        temporal.prior_season_appearances = 30
+        temporal.prior_season = 2025
+        temporal.prior_season_ip = 180.0
+        temporal.prior_year_relevance = "HIGH"
+        temporal.prior_year_relevance_reason = "recent history"
+
+        ctx = SimpleNamespace(
+            pitcher_name="Test Pitcher", throws="R", role="SP", temporal=temporal
+        )
+
+        result = build_writer_input(
+            ctx, "stuff output", "location output", "runvalue output",
+            "trends output", "game_shape output",
+        )
+        assert "## Temporal Context" in result
+        # Should appear before the specialist analyses.
+        temporal_pos = result.index("## Temporal Context")
+        stuff_pos = result.index("## Specialist Analysis 1")
+        assert temporal_pos < stuff_pos
+
 
 class TestWriterPromptKeySignals:
     def test_references_key_signals(self):

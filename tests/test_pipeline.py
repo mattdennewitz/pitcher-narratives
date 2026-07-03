@@ -1002,6 +1002,11 @@ def _patch_render_sections(monkeypatch):
         "render_tto_section": "## TTO\nSteady",
         "render_appearances_section": "## Appearances\n3 in window",
         "render_role_section": "## Role\nSP",
+        "render_temporal_section": (
+            "## Temporal Context\n"
+            "- Analysis date: 2026-07-03\n"
+            "- Prior-year workload relevance: HIGH -- mocked reason"
+        ),
     }
     for name, value in canned.items():
         monkeypatch.setattr(
@@ -1067,6 +1072,16 @@ class TestTrendSpecialistReceivesYoySection:
         _build_trend_input(ctx)
         p.render_yoy_section.assert_called_once()
 
+    def test_contains_temporal_section(self):
+        ctx = _make_mock_ctx()
+        text = _flatten_prompt(_build_trend_input(ctx))
+        assert "## Temporal Context" in text
+
+    def test_temporal_section_appears_first_among_data_sections(self):
+        ctx = _make_mock_ctx()
+        text = _flatten_prompt(_build_trend_input(ctx))
+        assert text.index("## Temporal Context") < text.index("## Fastball")
+
     def test_build_trend_input_default_omits_comparison(self):
         ctx = _make_mock_ctx()
         prompt = _build_trend_input(ctx)
@@ -1114,6 +1129,16 @@ class TestGameShapeSpecialistReceivesYoyData:
         output = _flatten_prompt(_build_game_shape_input(ctx))
         assert "Workload" in output
         assert "48.0 IP" in output
+
+    def test_contains_temporal_section(self):
+        ctx = _make_mock_ctx()
+        output = _flatten_prompt(_build_game_shape_input(ctx))
+        assert "## Temporal Context" in output
+
+    def test_temporal_section_appears_first_among_data_sections(self):
+        ctx = _make_mock_ctx()
+        output = _flatten_prompt(_build_game_shape_input(ctx))
+        assert output.index("## Temporal Context") < output.index("## TTO")
 
 
 # ── check_explainer_present unit tests (Phase 08: PERSONA-11) ──
