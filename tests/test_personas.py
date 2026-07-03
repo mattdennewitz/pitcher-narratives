@@ -878,7 +878,7 @@ def test_recap_mode_registered_and_resolvable():
         get_narration_mode,
     )
 
-    assert set(NARRATION_MODES) == {"report", "recap"}
+    assert set(NARRATION_MODES) == {"report", "recap", "changes"}
     assert get_narration_mode("recap") is RECAP
     assert RECAP.id == "recap"
 
@@ -934,3 +934,68 @@ def test_recap_writer_prompt_golden(persona_id):
     assert prompt == golden
     # Anti-tautology guard: the golden must actually be recap-shaped.
     assert "executive brief" in prompt.lower()
+
+
+def test_changes_mode_registered_and_resolvable():
+    from pitcher_narratives.personas import (
+        CHANGES,
+        NARRATION_MODES,
+        get_narration_mode,
+    )
+
+    assert set(NARRATION_MODES) == {"report", "recap", "changes"}
+    assert get_narration_mode("changes") is CHANGES
+    assert CHANGES.id == "changes"
+
+
+def test_changes_validation_depths_match_report():
+    """CHANGES is a full-length synthesis, so it uses REPORT's 5/2 depths
+    (not RECAP's shallow 1/2). Calibrated in Phase 11."""
+    from pitcher_narratives.config import MAX_FACT_REVISIONS, MAX_REVISIONS
+    from pitcher_narratives.personas import CHANGES
+
+    assert CHANGES.validation.anchor_depth == MAX_REVISIONS
+    assert CHANGES.validation.fact_depth == MAX_FACT_REVISIONS
+
+
+def test_changes_contracts_reuse_report_lengths_and_synthesis_framing():
+    from pitcher_narratives.personas import (
+        CHANGES,
+        CHANGES_ANALYST,
+        CHANGES_GENERIC,
+        CHANGES_SCOUT,
+        _SYNTHESIS_FRAMING,
+    )
+
+    # Every persona is mapped, so build_writer_system_prompt never falls back.
+    assert set(CHANGES.contracts) == {"scout", "analyst", "generic"}
+    assert CHANGES.contracts["scout"] is CHANGES_SCOUT
+    assert CHANGES.contracts["analyst"] is CHANGES_ANALYST
+    assert CHANGES.contracts["generic"] is CHANGES_GENERIC
+    # Reuse the REPORT persona length targets (design §6 "reuse lengths").
+    assert CHANGES_SCOUT.length_target == (150, 350)
+    assert CHANGES_ANALYST.length_target == (450, 800)
+    assert CHANGES_GENERIC.length_target == (300, 500)
+    # Writes FROM the analyses (same spine input as REPORT/RECAP).
+    for c in (CHANGES_SCOUT, CHANGES_ANALYST, CHANGES_GENERIC):
+        assert c.input_framing is _SYNTHESIS_FRAMING
+
+
+def test_changes_writer_prompt_is_change_focused_and_distinct():
+    """The composed CHANGES writer prompt carries the change mandate and differs
+    from both the REPORT and RECAP prompts for the same persona."""
+    from pitcher_narratives.personas import (
+        CHANGES,
+        PERSONAS,
+        RECAP,
+        REPORT,
+        build_writer_system_prompt,
+    )
+
+    changes_prompt = build_writer_system_prompt(PERSONAS["scout"], CHANGES)
+    report_prompt = build_writer_system_prompt(PERSONAS["scout"], REPORT)
+    recap_prompt = build_writer_system_prompt(PERSONAS["scout"], RECAP)
+    # A distinctive phrase from _CHANGES_MANDATE appears only in changes.
+    assert "changes only" in changes_prompt.lower()
+    assert changes_prompt != report_prompt
+    assert changes_prompt != recap_prompt

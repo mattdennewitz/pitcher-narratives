@@ -32,6 +32,10 @@ log = logging.getLogger("pitcher_narratives.personas")
 __all__ = [
     "ANALYST",
     "BRIEF",
+    "CHANGES",
+    "CHANGES_ANALYST",
+    "CHANGES_GENERIC",
+    "CHANGES_SCOUT",
     "DEFAULT_MODE",
     "DEFAULT_PERSONA",
     "GENERIC",
@@ -309,6 +313,72 @@ the analyses. Do not invent numbers or reach for a second storyline.
 This is a recap, not a full scouting report: depth is traded for a single \
 clear takeaway. Target 40-90 words; never exceed 4 sentences."""
 
+# ═══════════════════════════════════════════════════════════════════════
+# CHANGES-MODE STRUCTURES — change-focused writer contracts (design §6).
+# Same synthesis framing + persona length targets as REPORT; the writer is
+# directed to report only what MOVED and lead with the biggest shift.
+# ═══════════════════════════════════════════════════════════════════════
+
+_CHANGES_MANDATE = """\
+FOCUS — CHANGES ONLY: Report what has CHANGED for this pitcher in the recent \
+window relative to his season baseline. This is not a full scouting report; it \
+is a change log written with a scout's eye.
+- Lead with the single biggest shift — the largest, most consequential change \
+across the five analyses. Your first sentence names it.
+- Report only what moved. A stable, unchanged trait is not a story here; omit \
+it unless it directly frames a change (e.g. a steady fastball that makes a \
+slider's new shape stand out).
+- Prefer deltas to states. "The slider added three inches of drop" beats "the \
+slider has good drop." If a metric did not change, it does not earn a sentence.
+- A quiet window is itself the finding. If little moved, say so plainly and \
+tentatively rather than manufacturing movement out of noise.\
+"""
+
+_CHANGES_SCOUT_STRUCTURE = (
+    _CHANGES_MANDATE
+    + "\n\n"
+    + """\
+Compose a tight 2-3 paragraph change capsule. Prose only — no bullets, headers, \
+or tables.
+- Paragraph 1: the biggest shift, stated concretely, with the one metric that \
+proves it.
+- Paragraph 2+: the secondary changes that survive the sample size, and what \
+the combined picture means going forward.
+- At most three primary metrics carry the narrative.\
+"""
+)
+
+_CHANGES_NEWSLETTER_STRUCTURE = (
+    _CHANGES_MANDATE
+    + "\n\n"
+    + """\
+TARGET: 450-800 words, 4-6 paragraphs, framed as a change briefing.
+- Prose only. No tables, no bullet lists. Bolded leading phrases at the start \
+of paragraphs are allowed. No Markdown ## headings.
+- Open on the biggest shift as a hook, then walk the connected changes in \
+order of consequence.
+- Three-metric maximum per paragraph; you may cite the same metric twice if \
+the second citation explains the first.
+
+HARD LIMIT: Do not exceed 800 words. If you approach 700 words, wrap up.\
+"""
+)
+
+_CHANGES_SUMMARY_STRUCTURE = (
+    _CHANGES_MANDATE
+    + "\n\n"
+    + """\
+TARGET: 300-500 words of concise declarative prose, framed as a change summary.
+- Prose only. No Markdown headings, no tables, no bullet lists — one continuous \
+change log.
+- Lead with the biggest shift, then the secondary changes in order of \
+consequence. Each change is 2-4 sentences.
+- Three-metric maximum per change.
+
+HARD LIMIT: Do not exceed 500 words. Concision is the voice.\
+"""
+)
+
 BRIEF = OutputContract(
     id="brief",
     length_target=(40, 90),
@@ -345,6 +415,27 @@ SECTIONED = OutputContract(
     id="sectioned",
     length_target=(300, 500),
     structure=_SECTIONED_STRUCTURE,
+    input_framing=_SYNTHESIS_FRAMING,
+)
+
+CHANGES_SCOUT = OutputContract(
+    id="changes_scout",
+    length_target=(150, 350),
+    structure=_CHANGES_SCOUT_STRUCTURE,
+    input_framing=_SYNTHESIS_FRAMING,
+)
+
+CHANGES_ANALYST = OutputContract(
+    id="changes_analyst",
+    length_target=(450, 800),
+    structure=_CHANGES_NEWSLETTER_STRUCTURE,
+    input_framing=_SYNTHESIS_FRAMING,
+)
+
+CHANGES_GENERIC = OutputContract(
+    id="changes_generic",
+    length_target=(300, 500),
+    structure=_CHANGES_SUMMARY_STRUCTURE,
     input_framing=_SYNTHESIS_FRAMING,
 )
 
@@ -416,7 +507,27 @@ RECAP = NarrationMode(
     validation=ValidationPolicy(anchor_depth=1, fact_depth=2),
 )
 
-_NARRATION_MODES_INTERNAL: dict[str, NarrationMode] = {"report": REPORT, "recap": RECAP}
+# CHANGES foregrounds what moved in the recent window (design §6). In 9A it
+# rides the same RECENT-vs-SEASON spine as REPORT and differs only in the writer
+# contract; the recent-X-vs-prior-Y two-frame engine lands in 9B. Full-length
+# synthesis, so it keeps REPORT's 5/2 revision depths (calibrated in Phase 11).
+CHANGES = NarrationMode(
+    id="changes",
+    contracts={
+        "scout": CHANGES_SCOUT,
+        "analyst": CHANGES_ANALYST,
+        "generic": CHANGES_GENERIC,
+    },
+    validation=ValidationPolicy(
+        anchor_depth=MAX_REVISIONS, fact_depth=MAX_FACT_REVISIONS
+    ),
+)
+
+_NARRATION_MODES_INTERNAL: dict[str, NarrationMode] = {
+    "report": REPORT,
+    "recap": RECAP,
+    "changes": CHANGES,
+}
 
 # Import-time invariant: registry key must match mode.id.
 for _mid, _mode in _NARRATION_MODES_INTERNAL.items():
