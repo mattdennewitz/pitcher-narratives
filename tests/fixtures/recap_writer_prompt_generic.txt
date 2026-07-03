@@ -43,8 +43,8 @@ For the EXPLAIN THE MODEL section: each `##` section's first Pitching+ reference
 
 Write a tight executive brief — 2 to 4 sentences, one continuous thread, no headings or bullets.
 
-- Lead with the single most important recent development for this pitcher   (the biggest change, adaptation, or execution trend in the analyses).
-- Support it with at most one or two grounding metrics drawn straight from   the analyses. Do not invent numbers or reach for a second storyline.
+- Lead with the single most important recent development for this pitcher (the biggest change, adaptation, or execution trend in the analyses).
+- Support it with at most one or two grounding metrics drawn straight from the analyses. Do not invent numbers or reach for a second storyline.
 - Close on what it means going forward. Keep it scannable and quotable.
 
 This is a recap, not a full scouting report: depth is traded for a single clear takeaway. Target 40-90 words; never exceed 4 sentences.
