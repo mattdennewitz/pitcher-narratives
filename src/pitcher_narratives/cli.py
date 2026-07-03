@@ -21,6 +21,7 @@ from pitcher_narratives.temporal import _DEFAULT_PRIOR_APPEARANCES, _DEFAULT_REC
 if TYPE_CHECKING:
     from pitcher_narratives.data import PitcherData
     from pitcher_narratives.personas import NarrationMode
+    from pitcher_narratives.pipeline import PipelineResult
 
 log = logging.getLogger("pitcher_narratives")
 
@@ -337,8 +338,8 @@ def _append_metrics_records(
     *,
     pitcher_id: int,
     span: int,
-    modes: "list[NarrationMode]",
-    results: "dict[str, PipelineResult]",
+    modes: list[NarrationMode],
+    results: dict[str, PipelineResult],
 ) -> None:
     """Append per-mode calibration records (JSONL) to ``path``.
 
