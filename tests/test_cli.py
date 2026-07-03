@@ -686,6 +686,38 @@ def test_mode_flag_rejects_empty_value():
         assert exc.value.code == 2
 
 
+def _pipe_result_with_flags(n: int):
+    """Minimal PipelineResult carrying n residual capsule-audit flags.
+
+    Mirrors tests/test_pipeline.py::_result_with_flags.
+    """
+    from pitcher_narratives.pipeline import AuditFlag, PipelineResult, SpecialistOutputs
+
+    flags = [
+        AuditFlag(category="velocity", specialist="stuff", claim=f"c{i}", data_shows="d", suggested_fix="")
+        for i in range(n)
+    ]
+    return PipelineResult(
+        narrative="x",
+        specialists=SpecialistOutputs(
+            stuff="", location="", runvalue="", trends="", game_shape=""
+        ),
+        capsule_audit_flags=flags,
+    )
+
+
+def test_emit_mode_result_returns_unverified_status(capsys):
+    """_emit_mode_result returns is_unverified(result) — False when clean, True when flagged."""
+    from pitcher_narratives.cli import _emit_mode_result
+
+    clean = _pipe_result_with_flags(0)
+    flagged = _pipe_result_with_flags(2)
+
+    assert _emit_mode_result(clean, persona="scout") is False
+    assert _emit_mode_result(flagged, persona="scout") is True
+    capsys.readouterr()  # absorb printed sections
+
+
 def test_morning_subcommand_defaults(monkeypatch):
     monkeypatch.setattr(sys, "argv", ["cli", "morning"])
     args = parse_args()

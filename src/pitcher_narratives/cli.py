@@ -195,115 +195,14 @@ def main() -> None:
         _run_report_command(args)
 
 
-def _run_report_command(args: argparse.Namespace) -> None:
-    """Generate one pitcher's report (the pre-subcommand behavior)."""
-    # --list-personas short-circuits BEFORE setup_logging, data loading,
-    # and API key check. No LLM, no data file, no network.
-    if args.list_personas:
-        _print_personas()
-        sys.exit(0)
+def _emit_mode_result(pipe_result, *, persona: str) -> bool:
+    """Print one mode's post-stream sections and return whether unverified.
 
-    if args.pitcher is None:
-        print(
-            "pitcher-narratives: error: -p/--pitcher is required",
-            file=sys.stderr,
-        )
-        sys.exit(2)
-
-    setup_logging()
-
-    # Lazy imports: polars is heavy (~90ms) and only referenced in the
-    # except clause below. Keep module-level imports minimal so
-    # `pitcher-narratives --help` stays fast.
-    import polars as pl
-    from pitcher_narratives.data import load_pitcher_data
-
-    try:
-        pitcher_data = load_pitcher_data(args.pitcher, args.recent)
-    except ValueError as e:
-        # "Pitcher not found" and other user-input validation errors.
-        log.error("%s", e)
-        sys.exit(1)
-    except FileNotFoundError as e:
-        log.error("Data file not found: %s", e)
-        sys.exit(1)
-    except pl.exceptions.PolarsError as e:
-        log.error("Failed to read pitcher data (polars): %s", e)
-        sys.exit(1)
-    except OSError as e:
-        log.error("I/O error loading pitcher data: %s", e)
-        sys.exit(1)
-
-    if args.verbose:
-        log.info("persona=%s", args.persona)
-        _print_verbose_summary(pitcher_data)
-
-    # Support test mode: use TestModel when env var is set
-    model_override = None
-    if os.environ.get("PITCHER_NARRATIVES_TEST_MODEL"):
-        from pydantic_ai.models.test import TestModel
-
-        # call_tools=[] so the deterministic test model does not blindly
-        # invoke agents' reference tools (e.g. the skills toolset's
-        # load_skill), which would fail on placeholder arguments.
-        model_override = TestModel(call_tools=[])
-
-    # Pre-flight API key check — fail fast before writing files or hitting
-    # the LLM. --print-prompts intentionally bypasses this check because it
-    # never calls the model (it only renders the prompts that would be sent).
-    if (
-        not args.print_prompts
-        and model_override is None
-        and not os.environ.get(API_KEYS[args.provider])
-    ):
-        env_var = API_KEYS[args.provider]
-        log.error("%s not set.", env_var)
-        sys.exit(1)
-
-    from pitcher_narratives.context import assemble_pitcher_context
-    from pitcher_narratives.pipeline import (
-        check_hallucinated_metrics,
-        run_narration_modes,
-        write_pipeline_data_file,
-    )
-
-    ctx = assemble_pitcher_context(pitcher_data)
-    selected_modes = _resolve_modes(getattr(args, "mode", None))
-
-    try:
-        data_file, data_text = write_pipeline_data_file(
-            ctx, args.pitcher, args.provider, persona=args.persona
-        )
-    except OSError as e:
-        log.error("Failed to write prompt data file: %s", e)
-        sys.exit(1)
-    log.info("Wrote prompt data to %s", data_file)
-
-    if args.print_prompts:
-        # Use the text we just rendered — no disk roundtrip, no new failure
-        # surface from re-reading the file we just wrote.
-        print(data_text, file=sys.stderr)
-        sys.exit(0)
-
-    # Lazy import: pydantic_ai.exceptions pulls in the whole package
-    # (~330ms) and is only used in the except clause below.
-    from pydantic_ai.exceptions import AgentRunError
-
-    # The narrative streams to stdout during this call
-    print("# Scouting Report\n")
-    try:
-        results = run_narration_modes(
-            ctx,
-            modes=selected_modes,
-            provider=args.provider,
-            thinking=args.thinking,
-            persona=args.persona,
-            _model_override=model_override,
-        )
-    except AgentRunError as e:
-        log.error("LLM call failed: %s", e)
-        sys.exit(2)
-    pipe_result = results[selected_modes[0].id]
+    Byte-identical to the report command's single-mode output. The
+    empty-narrative case short-circuits the remaining sections for THIS
+    mode only (it no longer aborts sibling modes in the caller's loop).
+    """
+    from pitcher_narratives.pipeline import check_hallucinated_metrics, is_unverified
 
     # Executive summary — always emit the heading to keep the narrative
     # output format stable. If the summary agent failed to produce
@@ -390,10 +289,10 @@ def _run_report_command(args: argparse.Namespace) -> None:
     # produced nothing, which is a failure worth flagging loudly).
     if not pipe_result.narrative:
         log.warning("Pipeline produced empty narrative — skipping hallucination check")
-        return
+        return is_unverified(pipe_result)
 
     hallucination_report = check_hallucinated_metrics(
-        pipe_result.narrative, persona=args.persona
+        pipe_result.narrative, persona=persona
     )
 
     if hallucination_report.is_clean:
@@ -409,20 +308,138 @@ def _run_report_command(args: argparse.Namespace) -> None:
                 f"{', '.join(hallucination_report.outcome_stat_warnings)}"
             )
 
-    # Soft block: the report is fully printed/saved, but if the fact-check loop
-    # (B) could not ground every claim, warn loudly and exit non-zero so
-    # callers/CI catch an UNVERIFIED report rather than treating it as clean.
-    # The deterministic TestModel always emits synthetic audit flags, so the
-    # hard exit is suppressed in test mode (the banner still prints).
-    if pipe_result.capsule_audit_flags:
-        n = len(pipe_result.capsule_audit_flags)
+    return is_unverified(pipe_result)
+
+
+def _run_report_command(args: argparse.Namespace) -> None:
+    """Generate one pitcher's report (the pre-subcommand behavior)."""
+    # --list-personas short-circuits BEFORE setup_logging, data loading,
+    # and API key check. No LLM, no data file, no network.
+    if args.list_personas:
+        _print_personas()
+        sys.exit(0)
+
+    if args.pitcher is None:
         print(
-            f"\n⚠️  REPORT UNVERIFIED — {n} flagged claim(s) survived the "
-            "fact-check loop. Review before use.",
+            "pitcher-narratives: error: -p/--pitcher is required",
             file=sys.stderr,
         )
-        if not os.environ.get("PITCHER_NARRATIVES_TEST_MODEL"):
-            sys.exit(1)
+        sys.exit(2)
+
+    setup_logging()
+
+    # Lazy imports: polars is heavy (~90ms) and only referenced in the
+    # except clause below. Keep module-level imports minimal so
+    # `pitcher-narratives --help` stays fast.
+    import polars as pl
+    from pitcher_narratives.data import load_pitcher_data
+
+    try:
+        pitcher_data = load_pitcher_data(args.pitcher, args.recent)
+    except ValueError as e:
+        # "Pitcher not found" and other user-input validation errors.
+        log.error("%s", e)
+        sys.exit(1)
+    except FileNotFoundError as e:
+        log.error("Data file not found: %s", e)
+        sys.exit(1)
+    except pl.exceptions.PolarsError as e:
+        log.error("Failed to read pitcher data (polars): %s", e)
+        sys.exit(1)
+    except OSError as e:
+        log.error("I/O error loading pitcher data: %s", e)
+        sys.exit(1)
+
+    if args.verbose:
+        log.info("persona=%s", args.persona)
+        _print_verbose_summary(pitcher_data)
+
+    # Support test mode: use TestModel when env var is set
+    model_override = None
+    if os.environ.get("PITCHER_NARRATIVES_TEST_MODEL"):
+        from pydantic_ai.models.test import TestModel
+
+        # call_tools=[] so the deterministic test model does not blindly
+        # invoke agents' reference tools (e.g. the skills toolset's
+        # load_skill), which would fail on placeholder arguments.
+        model_override = TestModel(call_tools=[])
+
+    # Pre-flight API key check — fail fast before writing files or hitting
+    # the LLM. --print-prompts intentionally bypasses this check because it
+    # never calls the model (it only renders the prompts that would be sent).
+    if (
+        not args.print_prompts
+        and model_override is None
+        and not os.environ.get(API_KEYS[args.provider])
+    ):
+        env_var = API_KEYS[args.provider]
+        log.error("%s not set.", env_var)
+        sys.exit(1)
+
+    from pitcher_narratives.context import assemble_pitcher_context
+    from pitcher_narratives.pipeline import (
+        check_hallucinated_metrics,
+        is_unverified,
+        residual_banner,
+        run_narration_modes,
+        write_pipeline_data_file,
+    )
+
+    ctx = assemble_pitcher_context(pitcher_data)
+    selected_modes = _resolve_modes(getattr(args, "mode", None))
+
+    try:
+        data_file, data_text = write_pipeline_data_file(
+            ctx, args.pitcher, args.provider, persona=args.persona
+        )
+    except OSError as e:
+        log.error("Failed to write prompt data file: %s", e)
+        sys.exit(1)
+    log.info("Wrote prompt data to %s", data_file)
+
+    if args.print_prompts:
+        # Use the text we just rendered — no disk roundtrip, no new failure
+        # surface from re-reading the file we just wrote.
+        print(data_text, file=sys.stderr)
+        sys.exit(0)
+
+    # Lazy import: pydantic_ai.exceptions pulls in the whole package
+    # (~330ms) and is only used in the except clause below.
+    from pydantic_ai.exceptions import AgentRunError
+
+    # The narrative streams to stdout during this call
+    print("# Scouting Report\n")
+    try:
+        results = run_narration_modes(
+            ctx,
+            modes=selected_modes,
+            provider=args.provider,
+            thinking=args.thinking,
+            persona=args.persona,
+            _model_override=model_override,
+        )
+    except AgentRunError as e:
+        log.error("LLM call failed: %s", e)
+        sys.exit(2)
+    # Soft block: each mode's report is fully printed/saved, but if the
+    # fact-check loop (B) could not ground every claim, warn loudly and exit
+    # non-zero so callers/CI catch an UNVERIFIED report rather than treating
+    # it as clean. The deterministic TestModel always emits synthetic audit
+    # flags, so the hard exit is suppressed in test mode (the banner still
+    # prints). Aggregated across all selected modes (G4): every mode's
+    # sections are printed, banners for each unverified mode are emitted,
+    # and the process exits non-zero once at the end if any mode was
+    # unverified.
+    any_unverified = False
+    for mode in selected_modes:
+        pipe_result = results[mode.id]
+        if _emit_mode_result(pipe_result, persona=args.persona):
+            any_unverified = True
+            banner = residual_banner(pipe_result, label=mode.id.upper())
+            print(f"\n{banner}", file=sys.stderr)
+
+    if any_unverified and not os.environ.get("PITCHER_NARRATIVES_TEST_MODEL"):
+        sys.exit(1)
 
 
 def _run_morning_command(args: argparse.Namespace) -> None:
