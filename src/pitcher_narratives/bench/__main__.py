@@ -23,7 +23,8 @@ from pitcher_narratives.bench.rubric import AGENT_RUBRIC, CAPSULE_RUBRIC
 from pitcher_narratives.bench.runner import run_provider
 from pitcher_narratives.bench.scorecard import JudgedRecord, aggregate, render_report
 from pitcher_narratives.config import PROVIDERS, setup_logging
-from pitcher_narratives.temporal import _DEFAULT_RECENT_APPEARANCES
+from pitcher_narratives.personas import NarrationMode, get_narration_mode
+from pitcher_narratives.temporal import _DEFAULT_PRIOR_APPEARANCES, _DEFAULT_RECENT_APPEARANCES
 
 
 def parse_args() -> argparse.Namespace:
@@ -53,8 +54,35 @@ def parse_args() -> argparse.Namespace:
         default=_DEFAULT_RECENT_APPEARANCES,
         help="Analysis window in appearances",
     )
+    parser.add_argument(
+        "--mode",
+        default="report",
+        help="Comma-separated narration modes to bench (report,recap,changes)",
+    )
+    parser.add_argument(
+        "--prior",
+        type=int,
+        default=_DEFAULT_PRIOR_APPEARANCES,
+        help="Prior-window appearances for CHANGES mode",
+    )
     parser.add_argument("--out", default="bench-runs", help="Output directory root")
     return parser.parse_args()
+
+
+def _resolve_bench_modes(raw: str) -> list[NarrationMode]:
+    """Parse --mode into NarrationMode instances; exit(2) on bad input."""
+    ids = [m.strip() for m in raw.split(",") if m.strip()]
+    if not ids:
+        print("--mode was empty; expected comma-separated mode id(s).", file=sys.stderr)
+        sys.exit(2)
+    modes = []
+    for mode_id in ids:
+        try:
+            modes.append(get_narration_mode(mode_id))
+        except ValueError as exc:
+            print(str(exc), file=sys.stderr)
+            sys.exit(2)
+    return modes
 
 
 def main() -> None:
@@ -73,6 +101,7 @@ def main() -> None:
     if args.judges != "panel" and args.judges not in PROVIDERS and args.judges not in JUDGE_MODELS:
         print(f"Unknown judge: {args.judges}", file=sys.stderr)
         sys.exit(2)
+    modes = _resolve_bench_modes(args.mode)
 
     run_dir = Path(args.out) / datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -87,6 +116,8 @@ def main() -> None:
             thinking=args.thinking,
             persona=args.persona,
             recent_appearances=args.recent,
+            modes=modes,
+            prior=args.prior,
         )
         if not run.ok:
             # One retry: provider failures observed so far are transient
@@ -98,6 +129,8 @@ def main() -> None:
                 thinking=args.thinking,
                 persona=args.persona,
                 recent_appearances=args.recent,
+                modes=modes,
+                prior=args.prior,
             )
         runs.append(run)
         pdir = run_dir / provider
@@ -124,9 +157,9 @@ def main() -> None:
     records: list[JudgedRecord] = []
     for run in ok_runs:
         for tier, text in run.outputs.items():
-            if tier == "exec_summary":
+            if tier.split(":", 1)[0] == "exec_summary":
                 continue
-            rubric = CAPSULE_RUBRIC if tier == "capsule" else AGENT_RUBRIC
+            rubric = CAPSULE_RUBRIC if tier.split(":", 1)[0] == "capsule" else AGENT_RUBRIC
             for judge in judges_for(run.provider, providers, args.judges):
                 print(f"Judging {run.provider}/{tier} with {judge}...", file=sys.stderr)
                 try:
@@ -150,6 +183,7 @@ def main() -> None:
     meta = {
         "pitcher": ok_runs[0].pitcher_name or str(args.pitcher),
         "providers": ", ".join(providers),
+        "modes": ", ".join(m.id for m in modes),
         "judge_mode": args.judges,
         "thinking": args.thinking,
         "persona": args.persona,

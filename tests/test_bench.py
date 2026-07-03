@@ -287,3 +287,34 @@ def test_contestant_judge_uses_tool_output():
     assert "Prompted" not in type(agent._output_schema).__name__
     settings = agent.model_settings or {}
     assert "openrouter_reasoning" not in settings
+
+
+def test_parse_args_mode_and_prior_defaults(monkeypatch):
+    import sys as _sys
+
+    from pitcher_narratives.temporal import _DEFAULT_PRIOR_APPEARANCES
+
+    monkeypatch.setattr(_sys, "argv", ["bench", "-p", "693433"])
+    args = parse_args()
+    assert args.mode == "report"
+    assert args.prior == _DEFAULT_PRIOR_APPEARANCES
+
+
+def test_parse_args_accepts_comma_mode(monkeypatch):
+    import sys as _sys
+
+    monkeypatch.setattr(_sys, "argv", ["bench", "-p", "693433", "--mode", "report,recap"])
+    args = parse_args()
+    assert args.mode == "report,recap"
+
+
+def test_resolve_bench_modes_valid_and_invalid():
+    from pitcher_narratives.bench.__main__ import _resolve_bench_modes
+
+    modes = _resolve_bench_modes("report,changes")
+    assert [m.id for m in modes] == ["report", "changes"]
+    with pytest.raises(SystemExit) as exc:
+        _resolve_bench_modes("bogus")
+    assert exc.value.code == 2
+    with pytest.raises(SystemExit):
+        _resolve_bench_modes(" , ")
