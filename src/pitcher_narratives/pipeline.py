@@ -934,6 +934,22 @@ def _get_specialist_input_text(name: str, ctx: PitcherContext) -> str:
     return _flatten_prompt(_get_specialist_input(name, ctx))
 
 
+def _audit_failed_flag(specialist: str = "") -> AuditFlag:
+    """Sentinel flag: the auditor itself crashed, so nothing was verified.
+
+    Fail closed — an unaudited report must surface as UNVERIFIED rather than
+    ship silently marked clean. Carries the AUDIT_FAILED category so it counts
+    in audit_flags/capsule_audit_flags and trips is_unverified/residual_banner.
+    """
+    return AuditFlag(
+        category="AUDIT_FAILED",
+        specialist=specialist,
+        claim="(auditor call failed — report not fact-checked)",
+        data_shows="the audit agent raised before producing a verdict",
+        suggested_fix="re-run, or review the report manually",
+    )
+
+
 async def audit_and_revise_specialists(
     specialists: SpecialistOutputs,
     specialist_agents: dict[str, Agent[None, str]],
@@ -977,7 +993,7 @@ async def audit_and_revise_specialists(
     # not core: a failed audit call (provider error, rate limit) degrades
     # to passing that specialist through un-audited rather than killing
     # the whole pipeline run.
-    async def _audit_one(name: str) -> tuple[str, AuditResult]:
+    async def _audit_one(name: str) -> tuple[str, AuditResult | None]:
         try:
             audit_input = _build_specialist_audit_input(
                 ground_truths[name], outputs[name],
@@ -986,9 +1002,13 @@ async def audit_and_revise_specialists(
             _record_usage(tracker, tracker_model, result, "audit")
             return name, result.output
         except Exception:
-            log.error("Audit failed for %s specialist; passing through un-audited.",
+            # Fail closed: the auditor crashed, so this specialist's prose was
+            # never fact-checked. Signal failure with a None sentinel; the
+            # collector surfaces an AUDIT_FAILED flag (visible in audit_flags)
+            # without triggering a bogus revision against a nonexistent flag.
+            log.error("Audit failed for %s specialist; surfacing AUDIT_FAILED.",
                       name, exc_info=True)
-            return name, AuditResult(is_clean=True, flags=[])
+            return name, None
 
     audit_tasks = [_audit_one(name) for name in audit_names]
     audit_results = await asyncio.gather(*audit_tasks)
@@ -997,6 +1017,11 @@ async def audit_and_revise_specialists(
     all_flags: list[AuditFlag] = []
     flagged: dict[str, list[AuditFlag]] = {}
     for name, audit_result in audit_results:
+        if audit_result is None:
+            # Auditor crashed for this specialist — surface the sentinel but
+            # skip revision (nothing concrete to revise against).
+            all_flags.append(_audit_failed_flag(name))
+            continue
         if not audit_result.is_clean:
             for flag in audit_result.flags:
                 flag.specialist = name
@@ -1796,8 +1821,13 @@ async def run_capsule_audit(
             **agent_kwargs(build_capsule_audit_input(ground_truth, capsule), _model_override)
         )
     except Exception:
-        log.warning("Capsule auditor failed, skipping fact-check.", exc_info=True)
-        return capsule, [], False
+        # Fail closed: the auditor never produced a verdict, so nothing in the
+        # capsule was fact-checked. Returning [] would mark the report verified
+        # (is_unverified → False) and ship it with no banner. Surface a single
+        # AUDIT_FAILED residual flag so is_unverified → True and the loud
+        # UNVERIFIED banner fires.
+        log.warning("Capsule auditor failed; marking report UNVERIFIED.", exc_info=True)
+        return capsule, [_audit_failed_flag()], False
 
     _record_usage(tracker, tracker_model, result, "fact_audit")
     flags = result.output.flags

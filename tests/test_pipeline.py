@@ -380,6 +380,42 @@ class TestAuditAndReviseSpecialists:
         assert isinstance(result, SpecialistOutputs)
         assert all(isinstance(f, AuditFlag) for f in flags)
 
+    def test_auditor_crash_fails_closed_no_revision(self, specialists, agents):
+        """When the auditor RAISES, fail closed: the specialist's text is
+        unchanged, a single AUDIT_FAILED flag tagged with the specialist name
+        is surfaced (so it lands in audit_flags / n_audit_flags), and the
+        revision path is NOT invoked for that specialist (a revision against a
+        nonexistent flag is wasted work)."""
+        from unittest.mock import AsyncMock, MagicMock
+
+        class _BoomAuditor:
+            async def run(self, **kwargs):
+                raise RuntimeError("audit boom")
+
+        async def _run():
+            # Track specialist agent .run calls — must stay zero (no revision).
+            specialist_agents = {}
+            for name in ("stuff", "location", "runvalue", "trends", "game_shape"):
+                m = MagicMock()
+                m.run = AsyncMock(side_effect=AssertionError("revision must not run"))
+                specialist_agents[name] = m
+
+            data = load_pitcher_data(TEST_PITCHER, recent_appearances=10)
+            ctx = assemble_pitcher_context(data)
+
+            return await audit_and_revise_specialists(
+                specialists, specialist_agents, _BoomAuditor(), ctx,
+                names=["stuff"],
+            )
+
+        result, flags = asyncio.run(_run())
+        # Original text passes through unchanged.
+        assert result.stuff == specialists.stuff
+        # Exactly one AUDIT_FAILED flag, tagged with the specialist name.
+        assert len(flags) == 1
+        assert flags[0].category == "AUDIT_FAILED"
+        assert flags[0].specialist == "stuff"
+
 
 # ── End-to-end pipeline smoke test ───────────────────────────────────
 
@@ -1418,16 +1454,23 @@ class _ExplodingAuditor:
         raise RuntimeError("all-null response body")
 
 
-def test_audit_failure_degrades_to_unaudited(ctx):
-    """A failing auditor must not kill the pipeline: the specialist's
-    original text passes through un-audited with no flags."""
+def test_audit_failure_fails_closed(ctx):
+    """A failing auditor must not kill the pipeline, but it must fail CLOSED:
+    each specialist's original text passes through un-audited, and one
+    AUDIT_FAILED sentinel flag per audited specialist is surfaced (visible in
+    audit_flags) rather than silently returning zero flags."""
     outputs = SpecialistOutputs(stuff="s", location="l", runvalue="r",
                                 trends="t", game_shape="g")
     clean, flags = asyncio.run(audit_and_revise_specialists(
         outputs, {}, _ExplodingAuditor(), ctx,
     ))
     assert clean == outputs
-    assert flags == []
+    # One sentinel per audited specialist (all five by default).
+    assert len(flags) == 5
+    assert all(f.category == "AUDIT_FAILED" for f in flags)
+    assert {f.specialist for f in flags} == {
+        "stuff", "location", "runvalue", "trends", "game_shape",
+    }
 
 
 def test_audit_names_audits_only_selected(ctx):
@@ -1738,7 +1781,11 @@ class TestRunCapsuleAudit:
         assert len(flags) == 1
         assert revised is True
 
-    def test_auditor_error_degrades_to_unchanged(self):
+    def test_auditor_error_fails_closed(self):
+        # A first-audit crash means NOTHING was fact-checked. Fail closed: the
+        # capsule is unchanged but exactly one AUDIT_FAILED residual flag is
+        # surfaced, so is_unverified → True and the UNVERIFIED banner fires
+        # (an empty [] would ship the report silently marked verified).
         from pitcher_narratives.pipeline import run_capsule_audit
         class _Boom:
             async def run(self, **kwargs):
@@ -1748,7 +1795,8 @@ class TestRunCapsuleAudit:
             ground_truth="gt", capsule="original capsule",
         ))
         assert cap == "original capsule"
-        assert flags == []
+        assert len(flags) == 1
+        assert flags[0].category == "AUDIT_FAILED"
         assert revised is False
 
     def test_writer_error_keeps_flags_not_revised(self):
