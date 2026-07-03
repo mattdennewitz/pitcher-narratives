@@ -57,7 +57,6 @@ from pitcher_narratives.anchor import (
 )
 from pitcher_narratives.config import (
     MAX_FACT_REVISIONS,
-    MAX_REVISIONS,
     MINI_PROVIDERS,
     PROVIDERS,
     TOKEN_BUDGET_LARGE,

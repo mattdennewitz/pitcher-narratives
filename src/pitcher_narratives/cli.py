@@ -289,7 +289,10 @@ def _emit_mode_result(pipe_result, *, persona: str) -> bool:
     # produced nothing, which is a failure worth flagging loudly).
     if not pipe_result.narrative:
         log.warning("Pipeline produced empty narrative — skipping hallucination check")
-        return is_unverified(pipe_result)
+        # Empty narrative means the pipeline produced nothing to verify — this
+        # preserves the pre-Phase-7 exit-0 behavior (no UNVERIFIED banner) and
+        # does not abort sibling modes even if residual audit flags remain.
+        return False
 
     hallucination_report = check_hallucinated_metrics(
         pipe_result.narrative, persona=persona

@@ -718,6 +718,32 @@ def test_emit_mode_result_returns_unverified_status(capsys):
     capsys.readouterr()  # absorb printed sections
 
 
+def test_emit_mode_result_empty_narrative_is_not_unverified(capsys):
+    """Empty narrative always returns False, even with residual audit flags.
+
+    Pins the pre-Phase-7 behavior: an empty narrative means the pipeline
+    produced nothing to verify, so the REPORT command exits 0 with no
+    UNVERIFIED banner — regardless of leftover capsule_audit_flags.
+    """
+    from pitcher_narratives.cli import _emit_mode_result
+    from pitcher_narratives.pipeline import AuditFlag, PipelineResult, SpecialistOutputs
+
+    flags = [
+        AuditFlag(category="velocity", specialist="stuff", claim=f"c{i}", data_shows="d", suggested_fix="")
+        for i in range(2)
+    ]
+    result = PipelineResult(
+        narrative="",
+        specialists=SpecialistOutputs.model_construct(
+            stuff="", location="", runvalue="", trends="", game_shape=""
+        ),
+        capsule_audit_flags=flags,
+    )
+
+    assert _emit_mode_result(result, persona="scout") is False
+    capsys.readouterr()
+
+
 def test_morning_subcommand_defaults(monkeypatch):
     monkeypatch.setattr(sys, "argv", ["cli", "morning"])
     args = parse_args()
