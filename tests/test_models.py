@@ -15,3 +15,14 @@ def test_core_context_holds_four_specialists_and_flags():
     # Frame-sensitive fields are intentionally absent.
     assert not hasattr(CoreContext(stuff="s", location="l", runvalue="r",
                                    game_shape="g"), "trends")
+
+
+def test_analyzed_context_frame_comparison_defaults_none():
+    from pitcher_narratives.models import AnalyzedContext, SpecialistOutputs
+
+    ac = AnalyzedContext(
+        specialists=SpecialistOutputs(
+            stuff="s", location="l", runvalue="r", trends="t", game_shape="g"
+        ),
+    )
+    assert ac.trend_frame_comparison is None

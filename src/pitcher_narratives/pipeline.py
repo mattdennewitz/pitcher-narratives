@@ -1727,6 +1727,7 @@ async def run_spine_tail(
         residual_specialists=sorted(
             set(core.residual_specialists) | trends_residual
         ),
+        trend_frame_comparison=trend_frame_comparison,
     )
 
 

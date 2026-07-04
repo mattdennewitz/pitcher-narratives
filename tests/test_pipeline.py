@@ -2175,6 +2175,51 @@ def test_run_spine_tail_injects_frame_comparison_with_prior_ctx(ctx, monkeypatch
     assert "Recent vs Prior Window" in captured["trend_frame_comparison"]
 
 
+def test_spine_tail_stores_frame_comparison_with_prior_ctx(ctx):
+    """run_spine_tail persists the rendered frame-comparison block onto the
+    returned AnalyzedContext when prior_ctx is provided."""
+    import asyncio
+
+    from pitcher_narratives.context import assemble_prior_context
+    from pitcher_narratives.models import CoreContext
+    from pitcher_narratives.pipeline import make_pipeline_agents, run_spine_tail
+
+    prior_ctx = assemble_prior_context(load_pitcher_data(592155, 10), 10, 10)
+
+    agents = make_pipeline_agents("gemini", "high")
+    model = TestModel(call_tools=[], custom_output_text="Tail analysis.")
+    core = CoreContext(stuff="CORE_STUFF", location="CORE_LOC",
+                       runvalue="CORE_RV", game_shape="CORE_GS")
+
+    analyzed = asyncio.run(
+        run_spine_tail(core, ctx, agents=agents, _model_override=model,
+                       prior_ctx=prior_ctx)
+    )
+
+    assert analyzed.trend_frame_comparison is not None
+    assert "Recent vs Prior Window" in analyzed.trend_frame_comparison
+
+
+def test_spine_tail_frame_comparison_none_without_prior_ctx(ctx):
+    """run_spine_tail leaves trend_frame_comparison as None on the returned
+    AnalyzedContext when no prior_ctx is provided."""
+    import asyncio
+
+    from pitcher_narratives.models import CoreContext
+    from pitcher_narratives.pipeline import make_pipeline_agents, run_spine_tail
+
+    agents = make_pipeline_agents("gemini", "high")
+    model = TestModel(call_tools=[], custom_output_text="Tail analysis.")
+    core = CoreContext(stuff="CORE_STUFF", location="CORE_LOC",
+                       runvalue="CORE_RV", game_shape="CORE_GS")
+
+    analyzed = asyncio.run(
+        run_spine_tail(core, ctx, agents=agents, _model_override=model)
+    )
+
+    assert analyzed.trend_frame_comparison is None
+
+
 def test_run_spine_tail_no_frame_comparison_without_prior_ctx(ctx, monkeypatch):
     """Without prior_ctx, run_spine_tail passes trend_frame_comparison=None
     (byte-identical to the pre-P9B path)."""
