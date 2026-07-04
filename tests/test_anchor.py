@@ -145,6 +145,28 @@ def test_revision_message_handles_empty_warnings():
     assert "Current Capsule" in joined
 
 
+# ── build_reconcile_message ────────────────────────────────────────────────
+
+
+def test_reconcile_message_contains_parts():
+    from pitcher_narratives.anchor import AnchorWarning, build_reconcile_message
+
+    w = AnchorWarning(category="UNSUPPORTED", description="capsule says 6, synthesis says 15")
+    msg = build_reconcile_message("THE SYNTHESIS", "THE CAPSULE", [w])
+    assert "THE SYNTHESIS" in msg
+    assert "THE CAPSULE" in msg
+    assert "capsule says 6, synthesis says 15" in msg
+
+
+def test_reconcile_message_forbids_numeric_changes():
+    from pitcher_narratives.anchor import AnchorWarning, build_reconcile_message
+
+    w = AnchorWarning(category="UNSUPPORTED", description="d")
+    msg = build_reconcile_message("s", "c", [w])
+    assert "do not change any numeric value" in msg.lower()
+    assert "fact-check" in msg.lower()
+
+
 # ── Anchor tolerance for generic sectioned + table format ──
 
 
