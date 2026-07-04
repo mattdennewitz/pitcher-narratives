@@ -306,7 +306,7 @@ When the anchor is not clean, the writer is asked to revise via
 `anchor.build_revision_message` — a fresh prompt with no message
 history, a `CachePoint` breakpoint after the synthesis, and a targeted
 instruction that says "fix only the listed warnings." Up to
-`MAX_REVISIONS` (3) revision passes run, and then one final anchor
+`MAX_REVISIONS` (5) revision passes run, and then one final anchor
 check captures any surviving warnings.
 
 #### Anchor warning categories
@@ -553,7 +553,7 @@ assemble_pitcher_context (context.py)
         v
 +---------------------------------------------------+
 |  Phase 2.5 — anchor check + revision loop         |
-|    (up to MAX_REVISIONS = 3 passes)               |
+|    (up to MAX_REVISIONS = 5 passes)               |
 |    warnings: MISSED_SIGNAL / UNDERWEIGHTED /      |
 |              UNSUPPORTED / DIRECTION_ERROR /      |
 |              OVERSTATED                           |

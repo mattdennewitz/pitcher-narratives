@@ -2085,6 +2085,9 @@ async def _reconcile_anchor_warnings(
     prev_signature = {(w.category, w.description) for w in current.warnings}
 
     for _ in range(remaining):
+        # build_reconcile_message returns a plain string (no CachePoints) —
+        # intentionally uncached. Worst case is anchor_depth passes; revisit
+        # if cost calibration shows this matters.
         revision = await writer_agent.run(
             **agent_kwargs(
                 build_reconcile_message(synthesis, candidate, current.warnings),
@@ -2104,6 +2107,9 @@ async def _reconcile_anchor_warnings(
             break
         signature = {(w.category, w.description) for w in current.warnings}
         if signature == prev_signature:
+            # Intentional divergence from run_anchor_revision_loop: reconcile's
+            # first anchor check happens before this loop, so a stall here
+            # always costs one writer pass (vs. a zero-pass stall there).
             log.info("Reconcile loop stalled (identical warnings); stopping early.")
             break
         prev_signature = signature
