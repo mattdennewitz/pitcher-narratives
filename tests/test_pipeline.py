@@ -932,6 +932,270 @@ class TestAnchorRevisionLoop:
             assert len(value) > 0
 
 
+class TestReconcileAnchorWarnings:
+    """Post-fact-revision reconcile loop (ground truth wins).
+
+    A data fact-revision rewrites the capsule against source data, which can
+    invalidate the earlier anchor pass. `_reconcile_anchor_warnings` re-anchors
+    the fact-revised text and, if warnings surface, spends the mode's remaining
+    anchor budget on prose-only reconcile revisions — with a detection-only
+    capsule re-audit as a regression guard: if a reconcile revision regresses a
+    verified fact, the fact-revised capsule wins and the warnings ship as
+    advisory. These fakes mirror the TestAnchorRevisionLoop stubs.
+    """
+
+    def _fake_anchor(self, *responses):
+        """AsyncMock anchor whose .run() yields the given AnchorResults in order."""
+        from unittest.mock import AsyncMock, MagicMock
+
+        wrapped = [MagicMock(output=r) for r in responses]
+        mock = MagicMock()
+        mock.run = AsyncMock(side_effect=wrapped)
+        return mock
+
+    def _fake_writer(self, *revision_texts):
+        """AsyncMock writer whose .run() yields the given texts in order."""
+        from unittest.mock import AsyncMock, MagicMock
+
+        wrapped = [MagicMock(output=t) for t in revision_texts]
+        mock = MagicMock()
+        mock.run = AsyncMock(side_effect=wrapped)
+        return mock
+
+    def _fake_auditor(self, *flag_lists):
+        """AsyncMock capsule auditor whose .run() yields AuditResults in order.
+
+        Each entry is a list[AuditFlag]. Under the detection-only guard call
+        (max_fact_revisions=0) the auditor is invoked exactly once per reconcile.
+        """
+        from unittest.mock import AsyncMock, MagicMock
+
+        from pitcher_narratives.models import AuditResult
+
+        wrapped = [MagicMock(output=AuditResult(flags=list(f))) for f in flag_lists]
+        mock = MagicMock()
+        mock.run = AsyncMock(side_effect=wrapped)
+        return mock
+
+    def _flag(self, claim="c"):
+        from pitcher_narratives.models import AuditFlag
+
+        return AuditFlag(
+            category="FABRICATION", claim=claim, data_shows="d", suggested_fix="f"
+        )
+
+    def test_clean_recheck_returns_unchanged(self):
+        """Re-anchor clean → capsule + prior_anchor returned unchanged, 0 passes.
+
+        Writer and auditor are never touched: nothing to reconcile, nothing to
+        guard. This is today's clean path preserved exactly.
+        """
+        import asyncio
+
+        from pitcher_narratives.anchor import AnchorResult, AnchorWarning
+        from pitcher_narratives.pipeline import _reconcile_anchor_warnings
+
+        prior = AnchorResult(
+            warnings=[AnchorWarning(category="OVERSTATED", description="prior")]
+        )
+        anchor = self._fake_anchor(AnchorResult(warnings=[]))
+        writer = self._fake_writer()
+        auditor = self._fake_auditor()
+
+        capsule, result, passes = asyncio.run(
+            _reconcile_anchor_warnings(
+                anchor_agent=anchor,
+                writer_agent=writer,
+                capsule_auditor=auditor,
+                synthesis="synth",
+                capsule="CAP",
+                fact_check_source="GT",
+                prior_anchor=prior,
+                remaining=5,
+                _model_override=None,
+            )
+        )
+
+        assert capsule == "CAP"
+        assert result is prior
+        assert passes == 0
+        assert anchor.run.call_count == 1
+        assert writer.run.call_count == 0
+        assert auditor.run.call_count == 0
+
+    def test_no_budget_merges_warnings(self):
+        """Warnings with remaining==0 → merge (deduped) into prior, 0 passes.
+
+        No budget to reconcile, so the new warnings are merged advisory-only —
+        today's merge path. Writer/auditor never run. A warning already present
+        in prior is not duplicated.
+        """
+        import asyncio
+
+        from pitcher_narratives.anchor import AnchorResult, AnchorWarning
+        from pitcher_narratives.pipeline import _reconcile_anchor_warnings
+
+        pw = AnchorWarning(category="OVERSTATED", description="prior")
+        w1 = AnchorWarning(category="UNSUPPORTED", description="new")
+        prior = AnchorResult(warnings=[pw])
+        # Recheck surfaces a genuinely new warning plus a duplicate of prior's.
+        dirty = AnchorResult(warnings=[w1, pw])
+
+        anchor = self._fake_anchor(dirty)
+        writer = self._fake_writer()
+        auditor = self._fake_auditor()
+
+        capsule, result, passes = asyncio.run(
+            _reconcile_anchor_warnings(
+                anchor_agent=anchor,
+                writer_agent=writer,
+                capsule_auditor=auditor,
+                synthesis="synth",
+                capsule="CAP",
+                fact_check_source="GT",
+                prior_anchor=prior,
+                remaining=0,
+                _model_override=None,
+            )
+        )
+
+        assert capsule == "CAP"
+        assert passes == 0
+        sigs = {(w.category, w.description) for w in result.warnings}
+        assert sigs == {("OVERSTATED", "prior"), ("UNSUPPORTED", "new")}
+        # Dedup: prior warning appears once, not twice.
+        assert len(result.warnings) == 2
+        assert anchor.run.call_count == 1
+        assert writer.run.call_count == 0
+        assert auditor.run.call_count == 0
+
+    def test_reconcile_success_adopts_candidate(self):
+        """Dirty then clean, guard clean → adopt revised capsule, 1 pass.
+
+        The reconcile revision fixes the warning (pass 2 anchor is clean), the
+        detection-only guard finds no regression, so the revised capsule is
+        adopted with no residual warnings beyond prior's (here: none).
+        """
+        import asyncio
+
+        from pitcher_narratives.anchor import AnchorResult, AnchorWarning
+        from pitcher_narratives.pipeline import _reconcile_anchor_warnings
+
+        w1 = AnchorWarning(category="UNSUPPORTED", description="new")
+        anchor = self._fake_anchor(
+            AnchorResult(warnings=[w1]), AnchorResult(warnings=[])
+        )
+        writer = self._fake_writer("revised capsule")
+        auditor = self._fake_auditor([])  # guard clean
+
+        capsule, result, passes = asyncio.run(
+            _reconcile_anchor_warnings(
+                anchor_agent=anchor,
+                writer_agent=writer,
+                capsule_auditor=auditor,
+                synthesis="synth",
+                capsule="CAP",
+                fact_check_source="GT",
+                prior_anchor=AnchorResult(warnings=[]),
+                remaining=5,
+                _model_override=None,
+            )
+        )
+
+        assert capsule == "revised capsule"
+        assert result.warnings == []
+        assert passes == 1
+        assert anchor.run.call_count == 2
+        assert writer.run.call_count == 1
+        assert auditor.run.call_count == 1
+
+    def test_guard_flags_revert_to_fact_revised_capsule(self):
+        """Guard flags a regression → revert to fact-revised capsule, 1 pass.
+
+        The reconcile revision cleaned the anchor warning but the detection-only
+        re-audit shows it regressed a verified fact. Ground truth wins: the
+        original fact-revised capsule is kept and the original recheck warnings
+        ship as advisory.
+        """
+        import asyncio
+
+        from pitcher_narratives.anchor import AnchorResult, AnchorWarning
+        from pitcher_narratives.pipeline import _reconcile_anchor_warnings
+
+        w1 = AnchorWarning(category="UNSUPPORTED", description="new")
+        anchor = self._fake_anchor(
+            AnchorResult(warnings=[w1]), AnchorResult(warnings=[])
+        )
+        writer = self._fake_writer("bad revision")
+        auditor = self._fake_auditor([self._flag()])  # guard flags regression
+
+        capsule, result, passes = asyncio.run(
+            _reconcile_anchor_warnings(
+                anchor_agent=anchor,
+                writer_agent=writer,
+                capsule_auditor=auditor,
+                synthesis="synth",
+                capsule="ORIGINAL_CAP",
+                fact_check_source="GT",
+                prior_anchor=AnchorResult(warnings=[]),
+                remaining=5,
+                _model_override=None,
+            )
+        )
+
+        assert capsule == "ORIGINAL_CAP"
+        assert passes == 1
+        sigs = {(w.category, w.description) for w in result.warnings}
+        assert ("UNSUPPORTED", "new") in sigs
+        assert anchor.run.call_count == 2
+        assert writer.run.call_count == 1
+        assert auditor.run.call_count == 1
+
+    def test_stall_breaks_loop(self):
+        """Identical warnings two passes running → stall break after 1 pass.
+
+        The reconcile revision does not converge (same warning signature), so
+        the loop stops early instead of burning the remaining budget. Guard is
+        clean, so the (unconverged) candidate is adopted.
+        """
+        import asyncio
+
+        from pitcher_narratives.anchor import AnchorResult, AnchorWarning
+        from pitcher_narratives.pipeline import _reconcile_anchor_warnings
+
+        def _dirty():
+            return AnchorResult(
+                warnings=[AnchorWarning(category="MISSED_SIGNAL", description="same")]
+            )
+
+        anchor = self._fake_anchor(_dirty(), _dirty())
+        writer = self._fake_writer("r1")
+        auditor = self._fake_auditor([])  # guard clean
+
+        capsule, result, passes = asyncio.run(
+            _reconcile_anchor_warnings(
+                anchor_agent=anchor,
+                writer_agent=writer,
+                capsule_auditor=auditor,
+                synthesis="synth",
+                capsule="CAP",
+                fact_check_source="GT",
+                prior_anchor=AnchorResult(warnings=[]),
+                remaining=5,
+                _model_override=None,
+            )
+        )
+
+        assert passes == 1
+        assert capsule == "r1"
+        sigs = {(w.category, w.description) for w in result.warnings}
+        assert ("MISSED_SIGNAL", "same") in sigs
+        # 2 anchor checks (pre-loop + one in-loop), 1 revision, 1 guard audit.
+        assert anchor.run.call_count == 2
+        assert writer.run.call_count == 1
+        assert auditor.run.call_count == 1
+
+
 # ── Key signals integration test ─────────────────────────────────────
 
 
@@ -2352,6 +2616,13 @@ def test_pipeline_threads_report_validation_depths(monkeypatch):
     from pitcher_narratives.personas import REPORT
 
     captured: dict[str, int] = {}
+    # run_capsule_audit is now called twice when a fact-revision occurs: the
+    # main fact-check (fact_depth), then _reconcile_anchor_warnings' detection-
+    # only regression guard (max_fact_revisions=0). TestModel forces
+    # capsule_revised=True, so both fire. Record the first (main) call's depth,
+    # which is what this test asserts on; the trailing guard call legitimately
+    # passes 0 and must not clobber the captured main depth.
+    fact_calls: list[int] = []
 
     real_anchor = pipeline.run_anchor_revision_loop
     real_audit = pipeline.run_capsule_audit
@@ -2361,7 +2632,8 @@ def test_pipeline_threads_report_validation_depths(monkeypatch):
         return await real_anchor(*args, **kwargs)
 
     async def audit_spy(*args, **kwargs):
-        captured["fact"] = kwargs["max_fact_revisions"]
+        fact_calls.append(kwargs["max_fact_revisions"])
+        captured["fact"] = fact_calls[0]
         return await real_audit(*args, **kwargs)
 
     monkeypatch.setattr(pipeline, "run_anchor_revision_loop", anchor_spy)

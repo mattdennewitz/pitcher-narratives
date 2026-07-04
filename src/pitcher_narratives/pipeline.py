@@ -56,6 +56,7 @@ from pitcher_narratives.anchor import (
     AnchorResult,
     AnchorWarning,
     build_anchor_message,
+    build_reconcile_message,
     build_revision_message,
 )
 from pitcher_narratives.config import (
@@ -2021,6 +2022,118 @@ class _RenderedCapsule:
     capsule_revised: bool
 
 
+async def _reconcile_anchor_warnings(
+    *,
+    anchor_agent: Agent[None, AnchorResult],
+    writer_agent: Agent[None, str],
+    capsule_auditor: Agent[None, AuditResult],
+    synthesis: str,
+    capsule: str,
+    fact_check_source: str,
+    prior_anchor: AnchorResult,
+    remaining: int,
+    _model_override: Any = None,
+    tracker: UsageTracker | None = None,
+    tracker_model: str = "",
+) -> tuple[str, AnchorResult, int]:
+    """Re-anchor a fact-revised capsule and reconcile any new warnings.
+
+    A data fact-revision rewrites the capsule against source data, which can
+    invalidate the anchor pass captured earlier in `_render_capsule`. Detection
+    alone (the old behavior) shipped those warnings as advisory with "Revised 0
+    time(s)". This helper instead spends the mode's REMAINING anchor budget on
+    reconcile revisions that do NOT touch numeric values (the fact-check already
+    verified them), then runs one detection-only capsule re-audit as a
+    regression guard: if the reconciled text regresses a verified fact, the
+    fact-revised capsule wins and its warnings ship as before. Ground truth
+    always outranks the specialist synthesis.
+
+    Returns (final_capsule, merged_anchor_result, reconcile_passes_used).
+    """
+
+    def _merge(base: AnchorResult, extra: list[AnchorWarning]) -> AnchorResult:
+        seen = {(w.category, w.description) for w in base.warnings}
+        merged = list(base.warnings)
+        for w in extra:
+            key = (w.category, w.description)
+            if key not in seen:
+                seen.add(key)
+                merged.append(w)
+        return AnchorResult(warnings=merged)
+
+    # Re-anchor the fact-revised capsule once against the final text.
+    recheck = await anchor_agent.run(
+        **agent_kwargs(build_anchor_message(synthesis, capsule), _model_override)
+    )
+    _record_usage(tracker, tracker_model, recheck, "anchor")
+    current = recheck.output
+
+    # Rule 1: clean recheck → nothing to reconcile (today's clean path).
+    if current.is_clean:
+        return capsule, prior_anchor, 0
+
+    # Rule 2: no remaining budget → merge new warnings advisory-only, deduped
+    # by (category, description) — exactly today's merge behavior.
+    if remaining <= 0:
+        return capsule, _merge(prior_anchor, current.warnings), 0
+
+    # Rule 3: spend the remaining budget on prose-only reconcile revisions.
+    original = capsule
+    original_warnings = list(current.warnings)
+    candidate = capsule
+    passes = 0
+    prev_signature = {(w.category, w.description) for w in current.warnings}
+
+    for _ in range(remaining):
+        revision = await writer_agent.run(
+            **agent_kwargs(
+                build_reconcile_message(synthesis, candidate, current.warnings),
+                _model_override,
+            )
+        )
+        _record_usage(tracker, tracker_model, revision, "anchor_revision")
+        candidate = revision.output
+        passes += 1
+
+        recheck = await anchor_agent.run(
+            **agent_kwargs(build_anchor_message(synthesis, candidate), _model_override)
+        )
+        _record_usage(tracker, tracker_model, recheck, "anchor")
+        current = recheck.output
+        if current.is_clean:
+            break
+        signature = {(w.category, w.description) for w in current.warnings}
+        if signature == prev_signature:
+            log.info("Reconcile loop stalled (identical warnings); stopping early.")
+            break
+        prev_signature = signature
+
+    # Rule 4: regression guard — one detection-only (max_fact_revisions=0) audit
+    # of the reconciled text against ground truth. If the reconcile prose
+    # regressed a verified fact, revert to the fact-revised capsule and ship the
+    # original recheck warnings as advisory. Ground truth wins.
+    _, guard_flags, _ = await run_capsule_audit(
+        auditor=capsule_auditor,
+        writer_agent=writer_agent,
+        ground_truth=fact_check_source,
+        capsule=candidate,
+        max_fact_revisions=0,
+        _model_override=_model_override,
+        tracker=tracker,
+        tracker_model=tracker_model,
+    )
+    if guard_flags:
+        log.warning(
+            "Reconcile revision regressed ground-truth facts (%d flag(s)); "
+            "reverting to the fact-revised capsule and shipping anchor "
+            "warnings as advisory.",
+            len(guard_flags),
+        )
+        return original, _merge(prior_anchor, original_warnings), passes
+
+    return candidate, _merge(prior_anchor, current.warnings), passes
+
+
 async def _render_capsule(
     ctx: PitcherContext,
     analyzed: AnalyzedContext,
@@ -2146,27 +2259,30 @@ async def _render_capsule(
         )
 
     # A fact-revision can rewrite the capsule out from under the anchor result
-    # captured above, so re-anchor once against the final text and merge any new
-    # warnings into the stored result. Unlike the capsule audit (which fails
-    # closed), an anchor crash here is advisory-plus: log and keep the prior
+    # captured above, so re-anchor against the final text and reconcile any new
+    # warnings — spending the mode's remaining anchor budget on prose-only
+    # revisions, with a detection-only re-audit as a ground-truth regression
+    # guard (see _reconcile_anchor_warnings). Unlike the capsule audit (which
+    # fails closed), a crash here is advisory-plus: log and keep the prior
     # anchor_check rather than kill the pipeline.
     if capsule_revised:
         try:
-            recheck = await agents.anchor.run(
-                **agent_kwargs(build_anchor_message(synthesis, capsule), _model_override)
+            capsule, anchor_check, _ = await _reconcile_anchor_warnings(
+                anchor_agent=agents.anchor,
+                writer_agent=agents.writer,
+                capsule_auditor=agents.capsule_auditor,
+                synthesis=synthesis,
+                capsule=capsule,
+                fact_check_source=fact_check_source,
+                prior_anchor=anchor_check,
+                remaining=max(anchor_depth - revision_count, 0),
+                _model_override=_model_override,
+                tracker=tracker,
+                tracker_model=agents.mini_model_name,
             )
-            _record_usage(tracker, agents.mini_model_name, recheck, "anchor")
-            seen = {(w.category, w.description) for w in anchor_check.warnings}
-            merged = list(anchor_check.warnings)
-            for w in recheck.output.warnings:
-                key = (w.category, w.description)
-                if key not in seen:
-                    seen.add(key)
-                    merged.append(w)
-            anchor_check = AnchorResult(warnings=merged)
         except Exception:
             log.warning(
-                "Post-fact-revision anchor re-check failed; keeping prior anchor result.",
+                "Post-fact-revision anchor reconcile failed; keeping prior anchor result.",
                 exc_info=True,
             )
 
