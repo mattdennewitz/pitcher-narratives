@@ -1579,7 +1579,11 @@ def make_pipeline_agents(
                       model_settings=checker_settings, retries=5, defer_model_check=True),
         capsule_auditor=Agent(mini_model, output_type=AuditResult, system_prompt=_CAPSULE_AUDITOR_PROMPT,
                               model_settings=capsule_auditor_settings, retries=5, defer_model_check=True),
-        anchor=Agent(mini_model, output_type=AnchorResult, system_prompt=ANCHOR_PROMPT,
+        anchor=Agent(mini_model, output_type=AnchorResult, system_prompt=(
+                         ANCHOR_PROMPT + "\n\n" + mode.anchor_guidance
+                         if mode.anchor_guidance
+                         else ANCHOR_PROMPT
+                     ),
                      model_settings=checker_settings, retries=3, defer_model_check=True),
         summary=Agent(mini_model, output_type=str, system_prompt=_EXECUTIVE_SUMMARY_PROMPT,
                       model_settings=report_summary_settings, retries=3, defer_model_check=True),

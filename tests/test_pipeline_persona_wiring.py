@@ -61,3 +61,20 @@ class TestPipelinePersonaWiring:
         import inspect
         from pitcher_narratives.pipeline import generate_pipeline_streaming
         assert "mode" in inspect.signature(generate_pipeline_streaming).parameters
+
+    def test_anchor_prompt_carries_changes_guidance(self):
+        """CHANGES mode's anchor guidance overlay lands on the anchor agent's
+        system prompt; REPORT's anchor prompt stays byte-identical to the
+        base prompt (no guidance overlay)."""
+        from pitcher_narratives.anchor import ANCHOR_PROMPT
+        from pitcher_narratives.personas import CHANGES, REPORT, get_persona
+        from pitcher_narratives.pipeline import make_pipeline_agents
+
+        changes_agents = make_pipeline_agents("gemini", "high", get_persona("scout"), CHANGES)
+        report_agents = make_pipeline_agents("gemini", "high", get_persona("scout"), REPORT)
+        changes_prompt = changes_agents.anchor._system_prompts[0]
+        report_prompt = report_agents.anchor._system_prompts[0]
+
+        assert CHANGES.anchor_guidance in changes_prompt
+        assert CHANGES.anchor_guidance not in report_prompt
+        assert report_prompt == ANCHOR_PROMPT

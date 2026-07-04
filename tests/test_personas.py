@@ -1178,3 +1178,13 @@ def test_build_system_prompt_explain_model_off_no_dangling_blanks():
 
     off = build_system_prompt(SCOUT, SCOUT_REPORT, explain_model=False)
     assert "\n\n\n" not in off
+
+
+def test_changes_mode_has_anchor_guidance():
+    from pitcher_narratives.personas import CHANGES, RECAP, REPORT
+
+    assert REPORT.anchor_guidance == ""
+    assert RECAP.anchor_guidance == ""
+    g = CHANGES.anchor_guidance
+    assert "change" in g.lower()
+    assert "UNDERWEIGHTED" in g

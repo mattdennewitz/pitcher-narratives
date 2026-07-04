@@ -397,6 +397,18 @@ HARD LIMIT: Do not exceed 500 words. Concision is the voice.\
 """
 )
 
+_CHANGES_ANCHOR_GUIDANCE = """\
+CHANGE-FOCUSED CAPSULE: This capsule is a change log — its mandate is to \
+report what MOVED in the recent window versus the prior window, and to omit \
+or deprioritize stable traits. Apply your emphasis rules accordingly: a \
+primary or secondary signal that describes a STEADY state (an unchanged \
+strength, a stable grade) may legitimately be deprioritized or mentioned \
+only in passing — do not flag that as MISSED_SIGNAL or UNDERWEIGHTED. \
+Reserve those flags for signals that themselves describe a CHANGE the \
+capsule ignores or buries. Numeric deltas in this capsule are stated against \
+the PRIOR window unless the capsule says otherwise; do not flag them for \
+disagreeing with season-baseline figures."""
+
 # BRIEF vs RECAP_BRIEF: intentionally separate contracts. BRIEF distills the
 # finished report (report/changes modes, recover-only grounding); RECAP_BRIEF
 # writes a standalone brief straight from the analyses (recap mode). Since
@@ -498,6 +510,11 @@ class NarrationMode:
     capsule. ``distill`` controls whether the pipeline runs the second-step
     summarizers (executive summary + brief); RECAP's capsule *is* a brief, so
     it skips them.
+
+    ``anchor_guidance`` is an optional mode-specific overlay appended to the
+    anchor agent's system prompt — modes whose narrative mandate legitimately
+    reweights signals (CHANGES) use it to keep the anchor's emphasis rules
+    consistent with the writer's contract.
     """
 
     id: str
@@ -508,6 +525,7 @@ class NarrationMode:
     temporal_frame: frozenset[TemporalFrame] = frozenset({TemporalFrame.RECENT})
     title: str = ""
     distill: bool = True
+    anchor_guidance: str = ""
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "contracts", MappingProxyType(dict(self.contracts)))
@@ -560,6 +578,7 @@ CHANGES = NarrationMode(
     ),
     temporal_frame=frozenset({TemporalFrame.RECENT, TemporalFrame.PRIOR}),
     title="Change Report",
+    anchor_guidance=_CHANGES_ANCHOR_GUIDANCE,
 )
 
 _NARRATION_MODES_INTERNAL: dict[str, NarrationMode] = {
