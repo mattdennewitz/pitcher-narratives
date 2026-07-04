@@ -358,6 +358,16 @@ advisory-plus — it's logged and the pipeline keeps the prior
 toward `revision_count`, so the CLI's "Revised N time(s)" reflects
 them the same as ordinary anchor revisions.
 
+#### Temporal frames
+
+In changes mode two baselines coexist: recent-vs-season deltas in the context
+tables and the code-computed recent-vs-prior block. The capsule fact-check's
+ground truth includes BOTH (the frame block is threaded in exactly as the
+trends specialist saw it), and the auditor is instructed that a claim matching
+either baseline is grounded — it must never "correct" a number from one frame
+into the other. The anchor receives changes-mode guidance to the same effect,
+and to reserve MISSED_SIGNAL/UNDERWEIGHTED for signals that describe a change.
+
 ## Hallucination guard
 
 After Phase 2.5 completes, `check_hallucinated_metrics` in `pipeline.py`
