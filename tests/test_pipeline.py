@@ -1259,6 +1259,107 @@ class TestReconcileAnchorWarnings:
         # 0 anchor-loop revisions + 1 reconcile pass.
         assert rc.revision_count == 1
 
+    def test_render_capsule_threads_frame_block_into_fact_check(
+        self, ctx, monkeypatch
+    ):
+        """Wiring: _render_capsule passes analyzed.trend_frame_comparison
+        through to _build_parity_union, so the capsule fact-check sees the
+        same recent-vs-prior frame the writer narrated from."""
+        import asyncio
+
+        from pitcher_narratives import pipeline as pipeline_mod
+        from pitcher_narratives.anchor import AnchorResult
+        from pitcher_narratives.models import AnalyzedContext, SpecialistOutputs
+        from pitcher_narratives.pipeline import PipelineAgents, _render_capsule
+
+        recorded = {}
+        real_union = pipeline_mod._build_parity_union
+
+        def _recording_union(*args, **kwargs):
+            recorded["trend_frame_comparison"] = kwargs.get(
+                "trend_frame_comparison"
+            )
+            return real_union(*args, **kwargs)
+
+        monkeypatch.setattr(
+            pipeline_mod, "_build_parity_union", _recording_union
+        )
+
+        writer = self._fake_writer("cap0")
+        anchor = self._fake_anchor(AnchorResult(warnings=[]))
+        auditor = self._fake_auditor([])  # clean audit, no revision
+
+        sentinel = object()
+        agents = PipelineAgents(
+            stuff=sentinel, location=sentinel, runvalue=sentinel,
+            trends=sentinel, game_shape=sentinel,
+            writer=writer, auditor=sentinel, capsule_auditor=auditor,
+            anchor=anchor, summary=sentinel, signal_extractor=sentinel,
+            brief=sentinel, mini_model_name="test-mini",
+        )
+        analyzed = AnalyzedContext(
+            specialists=SpecialistOutputs(
+                stuff="s", location="l", runvalue="r",
+                trends="t", game_shape="g",
+            ),
+            trend_frame_comparison="SENTINEL_FRAME",
+        )
+
+        asyncio.run(
+            _render_capsule(
+                ctx,
+                analyzed,
+                agents=agents,
+                anchor_depth=5,
+                fact_depth=1,
+                stream=False,
+                check_explainer=False,
+            )
+        )
+
+        assert recorded["trend_frame_comparison"] == "SENTINEL_FRAME"
+
+
+class TestFrameAwareCapsuleAudit:
+    """The capsule fact-check must see the same frames the writer saw."""
+
+    def test_capsule_ground_truth_includes_frame_block(self, ctx):
+        from pitcher_narratives.pipeline import _build_capsule_ground_truth
+
+        gt = _build_capsule_ground_truth(
+            ctx, trend_frame_comparison="## Recent vs Prior Window SENTINEL"
+        )
+        assert "## Recent vs Prior Window SENTINEL" in gt
+
+    def test_capsule_ground_truth_unchanged_without_frame_block(self, ctx):
+        from pitcher_narratives.pipeline import _build_capsule_ground_truth
+
+        assert _build_capsule_ground_truth(ctx) == _build_capsule_ground_truth(
+            ctx, trend_frame_comparison=None
+        )
+
+    def test_parity_union_threads_frame_block(self, ctx):
+        from pitcher_narratives.pipeline import _build_parity_union
+        from pitcher_narratives.models import SpecialistOutputs
+
+        specialists = SpecialistOutputs(
+            stuff="s", location="l", runvalue="r", trends="t", game_shape="g"
+        )
+        union = _build_parity_union(
+            ctx, specialists, None,
+            trend_frame_comparison="## Recent vs Prior Window SENTINEL",
+        )
+        assert "## Recent vs Prior Window SENTINEL" in union
+
+    def test_capsule_auditor_prompt_is_frame_aware(self):
+        from pitcher_narratives.pipeline import _CAPSULE_AUDITOR_PROMPT
+
+        p = _CAPSULE_AUDITOR_PROMPT.lower()
+        assert "baseline" in p
+        assert "recent vs prior" in p
+        # The core rule: matching either frame is grounded; never cross-correct.
+        assert "either" in p
+
 
 # ── Key signals integration test ─────────────────────────────────────
 

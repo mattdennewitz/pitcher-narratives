@@ -481,6 +481,16 @@ shows the other.
 the source material.
 - UNRECONCILED / HALLUCINATED_CAUSATION: a causal claim the source does not support.
 
+TEMPORAL FRAMES: The source material can contain TWO baselines for the same \
+metric: recent-window-vs-SEASON deltas in the context tables, and a \
+"Recent vs Prior Window (code-computed deltas)" block comparing the recent \
+window to the window just before it. These legitimately disagree in magnitude \
+and even direction (the season average includes the recent games). A capsule \
+claim that matches EITHER baseline is grounded — verify it against the \
+baseline it narrates, and NEVER flag or "correct" a number from one baseline \
+using the other. A change-focused capsule narrates the recent-vs-prior block \
+by default.
+
 Only flag genuine factual errors against the source — not style, emphasis, or \
 legitimate synthesis. The specialists' analyses already contain computed deltas, \
 contrasts, and paraphrases of grades (e.g. "S+ up 8 points", "28% above \
@@ -488,10 +498,24 @@ average"); a number the capsule draws from those is faithful, NOT fabricated. \
 If the capsule is faithful, return an empty list of flags."""
 
 
-def _build_capsule_ground_truth(ctx: PitcherContext) -> str:
-    """Combined raw ground truth (all five specialists' input tables)."""
+def _build_capsule_ground_truth(
+    ctx: PitcherContext, *, trend_frame_comparison: str | None = None
+) -> str:
+    """Combined raw ground truth (all five specialists' input tables).
+
+    ``trend_frame_comparison`` threads the CHANGES-mode recent-vs-prior block
+    into the trends input exactly as the trends specialist saw it — the same
+    mechanism as the per-specialist audit (see _get_specialist_input). Without
+    it the capsule auditor sees only recent-vs-season deltas and "corrects"
+    correct prior-frame numbers into the season frame.
+    """
     names = ["stuff", "location", "runvalue", "trends", "game_shape"]
-    return "\n\n".join(_get_specialist_input_text(name, ctx) for name in names)
+    return "\n\n".join(
+        _get_specialist_input_text(
+            name, ctx, trend_frame_comparison=trend_frame_comparison
+        )
+        for name in names
+    )
 
 
 def _build_parity_union(
@@ -500,6 +524,7 @@ def _build_parity_union(
     key_signals: KeySignals | None,
     *,
     exclude: frozenset[str] = frozenset(),
+    trend_frame_comparison: str | None = None,
 ) -> str:
     """A's source-of-truth union: everything the writer saw — raw ground truth,
     clean specialist outputs, and the rendered key signals.
@@ -509,8 +534,16 @@ def _build_parity_union(
     a fabricated number in its prose must not launder into citable truth. Raw
     ground-truth tables and the key signals are always included; only the
     excluded specialists' analysis prose is dropped.
+
+    ``trend_frame_comparison`` is threaded into the raw ground truth so the
+    union contains every temporal frame the writer narrated from — in CHANGES
+    mode the recent-vs-prior block, not just the recent-vs-season deltas.
     """
-    parts = [_build_capsule_ground_truth(ctx)]
+    parts = [
+        _build_capsule_ground_truth(
+            ctx, trend_frame_comparison=trend_frame_comparison
+        )
+    ]
     specialist_prose = {
         "stuff": specialists.stuff,
         "location": specialists.location,
@@ -2246,6 +2279,7 @@ async def _render_capsule(
     fact_check_source = _build_parity_union(
         ctx, specialists, key_signals,
         exclude=frozenset(analyzed.residual_specialists),
+        trend_frame_comparison=analyzed.trend_frame_comparison,
     )
     capsule, capsule_audit_flags, capsule_revised = await run_capsule_audit(
         auditor=agents.capsule_auditor,
