@@ -270,7 +270,12 @@ are defaulting to RP (run `make pull-statcast`).
   own `anchor_depth`/`fact_depth` (a `ValidationPolicy`): `report` and `changes`
   use the full budget, `recap` a shallower one. These caps are provisional and
   calibrated from the `--metrics-out` records — see
-  [`docs/calibration.md`](./docs/calibration.md).
+  [`docs/calibration.md`](./docs/calibration.md). When a fact revision rewrites
+  the capsule, the pipeline re-anchors the new text and spends any remaining
+  anchor budget on *reconciling* revisions that may not change numeric values
+  (ground truth outranks the synthesis); a detection-only re-audit guards the
+  result, reverting to the fact-revised capsule if reconciliation regressed a
+  number.
 
 For `changes` mode, a code-computed recent-vs-prior comparison (`frame_delta.py`)
 is threaded into the trends specialist and the writer before Phase 2.

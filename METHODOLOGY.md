@@ -324,6 +324,40 @@ emitted literally by the anchor prompt:
 
 `AnchorResult.is_clean` is `True` when `warnings` is empty.
 
+#### Reconciling the anchor check with fact-revised capsules
+
+The anchor check and the fact-check (`run_capsule_audit`, part of the
+capsule audit) validate the capsule against two different references:
+the anchor's reference is the synthesis (does the prose match the
+specialist findings?), while the fact-check's reference is the
+ground-truth data (does the prose match reality?). **When they
+disagree, the data wins** — a fact revision is allowed to invalidate
+an anchor result that was captured before the ground truth was
+applied.
+
+Concretely: if a fact revision rewrites the capsule (`capsule_revised`
+is `True`), the anchor check computed earlier in the pipeline no
+longer describes the final text, so `_reconcile_anchor_warnings`
+re-anchors it. If the re-anchor comes back clean, nothing further
+happens. Otherwise, as long as budget remains
+(`anchor_depth - revision_count`), the pipeline runs reconciling
+revision passes: the writer is asked to fix the listed warnings under
+a prompt that forbids changing any numeric value, since the fact-check
+already verified those numbers and the anchor may simply be looking at
+stale synthesis. Each pass re-anchors and stops early either on a
+clean result or when the warning set stalls (identical warnings two
+passes in a row).
+
+Once the loop ends, a detection-only capsule re-audit
+(`max_fact_revisions=0`) guards the outcome: if the reconciled prose
+regressed a verified fact, the pipeline reverts to the fact-revised
+capsule and ships the earlier recheck warnings as advisory rather than
+keeping the regression. A crash anywhere in this reconcile step is
+advisory-plus — it's logged and the pipeline keeps the prior
+`anchor_check` rather than failing the run. Reconcile passes count
+toward `revision_count`, so the CLI's "Revised N time(s)" reflects
+them the same as ordinary anchor revisions.
+
 ## Hallucination guard
 
 After Phase 2.5 completes, `check_hallucinated_metrics` in `pipeline.py`
