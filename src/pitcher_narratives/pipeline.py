@@ -2267,7 +2267,7 @@ async def _render_capsule(
     # anchor_check rather than kill the pipeline.
     if capsule_revised:
         try:
-            capsule, anchor_check, _ = await _reconcile_anchor_warnings(
+            capsule, anchor_check, reconcile_passes = await _reconcile_anchor_warnings(
                 anchor_agent=agents.anchor,
                 writer_agent=agents.writer,
                 capsule_auditor=agents.capsule_auditor,
@@ -2280,6 +2280,11 @@ async def _render_capsule(
                 tracker=tracker,
                 tracker_model=agents.mini_model_name,
             )
+            # Reconcile passes are anchor-budget revisions: count them so the
+            # CLI's "Revised N time(s)" reflects reconciled runs. The tuple
+            # assignment above is atomic w.r.t. an await failure, so on
+            # exception nothing here has been touched.
+            revision_count += reconcile_passes
         except Exception:
             log.warning(
                 "Post-fact-revision anchor reconcile failed; keeping prior anchor result.",

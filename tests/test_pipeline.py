@@ -1195,6 +1195,70 @@ class TestReconcileAnchorWarnings:
         assert writer.run.call_count == 1
         assert auditor.run.call_count == 1
 
+    def test_render_capsule_counts_reconcile_passes(self, ctx):
+        """Wiring: _render_capsule's revision_count includes reconcile passes.
+
+        Drives _render_capsule directly with stateful fakes through the
+        capsule_revised path: anchor loop clean (0 revisions), fact-check
+        revises once (capsule_revised=True), then reconcile re-anchor is dirty
+        then clean with a clean guard — exactly one reconcile pass. The
+        returned revision_count must include that pass (the CLI's
+        "Revised N time(s)" is fed by it); discarding the helper's third
+        return would report "Revised 0 time(s)" on a reconciled run.
+        """
+        import asyncio
+
+        from pitcher_narratives.anchor import AnchorResult, AnchorWarning
+        from pitcher_narratives.models import AnalyzedContext, SpecialistOutputs
+        from pitcher_narratives.pipeline import PipelineAgents, _render_capsule
+
+        # Writer: initial capsule, fact revision, reconcile revision.
+        writer = self._fake_writer("cap0", "cap1", "cap2")
+        # Anchor: loop check clean (0 loop revisions) → reconcile recheck
+        # dirty(w1) → post-reconcile clean.
+        w1 = AnchorWarning(category="UNSUPPORTED", description="post-fact drift")
+        anchor = self._fake_anchor(
+            AnchorResult(warnings=[]),
+            AnchorResult(warnings=[w1]),
+            AnchorResult(warnings=[]),
+        )
+        # Auditor: main audit flags once → re-audit clean (revised=True) →
+        # detection-only reconcile guard clean.
+        auditor = self._fake_auditor([self._flag()], [], [])
+
+        sentinel = object()  # unused agent slots must never be touched
+        agents = PipelineAgents(
+            stuff=sentinel, location=sentinel, runvalue=sentinel,
+            trends=sentinel, game_shape=sentinel,
+            writer=writer, auditor=sentinel, capsule_auditor=auditor,
+            anchor=anchor, summary=sentinel, signal_extractor=sentinel,
+            brief=sentinel, mini_model_name="test-mini",
+        )
+        analyzed = AnalyzedContext(
+            specialists=SpecialistOutputs(
+                stuff="s", location="l", runvalue="r",
+                trends="t", game_shape="g",
+            ),
+        )
+
+        rc = asyncio.run(
+            _render_capsule(
+                ctx,
+                analyzed,
+                agents=agents,
+                anchor_depth=5,
+                fact_depth=1,
+                stream=False,
+                check_explainer=False,
+            )
+        )
+
+        assert rc.capsule_revised is True
+        assert rc.capsule == "cap2"  # reconciled candidate adopted
+        assert rc.anchor_check.warnings == []  # reconcile converged clean
+        # 0 anchor-loop revisions + 1 reconcile pass.
+        assert rc.revision_count == 1
+
 
 # ── Key signals integration test ─────────────────────────────────────
 
