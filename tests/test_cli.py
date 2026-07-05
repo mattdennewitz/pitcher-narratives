@@ -11,6 +11,17 @@ import pytest
 from pitcher_narratives.cli import _resolve_modes, parse_args
 
 
+def _scored(pid, name, role, score, throws="R"):
+    from datetime import date
+
+    from pitcher_narratives.scout import ScoredAppearance
+
+    return ScoredAppearance(
+        pitcher_id=pid, pitcher_name=name, throws=throws,
+        game_date=date(2026, 7, 4), game_pk=pid, n_pitches=90, score=score, role=role,
+    )
+
+
 def test_parse_pitcher_flag(monkeypatch):
     """CLI-01: -p flag accepted and parsed as int."""
     monkeypatch.setattr(sys, "argv", ["main.py", "report", "-p", "592155"])
@@ -1054,3 +1065,67 @@ def test_report_explain_model_defaults_true(monkeypatch):
     monkeypatch.setattr(sys, "argv", ["main.py", "report", "-p", "592155"])
     args = parse_args()
     assert args.explain_model is True
+
+
+# ── scoreboard subcommand ──
+
+
+def test_scoreboard_parse_defaults(monkeypatch):
+    monkeypatch.setattr(sys, "argv", ["main.py", "scoreboard"])
+    args = parse_args()
+    assert args.command == "scoreboard"
+    assert args.window == 1
+    assert args.min_pitches == 20
+    assert args.starters_only is False
+
+
+def test_scoreboard_parse_flags(monkeypatch):
+    monkeypatch.setattr(
+        sys, "argv",
+        ["main.py", "scoreboard", "-w", "3", "--min-pitches", "10", "--starters-only"],
+    )
+    args = parse_args()
+    assert (args.window, args.min_pitches, args.starters_only) == (3, 10, True)
+
+
+def test_scoreboard_prints_full_board(monkeypatch, capsys):
+    """scoreboard prints the render_full_board markdown, no LLM."""
+    import argparse
+
+    from pitcher_narratives import scout as scout_mod
+    from pitcher_narratives.cli import _run_scoreboard_command
+
+    board = [_scored(1, "Ace SP", "SP", 12.0), _scored(2, "Setup RP", "RP", 6.0)]
+    monkeypatch.setattr(scout_mod, "scout_appearances", lambda **kw: list(board))
+    _run_scoreboard_command(argparse.Namespace(window=1, min_pitches=20, starters_only=False))
+    out = capsys.readouterr().out
+    assert "# Scoreboard — 2026-07-04" in out
+    assert "## The Full Board" in out
+    assert "Ace SP" in out and "Setup RP" in out
+
+
+def test_scoreboard_starters_only_drops_relievers(monkeypatch, capsys):
+    import argparse
+
+    from pitcher_narratives import scout as scout_mod
+    from pitcher_narratives.cli import _run_scoreboard_command
+
+    board = [_scored(1, "Ace SP", "SP", 12.0), _scored(2, "Setup RP", "RP", 6.0)]
+    monkeypatch.setattr(scout_mod, "scout_appearances", lambda **kw: list(board))
+    _run_scoreboard_command(argparse.Namespace(window=1, min_pitches=20, starters_only=True))
+    out = capsys.readouterr().out
+    assert "Ace SP" in out
+    assert "Setup RP" not in out
+
+
+def test_scoreboard_quiet_day(monkeypatch, capsys):
+    import argparse
+
+    from pitcher_narratives import scout as scout_mod
+    from pitcher_narratives.cli import _run_scoreboard_command
+
+    monkeypatch.setattr(scout_mod, "scout_appearances", lambda **kw: [])
+    _run_scoreboard_command(argparse.Namespace(window=1, min_pitches=20, starters_only=False))
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "quiet day" in captured.err

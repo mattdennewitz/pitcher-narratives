@@ -162,6 +162,29 @@ def parse_args() -> argparse.Namespace:
         help="Output directory root (default: morning-runs)",
     )
 
+    scoreboard = sub.add_parser(
+        "scoreboard",
+        help="Print the scouted board only (no LLM) — the morning full board",
+    )
+    scoreboard.add_argument(
+        "-w",
+        "--window",
+        type=int,
+        default=1,
+        help="Days to scan back from the most recent game date (default: 1)",
+    )
+    scoreboard.add_argument(
+        "--min-pitches",
+        type=int,
+        default=20,
+        help="Minimum pitches for an appearance to be scored (default: 20)",
+    )
+    scoreboard.add_argument(
+        "--starters-only",
+        action="store_true",
+        help="Restrict the board to starting pitchers (role SP)",
+    )
+
     return parser.parse_args()
 
 
@@ -227,6 +250,8 @@ def main() -> None:
     args = parse_args()
     if args.command == "morning":
         _run_morning_command(args)
+    elif args.command == "scoreboard":
+        _run_scoreboard_command(args)
     else:
         _run_report_command(args)
 
@@ -587,6 +612,36 @@ def _run_morning_command(args: argparse.Namespace) -> None:
         sys.exit(1)
     if run_dir is not None:
         print(f"\nRun artifacts: {run_dir}", file=sys.stderr)
+
+
+def _run_scoreboard_command(args: argparse.Namespace) -> None:
+    """Print the scouted full board to stdout — no LLM, no cost."""
+    setup_logging()
+
+    # Lazy imports: polars (~90ms) and the scout/digest modules are heavy;
+    # importing at call time keeps `pitcher-narratives --help` fast.
+    import polars as pl
+
+    from pitcher_narratives.digest import render_full_board
+    from pitcher_narratives.scout import scout_appearances
+
+    try:
+        board = scout_appearances(window_days=args.window, min_pitches=args.min_pitches)
+    except (ValueError, FileNotFoundError, pl.exceptions.PolarsError, OSError) as exc:
+        print(f"Scoreboard failed: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+    if args.starters_only:
+        board = [a for a in board if a.role == "SP"]
+
+    if not board:
+        noun = "starter appearances" if args.starters_only else "appearances"
+        print(f"No interesting {noun} found — quiet day.", file=sys.stderr)
+        return
+
+    game_date = max(a.game_date for a in board)
+    print(f"# Scoreboard — {game_date}\n")
+    print(render_full_board(board))
 
 
 if __name__ == "__main__":
