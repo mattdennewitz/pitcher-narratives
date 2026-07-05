@@ -1,7 +1,7 @@
 """CLI entry point for pitcher scouting reports.
 
 Parses command-line arguments, loads pitcher data, assembles context,
-and generates an LLM-powered scouting report via streaming output.
+and generates an LLM-powered scouting report printed to stdout.
 """
 
 from __future__ import annotations
@@ -406,7 +406,7 @@ def _emit_mode_result(pipe_result, *, persona: str, mode, verbose: bool = False)
     """Print one mode's reader-facing sections to stdout; diagnostics stay off it.
 
     Returns (unverified, diagnostics_dict). Called immediately after the
-    mode's capsule streamed, so the whole mode block is contiguous on stdout.
+    mode's capsule is rendered, so the whole mode block is contiguous on stdout.
     """
     from pitcher_narratives.pipeline import is_unverified
 
@@ -427,7 +427,7 @@ def _emit_mode_result(pipe_result, *, persona: str, mode, verbose: bool = False)
         print(
             f"\n\n**Verification:** ⚠️ UNVERIFIED — {n_fact} residual "
             f"fact-check flag(s), {n_anchor} anchor warning(s). "
-            "See Diagnostics below."
+            "See diagnostics (-v or --diagnostics-file)."
         )
     else:
         print("\n\n**Verification:** ✅ Verified — fact-check and anchor gates clean.")
