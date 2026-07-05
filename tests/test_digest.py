@@ -104,6 +104,20 @@ def _appearance(pid: int, score: float):
     )
 
 
+def test_render_curation_slate_groups_in_registry_order():
+    from pitcher_narratives.digest import render_curation_slate
+
+    slate = CurationSlate(picks=[
+        _pick2(2, "red_flag"),
+        _pick2(1, "clean_breakout"),
+    ])
+    out = render_curation_slate(slate, {1: "Ace", 2: "Setup"})
+    # clean_breakout (order 0) badge appears before red_flag (order 5) badge.
+    assert out.index("CLEAN BREAKOUT") < out.index("RED FLAG")
+    assert "Ace (medium): a" in out
+    assert "Setup (medium): a" in out
+
+
 def test_digest_groups_by_category_and_omits_empty():
     slate = CurationSlate(picks=[
         _pick2(1, "red_flag"),

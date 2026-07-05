@@ -19,6 +19,7 @@ __all__ = [
     "render_full_board",
     "render_full_board_json",
     "render_full_board_table",
+    "render_curation_slate",
 ]
 
 log = logging.getLogger("pitcher_narratives.digest")
@@ -108,6 +109,27 @@ def render_full_board_table(
             for s in a.signals:
                 lines.append(f"       └─ {s.name} ({s.weight:.1f}): {s.detail}")
     return "\n".join(lines)
+
+def render_curation_slate(slate: CurationSlate, names: dict[int, str]) -> str:
+    """Render a selected slate as category-grouped lines for terminal display.
+
+    Categories appear in registry order under their badge; each pick is one
+    line: ``<name> (<conviction>): <angle>``. Empty categories are skipped.
+    """
+    by_cat: dict[str, list[CurationPick]] = {c.id: [] for c in CATEGORIES}
+    for pick in slate.picks:
+        by_cat[pick.category].append(pick)
+    blocks: list[str] = []
+    for cat in CATEGORIES:
+        picks = by_cat[cat.id]
+        if not picks:
+            continue
+        lines = [cat.badge]
+        for pick in picks:
+            who = names.get(pick.pitcher_id, pick.pitcher_id)
+            lines.append(f"  {who} ({pick.conviction}): {pick.angle}")
+        blocks.append("\n".join(lines))
+    return "\n\n".join(blocks)
 
 def assemble_digest(
     *,
