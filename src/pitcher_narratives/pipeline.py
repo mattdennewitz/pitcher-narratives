@@ -176,6 +176,49 @@ def _record_usage(
 # SPECIALIST PROMPTS
 # ═══════════════════════════════════════════════════════════════════════
 
+# Appended to every specialist system prompt. The bracketed z-score tags
+# ([NORMAL], [OUTLIER], [SMALL SAMPLE ...]) are computed in engine.baselines
+# and fed into specialist *inputs* as internal annotations. Specialists must
+# interpret them, never echo the literal token into prose. Centralized here so
+# the rule stays identical across all five specialists.
+_NO_TAG_ECHO_RULE = """
+
+TAG HYGIENE (absolute): The bracketed tags in the data — [NORMAL], \
+[OUTLIER], [SMALL SAMPLE ...] — are internal annotations for you to read, \
+NOT display text. NEVER reproduce a bracketed tag token in your prose. \
+Translate the judgment into scout language: an [OUTLIER] 93.0 mph becomes \
+"an unusual 93.0 mph, well above the norm for the pitch type"; a [NORMAL] \
+metric is simply left undescribed or called unremarkable — never written \
+as the literal "[NORMAL]"."""
+
+# Matches any bracketed internal tag token that leaked into prose, e.g.
+# "[NORMAL]", "[OUTLIER]", "[OUTLIER (above avg, z=+3.2)]",
+# "[SMALL SAMPLE, N=3 -- untagged]". These are produced by
+# engine.baselines.outlier_tag and must never survive in final narrative.
+_TAG_TOKEN_RE = re.compile(r"\s*\[\s*(?:NORMAL|OUTLIER|SMALL SAMPLE)[^\]]*\]")
+
+
+def _strip_tag_tokens(text: str, *, specialist: str = "") -> str:
+    """Remove leaked internal z-score tag tokens from specialist prose.
+
+    Belt-and-suspenders behind ``_NO_TAG_ECHO_RULE``: the bracketed tags
+    ([NORMAL]/[OUTLIER]/[SMALL SAMPLE ...]) are ground-truth annotations fed
+    into specialist inputs and must never reach the reader. The prompt rule
+    reduces the leak; this guarantees it. A removal is logged so regressions
+    stay visible rather than being silently scrubbed.
+    """
+    cleaned, n = _TAG_TOKEN_RE.subn("", text)
+    if n:
+        # Collapse whitespace/punctuation gaps left where a token was removed.
+        cleaned = re.sub(r"  +", " ", cleaned)
+        cleaned = re.sub(r"\s+([.,;:])", r"\1", cleaned)
+        log.warning(
+            "Stripped %d leaked tag token(s) from %s specialist output.",
+            n, specialist or "unknown",
+        )
+    return cleaned
+
+
 _STUFF_SPECIALIST_PROMPT = """\
 You are a pitch physics analyst. Your job is to explain each pitch's \
 raw stuff quality by tracing from physical characteristics to the \
@@ -1031,6 +1074,28 @@ def _audit_failed_flag(specialist: str = "") -> AuditFlag:
     )
 
 
+def _tag_leak_flag(specialist: str = "") -> AuditFlag:
+    """Synthetic flag: the specialist echoed an internal z-score tag into prose.
+
+    Folds tag-leak repair into the existing audit/revise loop so the specialist
+    rewrites the offending sentence (grammar intact) rather than having the
+    token deleted by ``_strip_tag_tokens`` (which can leave a hole where the
+    model used the tag as a sentence constituent). Cosmetic, not a verification
+    failure: TAG_LEAK is not in the gating categories, so it does not trip
+    is_unverified/residual_banner — the regex strip remains the last-resort net.
+    """
+    return AuditFlag(
+        category="TAG_LEAK",
+        specialist=specialist,
+        claim="prose reproduces an internal tag token (e.g. [OUTLIER], [NORMAL])",
+        data_shows="bracketed tags are internal annotations, never display text",
+        suggested_fix=(
+            "rewrite the affected sentence so the judgment is expressed in scout "
+            "language, leaving no bracketed tag token in the prose"
+        ),
+    )
+
+
 async def audit_and_revise_specialists(
     specialists: SpecialistOutputs,
     specialist_agents: dict[str, Agent[None, str]],
@@ -1134,6 +1199,18 @@ async def audit_and_revise_specialists(
             flagged[name] = audit_result.flags
             log.info("Audit flagged %s: %d issue(s)", name, len(audit_result.flags))
 
+    # Independent of the data auditor's verdict: scan each audited specialist's
+    # raw prose for leaked internal tag tokens ([OUTLIER]/[NORMAL]/SMALL SAMPLE)
+    # and fold a synthetic TAG_LEAK flag into `flagged` so the specialist is
+    # revised to remove it in-grammar. Runs even for AUDIT_FAILED specialists —
+    # the leak is orthogonal to whether the data auditor produced a verdict.
+    for name in audit_names:
+        if _TAG_TOKEN_RE.search(outputs[name]):
+            leak_flag = _tag_leak_flag(name)
+            all_flags.append(leak_flag)
+            flagged.setdefault(name, []).append(leak_flag)
+            log.warning("Tag leak in %s specialist prose; flagging for revision.", name)
+
     if not flagged:
         log.info("All specialists passed audit.")
         return specialists, all_flags, set()
@@ -1149,10 +1226,11 @@ async def audit_and_revise_specialists(
             agent = specialist_agents[name]
             result = await agent.run(**agent_kwargs(revision_input, _model_override))
             _record_usage(tracker, tracker_model, result, "revision")
-            return name, result.output
+            return name, _strip_tag_tokens(result.output, specialist=name)
         except Exception:
             log.warning("Revision failed for %s specialist, keeping original.", name, exc_info=True)
-            return name, outputs[name]
+            # Net: a crashed revision must not ship a raw leaked token.
+            return name, _strip_tag_tokens(outputs[name], specialist=name)
 
     revision_tasks = [
         _revise_one(name, flags) for name, flags in flagged.items()
@@ -1540,15 +1618,15 @@ def make_pipeline_agents(
     skills = [skill_toolset()]
 
     def _specialist(prompt: str) -> Agent[None, str]:
-        return Agent(model, output_type=str, system_prompt=prompt,
+        return Agent(model, output_type=str, system_prompt=prompt + _NO_TAG_ECHO_RULE,
                      model_settings=stuff_settings, toolsets=skills, defer_model_check=True)
 
     def _mini_specialist(prompt: str) -> Agent[None, str]:
-        return Agent(mini_model, output_type=str, system_prompt=prompt,
+        return Agent(mini_model, output_type=str, system_prompt=prompt + _NO_TAG_ECHO_RULE,
                      model_settings=mini_specialist_settings, toolsets=skills, defer_model_check=True)
 
     def _mini_specialist_compact(prompt: str) -> Agent[None, str]:
-        return Agent(mini_model, output_type=str, system_prompt=prompt,
+        return Agent(mini_model, output_type=str, system_prompt=prompt + _NO_TAG_ECHO_RULE,
                      model_settings=mini_specialist_compact_settings, toolsets=skills, defer_model_check=True)
 
     def _writer(prompt: str) -> Agent[None, str]:
@@ -1633,6 +1711,9 @@ async def run_specialists(
             u = result.usage()
             tracker.record(tracker_model, u.input_tokens or 0, u.output_tokens or 0,
                            stage=f"specialist:{name}")
+        # Raw output flows forward unstripped so audit_and_revise_specialists
+        # can detect any leaked internal tag token and trigger a proper
+        # grammar-preserving revision. The final strip is the net after that.
         return name, result.output
 
     results = await asyncio.gather(

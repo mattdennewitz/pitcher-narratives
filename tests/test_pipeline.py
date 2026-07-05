@@ -2073,6 +2073,45 @@ def test_reaudit_clean_revision_leaves_residual_empty(ctx):
     assert len(flags) == 1            # only the original flag
 
 
+def test_strip_tag_tokens_removes_leaked_tags():
+    """_strip_tag_tokens deletes bracketed internal tags and tidies the gap,
+    leaving tag-free prose untouched."""
+    from pitcher_narratives.pipeline import _strip_tag_tokens
+
+    assert _strip_tag_tokens(
+        "extreme velocity [OUTLIER] at 93.0 mph, both [NORMAL]."
+    ) == "extreme velocity at 93.0 mph, both."
+    assert _strip_tag_tokens(
+        "spin [OUTLIER (above avg, z=+3.2)] and [SMALL SAMPLE, N=3 -- untagged] here."
+    ) == "spin and here."
+    # No tags -> returned verbatim.
+    assert _strip_tag_tokens("clean scout prose.") == "clean scout prose."
+
+
+def test_tag_leak_folds_into_revision(ctx):
+    """A specialist that leaks an internal tag token is flagged TAG_LEAK and
+    revised even when the data auditor finds nothing else wrong."""
+    from pitcher_narratives.models import AuditResult
+
+    class _CleanAuditor:
+        async def run(self, **kwargs):
+            class _R:
+                output = AuditResult(flags=[])
+            return _R()
+
+    outputs = SpecialistOutputs(
+        stuff="velocity [OUTLIER] at 93.0 mph.", location="l", runvalue="r",
+        trends="t", game_shape="g",
+    )
+    clean, flags, residual = asyncio.run(audit_and_revise_specialists(
+        outputs, {"stuff": _ReviseSpecialist("velocity is unusually high.")},
+        _CleanAuditor(), ctx, names=["stuff"],
+    ))
+    assert clean.stuff == "velocity is unusually high."   # revised, token gone
+    assert any(f.category == "TAG_LEAK" and f.specialist == "stuff" for f in flags)
+    assert residual == set()                              # re-audit came back clean
+
+
 def test_reaudit_crash_marks_residual_and_surfaces_sentinel(ctx):
     """A re-audit that RAISES counts the specialist as residual and appends an
     AUDIT_FAILED sentinel (fail closed)."""
