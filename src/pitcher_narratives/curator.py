@@ -11,7 +11,8 @@ from __future__ import annotations
 
 import asyncio
 from collections import Counter
-from typing import Literal
+from dataclasses import dataclass
+from typing import Literal, get_args
 
 from pydantic import BaseModel, Field, model_validator
 from pydantic_ai import Agent, ModelRetry
@@ -21,6 +22,9 @@ from pitcher_narratives.costs import UsageTracker
 from pitcher_narratives.scout import ScoredAppearance
 
 __all__ = [
+    "CATEGORIES",
+    "CATEGORY_BY_ID",
+    "Category",
     "CurationPick",
     "CurationSlate",
     "build_selector_briefing",
@@ -74,6 +78,38 @@ class CurationSlate(BaseModel):
                 f"cap is {_MAX_PICKS_PER_CATEGORY} per category."
             )
         return self
+
+
+@dataclass(frozen=True)
+class Category:
+    """Display metadata for one curation category — the single source of truth
+    for ordering and labels across the digest and scoreboard renderers."""
+
+    id: str
+    order: int
+    section_title: str
+    badge: str
+
+
+CATEGORIES: tuple[Category, ...] = (
+    Category("clean_breakout", 0, "Clean Breakouts", "CLEAN BREAKOUT"),
+    Category("command_breakout", 1, "Command Breakouts", "COMMAND BREAKOUT"),
+    Category("lab_project", 2, "Lab Projects", "LAB PROJECT"),
+    Category("identity_crisis", 3, "Identity Crises", "IDENTITY CRISIS"),
+    Category("velo_drop", 4, "Velocity Drops", "VELO DROP"),
+    Category("red_flag", 5, "Red Flags", "RED FLAG"),
+)
+
+CATEGORY_BY_ID: dict[str, Category] = {c.id: c for c in CATEGORIES}
+
+# Import-time invariant: the registry must exactly cover the CurationPick
+# category Literal (mirrors the persona/mode registry checks in personas.py).
+_declared_category_ids = set(get_args(CurationPick.model_fields["category"].annotation))
+if set(CATEGORY_BY_ID) != _declared_category_ids:
+    raise ValueError(
+        f"Category registry {set(CATEGORY_BY_ID)} out of sync with "
+        f"CurationPick.category Literal {_declared_category_ids}"
+    )
 
 
 _SELECTOR_PROMPT = """\
