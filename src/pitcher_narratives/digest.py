@@ -8,7 +8,6 @@ by render_recap (see pipeline.py).
 from __future__ import annotations
 
 import json
-import logging
 from datetime import date
 
 from pitcher_narratives.curator import CATEGORIES, CurationPick, CurationSlate
@@ -16,13 +15,12 @@ from pitcher_narratives.scout import ScoredAppearance
 
 __all__ = [
     "assemble_digest",
+    "render_curation_slate",
     "render_full_board",
     "render_full_board_json",
     "render_full_board_table",
-    "render_curation_slate",
 ]
 
-log = logging.getLogger("pitcher_narratives.digest")
 
 
 # ── Assembly ────────────────────────────────────────────────────────
