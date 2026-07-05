@@ -3,7 +3,11 @@
 from datetime import date
 
 from pitcher_narratives.curator import CurationPick, CurationSlate
-from pitcher_narratives.digest import assemble_digest, render_full_board
+from pitcher_narratives.digest import (
+    assemble_digest,
+    render_full_board,
+    render_full_board_json,
+)
 from pitcher_narratives.scout import ScoredAppearance, Signal
 
 
@@ -35,6 +39,30 @@ def test_render_full_board_groups_and_sorts():
     assert board.index("Relievers") < board.index("Pitcher 2")
     assert "velo_delta" in board and "+2.1 mph vs season" in board
     assert "9.0" in board
+
+
+def test_render_full_board_json_shape_and_order():
+    import json
+
+    payload = json.loads(render_full_board_json([
+        _app(1, "SP", 9.0), _app(2, "RP", 7.0), _app(3, "SP", 3.0),
+    ]))
+    assert payload["game_date"] == "2026-06-10"
+    # Flat list sorted by score descending, regardless of role.
+    assert [a["pitcher_id"] for a in payload["appearances"]] == [1, 2, 3]
+    first = payload["appearances"][0]
+    assert first == {
+        "pitcher_id": 1, "pitcher_name": "Pitcher 1", "throws": "R", "role": "SP",
+        "game_date": "2026-06-10", "game_pk": 1, "n_pitches": 80, "score": 9.0,
+        "signals": [{"name": "velo_delta", "weight": 3.0, "detail": "+2.1 mph vs season"}],
+    }
+
+
+def test_render_full_board_json_empty():
+    import json
+
+    payload = json.loads(render_full_board_json([]))
+    assert payload == {"game_date": None, "appearances": []}
 
 
 def test_assemble_digest_layout():

@@ -1097,7 +1097,9 @@ def test_scoreboard_prints_full_board(monkeypatch, capsys):
 
     board = [_scored(1, "Ace SP", "SP", 12.0), _scored(2, "Setup RP", "RP", 6.0)]
     monkeypatch.setattr(scout_mod, "scout_appearances", lambda **kw: list(board))
-    _run_scoreboard_command(argparse.Namespace(window=1, min_pitches=20, starters_only=False))
+    _run_scoreboard_command(
+        argparse.Namespace(window=1, min_pitches=20, starters_only=False, json=False)
+    )
     out = capsys.readouterr().out
     assert "# Scoreboard — 2026-07-04" in out
     assert "## The Full Board" in out
@@ -1112,7 +1114,9 @@ def test_scoreboard_starters_only_drops_relievers(monkeypatch, capsys):
 
     board = [_scored(1, "Ace SP", "SP", 12.0), _scored(2, "Setup RP", "RP", 6.0)]
     monkeypatch.setattr(scout_mod, "scout_appearances", lambda **kw: list(board))
-    _run_scoreboard_command(argparse.Namespace(window=1, min_pitches=20, starters_only=True))
+    _run_scoreboard_command(
+        argparse.Namespace(window=1, min_pitches=20, starters_only=True, json=False)
+    )
     out = capsys.readouterr().out
     assert "Ace SP" in out
     assert "Setup RP" not in out
@@ -1125,7 +1129,44 @@ def test_scoreboard_quiet_day(monkeypatch, capsys):
     from pitcher_narratives.cli import _run_scoreboard_command
 
     monkeypatch.setattr(scout_mod, "scout_appearances", lambda **kw: [])
-    _run_scoreboard_command(argparse.Namespace(window=1, min_pitches=20, starters_only=False))
+    _run_scoreboard_command(
+        argparse.Namespace(window=1, min_pitches=20, starters_only=False, json=False)
+    )
     captured = capsys.readouterr()
     assert captured.out == ""
     assert "quiet day" in captured.err
+
+
+def test_scoreboard_json_output(monkeypatch, capsys):
+    """--json emits parseable JSON with the scored appearances."""
+    import argparse
+    import json
+
+    from pitcher_narratives import scout as scout_mod
+    from pitcher_narratives.cli import _run_scoreboard_command
+
+    board = [_scored(1, "Ace SP", "SP", 12.0), _scored(2, "Setup RP", "RP", 6.0)]
+    monkeypatch.setattr(scout_mod, "scout_appearances", lambda **kw: list(board))
+    _run_scoreboard_command(
+        argparse.Namespace(window=1, min_pitches=20, starters_only=False, json=True)
+    )
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["game_date"] == "2026-07-04"
+    assert [a["pitcher_name"] for a in payload["appearances"]] == ["Ace SP", "Setup RP"]
+
+
+def test_scoreboard_json_empty_is_valid(monkeypatch, capsys):
+    """--json on a quiet day still emits valid JSON to stdout (no stderr)."""
+    import argparse
+    import json
+
+    from pitcher_narratives import scout as scout_mod
+    from pitcher_narratives.cli import _run_scoreboard_command
+
+    monkeypatch.setattr(scout_mod, "scout_appearances", lambda **kw: [])
+    _run_scoreboard_command(
+        argparse.Namespace(window=1, min_pitches=20, starters_only=False, json=True)
+    )
+    captured = capsys.readouterr()
+    assert json.loads(captured.out) == {"game_date": None, "appearances": []}
+    assert captured.err == ""

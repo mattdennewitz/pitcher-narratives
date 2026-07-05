@@ -184,6 +184,11 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Restrict the board to starting pitchers (role SP)",
     )
+    scoreboard.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit the board as JSON instead of markdown",
+    )
 
     return parser.parse_args()
 
@@ -622,7 +627,7 @@ def _run_scoreboard_command(args: argparse.Namespace) -> None:
     # importing at call time keeps `pitcher-narratives --help` fast.
     import polars as pl
 
-    from pitcher_narratives.digest import render_full_board
+    from pitcher_narratives.digest import render_full_board, render_full_board_json
     from pitcher_narratives.scout import scout_appearances
 
     try:
@@ -633,6 +638,12 @@ def _run_scoreboard_command(args: argparse.Namespace) -> None:
 
     if args.starters_only:
         board = [a for a in board if a.role == "SP"]
+
+    # JSON always emits valid output (empty board -> empty appearances list) so
+    # downstream consumers can parse stdout unconditionally.
+    if args.json:
+        print(render_full_board_json(board))
+        return
 
     if not board:
         noun = "starter appearances" if args.starters_only else "appearances"

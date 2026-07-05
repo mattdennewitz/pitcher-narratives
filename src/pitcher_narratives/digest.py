@@ -7,6 +7,7 @@ by render_recap (see pipeline.py).
 
 from __future__ import annotations
 
+import json
 import logging
 from datetime import date
 
@@ -16,6 +17,7 @@ from pitcher_narratives.scout import ScoredAppearance
 __all__ = [
     "assemble_digest",
     "render_full_board",
+    "render_full_board_json",
 ]
 
 log = logging.getLogger("pitcher_narratives.digest")
@@ -68,6 +70,37 @@ def render_full_board(board: list[ScoredAppearance]) -> str:
                 lines.append(f"  - `{s.name}`: {s.detail}")
         lines.append("")
     return "\n".join(lines)
+
+
+def render_full_board_json(board: list[ScoredAppearance]) -> str:
+    """Serialize the scored board to a JSON string.
+
+    Flat list of appearances sorted by interest score descending (consumers
+    group by the ``role`` field). ``game_date`` is the most recent game date
+    on the board, or null when the board is empty.
+    """
+    ranked = sorted(board, key=lambda a: a.score, reverse=True)
+    payload = {
+        "game_date": max((a.game_date for a in board), default=None),
+        "appearances": [
+            {
+                "pitcher_id": a.pitcher_id,
+                "pitcher_name": a.pitcher_name,
+                "throws": a.throws,
+                "role": a.role,
+                "game_date": a.game_date,
+                "game_pk": a.game_pk,
+                "n_pitches": a.n_pitches,
+                "score": a.score,
+                "signals": [
+                    {"name": s.name, "weight": s.weight, "detail": s.detail}
+                    for s in a.signals
+                ],
+            }
+            for a in ranked
+        ],
+    }
+    return json.dumps(payload, indent=2, default=str)
 
 
 def assemble_digest(
