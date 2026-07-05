@@ -8,8 +8,7 @@ caveats — so the model spends its effort on insight, not arithmetic.
 It works at two scales:
 
 - **One pitcher** — a full scouting capsule for a single arm's recent
-  appearances (`pitcher-narratives report`), plus a triage scanner
-  (`pitcher-scout`).
+  appearances (`pitcher-narratives report`).
 - **The whole league, every morning** — an editorial digest that scouts the
   day's appearances, selects the most compelling stories by category, and
   writes a capsule for each (`pitcher-narratives morning`).
@@ -55,12 +54,11 @@ what-moved write-up, or `--mode recap` for a short brief — details in
 
 ## The CLIs
 
-The package installs two entry points via `[project.scripts]`:
+The package installs one entry point via `[project.scripts]`:
 
 | Script | Source | Purpose |
 |---|---|---|
-| `pitcher-narratives` | `pitcher_narratives.cli:main` | `report` (one pitcher) and `morning` (daily digest) subcommands |
-| `pitcher-scout` | `pitcher_narratives.scout_cli:main` | Appearance triage + scoring |
+| `pitcher-narratives` | `pitcher_narratives.cli:main` | `report` (one pitcher), `morning` (daily digest), and `scoreboard` (no-LLM triage) subcommands |
 
 ### `pitcher-narratives report`
 
@@ -74,13 +72,14 @@ window of recent appearances, in one or more [narration modes](#narration-modes)
 | `--mode` | str | `report` | Comma-separated modes: `report` \| `changes` \| `recap` |
 | `--prior` | int | `10` | Size of the prior window (appearances) for `changes` mode's recent-vs-prior comparison; ignored by `report`/`recap` |
 | `--metrics-out` | path | *none* | Append per-mode calibration records as JSONL (see [`docs/calibration.md`](./docs/calibration.md)) |
-| `-v`, `--verbose` | flag | off | Prints pitcher name, game dates, pitch counts to stderr before running |
+| `-v`, `--verbose` | flag | off | Print pitcher summary **and** the QA/diagnostics appendix to stderr (default stdout is the reader report only) |
 | `--print-prompts` | flag | off | Renders the pipeline prompts to stderr and exits without calling the LLM |
 | `--provider` | enum | `gemini` | `gemini` \| `claude` |
 | `--thinking` | enum | `medium` | `minimal` \| `low` \| `medium` \| `high` \| `xhigh` |
 | `--persona` | enum | `scout` | Writer voice: `scout` \| `analyst` \| `generic` |
 | `--list-personas` | flag | off | Print available personas and exit |
 | `--no-explain-model` | flag | off | Skip S+/L+/P+ model explanations in the capsule (repeat readers) |
+| `--diagnostics-file` | path | *none* | Write the QA/diagnostics appendix as JSON (one object per mode); stdout stays the reader report |
 
 ```bash
 # Default full report over the last 10 appearances
@@ -93,18 +92,17 @@ uv run pitcher-narratives report -p 657277 -n 5 --prior 10 --mode changes
 uv run pitcher-narratives report -p 657277 --mode report,changes,recap --metrics-out run.jsonl
 ```
 
-Stdout emits one labeled block per requested mode, in `--mode` order. Each
-block is: `# <Mode Title>` (`Scouting Report` / `Change Report` / `Recap`), the
-streamed capsule, a `## Corrected Capsule` section when a fact-revision
-rewrote the draft (the corrected text is authoritative), a `**Verification:**`
-stamp (✅ verified / ⚠️ UNVERIFIED with counts), a distilled `## Executive
-Summary` and `## Brief` for `report`/`changes` only (recap's capsule is
-already the brief, so it skips distillation), then a `---`-demarcated
-`## Diagnostics` appendix with `### Stuff Analysis`, `### Data Audit`,
-`### Capsule Fact-Check`, `### Value Parity (advisory)` (when warnings),
-`### Anchor Check`, and `### Hallucination Check` (emitted only when the
-post-pipeline guard finds unknown metrics or traditional outcome stats). The
-hallucination guard now runs on **every** mode, not just the default report.
+Stdout emits one labeled block per requested mode, in `--mode` order — the
+**reader document only**: `# <Mode Title>` (`Scouting Report` / `Change Report`
+/ `Recap`), the final capsule (printed once — the pipeline buffers the writer
+output rather than streaming it), a `**Verification:**` stamp (✅ verified / ⚠️
+UNVERIFIED with counts), and a distilled `## Executive Summary` + `## Brief` for
+`report`/`changes` only (recap's capsule is already the brief).
+
+The QA/diagnostics appendix (`### Stuff Analysis`, `### Data Audit`,
+`### Capsule Fact-Check`, `### Value Parity`, `### Anchor Check`,
+`### Hallucination Check`) is **off the reader stream**: pass `-v` to print it to
+stderr, or `--diagnostics-file PATH` to write it as JSON (one object per mode).
 
 If any mode ships an **unverified** capsule (residual anchor/fact warnings after
 the revision budget is spent), an `UNVERIFIED` banner is printed to stderr for
@@ -133,7 +131,7 @@ of them is unverified. A duplicated mode id is de-duplicated, not double-run.
 #### What each mode × voice produces
 
 The mode picks the **structure and temporal frame**; the voice (`--persona`)
-picks the **tone**. Together they determine the shape of the streamed
+picks the **tone**. Together they determine the shape of the
 `# Scouting Report` capsule. The three voices are:
 
 - **`scout`** (default) — front-office scouting capsule, conversational
@@ -154,12 +152,13 @@ model-teaching skipped. The persona overlay still nudges word choice, but the
 length and structure are identical. This is the mode `pitcher-narratives
 morning` uses for every digest pick.
 
-Every mode also emits a `## Diagnostics` appendix after the capsule (`###
-Stuff Analysis`, `### Data Audit`, `### Capsule Fact-Check`, `### Value
-Parity`, `### Anchor Check`, and — when triggered — `### Hallucination
-Check`); only `report`/`changes` also distill a `## Executive Summary` and
-`## Brief` (recap skips distillation, since its capsule already is the
-brief). Only the streamed capsule changes with mode × voice.
+Every mode also produces the same QA/diagnostics appendix (`### Stuff
+Analysis`, `### Data Audit`, `### Capsule Fact-Check`, `### Value Parity`,
+`### Anchor Check`, and — when triggered — `### Hallucination Check`),
+available off the reader stream via `-v` or `--diagnostics-file`; only
+`report`/`changes` also distill a `## Executive Summary` and `## Brief`
+(recap skips distillation, since its capsule already is the brief). Only the
+capsule text itself changes with mode × voice.
 
 ### `pitcher-narratives morning`
 
@@ -180,24 +179,25 @@ category → write a capsule for each → assemble a digest. See
 uv run pitcher-narratives morning
 ```
 
-### `pitcher-scout`
+### `pitcher-narratives scoreboard`
 
 Cheap pre-filter that scans recent appearances, scores each on a heuristic (no
-LLM), and prints a ranked table. Optionally pipes the top results to a curator
-LLM.
+LLM), and prints the board. Optionally pipes the board to a curator LLM.
 
 | Flag | Default | Notes |
 |---|---|---|
 | `-w`, `--window` | `1` | Days to scan (`1` = most recent game date only) |
-| `-n`, `--top` | `20` | Max results per role to display |
 | `--min-pitches` | `20` | Minimum pitches for an appearance to be scored |
-| `--min-score` | `0.0` | Minimum interest score to display |
-| `-v`, `--verbose` | off | Show per-signal detail under each row |
-| `--curate` | off | Send top results to the curator LLM and print the slate |
+| `--starters-only` | off | Restrict the board to starting pitchers (role SP) |
+| `--format` | `md` | `table` (fixed-width) \| `md` (markdown board) \| `json` |
+| `-n`, `--top` | `0` | Keep only the top N per role by score (`0` = no limit) |
+| `--min-score` | `0.0` | Drop appearances below this interest score |
+| `-v`, `--verbose` | off | In `table` format, show per-signal detail under each row |
+| `--curate` | off | Send the board to the curator LLM and print the slate |
 | `--provider` | `gemini` | `gemini` \| `claude` (used for `--curate`) |
 
 ```bash
-uv run pitcher-scout -w 1 -n 25 --min-score 5.0 -v
+uv run pitcher-narratives scoreboard -w 1 --format table -n 25 --min-score 5.0 -v
 ```
 
 The heuristic looks for velocity swings, P+/S+/L+ divergences, new or dropped
@@ -288,8 +288,7 @@ structure, cache breakpoints, and the anchor-check taxonomy.
 ```
 pitcher-narratives/
 ├── src/pitcher_narratives/
-│   ├── cli.py            # pitcher-narratives entry (report + morning)
-│   ├── scout_cli.py      # pitcher-scout entry
+│   ├── cli.py            # pitcher-narratives entry (report + morning + scoreboard)
 │   ├── data.py           # Statcast + Pitching+ loading pipeline
 │   ├── engine/           # computation subpackage (baselines, arsenal,
 │   │                     #   execution, workload, mechanics, contact, tto,
@@ -333,8 +332,8 @@ Makefile shortcuts:
 
 ```bash
 make run            # uv run pitcher-narratives report -p 657277 -n 10
-make scout          # uv run pitcher-scout -n 25 --min-score 5.0 -v
-make curate         # uv run pitcher-scout -n 25 --min-score 5.0 --curate
+make scout          # uv run pitcher-narratives scoreboard -n 25 --min-score 5.0 --format table -v
+make curate         # uv run pitcher-narratives scoreboard -n 25 --min-score 5.0 --curate
 make pull-data      # refresh var/statcast/ and var/aggs/ from R2
 ```
 
