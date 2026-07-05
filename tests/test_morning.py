@@ -133,6 +133,48 @@ def test_run_morning_writes_all_artifacts(tmp_path, monkeypatch):
     assert "picks" in validation
 
 
+def test_run_morning_starters_only_filters_board(tmp_path, monkeypatch):
+    """starters_only drops relievers before selection: the RP appearance never
+    reaches candidates, the board, or the digest."""
+    _patch_data(monkeypatch)  # yields SP pitcher 1 and RP pitcher 2
+    starters_selector = TestModel(custom_output_args={
+        "picks": [
+            {
+                "pitcher_id": 1, "category": "clean_breakout",
+                "angle": "Velo spike", "conviction": "medium",
+                "conviction_reason": "Shape agrees.",
+            },
+        ],
+    })
+    run_dir = morning.run_morning(
+        window_days=1, top_n=25, min_pitches=20,
+        provider="gemini", persona_id="scout", out_root=tmp_path,
+        starters_only=True,
+        _selector_override=starters_selector,
+        _writer_override=TestModel(call_tools=[]),
+    )
+    digest = (run_dir / "digest.md").read_text()
+    assert "Pitcher 1" in digest
+    assert "Pitcher 2" not in digest  # RP filtered out everywhere
+    briefing = (run_dir / "briefing.md").read_text()
+    assert "Pitcher 2" not in briefing  # RP excluded from selector candidates
+
+
+def test_run_morning_starters_only_quiet_when_no_starters(tmp_path, monkeypatch):
+    """A board of only relievers under starters_only is a quiet day (no run dir)."""
+    monkeypatch.setattr(
+        morning, "scout_appearances", lambda **kw: [_app(2, "RP"), _app(3, "RP")],
+    )
+    run_dir = morning.run_morning(
+        window_days=1, top_n=25, min_pitches=20,
+        provider="gemini", persona_id="scout", out_root=tmp_path,
+        starters_only=True,
+        _selector_override=_selector_model(),
+        _writer_override=TestModel(call_tools=[]),
+    )
+    assert run_dir is None
+
+
 def test_run_morning_single_event_loop(tmp_path, monkeypatch):
     """Selector and writers share one event loop: provider-client state
     created during selection must not leak into a second loop (observed

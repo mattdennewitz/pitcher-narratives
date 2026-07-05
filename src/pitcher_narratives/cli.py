@@ -139,6 +139,11 @@ def parse_args() -> argparse.Namespace:
         help="Minimum pitches for an appearance to be scored (default: 20)",
     )
     morning.add_argument(
+        "--starters-only",
+        action="store_true",
+        help="Restrict the board to starting pitchers (role SP) before selection",
+    )
+    morning.add_argument(
         "--provider",
         choices=["gemini", "claude"],
         default="gemini",
@@ -572,6 +577,7 @@ def _run_morning_command(args: argparse.Namespace) -> None:
             provider=args.provider,
             persona_id=args.persona,
             out_root=Path(args.out),
+            starters_only=args.starters_only,
         )
     except AgentRunError as exc:
         print(f"Morning run failed: {exc}", file=sys.stderr)

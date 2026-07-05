@@ -86,10 +86,16 @@ def run_morning(
     persona_id: str,
     out_root: Path,
     max_concurrency: int = 4,
+    starters_only: bool = False,
     _selector_override: object = None,
     _writer_override: object = None,
 ) -> Path | None:
-    """Run the full morning workflow. Returns the run dir, or None on a quiet day."""
+    """Run the full morning workflow. Returns the run dir, or None on a quiet day.
+
+    When ``starters_only`` is set, the scouted board is filtered to starting
+    pitchers (role == "SP") before selection, so candidates, the full board,
+    and the digest all reflect starters only.
+    """
     started = time.monotonic()
     tracker = UsageTracker()
     persona = PERSONAS[persona_id]
@@ -97,8 +103,17 @@ def run_morning(
     # ── Scout ─────────────────────────────────────────────────────
     log.info("Scouting appearances...")
     all_scored = scout_appearances(window_days=window_days, min_pitches=min_pitches)
+    if starters_only:
+        n_before = len(all_scored)
+        all_scored = [a for a in all_scored if a.role == "SP"]
+        log.info("Filtered to starters: %d of %d appearances kept.", len(all_scored), n_before)
     if not all_scored:
-        print("No interesting appearances found — quiet day, no digest.", file=sys.stderr)
+        quiet = (
+            "No interesting starter appearances found — quiet day, no digest."
+            if starters_only
+            else "No interesting appearances found — quiet day, no digest."
+        )
+        print(quiet, file=sys.stderr)
         return None
     candidates = top_per_role(all_scored, top_n)
     game_date = max(c.game_date for c in all_scored)
