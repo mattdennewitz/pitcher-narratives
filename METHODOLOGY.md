@@ -306,7 +306,7 @@ When the anchor is not clean, the writer is asked to revise via
 `anchor.build_revision_message` — a fresh prompt with no message
 history, a `CachePoint` breakpoint after the synthesis, and a targeted
 instruction that says "fix only the listed warnings." Up to
-`MAX_REVISIONS` (3) revision passes run, and then one final anchor
+`MAX_REVISIONS` (5) revision passes run, and then one final anchor
 check captures any surviving warnings.
 
 #### Anchor warning categories
@@ -323,6 +323,50 @@ emitted literally by the anchor prompt:
 | `OVERSTATED` | The synthesis flagged something as small sample or uncertain, but the capsule presents it as definitive |
 
 `AnchorResult.is_clean` is `True` when `warnings` is empty.
+
+#### Reconciling the anchor check with fact-revised capsules
+
+The anchor check and the fact-check (`run_capsule_audit`, part of the
+capsule audit) validate the capsule against two different references:
+the anchor's reference is the synthesis (does the prose match the
+specialist findings?), while the fact-check's reference is the
+ground-truth data (does the prose match reality?). **When they
+disagree, the data wins** — a fact revision is allowed to invalidate
+an anchor result that was captured before the ground truth was
+applied.
+
+Concretely: if a fact revision rewrites the capsule (`capsule_revised`
+is `True`), the anchor check computed earlier in the pipeline no
+longer describes the final text, so `_reconcile_anchor_warnings`
+re-anchors it. If the re-anchor comes back clean, nothing further
+happens. Otherwise, as long as budget remains
+(`anchor_depth - revision_count`), the pipeline runs reconciling
+revision passes: the writer is asked to fix the listed warnings under
+a prompt that forbids changing any numeric value, since the fact-check
+already verified those numbers and the anchor may simply be looking at
+stale synthesis. Each pass re-anchors and stops early either on a
+clean result or when the warning set stalls (identical warnings two
+passes in a row).
+
+Once the loop ends, a detection-only capsule re-audit
+(`max_fact_revisions=0`) guards the outcome: if the reconciled prose
+regressed a verified fact, the pipeline reverts to the fact-revised
+capsule and ships the earlier recheck warnings as advisory rather than
+keeping the regression. A crash anywhere in this reconcile step is
+advisory-plus — it's logged and the pipeline keeps the prior
+`anchor_check` rather than failing the run. Reconcile passes count
+toward `revision_count`, so the CLI's "Revised N time(s)" reflects
+them the same as ordinary anchor revisions.
+
+#### Temporal frames
+
+In changes mode two baselines coexist: recent-vs-season deltas in the context
+tables and the code-computed recent-vs-prior block. The capsule fact-check's
+ground truth includes BOTH (the frame block is threaded in exactly as the
+trends specialist saw it), and the auditor is instructed that a claim matching
+either baseline is grounded — it must never "correct" a number from one frame
+into the other. The anchor receives changes-mode guidance to the same effect,
+and to reserve MISSED_SIGNAL/UNDERWEIGHTED for signals that describe a change.
 
 ## Hallucination guard
 
@@ -519,7 +563,7 @@ assemble_pitcher_context (context.py)
         v
 +---------------------------------------------------+
 |  Phase 2.5 — anchor check + revision loop         |
-|    (up to MAX_REVISIONS = 3 passes)               |
+|    (up to MAX_REVISIONS = 5 passes)               |
 |    warnings: MISSED_SIGNAL / UNDERWEIGHTED /      |
 |              UNSUPPORTED / DIRECTION_ERROR /      |
 |              OVERSTATED                           |

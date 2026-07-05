@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import pytest
 
-from pitcher_narratives.digest import _build_writer_prompt
 from pitcher_narratives.personas import (
     PERSONAS,
     build_writer_system_prompt,
@@ -26,11 +25,6 @@ from pitcher_narratives.personas import (
 def _report_prompt(persona_id: str) -> str:
     """Return the composed report-writer system prompt for a persona."""
     return build_writer_system_prompt(get_persona(persona_id))
-
-
-def _digest_prompt(persona_id: str) -> str:
-    """Return the composed digest-writer system prompt for a persona."""
-    return _build_writer_prompt(get_persona(persona_id))
 
 
 # ── Report-writer invariants (build_writer_system_prompt) ─────────────
@@ -134,60 +128,6 @@ class TestReportWriterInvariants:
 
 
 # ── Analyst ask-voice invariants (composed ask prompt) ────────────────
-
-
-# ── Digest-writer invariants (_build_writer_prompt) ───────────────────
-
-
-class TestDigestWriterInvariants:
-    """Invariants for the digest-writer (_build_writer_prompt) path.
-
-    Phase 1A repointed the digest writer through the shared voice composer
-    (build_system_prompt(persona, DIGEST_ITEM)). The digest prompt now draws
-    the universal analytical rules from SHARED_WRITER_BASE, closing the gaps
-    where it previously lacked DIRECTIONAL CONSISTENCY and TEMPORAL GROUNDING.
-    """
-
-    @pytest.mark.parametrize("persona_id", ["scout", "analyst", "generic"])
-    def test_contains_banned_word_degradation(self, persona_id: str) -> None:
-        """Digest writer prompt carries the banned-word 'degradation' (universal base)."""
-        prompt = _digest_prompt(persona_id)
-        assert "degradation" in prompt, (
-            f"digest({persona_id}): banned-word 'degradation' not found in composed digest prompt"
-        )
-
-    @pytest.mark.parametrize("persona_id", ["scout", "analyst", "generic"])
-    def test_directional_consistency_present(self, persona_id: str) -> None:
-        """Digest writer prompt now carries DIRECTIONAL CONSISTENCY (gap closed in Phase 1A).
-
-        The directive flows from the universal SHARED_WRITER_BASE that the
-        DIGEST_ITEM composition now includes.
-        """
-        prompt = _digest_prompt(persona_id)
-        assert "DIRECTIONAL CONSISTENCY" in prompt, (
-            f"digest({persona_id}): DIRECTIONAL CONSISTENCY missing — "
-            "the universal base should now supply it"
-        )
-
-    @pytest.mark.parametrize("persona_id", ["scout", "analyst", "generic"])
-    def test_temporal_grounding_present(self, persona_id: str) -> None:
-        """Digest writer prompt now carries TEMPORAL GROUNDING (gap closed in Phase 1A).
-
-        The directive flows from the universal SHARED_WRITER_BASE that the
-        DIGEST_ITEM composition now includes.
-        """
-        prompt = _digest_prompt(persona_id)
-        assert "TEMPORAL GROUNDING" in prompt, (
-            f"digest({persona_id}): TEMPORAL GROUNDING missing — "
-            "the universal base should now supply it"
-        )
-
-    @pytest.mark.parametrize("persona_id", ["scout", "analyst", "generic"])
-    def test_uses_cue_framing_not_synthesis(self, persona_id: str) -> None:
-        """Digest uses cue framing, NOT the five-specialist synthesis framing."""
-        prompt = _digest_prompt(persona_id)
-        assert "morning digest" in prompt
-        assert "five specialist analyses" not in prompt.lower()
 
 
 # ── RT-1: Directive-manifest completeness guard ───────────────────────

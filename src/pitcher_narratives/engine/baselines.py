@@ -12,7 +12,7 @@ from dataclasses import dataclass
 import polars as pl
 
 from pitcher_narratives.data import load_all_statcast, load_full_agg
-from pitcher_narratives.engine._common import _FEET_TO_INCHES, _SWING_DESCRIPTIONS
+from pitcher_narratives.engine._common import _FEET_TO_INCHES, _MIN_PITCHES, _SWING_DESCRIPTIONS
 
 # ── League baselines ─────────────────────────────────────────────────
 
@@ -154,8 +154,16 @@ def compute_league_baselines() -> list[LeagueBaseline]:
     return results
 
 
-def outlier_tag(value: float, avg: float, std: float) -> str:
-    """Return OUTLIER or NORMAL tag based on z-score from league average."""
+def outlier_tag(
+    value: float, avg: float, std: float, n: int, floor: int = _MIN_PITCHES
+) -> str:
+    """Return OUTLIER/NORMAL tag based on z-score, suppressed below the sample floor.
+
+    Below ``floor`` pitches the sample is too thin to trust, so no OUTLIER/NORMAL
+    judgment is emitted -- the tag explicitly says so instead (design section 15 G7).
+    """
+    if n < floor:
+        return f"SMALL SAMPLE, N={n} -- untagged"
     if std == 0:
         return "NORMAL"
     z = (value - avg) / std

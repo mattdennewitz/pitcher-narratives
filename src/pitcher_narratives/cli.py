@@ -15,10 +15,13 @@ from typing import TYPE_CHECKING
 from dotenv import load_dotenv
 
 from pitcher_narratives.config import API_KEYS, setup_logging
-from pitcher_narratives.personas import PERSONAS
+from pitcher_narratives.personas import PERSONAS, REPORT, get_narration_mode
+from pitcher_narratives.temporal import _DEFAULT_PRIOR_APPEARANCES, _DEFAULT_RECENT_APPEARANCES
 
 if TYPE_CHECKING:
     from pitcher_narratives.data import PitcherData
+    from pitcher_narratives.personas import NarrationMode
+    from pitcher_narratives.pipeline import PipelineResult
 
 log = logging.getLogger("pitcher_narratives")
 
@@ -35,11 +38,21 @@ def parse_args() -> argparse.Namespace:
     # _run_report_command() re-asserts that -p is present when --list-personas is not used.
     report.add_argument("-p", "--pitcher", type=int, required=False, help="MLB pitcher ID (e.g., 592155)")
     report.add_argument(
-        "-w",
-        "--window",
+        "-n",
+        "--recent",
         type=int,
-        default=30,
-        help="Lookback window in days (default: 30)",
+        default=_DEFAULT_RECENT_APPEARANCES,
+        help=f"Analysis window in most-recent appearances (default: {_DEFAULT_RECENT_APPEARANCES})",
+    )
+    report.add_argument(
+        "--prior",
+        type=int,
+        default=_DEFAULT_PRIOR_APPEARANCES,
+        help=(
+            "Prior-window size in appearances for CHANGES mode's recent-vs-prior "
+            f"comparison (default: {_DEFAULT_PRIOR_APPEARANCES}). Ignored by "
+            "report/recap modes."
+        ),
     )
     report.add_argument(
         "-v",
@@ -76,6 +89,34 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="List available personas (id, display name, description) and exit",
     )
+    report.add_argument(
+        "--mode",
+        default=None,
+        help=(
+            "Comma-separated narration modes: report, recap, changes "
+            "(default: report)."
+        ),
+    )
+    report.add_argument(
+        "--metrics-out",
+        default=None,
+        help=(
+            "Append one JSON line per (pitcher, mode) run to this path, for "
+            "offline depth calibration (see docs/calibration.md). Off by default."
+        ),
+    )
+
+    report.add_argument(
+        "--no-explain-model",
+        action="store_false",
+        dest="explain_model",
+        default=True,
+        help=(
+            "Strip the EXPLAIN THE MODEL mandate from the writer prompt so the "
+            "capsule doesn't re-teach S+/L+/P+ (for readers who already know the "
+            "grading system). On by default."
+        ),
+    )
 
     morning = sub.add_parser("morning", help="Scout, select, and write the morning digest")
     morning.add_argument(
@@ -98,6 +139,11 @@ def parse_args() -> argparse.Namespace:
         help="Minimum pitches for an appearance to be scored (default: 20)",
     )
     morning.add_argument(
+        "--starters-only",
+        action="store_true",
+        help="Restrict the board to starting pitchers (role SP) before selection",
+    )
+    morning.add_argument(
         "--provider",
         choices=["gemini", "claude"],
         default="gemini",
@@ -116,7 +162,60 @@ def parse_args() -> argparse.Namespace:
         help="Output directory root (default: morning-runs)",
     )
 
+    scoreboard = sub.add_parser(
+        "scoreboard",
+        help="Print the scouted board only (no LLM) — the morning full board",
+    )
+    scoreboard.add_argument(
+        "-w",
+        "--window",
+        type=int,
+        default=1,
+        help="Days to scan back from the most recent game date (default: 1)",
+    )
+    scoreboard.add_argument(
+        "--min-pitches",
+        type=int,
+        default=20,
+        help="Minimum pitches for an appearance to be scored (default: 20)",
+    )
+    scoreboard.add_argument(
+        "--starters-only",
+        action="store_true",
+        help="Restrict the board to starting pitchers (role SP)",
+    )
+    scoreboard.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit the board as JSON instead of markdown",
+    )
+
     return parser.parse_args()
+
+
+def _resolve_modes(raw: str | None) -> list["NarrationMode"]:
+    """Parse the ``--mode`` flag into a list of NarrationMode instances.
+
+    None (flag omitted) resolves to [REPORT]. Comma-separated ids are looked
+    up via get_narration_mode; an unknown/not-yet-available id — or a non-None
+    but empty value (e.g. "," or " ") — logs an error and exits non-zero
+    (SystemExit code 2).
+    """
+    if raw is None:
+        return [REPORT]
+
+    ids = [m.strip() for m in raw.split(",") if m.strip()]
+    if not ids:
+        log.error("--mode was given but empty; expected comma-separated mode id(s).")
+        sys.exit(2)
+    modes = []
+    for mode_id in ids:
+        try:
+            modes.append(get_narration_mode(mode_id))
+        except ValueError as e:
+            log.error("%s", e)
+            sys.exit(2)
+    return modes
 
 
 def _print_personas() -> None:
@@ -156,8 +255,172 @@ def main() -> None:
     args = parse_args()
     if args.command == "morning":
         _run_morning_command(args)
+    elif args.command == "scoreboard":
+        _run_scoreboard_command(args)
     else:
         _run_report_command(args)
+
+
+def _emit_mode_result(pipe_result, *, persona: str, mode) -> bool:
+    """Print one mode's reader-facing sections + diagnostics appendix.
+
+    Returns whether the mode shipped unverified. Called immediately after the
+    mode's capsule streamed, so the whole mode block is contiguous on stdout.
+    """
+    from pitcher_narratives.pipeline import check_hallucinated_metrics, is_unverified
+
+    # Corrected capsule — the streamed text above is the pre-correction draft
+    # whenever fact-revision fired. Never let the headline text be the stale
+    # one: print the verified capsule as the authoritative version.
+    if pipe_result.capsule_revised and pipe_result.narrative:
+        print("\n\n## Corrected Capsule\n")
+        print(
+            "_The streamed text above is the pre-correction draft; this is the "
+            "fact-revised capsule._\n"
+        )
+        print(pipe_result.narrative)
+
+    # Verification stamp — travels with the document (the UNVERIFIED banner
+    # on stderr and the exit code remain the CI-facing signals).
+    unverified = is_unverified(pipe_result)
+    if unverified:
+        n_fact = len(pipe_result.capsule_audit_flags)
+        n_anchor = len(pipe_result.anchor_warnings)
+        print(
+            f"\n\n**Verification:** ⚠️ UNVERIFIED — {n_fact} residual "
+            f"fact-check flag(s), {n_anchor} anchor warning(s). "
+            "See Diagnostics below."
+        )
+    else:
+        print("\n\n**Verification:** ✅ Verified — fact-check and anchor gates clean.")
+
+    # Distilled sections — only for modes that ran the distillation agents.
+    # RECAP's capsule is already a brief; a summary of a summary is noise.
+    if mode.distill:
+        print("\n\n## Executive Summary\n")
+        if pipe_result.executive_summary:
+            for bullet in pipe_result.executive_summary:
+                print(f"- {bullet}")
+        else:
+            print("_Summary unavailable — no bullets produced._")
+
+        print("\n\n## Brief\n")
+        if pipe_result.brief:
+            print(pipe_result.brief)
+        else:
+            print("_Brief unavailable — no text produced._")
+
+    # ── Diagnostics appendix ──────────────────────────────────────────
+    # Everything below is QA/pipeline output, not part of the report.
+    print("\n\n---\n\n## Diagnostics")
+
+    print(f"\n\n### Stuff Analysis\n\n{pipe_result.specialists.stuff}")
+
+    print("\n\n### Data Audit\n")
+    if pipe_result.audit_flags:
+        for f in pipe_result.audit_flags:
+            print(f"- **[{f.category}]** {f.specialist}: {f.claim}")
+            print(f"  - Data shows: {f.data_shows}")
+    else:
+        print("Clean — no issues found.")
+
+    # Capsule fact-check. capsule_audit_flags is the post-re-audit residual:
+    # issues that REMAIN in the saved report. Three states:
+    #   revised + no residual  -> corrected and re-audit verified clean
+    #   residual flags present -> still-unresolved issues (list them)
+    #   neither                -> clean on first pass
+    print("\n\n### Capsule Fact-Check\n")
+    if pipe_result.capsule_revised and not pipe_result.capsule_audit_flags:
+        print(
+            "Auditor flagged issue(s); the fact-revision corrected them and the "
+            "re-audit is clean. (See the Corrected Capsule section above.)"
+        )
+    elif pipe_result.capsule_audit_flags:
+        n = len(pipe_result.capsule_audit_flags)
+        if pipe_result.capsule_revised:
+            print(
+                f"Auditor revised the report, but {n} issue(s) remain after "
+                "re-audit (see the Corrected Capsule section above):"
+            )
+        else:
+            print(f"Auditor flagged {n} issue(s) (not auto-corrected):")
+        for f in pipe_result.capsule_audit_flags:
+            print(f"- **[{f.category}]** {f.claim}")
+            print(f"  - Data shows: {f.data_shows}")
+    else:
+        print("Clean — no factual issues found.")
+
+    # Value parity (advisory). Covers the capsule and the reader-facing
+    # summary/brief; each warning is prefixed with its surface.
+    if pipe_result.value_parity_warnings:
+        print("\n\n### Value Parity (advisory)\n")
+        print("Report numbers with no match in the source data:")
+        for w in pipe_result.value_parity_warnings:
+            print(f"- {w}")
+
+    print("\n\n### Anchor Check\n")
+    if pipe_result.revision_count == 0 and not pipe_result.anchor_warnings:
+        print("Passed on first draft.")
+    elif pipe_result.anchor_warnings:
+        print(f"Revised {pipe_result.revision_count} time(s) — remaining issues:")
+        for w in pipe_result.anchor_warnings:
+            print(f"- **[{w.category}]** {w.description}")
+    else:
+        print(f"Revised {pipe_result.revision_count} time(s) — passed.")
+
+    # Hallucination check — skipped if the narrative is empty (pipeline
+    # produced nothing, which is a failure worth flagging loudly).
+    if not pipe_result.narrative:
+        log.warning("Pipeline produced empty narrative — skipping hallucination check")
+        return False
+
+    hallucination_report = check_hallucinated_metrics(
+        pipe_result.narrative, persona=persona
+    )
+    if hallucination_report.is_clean:
+        log.info("Hallucination check passed (no unknown metrics or outcome stats).")
+    else:
+        print("\n\n### Hallucination Check\n")
+        if hallucination_report.unknown_metrics:
+            print(f"Unknown metrics referenced: {', '.join(hallucination_report.unknown_metrics)}")
+        if hallucination_report.outcome_stat_warnings:
+            print(
+                f"Traditional outcome stats referenced "
+                f"(prompt warns against these): "
+                f"{', '.join(hallucination_report.outcome_stat_warnings)}"
+            )
+
+    return unverified
+
+
+def _append_metrics_records(
+    path,
+    *,
+    pitcher_id: int,
+    span: int,
+    modes: list[NarrationMode],
+    results: dict[str, PipelineResult],
+) -> None:
+    """Append per-mode calibration records (JSONL) to ``path``.
+
+    One line per result, opened in append mode so repeated runs accumulate
+    rather than overwrite. Mode objects supply the depth caps recorded by
+    ``flag_record``.
+    """
+    import json
+    from pathlib import Path
+
+    from pitcher_narratives.pipeline import flag_record
+
+    modes_by_id = {m.id: m for m in modes}
+    lines = [
+        json.dumps(flag_record(modes_by_id[mode_id], pitcher_id, result, span=span))
+        for mode_id, result in results.items()
+    ]
+
+    with Path(path).open("a") as f:
+        for line in lines:
+            f.write(line + "\n")
 
 
 def _run_report_command(args: argparse.Namespace) -> None:
@@ -184,7 +447,7 @@ def _run_report_command(args: argparse.Namespace) -> None:
     from pitcher_narratives.data import load_pitcher_data
 
     try:
-        pitcher_data = load_pitcher_data(args.pitcher, args.window)
+        pitcher_data = load_pitcher_data(args.pitcher, args.recent)
     except ValueError as e:
         # "Pitcher not found" and other user-input validation errors.
         log.error("%s", e)
@@ -225,18 +488,27 @@ def _run_report_command(args: argparse.Namespace) -> None:
         log.error("%s not set.", env_var)
         sys.exit(1)
 
-    from pitcher_narratives.context import assemble_pitcher_context
+    from pitcher_narratives.context import assemble_pitcher_context, assemble_prior_context
     from pitcher_narratives.pipeline import (
-        check_hallucinated_metrics,
-        generate_pipeline_streaming,
+        residual_banner,
+        run_narration_modes,
         write_pipeline_data_file,
     )
+    from pitcher_narratives.temporal import TemporalFrame
 
     ctx = assemble_pitcher_context(pitcher_data)
+    selected_modes = _resolve_modes(getattr(args, "mode", None))
+
+    needs_prior = any(TemporalFrame.PRIOR in m.temporal_frame for m in selected_modes)
+    prior_ctx = (
+        assemble_prior_context(pitcher_data, args.recent, args.prior)
+        if needs_prior
+        else None
+    )
 
     try:
         data_file, data_text = write_pipeline_data_file(
-            ctx, args.pitcher, args.provider, persona=args.persona
+            ctx, args.pitcher, args.provider, persona=args.persona, prior_ctx=prior_ctx
         )
     except OSError as e:
         log.error("Failed to write prompt data file: %s", e)
@@ -253,138 +525,60 @@ def _run_report_command(args: argparse.Namespace) -> None:
     # (~330ms) and is only used in the except clause below.
     from pydantic_ai.exceptions import AgentRunError
 
-    # The narrative streams to stdout during this call
-    print("# Scouting Report\n")
-    try:
-        pipe_result = generate_pipeline_streaming(
-            ctx,
-            provider=args.provider,
-            thinking=args.thinking,
-            persona=args.persona,
-            _model_override=model_override,
-        )
-    except AgentRunError as e:
-        log.error("LLM call failed: %s", e)
-        sys.exit(2)
-
-    # Executive summary — always emit the heading to keep the narrative
-    # output format stable. If the summary agent failed to produce
-    # bullets (empty list, parsing failure, or TestModel in tests), we
-    # still show the section with a fallback message instead of silently
-    # dropping it.
-    print("\n\n# Executive Summary\n")
-    if pipe_result.executive_summary:
-        for bullet in pipe_result.executive_summary:
-            print(f"- {bullet}")
-    else:
-        print("_Summary unavailable — no bullets produced._")
-
-    # Brief — a 2-3 sentence recent-vs-window summary. Always emit the heading
-    # to keep the output format stable; show a fallback if the (non-critical)
-    # brief agent produced nothing.
-    print("\n\n# Brief\n")
-    if pipe_result.brief:
-        print(pipe_result.brief)
-    else:
-        print("_Brief unavailable — no text produced._")
-
-    # Stuff analysis
-    print(f"\n\n# Stuff Analysis\n\n{pipe_result.specialists.stuff}")
-
-    # Data audit
-    print("\n\n# Data Audit\n")
-    if pipe_result.audit_flags:
-        for f in pipe_result.audit_flags:
-            print(f"- **[{f.category}]** {f.specialist}: {f.claim}")
-            print(f"  - Data shows: {f.data_shows}")
-    else:
-        print("Clean — no issues found.")
-
-    # Capsule fact-check (B). capsule_audit_flags is the post-re-audit residual:
-    # issues that REMAIN in the saved report. Three states:
-    #   revised + no residual  -> corrected and re-audit verified clean
-    #   residual flags present -> still-unresolved issues (list them)
-    #   neither                -> clean on first pass
-    print("\n\n# Capsule Fact-Check\n")
-    if pipe_result.capsule_revised and not pipe_result.capsule_audit_flags:
-        # The streamed report above is the pre-correction draft; the corrected
-        # text is the saved report (PipelineResult.narrative).
-        print(
-            "Auditor flagged issue(s); the fact-revision corrected them and the "
-            "re-audit is clean. (The streamed report above is the pre-correction "
-            "draft; the saved report is corrected.)"
-        )
-    elif pipe_result.capsule_audit_flags:
-        n = len(pipe_result.capsule_audit_flags)
-        if pipe_result.capsule_revised:
-            print(
-                f"Auditor revised the report, but {n} issue(s) remain after "
-                "re-audit (saved report; the streamed draft above is pre-revision):"
+    # One contiguous labeled block per mode: H1 title, streamed capsule,
+    # reader-facing sections, diagnostics appendix. Duplicate --mode ids
+    # are deduped here so a mode never streams twice.
+    any_unverified = False
+    results: dict[str, PipelineResult] = {}
+    first = True
+    for mode in selected_modes:
+        if mode.id in results:
+            continue
+        print(f"{'' if first else chr(10) * 2}# {mode.title}\n")
+        first = False
+        try:
+            mode_results = run_narration_modes(
+                ctx,
+                modes=[mode],
+                provider=args.provider,
+                thinking=args.thinking,
+                persona=args.persona,
+                explain_model=args.explain_model,
+                _model_override=model_override,
+                prior_ctx=prior_ctx,
             )
-        else:
-            print(f"Auditor flagged {n} issue(s) (not auto-corrected):")
-        for f in pipe_result.capsule_audit_flags:
-            print(f"- **[{f.category}]** {f.claim}")
-            print(f"  - Data shows: {f.data_shows}")
-    else:
-        print("Clean — no factual issues found.")
+        except AgentRunError as e:
+            log.error("LLM call failed: %s", e)
+            sys.exit(2)
+        pipe_result = mode_results[mode.id]
+        results[mode.id] = pipe_result
+        if _emit_mode_result(pipe_result, persona=args.persona, mode=mode):
+            any_unverified = True
+            banner = residual_banner(pipe_result, label=mode.id.upper())
+            print(f"\n{banner}", file=sys.stderr)
 
-    # Value parity (A, advisory). Covers the capsule and the reader-facing
-    # summary/brief; each warning is prefixed with its surface.
-    if pipe_result.value_parity_warnings:
-        print("\n\n# Value Parity (advisory)\n")
-        print("Report numbers with no match in the source data:")
-        for w in pipe_result.value_parity_warnings:
-            print(f"- {w}")
+    # Soft block: each mode's report is fully printed/saved, but if the
+    # fact-check loop (B) could not ground every claim, warn loudly and exit
+    # non-zero so callers/CI catch an UNVERIFIED report rather than treating
+    # it as clean. The deterministic TestModel always emits synthetic audit
+    # flags, so the hard exit is suppressed in test mode (the banner still
+    # prints). Aggregated across all selected modes (G4): every mode's
+    # sections are printed, banners for each unverified mode are emitted,
+    # and the process exits non-zero once at the end if any mode was
+    # unverified. The per-mode emit loop above already aggregated
+    # ``any_unverified`` across the deduped results and printed each banner.
 
-    # Anchor check
-    print("\n\n# Anchor Check\n")
-    if pipe_result.revision_count == 0 and not pipe_result.anchor_warnings:
-        print("Passed on first draft.")
-    elif pipe_result.anchor_warnings:
-        print(f"Revised {pipe_result.revision_count} time(s) — remaining issues:")
-        for w in pipe_result.anchor_warnings:
-            print(f"- **[{w.category}]** {w.description}")
-    else:
-        print(f"Revised {pipe_result.revision_count} time(s) — passed.")
-
-    # Hallucination check — skipped if the narrative is empty (pipeline
-    # produced nothing, which is a failure worth flagging loudly).
-    if not pipe_result.narrative:
-        log.warning("Pipeline produced empty narrative — skipping hallucination check")
-        return
-
-    hallucination_report = check_hallucinated_metrics(
-        pipe_result.narrative, persona=args.persona
-    )
-
-    if hallucination_report.is_clean:
-        log.info("Hallucination check passed (no unknown metrics or outcome stats).")
-    else:
-        print("\n\n# Hallucination Check\n")
-        if hallucination_report.unknown_metrics:
-            print(f"Unknown metrics referenced: {', '.join(hallucination_report.unknown_metrics)}")
-        if hallucination_report.outcome_stat_warnings:
-            print(
-                f"Traditional outcome stats referenced "
-                f"(prompt warns against these): "
-                f"{', '.join(hallucination_report.outcome_stat_warnings)}"
-            )
-
-    # Soft block: the report is fully printed/saved, but if the fact-check loop
-    # (B) could not ground every claim, warn loudly and exit non-zero so
-    # callers/CI catch an UNVERIFIED report rather than treating it as clean.
-    # The deterministic TestModel always emits synthetic audit flags, so the
-    # hard exit is suppressed in test mode (the banner still prints).
-    if pipe_result.capsule_audit_flags:
-        n = len(pipe_result.capsule_audit_flags)
-        print(
-            f"\n⚠️  REPORT UNVERIFIED — {n} flagged claim(s) survived the "
-            "fact-check loop. Review before use.",
-            file=sys.stderr,
+    if args.metrics_out:
+        _append_metrics_records(
+            args.metrics_out,
+            pitcher_id=args.pitcher,
+            span=args.recent,
+            modes=selected_modes,
+            results=results,
         )
-        if not os.environ.get("PITCHER_NARRATIVES_TEST_MODEL"):
-            sys.exit(1)
+
+    if any_unverified and not os.environ.get("PITCHER_NARRATIVES_TEST_MODEL"):
+        sys.exit(1)
 
 
 def _run_morning_command(args: argparse.Namespace) -> None:
@@ -413,6 +607,7 @@ def _run_morning_command(args: argparse.Namespace) -> None:
             provider=args.provider,
             persona_id=args.persona,
             out_root=Path(args.out),
+            starters_only=args.starters_only,
         )
     except AgentRunError as exc:
         print(f"Morning run failed: {exc}", file=sys.stderr)
@@ -422,6 +617,42 @@ def _run_morning_command(args: argparse.Namespace) -> None:
         sys.exit(1)
     if run_dir is not None:
         print(f"\nRun artifacts: {run_dir}", file=sys.stderr)
+
+
+def _run_scoreboard_command(args: argparse.Namespace) -> None:
+    """Print the scouted full board to stdout — no LLM, no cost."""
+    setup_logging()
+
+    # Lazy imports: polars (~90ms) and the scout/digest modules are heavy;
+    # importing at call time keeps `pitcher-narratives --help` fast.
+    import polars as pl
+
+    from pitcher_narratives.digest import render_full_board, render_full_board_json
+    from pitcher_narratives.scout import scout_appearances
+
+    try:
+        board = scout_appearances(window_days=args.window, min_pitches=args.min_pitches)
+    except (ValueError, FileNotFoundError, pl.exceptions.PolarsError, OSError) as exc:
+        print(f"Scoreboard failed: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+    if args.starters_only:
+        board = [a for a in board if a.role == "SP"]
+
+    # JSON always emits valid output (empty board -> empty appearances list) so
+    # downstream consumers can parse stdout unconditionally.
+    if args.json:
+        print(render_full_board_json(board))
+        return
+
+    if not board:
+        noun = "starter appearances" if args.starters_only else "appearances"
+        print(f"No interesting {noun} found — quiet day.", file=sys.stderr)
+        return
+
+    game_date = max(a.game_date for a in board)
+    print(f"# Scoreboard — {game_date}\n")
+    print(render_full_board(board))
 
 
 if __name__ == "__main__":

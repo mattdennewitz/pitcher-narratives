@@ -25,7 +25,13 @@ from pitcher_narratives.data import (
     load_full_agg,
 )
 
-__all__ = ["ScoredAppearance", "compute_velo_baselines", "scout_appearances", "top_per_role"]
+__all__ = [
+    "ScoredAppearance",
+    "compute_pitch_profiles",
+    "compute_velo_baselines",
+    "scout_appearances",
+    "top_per_role",
+]
 
 log = logging.getLogger("pitcher_narratives.scout")
 
@@ -33,6 +39,8 @@ log = logging.getLogger("pitcher_narratives.scout")
 
 _WEIGHTS = {
     "velo_delta": 3.0,
+    "velo_decline": 3.5,  # in-game velo cliff -- strong acute-injury tell
+    "spin_drop": 2.0,  # fastball spin loss -- corroborates arm trouble
     "pplus_swing": 2.5,
     "splus_lplus_divergence": 3.0,
     "usage_shift": 2.0,
@@ -47,7 +55,16 @@ _WEIGHTS = {
 
 # ── Thresholds ───────────────────────────────────────────────────────
 
-_VELO_THRESHOLD = 1.5  # mph from season avg
+_VELO_THRESHOLD = 1.5  # mph from season avg (population flat floor)
+_VELO_Z_THRESHOLD = 2.0  # robust (median/MAD) sigmas from a pitcher's own game-to-game velo
+_VELO_DECLINE_THRESHOLD = 1.5  # mph drop within a start (first-third -> last-third FB velo)
+_SPIN_Z_THRESHOLD = 1.5  # robust sigmas of fastball spin below a pitcher's own norm
+_MIN_FB_FOR_DECLINE = 9  # fastballs needed before an in-game decline is trustworthy
+_MAD_TO_STD = 1.4826  # scales median-absolute-deviation to a normal-consistent std
+_FB_TYPES = ["FF", "SI", "FC"]  # four/two-seam + cutter -- the "fastball" family
+_MIN_GAMES_FOR_Z = 5  # other games a pitcher needs before a robust z is trusted
+_VELO_RSTD_FLOOR = 0.4  # mph floor on the robust velo scale (thin baselines can't manufacture z)
+_SPIN_RSTD_FLOOR = 40.0  # rpm floor on the robust spin scale
 _PPLUS_THRESHOLD = 15  # points from season
 _DIVERGENCE_THRESHOLD = 10  # S+ and L+ moving opposite directions, each ≥ this
 _MIN_TYPE_PITCHES = 3
@@ -107,6 +124,15 @@ def top_per_role(results: list[ScoredAppearance], top_n: int) -> list[ScoredAppe
     return merged
 
 
+def _statcast_max_mlb_date() -> date | None:
+    """Most recent MLB game date in the statcast parquet, or None if unavailable."""
+    df = load_all_statcast(columns=["game_date", "level"])
+    if df.is_empty():
+        return None
+    val = df.filter(pl.col("level") == "MLB")["game_date"].max()
+    return cast(date, val) if val is not None else None
+
+
 def _get_max_date(appearance_df: pl.DataFrame) -> date:
     """Get the most recent date in the appearance data."""
     val = appearance_df["game_date"].max()
@@ -143,6 +169,22 @@ def scout_appearances(
 
     # Determine date window
     max_date = _get_max_date(app_df)
+
+    # Guard against a stale appearance aggregate. The scout iterates the
+    # appearance aggregates, but velocity and role signals are sourced from the
+    # statcast parquet. If statcast leads the aggregates (e.g. `make pull-statcast`
+    # ran without `make pull-aggs`), the most recent outings exist in statcast but
+    # never enter the window -- they are silently invisible to scoring. This is
+    # the mirror image of the role-map guard below, which handles statcast lagging.
+    statcast_max = _statcast_max_mlb_date()
+    if statcast_max is not None and statcast_max > max_date:
+        log.warning(
+            "Appearance aggregate is stale: statcast has MLB games through %s but the "
+            "appearance aggregate stops at %s. Outings after %s are invisible to the "
+            "scout -- run `make pull-aggs` (or `make pull-data`) to refresh.",
+            statcast_max, max_date, max_date,
+        )
+
     cutoff = max_date - timedelta(days=window_days - 1)
     app_window = app_df.filter(
         (pl.col("game_date") >= cutoff) & (pl.col("n_pitches") >= min_pitches)
@@ -152,8 +194,10 @@ def scout_appearances(
     season_baseline = compute_season_baseline(season_df)
     season_type_baseline = compute_pitch_type_baseline(season_type_df)
 
-    # Compute velocity baselines from statcast
-    velo_baselines = compute_velo_baselines()
+    # Velocity + spin profiles from statcast (game velo/spin, per-pitcher robust
+    # center/scale, and in-game velo decline) feed the velo-change, in-game
+    # velo-decline, and spin-drop checkers.
+    pitch_profiles = compute_pitch_profiles()
 
     # Score all appearances in recent date(s) that had enough appearances to
     # build a season baseline
@@ -211,9 +255,14 @@ def scout_appearances(
 
         signals: list[Signal] = []
 
-        # --- Signal: Velocity delta ---
-        velo_signals = _check_velo_delta(pitcher_id, game_pk, game_date, velo_baselines)
-        signals.extend(velo_signals)
+        # --- Signal: Velocity change (flat + per-pitcher robust z) ---
+        signals.extend(_check_velo_change(pitcher_id, game_pk, pitch_profiles))
+
+        # --- Signal: In-game velocity decline (acute-injury tell) ---
+        signals.extend(_check_velo_decline(pitcher_id, game_pk, pitch_profiles))
+
+        # --- Signal: Fastball spin drop ---
+        signals.extend(_check_spin_drop(pitcher_id, game_pk, pitch_profiles))
 
         # --- Signal: P+ swing ---
         pplus_signals = _check_pplus_swing(row, pitcher_baseline)
@@ -303,6 +352,145 @@ def compute_velo_baselines() -> pl.DataFrame:
     return game.join(season, on=["pitcher", "_year"]).drop("_year")
 
 
+def _leave_one_out_robust(per_game: pl.DataFrame) -> pl.DataFrame:
+    """Per-game robust center/scale over a pitcher's OTHER same-year games.
+
+    For each (pitcher, game_pk) returns the median and MAD-derived std of the
+    pitcher's remaining games' fastball velo/spin -- leave-one-out, so the game
+    under evaluation never dilutes its own z-score. Requires ``_MIN_GAMES_FOR_Z``
+    other games and floors the scale (``_VELO_RSTD_FLOOR`` / ``_SPIN_RSTD_FLOOR``);
+    below the game count, center/scale are null so the z path stays inert and
+    only the population-flat floor fires.
+    """
+    pg = per_game.select("pitcher", "_year", "game_pk", "game_velo", "game_spin")
+    other = pg.select(
+        "pitcher", "_year",
+        pl.col("game_pk").alias("_og"),
+        pl.col("game_velo").alias("_ov"),
+        pl.col("game_spin").alias("_os"),
+    )
+    # All same-year game pairs, minus self -> each row's "other games" set.
+    pairs = pg.join(other, on=["pitcher", "_year"]).filter(
+        pl.col("game_pk") != pl.col("_og")
+    )
+    med = pairs.group_by(["pitcher", "_year", "game_pk"]).agg(
+        pl.col("_ov").median().alias("velo_median"),
+        pl.col("_os").median().alias("spin_median"),
+        pl.len().alias("_n_other"),
+    )
+    dev = pairs.join(med, on=["pitcher", "_year", "game_pk"]).with_columns(
+        (pl.col("_ov") - pl.col("velo_median")).abs().alias("_adv"),
+        (pl.col("_os") - pl.col("spin_median")).abs().alias("_ads"),
+    )
+    mad = dev.group_by(["pitcher", "_year", "game_pk"]).agg(
+        (pl.col("_adv").median() * _MAD_TO_STD).alias("velo_rstd"),
+        (pl.col("_ads").median() * _MAD_TO_STD).alias("spin_rstd"),
+    )
+    loo = med.join(mad, on=["pitcher", "_year", "game_pk"])
+    enough = pl.col("_n_other") >= _MIN_GAMES_FOR_Z
+    return loo.with_columns(
+        pl.when(enough).then(pl.col("velo_median")).alias("velo_median"),
+        pl.when(enough).then(pl.col("spin_median")).alias("spin_median"),
+        pl.when(enough).then(
+            pl.max_horizontal(pl.col("velo_rstd"), pl.lit(_VELO_RSTD_FLOOR))
+        ).alias("velo_rstd"),
+        pl.when(enough).then(
+            pl.max_horizontal(pl.col("spin_rstd"), pl.lit(_SPIN_RSTD_FLOOR))
+        ).alias("spin_rstd"),
+    ).select("pitcher", "game_pk", "velo_median", "velo_rstd", "spin_median", "spin_rstd")
+
+
+def _in_game_velo_decline(raw: pl.DataFrame) -> pl.DataFrame:
+    """Fastball velo in the last third of a start minus the first third.
+
+    Buckets thirds over ALL pitches by throw order (at-bat, then pitch number),
+    then averages fastball velo within the first and last thirds. Bucketing over
+    every pitch -- not just fastballs -- keeps a late velo cliff visible even when
+    the pitcher goes soft (fewer fastballs) late, the exact compensation pattern
+    that a fastball-position split would smear away.
+    """
+    is_fb = pl.col("pitch_type").is_in(_FB_TYPES)
+    allp = raw.sort(["pitcher", "game_pk", "at_bat_number", "pitch_number"]).with_columns(
+        pl.int_range(pl.len()).over(["pitcher", "game_pk"]).alias("_idx"),
+        pl.len().over(["pitcher", "game_pk"]).alias("_n"),
+    ).with_columns((pl.col("_idx") * 3 // pl.col("_n")).alias("_third"))
+    wide = (
+        allp.filter(is_fb & pl.col("_third").is_in([0, 2]))
+        .group_by(["pitcher", "game_pk", "_third"])
+        .agg(pl.col("release_speed").mean().alias("_tv"))
+        .pivot(on="_third", index=["pitcher", "game_pk"], values="_tv")
+    )
+    for col in ("0", "2"):  # a game may lack fastballs in one third
+        if col not in wide.columns:
+            wide = wide.with_columns(pl.lit(None, dtype=pl.Float64).alias(col))
+    return wide.rename({"0": "velo_first_third", "2": "velo_last_third"}).with_columns(
+        (pl.col("velo_last_third") - pl.col("velo_first_third")).alias("velo_decline")
+    ).select("pitcher", "game_pk", "velo_first_third", "velo_last_third", "velo_decline")
+
+
+def compute_pitch_profiles() -> pl.DataFrame:
+    """Per-(pitcher, game_pk) fastball velocity and spin profiles from statcast.
+
+    Richer than :func:`compute_velo_baselines`: alongside each game's fastball
+    velocity it carries the pitcher's own leave-one-out robust game-to-game
+    center/scale (median + MAD-derived std) for velocity and spin, the season
+    spin mean, and the in-game velocity decline. These feed the injury-oriented
+    checkers -- in-game velo cliff, spin drop, and the per-pitcher robust-z
+    velocity change -- which the population-flat ``_check_velo_delta`` cannot
+    express.
+
+    Columns: pitcher, game_pk, game_date, game_velo, season_velo, velo_median,
+    velo_rstd, game_spin, season_spin, spin_median, spin_rstd, velo_first_third,
+    velo_last_third, velo_decline. Empty frame when no statcast is available.
+    """
+    raw = load_all_statcast(columns=[
+        "pitcher", "game_pk", "game_date", "pitch_type", "release_speed",
+        "release_spin_rate", "at_bat_number", "pitch_number", "level",
+    ])
+    if raw.is_empty():
+        return pl.DataFrame()
+    # MLB pitches with a recorded velocity. Kept at all pitch types so the
+    # in-game decline can bucket thirds over the whole outing; fastball-only
+    # views are derived below.
+    raw = raw.filter(
+        (pl.col("level") == "MLB") & pl.col("release_speed").is_not_null()
+    ).with_columns(pl.col("game_date").dt.year().alias("_year"))
+    fb = raw.filter(pl.col("pitch_type").is_in(_FB_TYPES))
+    if fb.is_empty():
+        return pl.DataFrame()
+
+    per_game = fb.group_by(["pitcher", "game_pk"]).agg(
+        pl.col("release_speed").mean().alias("game_velo"),
+        pl.col("release_spin_rate").mean().alias("game_spin"),
+        pl.col("game_date").first(),
+        pl.col("_year").first(),
+        pl.len().alias("_n_fb"),
+    )
+
+    # Pitch-weighted season means (per pitcher-year) -- flat floor + reporting.
+    season = fb.group_by(["pitcher", "_year"]).agg(
+        pl.col("release_speed").mean().alias("season_velo"),
+        pl.col("release_spin_rate").mean().alias("season_spin"),
+    )
+
+    loo = _leave_one_out_robust(per_game)
+    thirds = _in_game_velo_decline(raw)
+
+    out = (
+        per_game
+        .join(season, on=["pitcher", "_year"])
+        .join(loo, on=["pitcher", "game_pk"], how="left")
+        .join(thirds, on=["pitcher", "game_pk"], how="left")
+    )
+    # Suppress the decline for outings with too few fastballs to trust a trend.
+    thin = pl.col("_n_fb") < _MIN_FB_FOR_DECLINE
+    out = out.with_columns(
+        pl.when(thin).then(None).otherwise(pl.col(col)).alias(col)
+        for col in ("velo_decline", "velo_first_third", "velo_last_third")
+    )
+    return out.drop("_year", "_n_fb")
+
+
 def _compute_role_map() -> dict[tuple[int, int], str]:
     """Map (pitcher_id, game_pk) -> 'SP'/'RP' from league-wide statcast."""
     df = load_all_statcast(
@@ -378,6 +566,115 @@ def _check_velo_delta(
             f"({float(game_velo):.1f} vs {float(season_velo):.1f} season)",
         )]
     return []
+
+
+def _profile_row(pitcher_id: int, game_pk: int, profiles: pl.DataFrame) -> dict | None:
+    """Look up a pitcher's game row in a compute_pitch_profiles frame, or None."""
+    if profiles.is_empty():
+        return None
+    row = profiles.filter(
+        (pl.col("pitcher") == pitcher_id) & (pl.col("game_pk") == game_pk)
+    )
+    return row.row(0, named=True) if not row.is_empty() else None
+
+
+def _check_velo_change(
+    pitcher_id: int,
+    game_pk: int,
+    profiles: pl.DataFrame,
+) -> list[Signal]:
+    """Fastball velocity change vs season -- population-flat OR pitcher-relative.
+
+    Supersedes the flat-only :func:`_check_velo_delta` in the scoring loop: it
+    fires on the same absolute 1.5 mph floor AND on a robust (median/MAD)
+    z-score, so a drop that is small in absolute terms but large for a
+    low-variance pitcher is still caught. The robust center resists a prior
+    aborted start that would desensitize a plain std.
+    """
+    r = _profile_row(pitcher_id, game_pk, profiles)
+    if r is None or r["game_velo"] is None or r["season_velo"] is None:
+        return []
+    game_velo, season_velo = float(r["game_velo"]), float(r["season_velo"])
+    delta = game_velo - season_velo
+
+    z = None
+    if r["velo_median"] is not None and r["velo_rstd"] not in (None, 0.0):
+        z = (game_velo - float(r["velo_median"])) / float(r["velo_rstd"])
+
+    flat_fires = abs(delta) >= _VELO_THRESHOLD
+    z_fires = z is not None and abs(z) >= _VELO_Z_THRESHOLD
+    if not (flat_fires or z_fires):
+        return []
+
+    direction = "up" if delta > 0 else "down"
+    z_note = f", z={z:+.1f}" if z is not None else ""
+    return [Signal(
+        "velo_delta",
+        _WEIGHTS["velo_delta"],
+        f"FB velo {direction} {abs(delta):.1f} mph "
+        f"({game_velo:.1f} vs {season_velo:.1f} season{z_note})",
+    )]
+
+
+def _check_velo_decline(
+    pitcher_id: int,
+    game_pk: int,
+    profiles: pl.DataFrame,
+) -> list[Signal]:
+    """In-game velocity cliff: fastball velo fell within the start itself.
+
+    Compares first-third to last-third fastball velo by pitch order. A decline
+    beyond normal end-of-start fatigue is a strong acute-injury tell that a
+    game-average-vs-season comparison smears away -- exactly the signature that
+    a game-average drop understates.
+    """
+    r = _profile_row(pitcher_id, game_pk, profiles)
+    if r is None or r["velo_decline"] is None:
+        return []
+    decline = float(r["velo_decline"])
+    if decline > -_VELO_DECLINE_THRESHOLD:
+        return []
+    first = r.get("velo_first_third")
+    last = r.get("velo_last_third")
+    where = (
+        f" ({float(first):.1f} -> {float(last):.1f})"
+        if first is not None and last is not None else ""
+    )
+    return [Signal(
+        "velo_decline",
+        _WEIGHTS["velo_decline"],
+        f"FB velo fell {abs(decline):.1f} mph within the outing{where}",
+    )]
+
+
+def _check_spin_drop(
+    pitcher_id: int,
+    game_pk: int,
+    profiles: pl.DataFrame,
+) -> list[Signal]:
+    """Fastball spin loss vs a pitcher's own norm (robust z).
+
+    Spin dropping alongside velocity corroborates reduced arm output. Uses a
+    robust z so a genuinely large spin cliff fires while a normal game-to-game
+    wobble does not.
+    """
+    r = _profile_row(pitcher_id, game_pk, profiles)
+    if r is None or r["game_spin"] is None or r["spin_median"] is None:
+        return []
+    if r["spin_rstd"] in (None, 0.0):
+        return []
+    game_spin = float(r["game_spin"])
+    z = (game_spin - float(r["spin_median"])) / float(r["spin_rstd"])
+    if z > -_SPIN_Z_THRESHOLD:
+        return []
+    season_spin = r.get("season_spin")
+    ref = float(season_spin) if season_spin is not None else float(r["spin_median"])
+    return [Signal(
+        "spin_drop",
+        _WEIGHTS["spin_drop"],
+        f"FB spin down {abs(game_spin - ref):.0f} rpm "
+        f"({game_spin:.0f} vs {ref:.0f} season, z={z:+.1f})",
+    )]
 
 
 def _check_pplus_swing(

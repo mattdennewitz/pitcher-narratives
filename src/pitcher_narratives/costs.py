@@ -13,7 +13,7 @@ __all__ = ["PRICING", "UsageTracker", "model_label"]
 
 PRICING: dict[str, dict[str, float]] = {
     "claude-sonnet-4-6": {"input": 3.00, "output": 15.00},
-    "claude-haiku-4-5": {"input": 0.80, "output": 4.00},
+    "claude-haiku-4-5": {"input": 1.00, "output": 5.00},
     "gemini-3.1-pro-preview": {"input": 1.25, "output": 10.00},
     "gemini-3.5-flash": {"input": 1.50, "output": 9.00},
     "gemini-flash-latest": {"input": 0.15, "output": 0.60},

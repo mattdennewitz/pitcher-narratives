@@ -24,10 +24,12 @@ Architecture:
   targets).
 
   Phase 2: Writer composes a unified capsule from clean specialist outputs
-  + key signals. Executive summary agent runs concurrently with writer.
+  + key signals.
 
   Phase 2.5: Anchor check + revision loop. Primary signals are enforced
   (MISSED_SIGNAL), secondary signals are advisory (UNDERWEIGHTED).
+
+  Phase 3: Executive summary agent runs as a second step after the anchor loop.
 
 Anti-hallucination guardrails:
   - Specialists receive pre-computed NORMAL/OUTLIER tags on every metric.
@@ -41,7 +43,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
-from typing import Any, NamedTuple
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 from pydantic import BaseModel
 from pydantic_ai import Agent, CachePoint
@@ -53,11 +56,11 @@ from pitcher_narratives.anchor import (
     AnchorResult,
     AnchorWarning,
     build_anchor_message,
+    build_reconcile_message,
     build_revision_message,
 )
 from pitcher_narratives.config import (
     MAX_FACT_REVISIONS,
-    MAX_REVISIONS,
     MINI_PROVIDERS,
     PROVIDERS,
     TOKEN_BUDGET_LARGE,
@@ -69,6 +72,11 @@ from pitcher_narratives.config import (
 )
 from pitcher_narratives.costs import UsageTracker, model_label
 from pitcher_narratives.context import PitcherContext
+from pitcher_narratives.frame_delta import (
+    build_trend_frame_comparison,
+    render_trend_frame_comparison,
+)
+from pitcher_narratives.temporal import TemporalFrame
 from pitcher_narratives.engine import (
     compute_league_baselines,
     format_s_variant_comparisons,
@@ -77,12 +85,18 @@ from pitcher_narratives.engine import (
 )
 from pitcher_narratives.personas import (
     BRIEF,
+    DEFAULT_MODE,
     DEFAULT_PERSONA,
+    NarrationMode,
     Persona,
+    RECAP,
     build_system_prompt,
     build_writer_system_prompt,
     get_persona,
 )
+
+if TYPE_CHECKING:
+    from pitcher_narratives.curator import CurationPick
 from pitcher_narratives.prompt_builder import (
     render_appearances_section,
     render_arsenal_section,
@@ -90,6 +104,7 @@ from pitcher_narratives.prompt_builder import (
     render_hard_hit_section,
     render_release_point_section,
     render_role_section,
+    render_temporal_section,
     render_tto_section,
     render_yoy_section,
 )
@@ -98,24 +113,30 @@ from pitcher_narratives.models import (
     AnalyzedContext,
     AuditFlag,
     AuditResult,
+    CoreContext,
     SpecialistOutputs,
 )
 from pitcher_narratives.signals import (
     SIGNAL_EXTRACTOR_PROMPT,
     KeySignals,
+    count_secondary_signals,
     render_key_signals,
 )
 from pitcher_narratives.value_parity import check_value_parity
 
 __all__ = [
-    "AnalyzedContext",
-    "AuditFlag", "AuditResult", "ExecutiveSummary", "HallucinationReport",
+    "AnalyzedContext", "CoreContext",
+    "AuditFlag", "AuditResult", "HallucinationReport",
     "KeySignals", "PipelineAgents", "PipelineResult",
-    "UserPrompt", "audit_and_revise_specialists", "build_fact_revision_message",
+    "UserPrompt", "audit_and_revise_specialists", "build_capsule_audit_input",
+    "build_fact_revision_message",
     "build_summary_input",
-    "build_writer_input", "check_explainer_present", "check_hallucinated_metrics",
-    "generate_pipeline_streaming",
-    "make_pipeline_agents", "run_analysis_spine", "run_specialists",
+    "build_writer_input", "build_recap_overlay", "check_explainer_present", "check_hallucinated_metrics",
+    "flag_record", "flag_summary", "generate_pipeline_streaming", "is_unverified",
+    "make_pipeline_agents", "render_recap", "residual_banner", "run_analysis_spine",
+    "run_anchor_revision_loop",
+    "run_capsule_audit", "run_narration_modes", "run_spine_core", "run_spine_tail",
+    "run_specialists",
     "write_pipeline_data_file",
 ]
 
@@ -138,9 +159,65 @@ def _render_user_prompt(parts: UserPrompt) -> str:
     )
 
 
+def _record_usage(
+    tracker: UsageTracker | None,
+    tracker_model: str,
+    result: Any,
+    stage: str,
+) -> None:
+    """Record one agent call's token usage on the tracker, if tracking is on."""
+    if tracker is None:
+        return
+    u = result.usage()
+    tracker.record(tracker_model, u.input_tokens or 0, u.output_tokens or 0, stage=stage)
+
+
 # ═══════════════════════════════════════════════════════════════════════
 # SPECIALIST PROMPTS
 # ═══════════════════════════════════════════════════════════════════════
+
+# Appended to every specialist system prompt. The bracketed z-score tags
+# ([NORMAL], [OUTLIER], [SMALL SAMPLE ...]) are computed in engine.baselines
+# and fed into specialist *inputs* as internal annotations. Specialists must
+# interpret them, never echo the literal token into prose. Centralized here so
+# the rule stays identical across all five specialists.
+_NO_TAG_ECHO_RULE = """
+
+TAG HYGIENE (absolute): The bracketed tags in the data — [NORMAL], \
+[OUTLIER], [SMALL SAMPLE ...] — are internal annotations for you to read, \
+NOT display text. NEVER reproduce a bracketed tag token in your prose. \
+Translate the judgment into scout language: an [OUTLIER] 93.0 mph becomes \
+"an unusual 93.0 mph, well above the norm for the pitch type"; a [NORMAL] \
+metric is simply left undescribed or called unremarkable — never written \
+as the literal "[NORMAL]"."""
+
+# Matches any bracketed internal tag token that leaked into prose, e.g.
+# "[NORMAL]", "[OUTLIER]", "[OUTLIER (above avg, z=+3.2)]",
+# "[SMALL SAMPLE, N=3 -- untagged]". These are produced by
+# engine.baselines.outlier_tag and must never survive in final narrative.
+_TAG_TOKEN_RE = re.compile(r"\s*\[\s*(?:NORMAL|OUTLIER|SMALL SAMPLE)[^\]]*\]")
+
+
+def _strip_tag_tokens(text: str, *, specialist: str = "") -> str:
+    """Remove leaked internal z-score tag tokens from specialist prose.
+
+    Belt-and-suspenders behind ``_NO_TAG_ECHO_RULE``: the bracketed tags
+    ([NORMAL]/[OUTLIER]/[SMALL SAMPLE ...]) are ground-truth annotations fed
+    into specialist inputs and must never reach the reader. The prompt rule
+    reduces the leak; this guarantees it. A removal is logged so regressions
+    stay visible rather than being silently scrubbed.
+    """
+    cleaned, n = _TAG_TOKEN_RE.subn("", text)
+    if n:
+        # Collapse whitespace/punctuation gaps left where a token was removed.
+        cleaned = re.sub(r"  +", " ", cleaned)
+        cleaned = re.sub(r"\s+([.,;:])", r"\1", cleaned)
+        log.warning(
+            "Stripped %d leaked tag token(s) from %s specialist output.",
+            n, specialist or "unknown",
+        )
+    return cleaned
+
 
 _STUFF_SPECIALIST_PROMPT = """\
 You are a pitch physics analyst. Your job is to explain each pitch's \
@@ -247,7 +324,7 @@ INTERPRETATION RULES:
 - Compare zone% and chase% against the league baselines provided. \
 Only flag a rate as high/low if it deviates meaningfully from the \
 league average for that pitch type.
-- DIRECTIONAL CONSISTENCY: L+ above 0 means location helps. The \
+- DIRECTIONAL CONSISTENCY: L+ above 100 means location helps (L+ is 100-centered, like S+/P+). The \
 P-variant xRV100 should be more negative (better) than S-variant. \
 If the data contradicts this, note the discrepancy honestly.
 - Cite deltas from league average for zone% and chase% when claiming \
@@ -304,7 +381,7 @@ Look at:
 - Velocity deltas (up, down, steady)
 - P+/S+/L+ deltas per pitch type
 - Usage rate shifts (biggest increases/decreases)
-- Movement changes (pfx_x/pfx_z deltas)
+- Movement changes for the primary fastball (pfx_x/pfx_z deltas are provided only there; assess other pitches via their P+/S+/L+ deltas, do not derive movement deltas from raw values)
 - Release point shifts
 - Hard-hit rate shifts
 
@@ -376,8 +453,7 @@ _RP_GAME_SHAPE_GUIDANCE = """\
 Additional focus for this reliever:
 - Rest day impact on velocity, S+, and L+ (back-to-back vs rested — better or worse?)
 - Primary weapon identification: what is the put-away pitch? Cite its P+/S+/L+ triad
-- Pitch count efficiency: how many pitches per batter faced?
-- Platoon-specific strengths and vulnerabilities by handedness"""
+- Platoon-specific strengths and vulnerabilities by handedness — only when the input includes TTO/platoon splits; if absent, skip this angle rather than inferring it"""
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -425,6 +501,8 @@ For each problem found, report:
 - What the data actually shows
 - A suggested correction
 
+Checks that reference [NORMAL]/[OUTLIER] tags or S-variant metrics (xRV100_S, xWhiff_S) apply ONLY when those artifacts appear in the ground truth data. When the ground truth has no such tags or metrics (e.g. trends or game-shape data), skip those checks — do not flag their absence.
+
 If everything checks out, return an empty list."""
 
 
@@ -446,6 +524,16 @@ shows the other.
 the source material.
 - UNRECONCILED / HALLUCINATED_CAUSATION: a causal claim the source does not support.
 
+TEMPORAL FRAMES: The source material can contain TWO baselines for the same \
+metric: recent-window-vs-SEASON deltas in the context tables, and a \
+"Recent vs Prior Window (code-computed deltas)" block comparing the recent \
+window to the window just before it. These legitimately disagree in magnitude \
+and even direction (the season average includes the recent games). A capsule \
+claim that matches EITHER baseline is grounded — verify it against the \
+baseline it narrates, and NEVER flag or "correct" a number from one baseline \
+using the other. A change-focused capsule narrates the recent-vs-prior block \
+by default.
+
 Only flag genuine factual errors against the source — not style, emphasis, or \
 legitimate synthesis. The specialists' analyses already contain computed deltas, \
 contrasts, and paraphrases of grades (e.g. "S+ up 8 points", "28% above \
@@ -453,24 +541,68 @@ average"); a number the capsule draws from those is faithful, NOT fabricated. \
 If the capsule is faithful, return an empty list of flags."""
 
 
-def _build_capsule_ground_truth(ctx: PitcherContext) -> str:
-    """Combined raw ground truth (all five specialists' input tables)."""
+def _build_capsule_ground_truth(
+    ctx: PitcherContext, *, trend_frame_comparison: str | None = None
+) -> str:
+    """Combined raw ground truth (all five specialists' input tables).
+
+    ``trend_frame_comparison`` threads the CHANGES-mode recent-vs-prior block
+    into the trends input exactly as the trends specialist saw it — the same
+    mechanism as the per-specialist audit (see _get_specialist_input). Without
+    it the capsule auditor sees only recent-vs-season deltas and "corrects"
+    correct prior-frame numbers into the season frame.
+    """
     names = ["stuff", "location", "runvalue", "trends", "game_shape"]
-    return "\n\n".join(_get_specialist_input_text(name, ctx) for name in names)
+    return "\n\n".join(
+        _get_specialist_input_text(
+            name, ctx, trend_frame_comparison=trend_frame_comparison
+        )
+        for name in names
+    )
 
 
-def _build_parity_union(ctx: PitcherContext, specialists: SpecialistOutputs, key_signals: KeySignals | None) -> str:
+def _build_parity_union(
+    ctx: PitcherContext,
+    specialists: SpecialistOutputs,
+    key_signals: KeySignals | None,
+    *,
+    exclude: frozenset[str] = frozenset(),
+    trend_frame_comparison: str | None = None,
+) -> str:
     """A's source-of-truth union: everything the writer saw — raw ground truth,
-    clean specialist outputs, and the rendered key signals."""
-    parts = [_build_capsule_ground_truth(ctx)]
-    parts.extend([specialists.stuff, specialists.location, specialists.runvalue,
-                  specialists.trends, specialists.game_shape])
+    clean specialist outputs, and the rendered key signals.
+
+    ``exclude`` names specialists whose *prose* must NOT count as fact-check
+    ground truth — a specialist whose revision failed re-audit is unverified, so
+    a fabricated number in its prose must not launder into citable truth. Raw
+    ground-truth tables and the key signals are always included; only the
+    excluded specialists' analysis prose is dropped.
+
+    ``trend_frame_comparison`` is threaded into the raw ground truth so the
+    union contains every temporal frame the writer narrated from — in CHANGES
+    mode the recent-vs-prior block, not just the recent-vs-season deltas.
+    """
+    parts = [
+        _build_capsule_ground_truth(
+            ctx, trend_frame_comparison=trend_frame_comparison
+        )
+    ]
+    specialist_prose = {
+        "stuff": specialists.stuff,
+        "location": specialists.location,
+        "runvalue": specialists.runvalue,
+        "trends": specialists.trends,
+        "game_shape": specialists.game_shape,
+    }
+    parts.extend(
+        text for name, text in specialist_prose.items() if name not in exclude
+    )
     if key_signals is not None:
         parts.append(render_key_signals(key_signals))
     return "\n\n".join(parts)
 
 
-def _build_capsule_audit_input(ground_truth: str, capsule: str) -> str:
+def build_capsule_audit_input(ground_truth: str, capsule: str) -> str:
     """Auditor input: ground truth + the finished capsule to verify."""
     return (
         f"## GROUND TRUTH DATA\n{ground_truth}\n\n"
@@ -478,19 +610,31 @@ def _build_capsule_audit_input(ground_truth: str, capsule: str) -> str:
     )
 
 
-def build_fact_revision_message(capsule: str, flags: list[AuditFlag]) -> str:
-    """Ask the writer to correct ONLY the capsule's flagged factual errors."""
+def build_fact_revision_message(
+    ground_truth: str, capsule: str, flags: list[AuditFlag]
+) -> UserPrompt:
+    """Ask the writer to correct ONLY the capsule's flagged factual errors.
+
+    Carries the ground truth alongside the auditor's flagged claims (mirrors
+    ``anchor.build_revision_message``) so the writer can check the auditor's
+    claim strings against the source instead of faithfully inserting a
+    mis-stated value. Cache breakpoint after the ground-truth part.
+    """
     formatted = "\n".join(
         f"- [{f.category}] \"{f.claim}\" → Data shows: {f.data_shows}. "
         f"Fix: {f.suggested_fix}"
         for f in flags
     )
-    return (
+    return [
+        f"## Ground Truth\n{ground_truth}",
+        CachePoint(),
         f"## Your Capsule\n{capsule}\n\n"
         f"## Factual Errors Found\n{formatted}\n\n"
         "Revise the capsule to correct ONLY these factual errors. Keep all "
-        "other content, structure, voice, and length unchanged."
-    )
+        "other content, structure, voice, and length unchanged. Use the "
+        "Ground Truth section for the correct values; if a listed fix "
+        "contradicts the ground truth, follow the ground truth.",
+    ]
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -519,17 +663,9 @@ never flag a discrepancy.
 — just the analytical observation.
 - DIRECTIONAL CONSISTENCY: S+ below 100 is below average. S+ above 100 is \
 above average. Negative xRV100 is good for the pitcher.
-- Do not call normal metrics unusual. If a metric is within ±1.5 stddev of \
-the league average, it is normal.
+- Do not call normal metrics unusual. If the report or attached analyses tag a metric [NORMAL], treat it as normal.
 - Output ONLY the 3 bullet points. No headers, no intro, no outro.
 - Format: each line starts with "- " followed by the insight."""
-
-
-class ExecutiveSummary(BaseModel):
-    """Structured executive summary bullet points."""
-
-    bullets: list[str]
-
 
 
 # render_league_baselines and outlier_tag are imported from engine.py
@@ -570,11 +706,11 @@ def _build_stuff_input(ctx: PitcherContext) -> UserPrompt:
         b = baseline_lookup.get(p.pitch_type)
         if b is not None:
             velo_delta = p.window_velo - b.avg_velo
-            velo_tag = outlier_tag(p.window_velo, b.avg_velo, b.velo_std)
+            velo_tag = outlier_tag(p.window_velo, b.avg_velo, b.velo_std, p.n_pitches_window)
             pfx_x_delta = p.window_pfx_x - b.avg_pfx_x
-            pfx_x_tag = outlier_tag(p.window_pfx_x, b.avg_pfx_x, b.pfx_x_std)
+            pfx_x_tag = outlier_tag(p.window_pfx_x, b.avg_pfx_x, b.pfx_x_std, p.n_pitches_window)
             pfx_z_delta = p.window_pfx_z - b.avg_pfx_z
-            pfx_z_tag = outlier_tag(p.window_pfx_z, b.avg_pfx_z, b.pfx_z_std)
+            pfx_z_tag = outlier_tag(p.window_pfx_z, b.avg_pfx_z, b.pfx_z_std, p.n_pitches_window)
             data_lines.append(
                 f"- {p.pitch_name} ({p.pitch_type}):\n"
                 f"    Velocity: {p.window_velo:.1f} mph ({velo_delta:+.1f} vs league avg) [{velo_tag}]\n"
@@ -700,7 +836,7 @@ def _build_runvalue_input(ctx: PitcherContext) -> UserPrompt:
     return ["\n".join(header_lines), CachePoint(), "\n".join(data_lines)]
 
 
-def _build_trend_input(ctx: PitcherContext) -> UserPrompt:
+def _build_trend_input(ctx: PitcherContext, *, frame_comparison: str | None = None) -> UserPrompt:
     """Build input for the trend specialist -- arsenal deltas, release point, hard-hit.
 
     Returns a UserPrompt list with a CachePoint between the header+baselines
@@ -712,6 +848,7 @@ def _build_trend_input(ctx: PitcherContext) -> UserPrompt:
         baselines,
     ]
     data_sections = [
+        render_temporal_section(ctx),
         render_fastball_section(ctx),
         render_arsenal_section(ctx),
         render_release_point_section(ctx),
@@ -720,6 +857,8 @@ def _build_trend_input(ctx: PitcherContext) -> UserPrompt:
     # Cross-season context (when available) — trends specialist gets full YoY section
     if ctx.cross_season_summary is not None or ctx.arsenal_trend is not None:
         data_sections.append(render_yoy_section(ctx))
+    if frame_comparison is not None:
+        data_sections.append(frame_comparison)
     return [
         "\n\n".join(s for s in prefix_sections if s),
         CachePoint(),
@@ -763,6 +902,7 @@ def _build_game_shape_input(ctx: PitcherContext) -> UserPrompt:
     prefix_sections.append(baselines)
 
     data_sections = [
+        render_temporal_section(ctx),
         render_tto_section(ctx),
         render_fastball_section(ctx),
         render_appearances_section(ctx),
@@ -822,6 +962,10 @@ def build_writer_input(
     a Key Signals section is prepended before the specialist analyses.
     """
     parts = [f"## Pitcher: {ctx.pitcher_name} ({ctx.throws}HP, {ctx.role})\n"]
+    if getattr(ctx, "temporal", None) is not None:
+        temporal = render_temporal_section(ctx)
+        if temporal:
+            parts.append(temporal + "\n")
     if key_signals is not None:
         parts.append(render_key_signals(key_signals) + "\n")
     parts.extend([
@@ -883,21 +1027,73 @@ def _build_specialist_revision_input(
     )
 
 
-def _get_specialist_input(name: str, ctx: PitcherContext) -> UserPrompt:
-    """Get the data input for a named specialist as a UserPrompt (with CachePoints)."""
+def _get_specialist_input(
+    name: str, ctx: PitcherContext, *, trend_frame_comparison: str | None = None
+) -> UserPrompt:
+    """Get the data input for a named specialist as a UserPrompt (with CachePoints).
+
+    ``trend_frame_comparison`` (only meaningful for the trends specialist) is
+    threaded into the trends input so audit ground truth matches what the
+    trends specialist actually saw — a CHANGES-mode frame-comparison block the
+    specialist cited must appear in the auditor's ground truth, or the auditor
+    false-flags it as FABRICATED_DATA.
+    """
+    if name == "trends":
+        return _build_trend_input(ctx, frame_comparison=trend_frame_comparison)
     builders = {
         "stuff": _build_stuff_input,
         "location": _build_location_input,
         "runvalue": _build_runvalue_input,
-        "trends": _build_trend_input,
         "game_shape": _build_game_shape_input,
     }
     return builders[name](ctx)
 
 
-def _get_specialist_input_text(name: str, ctx: PitcherContext) -> str:
+def _get_specialist_input_text(
+    name: str, ctx: PitcherContext, *, trend_frame_comparison: str | None = None
+) -> str:
     """Get specialist data input as plain text (no CachePoints)."""
-    return _flatten_prompt(_get_specialist_input(name, ctx))
+    return _flatten_prompt(
+        _get_specialist_input(name, ctx, trend_frame_comparison=trend_frame_comparison)
+    )
+
+
+def _audit_failed_flag(specialist: str = "") -> AuditFlag:
+    """Sentinel flag: the auditor itself crashed, so nothing was verified.
+
+    Fail closed — an unaudited report must surface as UNVERIFIED rather than
+    ship silently marked clean. Carries the AUDIT_FAILED category so it counts
+    in audit_flags/capsule_audit_flags and trips is_unverified/residual_banner.
+    """
+    return AuditFlag(
+        category="AUDIT_FAILED",
+        specialist=specialist,
+        claim="(auditor call failed — report not fact-checked)",
+        data_shows="the audit agent raised before producing a verdict",
+        suggested_fix="re-run, or review the report manually",
+    )
+
+
+def _tag_leak_flag(specialist: str = "") -> AuditFlag:
+    """Synthetic flag: the specialist echoed an internal z-score tag into prose.
+
+    Folds tag-leak repair into the existing audit/revise loop so the specialist
+    rewrites the offending sentence (grammar intact) rather than having the
+    token deleted by ``_strip_tag_tokens`` (which can leave a hole where the
+    model used the tag as a sentence constituent). Cosmetic, not a verification
+    failure: TAG_LEAK is not in the gating categories, so it does not trip
+    is_unverified/residual_banner — the regex strip remains the last-resort net.
+    """
+    return AuditFlag(
+        category="TAG_LEAK",
+        specialist=specialist,
+        claim="prose reproduces an internal tag token (e.g. [OUTLIER], [NORMAL])",
+        data_shows="bracketed tags are internal annotations, never display text",
+        suggested_fix=(
+            "rewrite the affected sentence so the judgment is expressed in scout "
+            "language, leaving no bracketed tag token in the prose"
+        ),
+    )
 
 
 async def audit_and_revise_specialists(
@@ -907,53 +1103,95 @@ async def audit_and_revise_specialists(
     ctx: PitcherContext,
     _model_override: Any = None,
     *,
+    names: list[str] | None = None,
     tracker: UsageTracker | None = None,
     tracker_model: str = "",
-) -> tuple[SpecialistOutputs, list[AuditFlag]]:
+    trend_frame_comparison: str | None = None,
+) -> tuple[SpecialistOutputs, list[AuditFlag], set[str]]:
     """Audit each specialist's output independently, revise any with flags.
 
     Phase 1.5a: Run 5 per-specialist audits concurrently.
     Phase 1.5b: For any flagged specialist, re-run with audit feedback.
+    Phase 1.5c: Re-audit the revised specialists ONCE (bounded — no loop) and
+    collect a ``residual`` set of specialists whose revision still flagged or
+    whose re-audit itself failed. Their prose is unverified, so a downstream
+    fact-check must not treat it as ground truth.
+
+    Args:
+        names: Optional subset of specialist names to audit/revise. When
+            omitted, all five specialists are audited (current behavior).
+            The returned SpecialistOutputs always carries all five fields;
+            unlisted specialists pass through unchanged.
+        trend_frame_comparison: CHANGES-mode frame-comparison block threaded
+            into the trends specialist's audit ground truth so the auditor sees
+            the same source the specialist did.
 
     Returns:
-        Tuple of (clean SpecialistOutputs, all collected AuditFlags).
+        Tuple of (clean SpecialistOutputs, all collected AuditFlags, residual
+        specialist-name set).
     """
-    specialist_names = ["stuff", "location", "runvalue", "trends", "game_shape"]
+    all_names = ["stuff", "location", "runvalue", "trends", "game_shape"]
+    audit_names = names if names is not None else all_names
+
+    # Full output map (all five) so the returned SpecialistOutputs is always
+    # complete; only the audit_names subset is actually audited/revised.
     outputs: dict[str, str] = {
-        name: getattr(specialists, name) for name in specialist_names
+        name: getattr(specialists, name) for name in all_names
     }
 
-    # Build ground truth input per specialist (plain text for audit f-strings)
+    # Build ground truth input only for the specialists we audit.
     ground_truths = {
-        name: _get_specialist_input_text(name, ctx) for name in specialist_names
+        name: _get_specialist_input_text(
+            name, ctx, trend_frame_comparison=trend_frame_comparison
+        )
+        for name in audit_names
     }
 
-    # Phase 1.5a: Audit all 5 in parallel. The audit is an enhancement,
-    # not core: a failed audit call (provider error, rate limit) degrades
-    # to passing that specialist through un-audited rather than killing
-    # the whole pipeline run.
-    async def _audit_one(name: str) -> tuple[str, AuditResult]:
+    # Phase 1.5a: Audit all 5 in parallel. Fail closed: a failed audit call
+    # (provider error, rate limit) does not pass that specialist through
+    # un-audited. It returns (name, None), which the collector below turns
+    # into an AUDIT_FAILED sentinel flag on the report — the specialist is
+    # never revised against a nonexistent audit result, and the sentinel
+    # is visible in the pipeline's audit_flags rather than being silently
+    # swallowed.
+    async def _audit_one(name: str, text: str) -> tuple[str, AuditResult | None]:
         try:
             audit_input = _build_specialist_audit_input(
-                ground_truths[name], outputs[name],
+                ground_truths[name], text,
             )
             result = await auditor.run(**agent_kwargs(audit_input, _model_override))
-            if tracker is not None:
-                u = result.usage()
-                tracker.record(tracker_model, u.input_tokens or 0, u.output_tokens or 0, stage="audit")
+            _record_usage(tracker, tracker_model, result, "audit")
             return name, result.output
         except Exception:
-            log.error("Audit failed for %s specialist; passing through un-audited.",
+            # Fail closed: the auditor crashed, so this specialist's prose was
+            # never fact-checked. Signal failure with a None sentinel; the
+            # collector surfaces an AUDIT_FAILED flag (visible in audit_flags)
+            # without triggering a bogus revision against a nonexistent flag.
+            log.error("Audit failed for %s specialist; surfacing AUDIT_FAILED.",
                       name, exc_info=True)
-            return name, AuditResult(is_clean=True, flags=[])
+            return name, None
 
-    audit_tasks = [_audit_one(name) for name in specialist_names]
+    audit_tasks = [_audit_one(name, outputs[name]) for name in audit_names]
     audit_results = await asyncio.gather(*audit_tasks)
 
     # Collect all flags, tag with specialist name
     all_flags: list[AuditFlag] = []
     flagged: dict[str, list[AuditFlag]] = {}
     for name, audit_result in audit_results:
+        if audit_result is None:
+            # Auditor crashed for this specialist — surface the sentinel but
+            # skip revision (nothing concrete to revise against). Note the
+            # deliberate asymmetry: this FIRST-pass crash does NOT add the
+            # specialist to `residual` — its prose stays in the parity
+            # union used as fact-check ground truth. Excluding it here
+            # would collapse that ground truth down to raw tables and
+            # trigger false FABRICATED_DATA flags against otherwise-sound
+            # prose; the AUDIT_FAILED sentinel already gates verification
+            # of this specialist without penalizing the others. A crash
+            # during the RE-audit pass below (post-revision) is different
+            # and does mark the specialist residual — see there.
+            all_flags.append(_audit_failed_flag(name))
+            continue
         if not audit_result.is_clean:
             for flag in audit_result.flags:
                 flag.specialist = name
@@ -961,9 +1199,21 @@ async def audit_and_revise_specialists(
             flagged[name] = audit_result.flags
             log.info("Audit flagged %s: %d issue(s)", name, len(audit_result.flags))
 
+    # Independent of the data auditor's verdict: scan each audited specialist's
+    # raw prose for leaked internal tag tokens ([OUTLIER]/[NORMAL]/SMALL SAMPLE)
+    # and fold a synthetic TAG_LEAK flag into `flagged` so the specialist is
+    # revised to remove it in-grammar. Runs even for AUDIT_FAILED specialists —
+    # the leak is orthogonal to whether the data auditor produced a verdict.
+    for name in audit_names:
+        if _TAG_TOKEN_RE.search(outputs[name]):
+            leak_flag = _tag_leak_flag(name)
+            all_flags.append(leak_flag)
+            flagged.setdefault(name, []).append(leak_flag)
+            log.warning("Tag leak in %s specialist prose; flagging for revision.", name)
+
     if not flagged:
         log.info("All specialists passed audit.")
-        return specialists, all_flags
+        return specialists, all_flags, set()
 
     # Phase 1.5b: Revise flagged specialists in parallel
     log.info("Revising %d flagged specialist(s)...", len(flagged))
@@ -975,13 +1225,12 @@ async def audit_and_revise_specialists(
             )
             agent = specialist_agents[name]
             result = await agent.run(**agent_kwargs(revision_input, _model_override))
-            if tracker is not None:
-                u = result.usage()
-                tracker.record(tracker_model, u.input_tokens or 0, u.output_tokens or 0, stage="revision")
-            return name, result.output
+            _record_usage(tracker, tracker_model, result, "revision")
+            return name, _strip_tag_tokens(result.output, specialist=name)
         except Exception:
             log.warning("Revision failed for %s specialist, keeping original.", name, exc_info=True)
-            return name, outputs[name]
+            # Net: a crashed revision must not ship a raw leaked token.
+            return name, _strip_tag_tokens(outputs[name], specialist=name)
 
     revision_tasks = [
         _revise_one(name, flags) for name, flags in flagged.items()
@@ -990,13 +1239,40 @@ async def audit_and_revise_specialists(
 
     # Apply revisions
     clean_outputs = dict(outputs)
+    revised_names: list[str] = []
     for name, revised_text in revisions:
         clean_outputs[name] = revised_text
+        revised_names.append(name)
         log.info("Revised %s specialist.", name)
+
+    # Phase 1.5c: ONE bounded re-audit of the revised specialists (no loop).
+    # A revision is never re-checked today, so a fabricated number introduced
+    # by the revision ships un-audited. Re-audit the revised text once; any
+    # specialist still flagged — or whose re-audit itself raises — is residual:
+    # its prose is unverified and must be excluded from the fact-check ground
+    # truth. A raising re-audit also surfaces an AUDIT_FAILED sentinel (fail
+    # closed, mirroring the first pass).
+    residual: set[str] = set()
+    reaudit_results = await asyncio.gather(
+        *(_audit_one(name, clean_outputs[name]) for name in revised_names)
+    )
+    for name, audit_result in reaudit_results:
+        if audit_result is None:
+            all_flags.append(_audit_failed_flag(name))
+            residual.add(name)
+            continue
+        if not audit_result.is_clean:
+            for flag in audit_result.flags:
+                flag.specialist = name
+                all_flags.append(flag)
+            residual.add(name)
+            log.info("Re-audit still flagged %s: %d issue(s)",
+                     name, len(audit_result.flags))
 
     return (
         SpecialistOutputs(**clean_outputs),
         all_flags,
+        residual,
     )
 
 
@@ -1008,6 +1284,7 @@ def _render_pipeline_data_sections(
     ctx: PitcherContext,
     *,
     persona: str = "scout",
+    prior_ctx: PitcherContext | None = None,
 ) -> list[str]:
     """Render all pipeline prompt sections as a list of strings.
 
@@ -1016,18 +1293,26 @@ def _render_pipeline_data_sections(
     (e.g. cli.py --print-prompts).
 
     The persona arg controls which composed writer prompt is rendered in
-    the WRITER section.
+    the WRITER section. When prior_ctx is provided, the TRENDS specialist
+    input includes the RECENT-vs-PRIOR comparison block; when None (the
+    default), output is unchanged from before this parameter existed.
     """
     persona_obj = get_persona(persona)
     sep = "═" * 72
     sections: list[str] = []
+
+    trend_frame_comparison = (
+        render_trend_frame_comparison(build_trend_frame_comparison(ctx, prior_ctx))
+        if prior_ctx is not None
+        else None
+    )
 
     # Phase 1: Specialist prompts + inputs
     specialist_phases = [
         ("SPECIALIST 1: STUFF", _STUFF_SPECIALIST_PROMPT, _render_user_prompt(_build_stuff_input(ctx))),
         ("SPECIALIST 2: LOCATION", _LOCATION_SPECIALIST_PROMPT, _render_user_prompt(_build_location_input(ctx))),
         ("SPECIALIST 3: RUN VALUE", _RUNVALUE_SPECIALIST_PROMPT, _render_user_prompt(_build_runvalue_input(ctx))),
-        ("SPECIALIST 4: TRENDS", _TREND_SPECIALIST_PROMPT, _render_user_prompt(_build_trend_input(ctx))),
+        ("SPECIALIST 4: TRENDS", _TREND_SPECIALIST_PROMPT, _render_user_prompt(_build_trend_input(ctx, frame_comparison=trend_frame_comparison))),
         ("SPECIALIST 5: GAME SHAPE", _GAME_SHAPE_SPECIALIST_PROMPT, _render_user_prompt(_build_game_shape_input(ctx))),
     ]
     for label, system, user in specialist_phases:
@@ -1098,6 +1383,7 @@ def write_pipeline_data_file(
     provider: str,
     *,
     persona: str = "scout",
+    prior_ctx: PitcherContext | None = None,
 ) -> tuple[str, str]:
     """Write all pipeline prompts to a data file for end-to-end tracing.
 
@@ -1110,6 +1396,9 @@ def write_pipeline_data_file(
         provider: LLM provider key for the filename.
         persona: Persona id string (default "scout"); controls which
             composed writer prompt is rendered in the WRITER section.
+        prior_ctx: Optional prior-window context; when provided, the
+            TRENDS specialist section includes the RECENT-vs-PRIOR
+            comparison block. None (default) leaves output unchanged.
 
     Returns:
         Tuple of (filename, rendered_text). Callers that need to display
@@ -1122,7 +1411,7 @@ def write_pipeline_data_file(
     """
     from pathlib import Path
 
-    sections = _render_pipeline_data_sections(ctx, persona=persona)
+    sections = _render_pipeline_data_sections(ctx, persona=persona, prior_ctx=prior_ctx)
     text = "\n".join(sections)
 
     filename = f"data-{pitcher_id}-{provider}-pipeline.md"
@@ -1150,6 +1439,88 @@ class PipelineResult(BaseModel):
     capsule_audit_flags: list[AuditFlag] = []
     capsule_revised: bool = False
     value_parity_warnings: list[str] = []
+    signals_failed: bool = False
+
+
+def flag_summary(result: PipelineResult) -> dict[str, int | bool]:
+    """Countable validation outcomes for a finished pipeline result.
+
+    Persisted per run so the capsule flag/revision rate — never recorded
+    before — becomes measurable and the per-mode revision depth can be
+    calibrated from real data rather than guessed.
+    """
+    return {
+        "revision_count": result.revision_count,
+        "capsule_revised": result.capsule_revised,
+        "n_capsule_audit_flags": len(result.capsule_audit_flags),
+        "n_anchor_warnings": len(result.anchor_warnings),
+        "n_value_parity_warnings": len(result.value_parity_warnings),
+        "n_audit_flags": len(result.audit_flags),
+        "n_secondary_signals": count_secondary_signals(result.key_signals),
+        "signals_failed": result.signals_failed,
+    }
+
+
+def flag_record(
+    mode: NarrationMode,
+    pitcher_id: int,
+    result: PipelineResult,
+    *,
+    span: int,
+) -> dict[str, object]:
+    """A persisted calibration record: flag_summary + calibration context.
+
+    Stamps the mode id, pitcher, analysis span (recent-appearance count), and
+    the mode's configured revision-depth caps onto ``flag_summary(result)`` so
+    the offline aggregator (``pitcher_narratives.calibration``) can compute
+    per-mode revision rates and anchor/fact hit-cap rates from real runs.
+    """
+    return {
+        "mode": mode.id,
+        "pitcher_id": pitcher_id,
+        "span": span,
+        "anchor_depth_cap": mode.validation.anchor_depth,
+        "fact_depth_cap": mode.validation.fact_depth,
+        **flag_summary(result),
+    }
+
+
+_GATING_ANCHOR_CATEGORIES: tuple[str, ...] = ("MISSED_SIGNAL", "DIRECTION_ERROR")
+"""Primary/direction anchor categories whose survival past the anchor and fact
+loops means the report cannot be trusted, so they gate shipping alongside
+residual capsule-audit flags. UNDERWEIGHTED/UNSUPPORTED/OVERSTATED stay advisory
+(surfaced but non-blocking)."""
+
+
+def is_unverified(result: PipelineResult) -> bool:
+    """Whether a mode's output shipped with unresolved fact-check flags.
+
+    A result is unverified when residual capsule-audit flags survived the
+    fact-revision loop — the same condition that soft-blocks the report CLI.
+    Extracted so every narration mode (and morning, Phase 8) shares one
+    definition for the aggregate exit policy (design §7, G4).
+    """
+    return bool(result.capsule_audit_flags) or any(
+        w.category in _GATING_ANCHOR_CATEGORIES for w in result.anchor_warnings
+    )
+
+
+def residual_banner(result: PipelineResult, *, label: str = "REPORT") -> str | None:
+    """The loud UNVERIFIED banner for an unverified result, else ``None``.
+
+    ``label`` names the surface (REPORT / CHANGES / RECAP / a digest item) so
+    the same wording marks residual flags on every mode.
+    """
+    n = len(result.capsule_audit_flags)
+    m = sum(
+        1 for w in result.anchor_warnings if w.category in _GATING_ANCHOR_CATEGORIES
+    )
+    if not n and not m:
+        return None
+    return (
+        f"⚠️  {label} UNVERIFIED — {n} flagged claim(s) and/or {m} unresolved "
+        "primary anchor warning(s) survived validation. Review before use."
+    )
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -1193,6 +1564,8 @@ def make_pipeline_agents(
     provider: str = "gemini",
     thinking: ThinkingEffort = "high",
     persona: Persona = DEFAULT_PERSONA,
+    mode: NarrationMode = DEFAULT_MODE,
+    explain_model: bool = True,
 ) -> PipelineAgents:
     if provider not in PROVIDERS:
         raise ValueError(f"Unknown provider {provider!r}")
@@ -1202,6 +1575,12 @@ def make_pipeline_agents(
     # Split temperature by role: specialists need precision, writer needs voice,
     # auditor/anchor need maximum determinism.
     # Thinking caps: checker=low, specialist=medium, writer=uncapped.
+    # Caveat (Claude provider): Anthropic forces temperature=1 whenever
+    # extended thinking is enabled, overriding whatever temperature is
+    # requested here. Any settings block below that wants a specific
+    # temperature to actually take effect on Claude must also pass
+    # disable_thinking=True (see curator._SELECTOR_TEMPERATURE for the
+    # canonical example of this trap).
     stuff_settings = make_model_settings(provider, cap_thinking(thinking, "medium"), 0.3, max_tokens=TOKEN_BUDGET_LARGE)
     mini_specialist_settings = make_model_settings(provider, cap_thinking(thinking, "medium"), 0.3, max_tokens=TOKEN_BUDGET_LARGE, mini=True)
     mini_specialist_compact_settings = make_model_settings(provider, cap_thinking(thinking, "medium"), 0.3, max_tokens=TOKEN_BUDGET_MEDIUM, mini=True)
@@ -1239,15 +1618,15 @@ def make_pipeline_agents(
     skills = [skill_toolset()]
 
     def _specialist(prompt: str) -> Agent[None, str]:
-        return Agent(model, output_type=str, system_prompt=prompt,
+        return Agent(model, output_type=str, system_prompt=prompt + _NO_TAG_ECHO_RULE,
                      model_settings=stuff_settings, toolsets=skills, defer_model_check=True)
 
     def _mini_specialist(prompt: str) -> Agent[None, str]:
-        return Agent(mini_model, output_type=str, system_prompt=prompt,
+        return Agent(mini_model, output_type=str, system_prompt=prompt + _NO_TAG_ECHO_RULE,
                      model_settings=mini_specialist_settings, toolsets=skills, defer_model_check=True)
 
     def _mini_specialist_compact(prompt: str) -> Agent[None, str]:
-        return Agent(mini_model, output_type=str, system_prompt=prompt,
+        return Agent(mini_model, output_type=str, system_prompt=prompt + _NO_TAG_ECHO_RULE,
                      model_settings=mini_specialist_compact_settings, toolsets=skills, defer_model_check=True)
 
     def _writer(prompt: str) -> Agent[None, str]:
@@ -1273,12 +1652,16 @@ def make_pipeline_agents(
         runvalue=_mini_specialist(_RUNVALUE_SPECIALIST_PROMPT),
         trends=_mini_specialist_compact(_TREND_SPECIALIST_PROMPT),
         game_shape=_mini_specialist_compact(_GAME_SHAPE_SPECIALIST_PROMPT),
-        writer=_writer(build_writer_system_prompt(persona)),
+        writer=_writer(build_writer_system_prompt(persona, mode, explain_model=explain_model)),
         auditor=Agent(mini_model, output_type=AuditResult, system_prompt=_DATA_AUDITOR_PROMPT,
                       model_settings=checker_settings, retries=5, defer_model_check=True),
         capsule_auditor=Agent(mini_model, output_type=AuditResult, system_prompt=_CAPSULE_AUDITOR_PROMPT,
                               model_settings=capsule_auditor_settings, retries=5, defer_model_check=True),
-        anchor=Agent(mini_model, output_type=AnchorResult, system_prompt=ANCHOR_PROMPT,
+        anchor=Agent(mini_model, output_type=AnchorResult, system_prompt=(
+                         ANCHOR_PROMPT + "\n\n" + mode.anchor_guidance
+                         if mode.anchor_guidance
+                         else ANCHOR_PROMPT
+                     ),
                      model_settings=checker_settings, retries=3, defer_model_check=True),
         summary=Agent(mini_model, output_type=str, system_prompt=_EXECUTIVE_SUMMARY_PROMPT,
                       model_settings=report_summary_settings, retries=3, defer_model_check=True),
@@ -1302,72 +1685,138 @@ async def run_specialists(
     ctx: PitcherContext,
     _model_override: Any = None,
     *,
+    names: list[str] | None = None,
     tracker: UsageTracker | None = None,
     tracker_model: str = "",
+    trend_frame_comparison: str | None = None,
 ) -> SpecialistOutputs:
-    """Run all 5 specialists concurrently."""
-    inputs = {
+    """Run the specialists concurrently.
+
+    By default all five run. Pass ``names`` to run only a subset (used by the
+    core/tail spine split); unlisted specialists default to an empty string in
+    the returned SpecialistOutputs.
+    """
+    all_inputs = {
         "stuff": (stuff_agent, _build_stuff_input(ctx)),
         "location": (location_agent, _build_location_input(ctx)),
         "runvalue": (runvalue_agent, _build_runvalue_input(ctx)),
-        "trends": (trends_agent, _build_trend_input(ctx)),
+        "trends": (trends_agent, _build_trend_input(ctx, frame_comparison=trend_frame_comparison)),
         "game_shape": (game_shape_agent, _build_game_shape_input(ctx)),
     }
+    selected = list(all_inputs) if names is None else names
 
-    async def _run(name: str, agent: Agent[None, str], prompt: str | UserPrompt) -> str:
+    async def _run(name: str, agent: Agent[None, str], prompt: str | UserPrompt) -> tuple[str, str]:
         result = await agent.run(**agent_kwargs(prompt, _model_override))
         if tracker is not None:
             u = result.usage()
             tracker.record(tracker_model, u.input_tokens or 0, u.output_tokens or 0,
                            stage=f"specialist:{name}")
-        return result.output
-
-    tasks = {
-        name: _run(name, agent, prompt)
-        for name, (agent, prompt) in inputs.items()
-    }
+        # Raw output flows forward unstripped so audit_and_revise_specialists
+        # can detect any leaked internal tag token and trigger a proper
+        # grammar-preserving revision. The final strip is the net after that.
+        return name, result.output
 
     results = await asyncio.gather(
-        tasks["stuff"], tasks["location"],
-        tasks["runvalue"], tasks["trends"],
-        tasks["game_shape"],
+        *(_run(name, *all_inputs[name]) for name in selected)
     )
 
-    return SpecialistOutputs(
-        stuff=results[0], location=results[1],
-        runvalue=results[2], trends=results[3],
-        game_shape=results[4],
-    )
+    outputs = {name: "" for name in all_inputs}
+    for name, text in results:
+        outputs[name] = text
+    return SpecialistOutputs(**outputs)
 
 
-async def run_analysis_spine(
+_CORE_SPECIALISTS = ["stuff", "location", "runvalue", "game_shape"]
+_TAIL_SPECIALISTS = ["trends"]
+
+
+async def run_spine_core(
     ctx: PitcherContext,
     *,
     agents: PipelineAgents,
     _model_override: Any = None,
     tracker: UsageTracker | None = None,
-) -> AnalyzedContext:
-    """Run the specialist → audit → signal-extraction spine.
+) -> CoreContext:
+    """Run the frame-agnostic core of the analysis spine.
 
-    Shared analysis path for report and morning. Returns a grounded
-    AnalyzedContext; does not run the writer, anchor check, or hallucination
-    check — those are terminal-layer concerns.
-
-    Args:
-        ctx: Assembled pitcher context (facts, baselines, arsenal data).
-        agents: Pre-built pipeline agents (create once, reuse across picks).
-        _model_override: Optional model override for deterministic testing.
-        tracker: Optional usage tracker for accumulating per-call token costs.
+    Runs the stuff/location/run-value/game-shape specialists and audits them.
+    Frame-agnostic: these specialists read a single window snapshot, so the
+    core can be computed once and shared across narration modes. Trends,
+    signal extraction, and the anchor check are frame-sensitive — see
+    run_spine_tail.
     """
     mini = agents.mini_model_name
     raw = await run_specialists(
         agents.stuff, agents.location, agents.runvalue,
         agents.trends, agents.game_shape, ctx, _model_override,
-        tracker=tracker, tracker_model=mini,
+        names=_CORE_SPECIALISTS, tracker=tracker, tracker_model=mini,
     )
-    specialists, audit_flags = await audit_and_revise_specialists(
+    clean, flags, residual = await audit_and_revise_specialists(
         raw, agents.specialist_dict(), agents.auditor, ctx, _model_override,
-        tracker=tracker, tracker_model=mini,
+        names=_CORE_SPECIALISTS, tracker=tracker, tracker_model=mini,
+    )
+    return CoreContext(
+        stuff=clean.stuff, location=clean.location,
+        runvalue=clean.runvalue, game_shape=clean.game_shape,
+        audit_flags=flags,
+        residual_specialists=sorted(residual),
+    )
+
+
+_SPECIALIST_ORDER = {
+    "stuff": 0, "location": 1, "runvalue": 2, "trends": 3, "game_shape": 4,
+}
+
+
+def _order_flags(flags: list[AuditFlag]) -> list[AuditFlag]:
+    """Sort audit flags into the canonical specialist order.
+
+    The core/tail split collects core flags (stuff/location/run-value/
+    game-shape) then trends flags, so a naive concatenation would place trends
+    last. Sorting restores the legacy stuff→location→run-value→trends→
+    game-shape order, keeping run_analysis_spine output identical. Stable, so
+    multiple flags from the same specialist keep their relative order.
+    """
+    return sorted(flags, key=lambda f: _SPECIALIST_ORDER.get(f.specialist, 99))
+
+
+async def run_spine_tail(
+    core: CoreContext,
+    ctx: PitcherContext,
+    *,
+    agents: PipelineAgents,
+    _model_override: Any = None,
+    tracker: UsageTracker | None = None,
+    prior_ctx: PitcherContext | None = None,
+) -> AnalyzedContext:
+    """Run the frame-sensitive tail of the analysis spine.
+
+    Runs the trends specialist (+ its audit) and signal extraction over the
+    core's four specialists plus trends. Takes ``ctx`` explicitly so a later
+    phase can re-run the tail on a different temporal frame while reusing a
+    single shared core. In this phase the tail runs on the same ctx as the
+    core, so output is identical to the pre-split spine.
+    """
+    mini = agents.mini_model_name
+    trend_frame_comparison = (
+        render_trend_frame_comparison(build_trend_frame_comparison(ctx, prior_ctx))
+        if prior_ctx is not None
+        else None
+    )
+    raw = await run_specialists(
+        agents.stuff, agents.location, agents.runvalue,
+        agents.trends, agents.game_shape, ctx, _model_override,
+        names=_TAIL_SPECIALISTS, tracker=tracker, tracker_model=mini,
+        trend_frame_comparison=trend_frame_comparison,
+    )
+    merged = SpecialistOutputs(
+        stuff=core.stuff, location=core.location, runvalue=core.runvalue,
+        game_shape=core.game_shape, trends=raw.trends,
+    )
+    specialists, trends_flags, trends_residual = await audit_and_revise_specialists(
+        merged, agents.specialist_dict(), agents.auditor, ctx, _model_override,
+        names=_TAIL_SPECIALISTS, tracker=tracker, tracker_model=mini,
+        trend_frame_comparison=trend_frame_comparison,
     )
 
     signal_input = build_writer_input(
@@ -1391,12 +1840,54 @@ async def run_analysis_spine(
     return AnalyzedContext(
         specialists=specialists,
         key_signals=key_signals,
-        audit_flags=audit_flags,
+        audit_flags=_order_flags(list(core.audit_flags) + trends_flags),
         signals_failed=signals_failed,
+        residual_specialists=sorted(
+            set(core.residual_specialists) | trends_residual
+        ),
+        trend_frame_comparison=trend_frame_comparison,
     )
 
 
-async def _run_anchor_revision_loop(
+async def run_analysis_spine(
+    ctx: PitcherContext,
+    *,
+    agents: PipelineAgents,
+    _model_override: Any = None,
+    tracker: UsageTracker | None = None,
+    prior_ctx: PitcherContext | None = None,
+) -> AnalyzedContext:
+    """Run the specialist → audit → signal-extraction spine.
+
+    Shared analysis path for report and morning. Composes the frame-agnostic
+    core (run_spine_core) with the frame-sensitive tail (run_spine_tail) on a
+    single frame; the returned AnalyzedContext is identical to the pre-split
+    spine. Does not run the writer, anchor check, or hallucination check —
+    those are terminal-layer concerns.
+
+    Output-preserving but NOT latency-preserving on the single-frame path: the
+    tail's trends specialist now starts only after the core's specialists and
+    their audit/revision finish, whereas the pre-split spine ran all five
+    specialists (and all five audits) concurrently. The added serial latency is
+    the deliberate cost of a reusable core — a later multi-frame mode (CHANGES)
+    runs the core once and re-runs only the tail per frame.
+
+    Args:
+        ctx: Assembled pitcher context (facts, baselines, arsenal data).
+        agents: Pre-built pipeline agents (create once, reuse across picks).
+        _model_override: Optional model override for deterministic testing.
+        tracker: Optional usage tracker for accumulating per-call token costs.
+    """
+    core = await run_spine_core(
+        ctx, agents=agents, _model_override=_model_override, tracker=tracker,
+    )
+    return await run_spine_tail(
+        core, ctx, agents=agents, _model_override=_model_override, tracker=tracker,
+        prior_ctx=prior_ctx,
+    )
+
+
+async def run_anchor_revision_loop(
     *,
     anchor_agent: Agent[None, AnchorResult],
     writer_agent: Agent[None, str],
@@ -1404,6 +1895,8 @@ async def _run_anchor_revision_loop(
     capsule: str,
     max_revisions: int,
     _model_override: Any = None,
+    tracker: UsageTracker | None = None,
+    tracker_model: str = "",
 ) -> tuple[str, AnchorResult, int]:
     """Run the anchor check + writer revision loop to convergence.
 
@@ -1428,6 +1921,11 @@ async def _run_anchor_revision_loop(
         capsule: The current writer capsule to check.
         max_revisions: Maximum number of revision passes to attempt.
         _model_override: Optional model override (for testing with TestModel).
+        tracker: Optional UsageTracker; when set, each anchor check and
+            writer revision records its token usage (stage="anchor" /
+            "anchor_revision").
+        tracker_model: Bare model name passed to tracker.record(). Ignored
+            when tracker is None.
 
     Returns:
         Tuple of (final_capsule, final_anchor_result, revision_count).
@@ -1439,15 +1937,27 @@ async def _run_anchor_revision_loop(
         number of revision passes actually run (0 = passed first try).
     """
     revision_count = 0
+    prev_signature: set[tuple[str, str]] | None = None
 
     for _ in range(max_revisions):
         anchor_result = await anchor_agent.run(
             **agent_kwargs(build_anchor_message(synthesis, capsule), _model_override)
         )
+        _record_usage(tracker, tracker_model, anchor_result, "anchor")
         anchor_check = anchor_result.output
 
         if anchor_check.is_clean:
             return capsule, anchor_check, revision_count
+
+        # Stall detection: if this pass reproduces the exact warnings of the
+        # previous pass, revising again will not converge — stop early rather
+        # than burn the remaining budget re-emitting the same corrections. The
+        # current anchor_check IS the latest check, so skip the post-cap final.
+        signature = {(w.category, w.description) for w in anchor_check.warnings}
+        if signature == prev_signature:
+            log.info("Anchor loop stalled (identical warnings); stopping early.")
+            return capsule, anchor_check, revision_count
+        prev_signature = signature
 
         revision_result = await writer_agent.run(
             **agent_kwargs(
@@ -1455,6 +1965,7 @@ async def _run_anchor_revision_loop(
                 _model_override,
             )
         )
+        _record_usage(tracker, tracker_model, revision_result, "anchor_revision")
         capsule = revision_result.output
         revision_count += 1
 
@@ -1463,6 +1974,7 @@ async def _run_anchor_revision_loop(
     final_result = await anchor_agent.run(
         **agent_kwargs(build_anchor_message(synthesis, capsule), _model_override)
     )
+    _record_usage(tracker, tracker_model, final_result, "anchor")
     return capsule, final_result.output, revision_count
 
 
@@ -1523,7 +2035,7 @@ async def _run_summaries(
     return bullets, brief
 
 
-async def _run_capsule_audit(
+async def run_capsule_audit(
     *,
     auditor: Agent[None, AuditResult],
     writer_agent: Agent[None, str],
@@ -1531,6 +2043,8 @@ async def _run_capsule_audit(
     capsule: str,
     max_fact_revisions: int = MAX_FACT_REVISIONS,
     _model_override: Any = None,
+    tracker: UsageTracker | None = None,
+    tracker_model: str = "",
 ) -> tuple[str, list[AuditFlag], bool]:
     """B: fact-check the capsule against ground truth, looping audit → revise →
     re-audit up to ``max_fact_revisions`` times to converge.
@@ -1543,15 +2057,29 @@ async def _run_capsule_audit(
         ship it silently.
       - revised is True iff at least one fact-revision was applied.
     Degrades to (capsule, current_flags, revised_so_far) on any error — non-fatal.
+
+    Args:
+        tracker: Optional UsageTracker; when set, each auditor run records
+            stage="fact_audit" and each writer revision records
+            stage="fact_revision".
+        tracker_model: Bare model name passed to tracker.record(). Ignored
+            when tracker is None.
     """
     try:
         result = await auditor.run(
-            **agent_kwargs(_build_capsule_audit_input(ground_truth, capsule), _model_override)
+            **agent_kwargs(build_capsule_audit_input(ground_truth, capsule), _model_override)
         )
-        flags = result.output.flags
     except Exception:
-        log.warning("Capsule auditor failed, skipping fact-check.", exc_info=True)
-        return capsule, [], False
+        # Fail closed: the auditor never produced a verdict, so nothing in the
+        # capsule was fact-checked. Returning [] would mark the report verified
+        # (is_unverified → False) and ship it with no banner. Surface a single
+        # AUDIT_FAILED residual flag so is_unverified → True and the loud
+        # UNVERIFIED banner fires.
+        log.warning("Capsule auditor failed; marking report UNVERIFIED.", exc_info=True)
+        return capsule, [_audit_failed_flag()], False
+
+    _record_usage(tracker, tracker_model, result, "fact_audit")
+    flags = result.output.flags
 
     if not flags:
         return capsule, [], False
@@ -1562,8 +2090,9 @@ async def _run_capsule_audit(
                  len(flags), attempt, max_fact_revisions)
         try:
             revision = await writer_agent.run(
-                **agent_kwargs(build_fact_revision_message(capsule, flags), _model_override)
+                **agent_kwargs(build_fact_revision_message(ground_truth, capsule, flags), _model_override)
             )
+            _record_usage(tracker, tracker_model, revision, "fact_revision")
         except Exception:
             log.warning("Fact revision failed, keeping last capsule.", exc_info=True)
             return capsule, flags, revised
@@ -1581,12 +2110,14 @@ async def _run_capsule_audit(
         # ungrounded numbers. The residual is what actually remains.
         try:
             recheck = await auditor.run(
-                **agent_kwargs(_build_capsule_audit_input(ground_truth, capsule), _model_override)
+                **agent_kwargs(build_capsule_audit_input(ground_truth, capsule), _model_override)
             )
-            flags = recheck.output.flags
         except Exception:
             log.warning("Capsule re-audit failed; surfacing the last flags.", exc_info=True)
             return capsule, flags, revised
+
+        _record_usage(tracker, tracker_model, recheck, "fact_audit")
+        flags = recheck.output.flags
 
         if not flags:
             log.info("Capsule re-audit clean after %d revision(s).", attempt)
@@ -1597,32 +2128,157 @@ async def _run_capsule_audit(
     return capsule, flags, revised
 
 
-async def _run_pipeline(
-    ctx: PitcherContext,
+@dataclass
+class _RenderedCapsule:
+    """Result of the shared writer + anchor + capsule-audit core."""
+
+    capsule: str
+    writer_input: str
+    fact_check_source: str
+    anchor_check: AnchorResult
+    revision_count: int
+    capsule_audit_flags: list[AuditFlag]
+    capsule_revised: bool
+
+
+async def _reconcile_anchor_warnings(
     *,
-    provider: str = "gemini",
-    thinking: ThinkingEffort = "high",
-    persona: str = "scout",
+    anchor_agent: Agent[None, AnchorResult],
+    writer_agent: Agent[None, str],
+    capsule_auditor: Agent[None, AuditResult],
+    synthesis: str,
+    capsule: str,
+    fact_check_source: str,
+    prior_anchor: AnchorResult,
+    remaining: int,
     _model_override: Any = None,
-) -> PipelineResult:
-    """Async core of the multi-agent pipeline.
+    tracker: UsageTracker | None = None,
+    tracker_model: str = "",
+) -> tuple[str, AnchorResult, int]:
+    """Re-anchor a fact-revised capsule and reconcile any new warnings.
 
-    Phase 1: 5 specialists run concurrently.
-    Phase 1.5: Data auditor validates specialist outputs against ground truth.
-    Phase 1.75: Signal extractor identifies cross-specialist patterns.
-    Phase 2: Writer composes capsule from specialist outputs + key signals.
-    Phase 2.5: Anchor check + revision loop.
+    A data fact-revision rewrites the capsule against source data, which can
+    invalidate the anchor pass captured earlier in `_render_capsule`. Detection
+    alone (the old behavior) shipped those warnings as advisory with "Revised 0
+    time(s)". This helper instead spends the mode's REMAINING anchor budget on
+    reconcile revisions that do NOT touch numeric values (the fact-check already
+    verified them), then runs one detection-only capsule re-audit as a
+    regression guard: if the reconciled text regresses a verified fact, the
+    fact-revised capsule wins and its warnings ship as before. Ground truth
+    always outranks the specialist synthesis.
+
+    Returns (final_capsule, merged_anchor_result, reconcile_passes_used).
     """
-    persona_obj = get_persona(persona)
-    agents = make_pipeline_agents(provider, thinking, persona_obj)
 
-    # Phases 1 → 1.75: specialist → audit → signal extraction
-    log.info("Running analysis spine...")
-    analyzed = await run_analysis_spine(ctx, agents=agents, _model_override=_model_override)
+    def _merge(base: AnchorResult, extra: list[AnchorWarning]) -> AnchorResult:
+        seen = {(w.category, w.description) for w in base.warnings}
+        merged = list(base.warnings)
+        for w in extra:
+            key = (w.category, w.description)
+            if key not in seen:
+                seen.add(key)
+                merged.append(w)
+        return AnchorResult(warnings=merged)
+
+    # Re-anchor the fact-revised capsule once against the final text.
+    recheck = await anchor_agent.run(
+        **agent_kwargs(build_anchor_message(synthesis, capsule), _model_override)
+    )
+    _record_usage(tracker, tracker_model, recheck, "anchor")
+    current = recheck.output
+
+    # Rule 1: clean recheck → nothing to reconcile (today's clean path).
+    if current.is_clean:
+        return capsule, prior_anchor, 0
+
+    # Rule 2: no remaining budget → merge new warnings advisory-only, deduped
+    # by (category, description) — exactly today's merge behavior.
+    if remaining <= 0:
+        return capsule, _merge(prior_anchor, current.warnings), 0
+
+    # Rule 3: spend the remaining budget on prose-only reconcile revisions.
+    original = capsule
+    original_warnings = list(current.warnings)
+    candidate = capsule
+    passes = 0
+    prev_signature = {(w.category, w.description) for w in current.warnings}
+
+    for _ in range(remaining):
+        # build_reconcile_message returns a plain string (no CachePoints) —
+        # intentionally uncached. Worst case is anchor_depth passes; revisit
+        # if cost calibration shows this matters.
+        revision = await writer_agent.run(
+            **agent_kwargs(
+                build_reconcile_message(synthesis, candidate, current.warnings),
+                _model_override,
+            )
+        )
+        _record_usage(tracker, tracker_model, revision, "anchor_revision")
+        candidate = revision.output
+        passes += 1
+
+        recheck = await anchor_agent.run(
+            **agent_kwargs(build_anchor_message(synthesis, candidate), _model_override)
+        )
+        _record_usage(tracker, tracker_model, recheck, "anchor")
+        current = recheck.output
+        if current.is_clean:
+            break
+        signature = {(w.category, w.description) for w in current.warnings}
+        if signature == prev_signature:
+            # Intentional divergence from run_anchor_revision_loop: reconcile's
+            # first anchor check happens before this loop, so a stall here
+            # always costs one writer pass (vs. a zero-pass stall there).
+            log.info("Reconcile loop stalled (identical warnings); stopping early.")
+            break
+        prev_signature = signature
+
+    # Rule 4: regression guard — one detection-only (max_fact_revisions=0) audit
+    # of the reconciled text against ground truth. If the reconcile prose
+    # regressed a verified fact, revert to the fact-revised capsule and ship the
+    # original recheck warnings as advisory. Ground truth wins.
+    _, guard_flags, _ = await run_capsule_audit(
+        auditor=capsule_auditor,
+        writer_agent=writer_agent,
+        ground_truth=fact_check_source,
+        capsule=candidate,
+        max_fact_revisions=0,
+        _model_override=_model_override,
+        tracker=tracker,
+        tracker_model=tracker_model,
+    )
+    if guard_flags:
+        log.warning(
+            "Reconcile revision regressed ground-truth facts (%d flag(s)); "
+            "reverting to the fact-revised capsule and shipping anchor "
+            "warnings as advisory.",
+            len(guard_flags),
+        )
+        return original, _merge(prior_anchor, original_warnings), passes
+
+    return candidate, _merge(prior_anchor, current.warnings), passes
+
+
+async def _render_capsule(
+    ctx: PitcherContext,
+    analyzed: AnalyzedContext,
+    *,
+    agents: PipelineAgents,
+    anchor_depth: int,
+    fact_depth: int,
+    stream: bool,
+    check_explainer: bool = True,
+    overlay: str | None = None,
+    persona_label: str = "",
+    _model_override: Any = None,
+    tracker: UsageTracker | None = None,
+) -> _RenderedCapsule:
+    """Writer + anchor + capsule-audit core, shared by the report pipeline and
+    the recap render. Report streams (stream=True); recap does not. ``overlay``
+    prepends editorial direction to the writer input; ``check_explainer`` gates
+    the Pitching+ explainer warnings (off for the short recap brief)."""
     specialists = analyzed.specialists
-    audit_flags = analyzed.audit_flags
     key_signals = analyzed.key_signals
-    log.info("Analysis spine complete.")
 
     # Phase 2: Writer streams the initial capsule from clean specialist
     # outputs + key signals. Summarization is a separate second step that
@@ -1632,16 +2288,21 @@ async def _run_pipeline(
         specialists.runvalue, specialists.trends, specialists.game_shape,
         key_signals=key_signals,
     )
+    if overlay:
+        writer_input = f"{overlay}\n\n{writer_input}"
     writer_kwargs = agent_kwargs(writer_input, _model_override)
 
-    async with agents.writer.run_stream(**writer_kwargs) as stream:
-        chunks: list[str] = []
-        async for delta in stream.stream_text(delta=True):
-            print(delta, end="", flush=True)
-            chunks.append(delta)
-    print()
-
-    capsule = "".join(chunks)
+    if stream:
+        async with agents.writer.run_stream(**writer_kwargs) as stream_ctx:
+            chunks: list[str] = []
+            async for delta in stream_ctx.stream_text(delta=True):
+                print(delta, end="", flush=True)
+                chunks.append(delta)
+        print()
+        capsule = "".join(chunks)
+    else:
+        _res = await agents.writer.run(**writer_kwargs)
+        capsule = _res.output
 
     # EXPLAIN THE MODEL post-processor (non-fatal quality gate).
     # Runs for all personas — a persona that silently drops Pitching+
@@ -1649,11 +2310,13 @@ async def _run_pipeline(
     # capsule.strip() guards check_explainer_present, which raises on an empty
     # capsule (writer stream yielded no text). An empty capsule degrades
     # downstream (summaries return empty) rather than crashing the run here.
-    pre_revision_explainer_ok = bool(capsule.strip()) and check_explainer_present(capsule)
-    if not pre_revision_explainer_ok:
+    pre_revision_explainer_ok = bool(capsule.strip()) and (
+        not check_explainer or check_explainer_present(capsule)
+    )
+    if check_explainer and not pre_revision_explainer_ok:
         log.warning(
             "[%s] capsule is missing model explanation content",
-            persona,
+            persona_label,
         )
 
     # Anchor check + revision loop
@@ -1671,22 +2334,24 @@ async def _run_pipeline(
     )
 
     log.info("Revising report (anchor check loop)...")
-    capsule, anchor_check, revision_count = await _run_anchor_revision_loop(
+    capsule, anchor_check, revision_count = await run_anchor_revision_loop(
         anchor_agent=agents.anchor,
         writer_agent=agents.writer,
         synthesis=synthesis,
         capsule=capsule,
-        max_revisions=MAX_REVISIONS,
+        max_revisions=anchor_depth,
         _model_override=_model_override,
+        tracker=tracker,
+        tracker_model=agents.mini_model_name,
     )
 
     # Re-check explainer after revision loop. The anchor revision can rewrite
     # the capsule entirely, potentially dropping Pitching+ context that was
     # present before. Warn again only if state changed, to avoid duplicate logs.
-    if revision_count > 0 and pre_revision_explainer_ok and _explainer_dropped(capsule):
+    if check_explainer and revision_count > 0 and pre_revision_explainer_ok and _explainer_dropped(capsule):
         log.warning(
             "[%s] anchor revision removed model explanation content from capsule",
-            persona,
+            persona_label,
         )
 
     # Fact-checking layer (B then A) on the final capsule. Both check against the
@@ -1696,47 +2361,205 @@ async def _run_pipeline(
     # (key-signal deltas, plus-grade paraphrases) as fabricated and triggering a
     # needless fact-revision. Built once and reused by B and A.
     log.info("Fact-checking the capsule against ground truth...")
-    fact_check_source = _build_parity_union(ctx, specialists, key_signals)
-    capsule, capsule_audit_flags, capsule_revised = await _run_capsule_audit(
+    fact_check_source = _build_parity_union(
+        ctx, specialists, key_signals,
+        exclude=frozenset(analyzed.residual_specialists),
+        trend_frame_comparison=analyzed.trend_frame_comparison,
+    )
+    capsule, capsule_audit_flags, capsule_revised = await run_capsule_audit(
         auditor=agents.capsule_auditor,
         writer_agent=agents.writer,
         ground_truth=fact_check_source,
         capsule=capsule,
+        max_fact_revisions=fact_depth,
         _model_override=_model_override,
+        tracker=tracker,
+        tracker_model=agents.mini_model_name,
     )
     # Re-check explainer after B's fact-revision, mirroring the anchor guard:
     # a fact-correction can rewrite the capsule and drop Pitching+ context.
-    if capsule_revised and pre_revision_explainer_ok and _explainer_dropped(capsule):
+    if check_explainer and capsule_revised and pre_revision_explainer_ok and _explainer_dropped(capsule):
         log.warning(
             "[%s] capsule fact-revision removed model explanation content from capsule",
-            persona,
+            persona_label,
         )
+
+    # A fact-revision can rewrite the capsule out from under the anchor result
+    # captured above, so re-anchor against the final text and reconcile any new
+    # warnings — spending the mode's remaining anchor budget on prose-only
+    # revisions, with a detection-only re-audit as a ground-truth regression
+    # guard (see _reconcile_anchor_warnings). Unlike the capsule audit (which
+    # fails closed), a crash here is advisory-plus: log and keep the prior
+    # anchor_check rather than kill the pipeline.
+    if capsule_revised:
+        try:
+            capsule, anchor_check, reconcile_passes = await _reconcile_anchor_warnings(
+                anchor_agent=agents.anchor,
+                writer_agent=agents.writer,
+                capsule_auditor=agents.capsule_auditor,
+                synthesis=synthesis,
+                capsule=capsule,
+                fact_check_source=fact_check_source,
+                prior_anchor=anchor_check,
+                remaining=max(anchor_depth - revision_count, 0),
+                _model_override=_model_override,
+                tracker=tracker,
+                tracker_model=agents.mini_model_name,
+            )
+            # Reconcile passes are anchor-budget revisions: count them so the
+            # CLI's "Revised N time(s)" reflects reconciled runs. The tuple
+            # assignment above is atomic w.r.t. an await failure, so on
+            # exception nothing here has been touched.
+            revision_count += reconcile_passes
+        except Exception:
+            log.warning(
+                "Post-fact-revision anchor reconcile failed; keeping prior anchor result.",
+                exc_info=True,
+            )
+
+    return _RenderedCapsule(
+        capsule=capsule,
+        writer_input=writer_input,
+        fact_check_source=fact_check_source,
+        anchor_check=anchor_check,
+        revision_count=revision_count,
+        capsule_audit_flags=capsule_audit_flags,
+        capsule_revised=capsule_revised,
+    )
+
+
+def build_recap_overlay(*, angle: str, category: str) -> str:
+    """Editorial direction prepended to the recap writer input (morning path).
+
+    The recap leads with the editor's angle, grounded in the analyses.
+    """
+    return (
+        "EDITORIAL DIRECTION — lead the recap with this angle, grounded in the "
+        "analyses below (never contradict them):\n"
+        f"  Angle: {angle}\n"
+        f"  Category: {category}"
+    )
+
+
+async def render_recap(
+    ctx: PitcherContext,
+    analyzed: AnalyzedContext,
+    *,
+    agents: PipelineAgents,
+    pick: "CurationPick | None" = None,
+    _model_override: Any = None,
+    tracker: UsageTracker | None = None,
+) -> PipelineResult:
+    """Render a Mode RECAP executive brief from a pre-computed AnalyzedContext.
+
+    Reuses the shared writer+validation core (recap depths, explainer off,
+    non-streaming). When ``pick`` is provided (morning), its angle/category
+    lead the brief; standalone (pick=None) the brief leads with the analyses'
+    own thread. Returns a PipelineResult so is_unverified/residual_banner apply.
+    """
+    overlay = (
+        build_recap_overlay(angle=pick.angle, category=pick.category)
+        if pick is not None else None
+    )
+    rc = await _render_capsule(
+        ctx, analyzed, agents=agents,
+        anchor_depth=RECAP.validation.anchor_depth,
+        fact_depth=RECAP.validation.fact_depth,
+        stream=False, check_explainer=False, overlay=overlay,
+        persona_label="recap", _model_override=_model_override, tracker=tracker,
+    )
+    value_parity = check_value_parity(rc.capsule, rc.fact_check_source)
+    return PipelineResult(
+        narrative=rc.capsule,
+        specialists=analyzed.specialists,
+        key_signals=analyzed.key_signals,
+        audit_flags=analyzed.audit_flags,
+        anchor_warnings=rc.anchor_check.warnings,
+        revision_count=rc.revision_count,
+        capsule_audit_flags=rc.capsule_audit_flags,
+        capsule_revised=rc.capsule_revised,
+        value_parity_warnings=[f"[recap] {w}" for w in value_parity.unmatched],
+        signals_failed=analyzed.signals_failed,
+    )
+
+
+async def _run_pipeline(
+    ctx: PitcherContext,
+    *,
+    provider: str = "gemini",
+    thinking: ThinkingEffort = "high",
+    persona: str = "scout",
+    mode: NarrationMode = DEFAULT_MODE,
+    explain_model: bool = True,
+    _model_override: Any = None,
+    prior_ctx: PitcherContext | None = None,
+) -> PipelineResult:
+    """Async core of the multi-agent pipeline.
+
+    Phase 1: 5 specialists run concurrently.
+    Phase 1.5: Data auditor validates specialist outputs against ground truth.
+    Phase 1.75: Signal extractor identifies cross-specialist patterns.
+    Phase 2: Writer composes capsule from specialist outputs + key signals.
+    Phase 2.5: Anchor check + revision loop.
+    """
+    persona_obj = get_persona(persona)
+    agents = make_pipeline_agents(provider, thinking, persona_obj, mode, explain_model=explain_model)
+
+    # Phases 1 → 1.75: specialist → audit → signal extraction
+    log.info("Running analysis spine...")
+    analyzed = await run_analysis_spine(
+        ctx, agents=agents, _model_override=_model_override, prior_ctx=prior_ctx,
+    )
+    specialists = analyzed.specialists
+    audit_flags = analyzed.audit_flags
+    key_signals = analyzed.key_signals
+    log.info("Analysis spine complete.")
+
+    rc = await _render_capsule(
+        ctx, analyzed, agents=agents,
+        anchor_depth=mode.validation.anchor_depth,
+        fact_depth=mode.validation.fact_depth,
+        stream=True, check_explainer=explain_model, overlay=None,
+        persona_label=persona, _model_override=_model_override,
+    )
+    capsule = rc.capsule
+    writer_input = rc.writer_input
+    fact_check_source = rc.fact_check_source
+    anchor_check = rc.anchor_check
+    revision_count = rc.revision_count
+    capsule_audit_flags = rc.capsule_audit_flags
+    capsule_revised = rc.capsule_revised
 
     value_parity = check_value_parity(capsule, fact_check_source)
 
     # Second step: summarize the FINISHED, anchored report (not the
     # pre-revision specialist data). writer_input is attached as recover-only
-    # grounding inside _run_summaries.
-    log.info("Writing summary and brief from the final report...")
-    summary_bullets, brief_text = await _run_summaries(
-        summary_agent=agents.summary,
-        brief_agent=agents.brief,
-        capsule=capsule,
-        writer_input=writer_input,
-        _model_override=_model_override,
-    )
+    # grounding inside _run_summaries. RECAP is already a brief-length capsule,
+    # so distilling it further would duplicate (and cost two agent calls).
+    if mode.distill:
+        log.info("Writing summary and brief from the final report...")
+        summary_bullets, brief_text = await _run_summaries(
+            summary_agent=agents.summary,
+            brief_agent=agents.brief,
+            capsule=capsule,
+            writer_input=writer_input,
+            _model_override=_model_override,
+        )
 
-    # The brief and executive summary are the reader-facing outputs and may
-    # recover figures the capsule fact-check never saw, so value-parity them too
-    # against the same source. Warnings are labeled by surface so an operator can
-    # tell where an ungrounded number entered.
-    summary_parity = check_value_parity("\n".join(summary_bullets), fact_check_source)
-    brief_parity = check_value_parity(brief_text, fact_check_source)
-    value_parity_warnings = (
-        [f"[capsule] {w}" for w in value_parity.unmatched]
-        + [f"[summary] {w}" for w in summary_parity.unmatched]
-        + [f"[brief] {w}" for w in brief_parity.unmatched]
-    )
+        # The brief and executive summary are the reader-facing outputs and may
+        # recover figures the capsule fact-check never saw, so value-parity them too
+        # against the same source. Warnings are labeled by surface so an operator can
+        # tell where an ungrounded number entered.
+        summary_parity = check_value_parity("\n".join(summary_bullets), fact_check_source)
+        brief_parity = check_value_parity(brief_text, fact_check_source)
+        value_parity_warnings = (
+            [f"[capsule] {w}" for w in value_parity.unmatched]
+            + [f"[summary] {w}" for w in summary_parity.unmatched]
+            + [f"[brief] {w}" for w in brief_parity.unmatched]
+        )
+    else:
+        summary_bullets, brief_text = [], ""
+        value_parity_warnings = [f"[capsule] {w}" for w in value_parity.unmatched]
 
     return PipelineResult(
         narrative=capsule,
@@ -1750,6 +2573,7 @@ async def _run_pipeline(
         capsule_audit_flags=capsule_audit_flags,
         capsule_revised=capsule_revised,
         value_parity_warnings=value_parity_warnings,
+        signals_failed=analyzed.signals_failed,
     )
 
 
@@ -1759,7 +2583,10 @@ def generate_pipeline_streaming(
     provider: str = "gemini",
     thinking: ThinkingEffort = "high",
     persona: str = "scout",
+    mode: NarrationMode = DEFAULT_MODE,
+    explain_model: bool = True,
     _model_override: Any = None,
+    prior_ctx: PitcherContext | None = None,
 ) -> PipelineResult:
     """Generate a report using the specialist→auditor→writer multi-agent pipeline.
 
@@ -1774,6 +2601,7 @@ def generate_pipeline_streaming(
         provider: LLM provider key.
         thinking: Thinking effort level.
         persona: Persona id string (resolved to Persona object internally).
+        mode: Narration mode controlling writer prompt selection.
         _model_override: Optional model override for testing.
 
     Returns:
@@ -1781,8 +2609,58 @@ def generate_pipeline_streaming(
     """
     return asyncio.run(
         _run_pipeline(ctx, provider=provider, thinking=thinking,
-                      persona=persona, _model_override=_model_override)
+                      persona=persona, mode=mode, explain_model=explain_model,
+                      _model_override=_model_override, prior_ctx=prior_ctx)
     )
+
+
+def run_narration_modes(
+    ctx: PitcherContext,
+    *,
+    modes: list[NarrationMode] | None = None,
+    provider: str = "gemini",
+    thinking: ThinkingEffort = "high",
+    persona: str = "scout",
+    explain_model: bool = True,
+    _model_override: Any = None,
+    prior_ctx: PitcherContext | None = None,
+) -> dict[str, PipelineResult]:
+    """Run one or more narration modes over a single pitcher context.
+
+    The multi-mode entry point (design G10): returns a PipelineResult per mode,
+    keyed by ``mode.id`` in requested order. Each mode runs its own writer +
+    validation via generate_pipeline_streaming; the shared analysis spine is
+    re-run per mode in phase 4 (single-mode in practice). Reuse of one spine
+    across modes is a later-phase optimization (design §10).
+
+    Args:
+        ctx: Assembled pitcher context.
+        modes: Narration modes to render; defaults to [DEFAULT_MODE].
+        provider: LLM provider key.
+        thinking: Thinking effort level.
+        persona: Persona id string.
+        _model_override: Optional model override for testing.
+        prior_ctx: Optional prior-window context; forwarded only to modes
+            whose temporal_frame includes PRIOR (CHANGES). None for
+            report/recap.
+
+    Returns:
+        Mapping of mode id -> PipelineResult, insertion-ordered by ``modes``.
+    """
+    selected = modes if modes is not None else [DEFAULT_MODE]
+    results: dict[str, PipelineResult] = {}
+    for mode in selected:
+        # Dedupe by mode id: a repeated mode (e.g. --mode report,report) must
+        # not re-run the whole LLM pipeline and stream the report twice.
+        if mode.id in results:
+            continue
+        mode_prior = prior_ctx if TemporalFrame.PRIOR in mode.temporal_frame else None
+        results[mode.id] = generate_pipeline_streaming(
+            ctx, provider=provider, thinking=thinking,
+            persona=persona, mode=mode, explain_model=explain_model,
+            _model_override=_model_override, prior_ctx=mode_prior,
+        )
+    return results
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -1928,7 +2806,6 @@ _TRADITIONAL_PATTERN = re.compile(
     r"|Wins"
     r"|Losses"
     r"|Saves"
-    r"|IP"
     r")(?=[\s,.);\-:]|$)"
 )
 

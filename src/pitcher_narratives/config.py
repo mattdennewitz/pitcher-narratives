@@ -65,6 +65,14 @@ _THINKING_HEADROOM = 8192
 """Extra max_tokens when extended thinking is enabled (Claude): the
 thinking budget is spent from the same cap as the response."""
 
+_CLAUDE_EFFORTS: dict[ThinkingEffort, ThinkingEffort] = {
+    "minimal": "low",
+    "xhigh": "high",
+}
+"""Maps CLI-level thinking efforts unsupported by Anthropic's API onto the
+nearest accepted effort. Sonnet 4.6 only accepts low/medium/high/max;
+"minimal" and "xhigh" exist only for the Gemini side of THINKING_LEVELS."""
+
 API_KEYS = {
     "claude": "ANTHROPIC_API_KEY",
     "gemini": "GEMINI_API_KEY",
@@ -114,8 +122,14 @@ def make_model_settings(
         # Anthropic's thinking budget counts against max_tokens, so the
         # requested cap must be headroom-extended or thinking can exhaust
         # it before any response text is generated.
+        #
+        # Sonnet 4.6 only accepts thinking efforts low/medium/high/max, but
+        # the CLI's THINKING_LEVELS scale also allows "minimal" and "xhigh"
+        # (used for Gemini). Clamp those unsupported extremes to the nearest
+        # Anthropic-accepted effort before they reach the API.
+        claude_thinking = _CLAUDE_EFFORTS.get(thinking, thinking)
         return ModelSettings(
-            thinking=thinking,
+            thinking=claude_thinking,
             temperature=1,
             max_tokens=max_tokens + _THINKING_HEADROOM,
         )

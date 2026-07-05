@@ -8,7 +8,18 @@ import sys
 
 import pytest
 
-from pitcher_narratives.cli import parse_args
+from pitcher_narratives.cli import _resolve_modes, parse_args
+
+
+def _scored(pid, name, role, score, throws="R"):
+    from datetime import date
+
+    from pitcher_narratives.scout import ScoredAppearance
+
+    return ScoredAppearance(
+        pitcher_id=pid, pitcher_name=name, throws=throws,
+        game_date=date(2026, 7, 4), game_pk=pid, n_pitches=90, score=score, role=role,
+    )
 
 
 def test_parse_pitcher_flag(monkeypatch):
@@ -25,18 +36,34 @@ def test_parse_pitcher_long_flag(monkeypatch):
     assert args.pitcher == 592155
 
 
-def test_window_default(monkeypatch):
-    """CLI-02: -w defaults to 30 when omitted."""
+def test_report_accepts_recent_appearance_count(monkeypatch):
+    """-n/--recent parses as an int appearance count."""
+    monkeypatch.setattr(sys, "argv", ["main.py", "report", "-p", "592155", "--recent", "5"])
+    args = parse_args()
+    assert args.recent == 5
+
+
+def test_report_recent_defaults_to_appearance_span(monkeypatch):
+    """--recent defaults to the empirically-derived appearance count, not 30."""
     monkeypatch.setattr(sys, "argv", ["main.py", "report", "-p", "592155"])
     args = parse_args()
-    assert args.window == 30
+    assert args.recent >= 10
 
 
-def test_window_custom(monkeypatch):
-    """CLI-02: -w flag overrides default."""
-    monkeypatch.setattr(sys, "argv", ["main.py", "report", "-p", "592155", "-w", "14"])
+def test_report_subcommand_accepts_prior_flag(monkeypatch):
+    """--prior parses as an int prior-window appearance count."""
+    monkeypatch.setattr(
+        sys, "argv", ["main.py", "report", "-p", "592155", "--mode", "changes", "--prior", "8"]
+    )
     args = parse_args()
-    assert args.window == 14
+    assert args.prior == 8
+
+
+def test_report_prior_defaults(monkeypatch):
+    """--prior defaults to _DEFAULT_PRIOR_APPEARANCES (10)."""
+    monkeypatch.setattr(sys, "argv", ["main.py", "report", "-p", "592155", "--mode", "changes"])
+    args = parse_args()
+    assert args.prior == 10  # _DEFAULT_PRIOR_APPEARANCES
 
 
 def test_verbose_flag_default(monkeypatch):
@@ -176,10 +203,10 @@ def test_cli_invalid_pitcher_exit_1():
     assert "Pitcher 9999999 not found" in result.stderr
 
 
-def test_cli_custom_window():
-    """Integration: -w flag changes lookback window (pipeline completes)."""
+def test_cli_custom_recent():
+    """Integration: -n flag changes recent-appearances window (pipeline completes)."""
     result = subprocess.run(
-        [sys.executable, "-m", "pitcher_narratives.cli", "report", "-p", "592155", "-w", "7"],
+        [sys.executable, "-m", "pitcher_narratives.cli", "report", "-p", "592155", "-n", "7"],
         capture_output=True,
         text=True,
         timeout=60,
@@ -232,6 +259,23 @@ def test_cli_unverified_banner_on_residual_flags():
     )
     assert result.returncode == 0
     assert "REPORT UNVERIFIED" in result.stderr
+
+
+def test_cli_duplicate_mode_emits_sections_once():
+    """A repeated mode id is deduped: `--mode report,report` runs the LLM once
+    (run_narration_modes collapses by mode.id) and the emit loop must not
+    double-print sections or the UNVERIFIED banner for the single result."""
+    result = subprocess.run(
+        [sys.executable, "-m", "pitcher_narratives.cli",
+         "report", "-p", "592155", "--mode", "report,report"],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        env=_test_env(PITCHER_NARRATIVES_TEST_MODEL="1"),
+    )
+    assert result.returncode == 0, f"stderr: {result.stderr}"
+    assert result.stdout.count("# Executive Summary") == 1
+    assert result.stderr.count("REPORT UNVERIFIED") == 1
 
 
 def test_cli_verbose_shows_pitcher_info():
@@ -289,42 +333,74 @@ def test_cli_anchor_check_in_output():
         env=_test_env(PITCHER_NARRATIVES_TEST_MODEL="1"),
     )
     assert result.returncode == 0
-    assert "# Anchor Check" in result.stdout
+    assert "### Anchor Check" in result.stdout
 
 
 def test_cli_narrative_output_has_required_sections():
-    """Narrative CLI must produce all required sections.
+    """Locks in the reader-first report format:
 
-    The narrative report format is:
-      1. # Scouting Report       (streamed writer capsule — 'report context')
-      2. # Executive Summary     (3 bullets from the summary agent)
-      3. # Brief                 (2-3 sentence recent-vs-window summary)
-      4. # Stuff Analysis        (the stuff specialist's output)
-      5. # Data Audit            (audit flags or 'Clean — no issues found.')
-      6. # Capsule Fact-Check    (capsule audit flags or 'Clean — no factual issues found.')
-
-    This test locks the format in. Also verified: # Anchor Check is
-    present (separate test above) since it stays in the narrative
-    output as a debug/QA section.
+      1. # Scouting Report        (mode title H1, streamed capsule)
+      2. **Verification:** line   (in-document verification stamp)
+      3. ## Executive Summary     (distilled bullets)
+      4. ## Brief                 (2-3 sentence recent-vs-window summary)
+      5. ---  + ## Diagnostics    (demarcated QA appendix)
+      6. ### Stuff Analysis / ### Data Audit / ### Capsule Fact-Check /
+         ### Anchor Check         (demoted to appendix subsections)
     """
     result = subprocess.run(
         [sys.executable, "-m", "pitcher_narratives.cli", "report", "-p", "592155"],
-        capture_output=True,
-        text=True,
-        timeout=60,
+        capture_output=True, text=True, timeout=60,
         env=_test_env(PITCHER_NARRATIVES_TEST_MODEL="1"),
     )
     assert result.returncode == 0, f"stderr: {result.stderr}"
-    # Use "\n# Heading\n" pattern to avoid false matches on "## Heading"
-    # data subsections that may appear in the narrative prose.
-    stdout = "\n" + result.stdout  # prepend so leading headings match
+    stdout = "\n" + result.stdout
 
-    assert "\n# Scouting Report\n" in stdout, "missing Scouting Report heading"
-    assert "\n# Executive Summary\n" in stdout, "missing Executive Summary heading"
-    assert "\n# Brief\n" in stdout, "missing Brief heading"
-    assert "\n# Stuff Analysis\n" in stdout, "missing Stuff Analysis heading"
-    assert "\n# Data Audit\n" in stdout, "missing Data Audit heading"
-    assert "\n# Capsule Fact-Check\n" in stdout, "missing Capsule Fact-Check heading"
+    assert "\n# Scouting Report\n" in stdout
+    assert "\n**Verification:**" in stdout
+    assert "\n## Executive Summary\n" in stdout
+    assert "\n## Brief\n" in stdout
+    assert "\n## Diagnostics\n" in stdout
+    assert "\n### Stuff Analysis\n" in stdout
+    assert "\n### Data Audit\n" in stdout
+    assert "\n### Capsule Fact-Check\n" in stdout
+    assert "\n### Anchor Check\n" in stdout
+    # Diagnostics must come after the reader-facing sections.
+    assert stdout.index("## Diagnostics") > stdout.index("## Executive Summary")
+
+
+def test_cli_mode_blocks_are_labeled_and_contiguous():
+    """Multi-mode runs emit one labeled contiguous block per mode: each mode's
+    H1 title is followed by ITS diagnostics before the next mode's H1."""
+    result = subprocess.run(
+        [sys.executable, "-m", "pitcher_narratives.cli", "report", "-p", "592155",
+         "--mode", "report,changes"],
+        capture_output=True, text=True, timeout=120,
+        env=_test_env(PITCHER_NARRATIVES_TEST_MODEL="1"),
+    )
+    assert result.returncode == 0, f"stderr: {result.stderr}"
+    stdout = result.stdout
+    i_report = stdout.index("# Scouting Report")
+    i_changes = stdout.index("# Change Report")
+    assert i_report < i_changes
+    # The report block's diagnostics appear before the changes H1.
+    assert i_report < stdout.index("## Diagnostics") < i_changes
+    assert stdout.count("## Diagnostics") == 2
+
+
+def test_cli_recap_mode_has_no_summary_or_brief_sections():
+    """Recap's capsule IS the brief — no Executive Summary / Brief sections."""
+    result = subprocess.run(
+        [sys.executable, "-m", "pitcher_narratives.cli", "report", "-p", "592155",
+         "--mode", "recap"],
+        capture_output=True, text=True, timeout=60,
+        env=_test_env(PITCHER_NARRATIVES_TEST_MODEL="1"),
+    )
+    assert result.returncode == 0, f"stderr: {result.stderr}"
+    assert "# Recap" in result.stdout
+    assert "## Executive Summary" not in result.stdout
+    assert "## Brief" not in result.stdout
+    assert "**Verification:**" in result.stdout
+    assert "## Diagnostics" in result.stdout
 
 
 # ── Integration: --print-prompts ──
@@ -362,6 +438,56 @@ def test_cli_print_prompts_dumps_prompts_and_bypasses_api_key(tmp_path):
     assert "SPECIALIST 1: STUFF" in result.stderr
     assert "WRITER" in result.stderr
     assert "ANCHOR CHECK" in result.stderr
+
+
+def test_cli_print_prompts_changes_mode_includes_trend_comparison(tmp_path):
+    """--print-prompts --mode changes includes the Recent vs Prior Window block."""
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pitcher_narratives.cli",
+            "report",
+            "-p",
+            "592155",
+            "--mode",
+            "changes",
+            "--recent",
+            "10",
+            "--prior",
+            "10",
+            "--print-prompts",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        cwd=tmp_path,
+        env=_test_env(),
+    )
+    assert result.returncode == 0, f"stderr: {result.stderr}"
+    assert "Recent vs Prior Window" in result.stderr
+
+
+def test_cli_print_prompts_report_mode_omits_trend_comparison(tmp_path):
+    """--print-prompts on default (report) mode does NOT include the comparison block."""
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pitcher_narratives.cli",
+            "report",
+            "-p",
+            "592155",
+            "--print-prompts",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        cwd=tmp_path,
+        env=_test_env(),
+    )
+    assert result.returncode == 0, f"stderr: {result.stderr}"
+    assert "Recent vs Prior Window" not in result.stderr
 
 
 # ── Integration: --list-personas ──
@@ -646,7 +772,139 @@ def test_report_subcommand_parses(monkeypatch):
     args = parse_args()
     assert args.command == "report"
     assert args.pitcher == 123
-    assert args.window == 30
+    assert args.recent == 10
+
+
+# ── --mode scaffolding (G9/G4, phase 4: single-mode only) ──────────
+
+
+def test_mode_flag_defaults_to_none(monkeypatch):
+    """No --mode passed; argparse default is None (resolved by _resolve_modes)."""
+    monkeypatch.setattr(sys, "argv", ["cli", "report", "-p", "592155"])
+    args = parse_args()
+    assert args.mode is None
+
+
+def test_resolve_modes_defaults_to_report():
+    from pitcher_narratives.personas import REPORT
+
+    assert _resolve_modes(None) == [REPORT]
+
+
+def test_resolve_modes_report_explicit():
+    from pitcher_narratives.personas import REPORT
+
+    assert _resolve_modes("report") == [REPORT]
+
+
+def test_mode_flag_rejects_unavailable_mode():
+    """An unregistered mode id still exits 2 via _resolve_modes."""
+    with pytest.raises(SystemExit) as exc:
+        _resolve_modes("bogus")
+    assert exc.value.code == 2
+
+
+def test_mode_flag_resolves_changes():
+    from pitcher_narratives.personas import CHANGES
+
+    assert _resolve_modes("changes") == [CHANGES]
+
+
+def test_mode_flag_rejects_empty_value():
+    """A non-None but empty --mode (e.g. ',' or ' ') exits 2, not a silent report."""
+    for raw in (",", " ", " , "):
+        with pytest.raises(SystemExit) as exc:
+            _resolve_modes(raw)
+        assert exc.value.code == 2
+
+
+def _pipe_result_with_flags(n: int):
+    """Minimal PipelineResult carrying n residual capsule-audit flags.
+
+    Mirrors tests/test_pipeline.py::_result_with_flags.
+    """
+    from pitcher_narratives.pipeline import AuditFlag, PipelineResult, SpecialistOutputs
+
+    flags = [
+        AuditFlag(category="velocity", specialist="stuff", claim=f"c{i}", data_shows="d", suggested_fix="")
+        for i in range(n)
+    ]
+    return PipelineResult(
+        narrative="x",
+        specialists=SpecialistOutputs(
+            stuff="", location="", runvalue="", trends="", game_shape=""
+        ),
+        capsule_audit_flags=flags,
+    )
+
+
+def test_emit_mode_result_returns_unverified_status(capsys):
+    """_emit_mode_result returns is_unverified(result) — False when clean, True when flagged."""
+    from pitcher_narratives.cli import _emit_mode_result
+    from pitcher_narratives.personas import REPORT
+
+    clean = _pipe_result_with_flags(0)
+    flagged = _pipe_result_with_flags(2)
+
+    assert _emit_mode_result(clean, persona="scout", mode=REPORT) is False
+    assert _emit_mode_result(flagged, persona="scout", mode=REPORT) is True
+    capsys.readouterr()  # absorb printed sections
+
+
+def test_emit_mode_result_empty_narrative_is_not_unverified(capsys):
+    """Empty narrative always returns False, even with residual audit flags.
+
+    Pins the pre-Phase-7 behavior: an empty narrative means the pipeline
+    produced nothing to verify, so the REPORT command exits 0 with no
+    UNVERIFIED banner — regardless of leftover capsule_audit_flags.
+    """
+    from pitcher_narratives.cli import _emit_mode_result
+    from pitcher_narratives.personas import REPORT
+    from pitcher_narratives.pipeline import AuditFlag, PipelineResult, SpecialistOutputs
+
+    flags = [
+        AuditFlag(category="velocity", specialist="stuff", claim=f"c{i}", data_shows="d", suggested_fix="")
+        for i in range(2)
+    ]
+    result = PipelineResult(
+        narrative="",
+        specialists=SpecialistOutputs.model_construct(
+            stuff="", location="", runvalue="", trends="", game_shape=""
+        ),
+        capsule_audit_flags=flags,
+    )
+
+    assert _emit_mode_result(result, persona="scout", mode=REPORT) is False
+    capsys.readouterr()
+
+
+def test_emit_mode_result_runs_hallucination_guard_for_any_mode(capsys, monkeypatch):
+    """_emit_mode_result invokes check_hallucinated_metrics unconditionally.
+
+    The guard runs regardless of the mode passed, so the single call site at
+    cli.py's report-command dispatch loop already covers every selected
+    narration mode (report, changes, recap) identically — there is no per-mode
+    gate to bypass the guard.
+    """
+    import pitcher_narratives.cli as cli_module
+
+    from pitcher_narratives.personas import REPORT
+
+    calls = []
+    from pitcher_narratives import pipeline as pipeline_module
+
+    def _spy(text, *, persona=None):
+        calls.append((text, persona))
+        return pipeline_module.HallucinationReport(unknown_metrics=[], outcome_stat_warnings=[])
+
+    monkeypatch.setattr(pipeline_module, "check_hallucinated_metrics", _spy)
+
+    clean = _pipe_result_with_flags(0)
+    cli_module._emit_mode_result(clean, persona="scout", mode=REPORT)
+    capsys.readouterr()
+
+    assert len(calls) == 1
+    assert calls[0][0] == clean.narrative
 
 
 def test_morning_subcommand_defaults(monkeypatch):
@@ -659,3 +917,256 @@ def test_morning_subcommand_defaults(monkeypatch):
     assert args.provider == "gemini"
     assert args.persona == "scout"
     assert args.out == "morning-runs"
+
+
+def test_cli_recap_mode_runs_and_produces_output():
+    """`report --mode recap` renders a recap through the full validation stack
+    and exits cleanly under TestModel."""
+    result = subprocess.run(
+        [sys.executable, "-m", "pitcher_narratives.cli",
+         "report", "-p", "592155", "--mode", "recap"],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        env=_test_env(PITCHER_NARRATIVES_TEST_MODEL="1"),
+    )
+    assert result.returncode == 0, f"stderr: {result.stderr}"
+    # Recap's capsule is already a brief, so it skips the distilled
+    # Executive Summary / Brief sections but still labels its block and
+    # produces a non-empty narrative body.
+    assert len(result.stdout.strip()) > 0
+    assert "# Recap" in result.stdout
+    assert "## Executive Summary" not in result.stdout
+
+
+def test_cli_changes_mode_runs_and_produces_output():
+    """`report --mode changes` renders through the full validation stack and
+    exits cleanly under TestModel."""
+    result = subprocess.run(
+        [sys.executable, "-m", "pitcher_narratives.cli",
+         "report", "-p", "592155", "--mode", "changes"],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        env=_test_env(PITCHER_NARRATIVES_TEST_MODEL="1"),
+    )
+    assert result.returncode == 0, f"stderr: {result.stderr}"
+    assert len(result.stdout.strip()) > 0
+    assert "# Executive Summary" in result.stdout
+
+
+def test_cli_changes_two_frame_runs():
+    """`report --mode changes --recent N --prior M` runs the two-frame
+    CHANGES engine end-to-end and exits cleanly under TestModel."""
+    result = subprocess.run(
+        [sys.executable, "-m", "pitcher_narratives.cli",
+         "report", "-p", "592155", "--mode", "changes",
+         "--recent", "10", "--prior", "10"],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        env=_test_env(PITCHER_NARRATIVES_TEST_MODEL="1"),
+    )
+    assert result.returncode == 0, f"stderr: {result.stderr}"
+    assert len(result.stdout.strip()) > 0
+    assert "# Executive Summary" in result.stdout
+
+
+def test_cli_report_and_recap_both_run():
+    """`--mode report,recap` runs both modes; the process completes."""
+    result = subprocess.run(
+        [sys.executable, "-m", "pitcher_narratives.cli",
+         "report", "-p", "592155", "--mode", "report,recap"],
+        capture_output=True,
+        text=True,
+        timeout=90,
+        env=_test_env(PITCHER_NARRATIVES_TEST_MODEL="1"),
+    )
+    assert result.returncode == 0, f"stderr: {result.stderr}"
+    assert len(result.stdout.strip()) > 0
+
+
+def test_cli_report_changes_recap_all_run():
+    """`--mode report,changes,recap` runs all three modes; the process
+    completes. Only the distilling modes (report, changes) emit an Executive
+    Summary section — recap's capsule is already a brief, so it skips it."""
+    result = subprocess.run(
+        [sys.executable, "-m", "pitcher_narratives.cli",
+         "report", "-p", "592155", "--mode", "report,changes,recap"],
+        capture_output=True,
+        text=True,
+        timeout=120,
+        env=_test_env(PITCHER_NARRATIVES_TEST_MODEL="1"),
+    )
+    assert result.returncode == 0, f"stderr: {result.stderr}"
+    # Two distilling modes (report, changes) → two Executive Summary sections;
+    # recap does not distill.
+    assert result.stdout.count("## Executive Summary") == 2
+
+
+def test_report_parser_metrics_out_defaults_none(monkeypatch):
+    """--metrics-out is off by default (no calibration output unless opted in)."""
+    monkeypatch.setattr(sys, "argv", ["main.py", "report", "-p", "592155"])
+    args = parse_args()
+    assert args.metrics_out is None
+
+
+def test_append_metrics_records_writes_jsonl(tmp_path):
+    """_append_metrics_records writes one flag_record JSON line per mode."""
+    import json
+
+    from pitcher_narratives.cli import _append_metrics_records
+    from pitcher_narratives.models import SpecialistOutputs
+    from pitcher_narratives.personas import RECAP, REPORT
+    from pitcher_narratives.pipeline import PipelineResult
+
+    def _r(rev):
+        return PipelineResult(
+            narrative="x",
+            specialists=SpecialistOutputs(
+                stuff="", location="", runvalue="", trends="", game_shape=""
+            ),
+            revision_count=rev,
+        )
+
+    out = tmp_path / "metrics.jsonl"
+
+    _append_metrics_records(
+        out,
+        pitcher_id=592155,
+        span=10,
+        modes=[REPORT, RECAP],
+        results={"report": _r(4), "recap": _r(1)},
+    )
+    _append_metrics_records(
+        out,
+        pitcher_id=592155,
+        span=10,
+        modes=[REPORT],
+        results={"report": _r(2)},
+    )
+
+    lines = out.read_text().splitlines()
+    assert len(lines) == 3
+    recs = [json.loads(x) for x in lines]
+
+    assert recs[0]["revision_count"] == 4
+    assert recs[0]["anchor_depth_cap"] == REPORT.validation.anchor_depth  # REPORT: 5
+    assert recs[1]["anchor_depth_cap"] == RECAP.validation.anchor_depth  # RECAP: 1
+
+
+def test_report_no_explain_model_flag(monkeypatch):
+    monkeypatch.setattr(sys, "argv", ["main.py", "report", "-p", "592155", "--no-explain-model"])
+    args = parse_args()
+    assert args.explain_model is False
+
+
+def test_report_explain_model_defaults_true(monkeypatch):
+    monkeypatch.setattr(sys, "argv", ["main.py", "report", "-p", "592155"])
+    args = parse_args()
+    assert args.explain_model is True
+
+
+# ── scoreboard subcommand ──
+
+
+def test_scoreboard_parse_defaults(monkeypatch):
+    monkeypatch.setattr(sys, "argv", ["main.py", "scoreboard"])
+    args = parse_args()
+    assert args.command == "scoreboard"
+    assert args.window == 1
+    assert args.min_pitches == 20
+    assert args.starters_only is False
+
+
+def test_scoreboard_parse_flags(monkeypatch):
+    monkeypatch.setattr(
+        sys, "argv",
+        ["main.py", "scoreboard", "-w", "3", "--min-pitches", "10", "--starters-only"],
+    )
+    args = parse_args()
+    assert (args.window, args.min_pitches, args.starters_only) == (3, 10, True)
+
+
+def test_scoreboard_prints_full_board(monkeypatch, capsys):
+    """scoreboard prints the render_full_board markdown, no LLM."""
+    import argparse
+
+    from pitcher_narratives import scout as scout_mod
+    from pitcher_narratives.cli import _run_scoreboard_command
+
+    board = [_scored(1, "Ace SP", "SP", 12.0), _scored(2, "Setup RP", "RP", 6.0)]
+    monkeypatch.setattr(scout_mod, "scout_appearances", lambda **kw: list(board))
+    _run_scoreboard_command(
+        argparse.Namespace(window=1, min_pitches=20, starters_only=False, json=False)
+    )
+    out = capsys.readouterr().out
+    assert "# Scoreboard — 2026-07-04" in out
+    assert "## The Full Board" in out
+    assert "Ace SP" in out and "Setup RP" in out
+
+
+def test_scoreboard_starters_only_drops_relievers(monkeypatch, capsys):
+    import argparse
+
+    from pitcher_narratives import scout as scout_mod
+    from pitcher_narratives.cli import _run_scoreboard_command
+
+    board = [_scored(1, "Ace SP", "SP", 12.0), _scored(2, "Setup RP", "RP", 6.0)]
+    monkeypatch.setattr(scout_mod, "scout_appearances", lambda **kw: list(board))
+    _run_scoreboard_command(
+        argparse.Namespace(window=1, min_pitches=20, starters_only=True, json=False)
+    )
+    out = capsys.readouterr().out
+    assert "Ace SP" in out
+    assert "Setup RP" not in out
+
+
+def test_scoreboard_quiet_day(monkeypatch, capsys):
+    import argparse
+
+    from pitcher_narratives import scout as scout_mod
+    from pitcher_narratives.cli import _run_scoreboard_command
+
+    monkeypatch.setattr(scout_mod, "scout_appearances", lambda **kw: [])
+    _run_scoreboard_command(
+        argparse.Namespace(window=1, min_pitches=20, starters_only=False, json=False)
+    )
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "quiet day" in captured.err
+
+
+def test_scoreboard_json_output(monkeypatch, capsys):
+    """--json emits parseable JSON with the scored appearances."""
+    import argparse
+    import json
+
+    from pitcher_narratives import scout as scout_mod
+    from pitcher_narratives.cli import _run_scoreboard_command
+
+    board = [_scored(1, "Ace SP", "SP", 12.0), _scored(2, "Setup RP", "RP", 6.0)]
+    monkeypatch.setattr(scout_mod, "scout_appearances", lambda **kw: list(board))
+    _run_scoreboard_command(
+        argparse.Namespace(window=1, min_pitches=20, starters_only=False, json=True)
+    )
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["game_date"] == "2026-07-04"
+    assert [a["pitcher_name"] for a in payload["appearances"]] == ["Ace SP", "Setup RP"]
+
+
+def test_scoreboard_json_empty_is_valid(monkeypatch, capsys):
+    """--json on a quiet day still emits valid JSON to stdout (no stderr)."""
+    import argparse
+    import json
+
+    from pitcher_narratives import scout as scout_mod
+    from pitcher_narratives.cli import _run_scoreboard_command
+
+    monkeypatch.setattr(scout_mod, "scout_appearances", lambda **kw: [])
+    _run_scoreboard_command(
+        argparse.Namespace(window=1, min_pitches=20, starters_only=False, json=True)
+    )
+    captured = capsys.readouterr()
+    assert json.loads(captured.out) == {"game_date": None, "appearances": []}
+    assert captured.err == ""

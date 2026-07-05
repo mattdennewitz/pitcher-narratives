@@ -8,9 +8,12 @@ workload context (rest days, IP, pitch counts, consecutive days), and
 year-over-year arsenal trend computation (added/dropped/continued pitches).
 """
 
+import dataclasses
+
 import polars as pl
 
 from pitcher_narratives.data import PitcherData, load_pitcher_data
+from pitcher_narratives.engine.baselines import outlier_tag
 from pitcher_narratives.engine import (
     _CSW_DESCRIPTIONS,
     AppearanceWorkload,
@@ -35,6 +38,7 @@ from pitcher_narratives.engine import (
     WorkloadContext,
     _identify_primary_fastball,
     _movement_delta_string,
+    _most_recent_row,
     _pplus_delta_string,
     _stand_to_platoon,
     _usage_delta_string,
@@ -146,7 +150,7 @@ def test_movement_delta_string_direction():
 
 def test_identify_primary_fastball():
     """Returns a fastball type for test pitcher (FF and FC tied at 5 pitches each)."""
-    data = load_pitcher_data(TEST_PITCHER, window_days=30)
+    data = load_pitcher_data(TEST_PITCHER, recent_appearances=10)
     result = _identify_primary_fastball(data.pitch_type_baseline)
     assert result in ("FF", "FC")
 
@@ -171,7 +175,7 @@ def test_identify_primary_fastball_no_fb():
 
 def test_fastball_velocity_delta():
     """compute_fastball_summary returns FastballSummary with velocity fields."""
-    data = load_pitcher_data(TEST_PITCHER, window_days=30)
+    data = load_pitcher_data(TEST_PITCHER, recent_appearances=10)
     summary = compute_fastball_summary(data)
     assert summary is not None
     assert isinstance(summary, FastballSummary)
@@ -187,7 +191,7 @@ def test_fastball_velocity_delta():
 
 def test_fastball_pplus_delta():
     """FastballSummary has P+ season/window/delta fields."""
-    data = load_pitcher_data(TEST_PITCHER, window_days=30)
+    data = load_pitcher_data(TEST_PITCHER, recent_appearances=10)
     summary = compute_fastball_summary(data)
     assert summary is not None
     assert isinstance(summary.season_p_plus, float)
@@ -198,7 +202,7 @@ def test_fastball_pplus_delta():
 
 def test_fastball_splus_lplus():
     """FastballSummary has S+ and L+ season/window/delta fields."""
-    data = load_pitcher_data(TEST_PITCHER, window_days=30)
+    data = load_pitcher_data(TEST_PITCHER, recent_appearances=10)
     summary = compute_fastball_summary(data)
     assert summary is not None
     assert isinstance(summary.season_s_plus, float)
@@ -209,7 +213,7 @@ def test_fastball_splus_lplus():
 
 def test_fastball_movement_delta():
     """FastballSummary has pfx_x/pfx_z season/window/delta fields."""
-    data = load_pitcher_data(TEST_PITCHER, window_days=30)
+    data = load_pitcher_data(TEST_PITCHER, recent_appearances=10)
     summary = compute_fastball_summary(data)
     assert summary is not None
     assert isinstance(summary.season_pfx_x, float)
@@ -222,11 +226,44 @@ def test_fastball_movement_delta():
 
 def test_fastball_pitch_type():
     """FastballSummary identifies a fastball type for test pitcher (FF/FC tied)."""
-    data = load_pitcher_data(TEST_PITCHER, window_days=30)
+    data = load_pitcher_data(TEST_PITCHER, recent_appearances=10)
     summary = compute_fastball_summary(data)
     assert summary is not None
     assert summary.pitch_type in ("FF", "FC")
     assert summary.pitch_name != ""  # Should have human-readable name
+
+
+def test_compute_fastball_summary_suppresses_deltas_below_floor():
+    """G6: below the pitch-count floor (but not empty), qualitative fastball
+    delta strings render 'insufficient sample' instead of a computed delta."""
+    data = load_pitcher_data(TEST_PITCHER, recent_appearances=10)
+    # A single game_date almost always yields fewer than _MIN_PITCHES fastballs.
+    one_game = data.window_appearances.sort(
+        ["game_date", "game_pk"], descending=True, nulls_last=True
+    ).head(1)
+    thin = dataclasses.replace(data, window_appearances=one_game)
+    summary = compute_fastball_summary(thin)
+    assert summary is not None
+    assert summary.window_empty is False
+    assert summary.small_sample is True
+    assert summary.velo_delta == "insufficient sample"
+    assert summary.p_plus_delta == "insufficient sample"
+    assert summary.s_plus_delta == "insufficient sample"
+    assert summary.l_plus_delta == "insufficient sample"
+    assert summary.pfx_x_delta == "insufficient sample"
+    assert summary.pfx_z_delta == "insufficient sample"
+
+
+def test_compute_fastball_summary_empty_window_does_not_crash():
+    data = load_pitcher_data(TEST_PITCHER, recent_appearances=10)
+    # Force an empty frame: no appearances in the window.
+    empty = dataclasses.replace(data, window_appearances=data.window_appearances.head(0))
+    summary = compute_fastball_summary(empty)
+    assert summary is not None
+    assert summary.window_empty is True
+    # Window values fall back to season values; no None arithmetic.
+    assert summary.window_velo == summary.season_velo
+    assert summary.velo_delta == "No data for this frame"
 
 
 # ── VelocityArc ──────────────────────────────────────────────────────
@@ -285,7 +322,7 @@ def test_velocity_arc():
     # Test pitcher Booser is all single-inning, so we test the structure
     # and the single-inning fallback above. For the multi-inning case,
     # we verify the dataclass fields are correct.
-    data = load_pitcher_data(TEST_PITCHER, window_days=30)
+    data = load_pitcher_data(TEST_PITCHER, recent_appearances=10)
     summary = compute_fastball_summary(data)
     assert summary is not None
     arc = compute_velocity_arc(data, summary.pitch_type)
@@ -300,15 +337,56 @@ def test_velocity_arc():
 
 
 def test_cold_start_fallback():
-    """When window covers full season, delta strings contain cold start message."""
-    # Use window_days=9999 so all appearances fall in window
-    data = load_pitcher_data(TEST_PITCHER, window_days=9999)
+    """When window covers full season, delta strings report the thin-frame hedge."""
+    # Use recent_appearances=9999 so all appearances fall in window
+    data = load_pitcher_data(TEST_PITCHER, recent_appearances=9999)
     summary = compute_fastball_summary(data)
     assert summary is not None
     assert summary.cold_start is True
-    assert "Full season in window" in summary.velo_delta
-    assert "Full season in window" in summary.p_plus_delta
-    assert "Full season in window" in summary.pfx_x_delta
+    assert "Underpowered comparison" in summary.velo_delta
+    assert "Underpowered comparison" in summary.p_plus_delta
+    assert "Underpowered comparison" in summary.pfx_x_delta
+
+
+# ── Frame sufficiency gate (G8) ───────────────────────────────────────
+
+
+def test_frame_sufficiency_empty():
+    """Zero window appearances classify as 'empty'."""
+    from pitcher_narratives.engine._common import frame_sufficiency
+
+    data = load_pitcher_data(TEST_PITCHER, recent_appearances=10)
+    empty = dataclasses.replace(
+        data, window_appearances=data.window_appearances.head(0)
+    )
+    assert frame_sufficiency(empty) == "empty"
+
+
+def test_frame_sufficiency_thin_low_appearances():
+    """A single-appearance window is underpowered ('thin')."""
+    from pitcher_narratives.engine._common import frame_sufficiency
+
+    data = load_pitcher_data(TEST_PITCHER, recent_appearances=10)
+    thin = dataclasses.replace(
+        data, window_appearances=data.window_appearances.head(1)
+    )
+    assert frame_sufficiency(thin) == "thin"
+
+
+def test_frame_sufficiency_thin_full_season():
+    """A window covering the whole season has no baseline to compare -> 'thin'."""
+    from pitcher_narratives.engine._common import frame_sufficiency
+
+    data = load_pitcher_data(TEST_PITCHER, recent_appearances=10)
+    full = dataclasses.replace(data, window_appearances=data.appearances)
+    assert frame_sufficiency(full) == "thin"
+
+
+def test_is_cold_start_removed():
+    """The day-window-shaped detector is gone after the G8 migration."""
+    from pitcher_narratives.engine import _common
+
+    assert not hasattr(_common, "_is_cold_start")
 
 
 # ── Small sample ──────────────────────────────────────────────────────
@@ -317,7 +395,7 @@ def test_cold_start_fallback():
 def test_small_sample_flag():
     """FastballSummary.small_sample is True when <10 fastballs in window."""
     # Use a very small window to get few pitches
-    data = load_pitcher_data(TEST_PITCHER, window_days=1)
+    data = load_pitcher_data(TEST_PITCHER, recent_appearances=1)
     summary = compute_fastball_summary(data)
     # Even with small window, summary should exist (or be None if no pitches)
     if summary is not None:
@@ -332,7 +410,7 @@ def test_small_sample_flag():
 
 def test_usage_rate_deltas():
     """compute_arsenal_summary returns PitchTypeSummary list with usage deltas."""
-    data = load_pitcher_data(TEST_PITCHER, window_days=30)
+    data = load_pitcher_data(TEST_PITCHER, recent_appearances=10)
     arsenal = compute_arsenal_summary(data)
     assert isinstance(arsenal, list)
     assert len(arsenal) > 0
@@ -354,7 +432,7 @@ def test_usage_rate_deltas():
 
 def test_arsenal_pplus_deltas():
     """Each PitchTypeSummary has P+/S+/L+ season, window, and delta fields."""
-    data = load_pitcher_data(TEST_PITCHER, window_days=30)
+    data = load_pitcher_data(TEST_PITCHER, recent_appearances=10)
     arsenal = compute_arsenal_summary(data)
     assert len(arsenal) > 0
     for pts in arsenal:
@@ -372,7 +450,7 @@ def test_arsenal_pplus_deltas():
 
 def test_arsenal_pitch_names():
     """Each PitchTypeSummary has human-readable pitch_name."""
-    data = load_pitcher_data(TEST_PITCHER, window_days=30)
+    data = load_pitcher_data(TEST_PITCHER, recent_appearances=10)
     arsenal = compute_arsenal_summary(data)
     for pts in arsenal:
         assert isinstance(pts.pitch_name, str)
@@ -383,7 +461,7 @@ def test_arsenal_pitch_names():
 
 def test_arsenal_ordering():
     """PitchTypeSummary list is ordered by season usage descending."""
-    data = load_pitcher_data(TEST_PITCHER, window_days=30)
+    data = load_pitcher_data(TEST_PITCHER, recent_appearances=10)
     arsenal = compute_arsenal_summary(data)
     assert len(arsenal) >= 2
     # Verify descending order
@@ -396,7 +474,7 @@ def test_arsenal_ordering():
 def test_arsenal_small_sample():
     """PitchTypeSummary.small_sample is True for pitch types with < 10 pitches in window."""
     # Use a tiny window to get few pitches per type
-    data = load_pitcher_data(TEST_PITCHER, window_days=1)
+    data = load_pitcher_data(TEST_PITCHER, recent_appearances=1)
     arsenal = compute_arsenal_summary(data)
     for pts in arsenal:
         assert isinstance(pts.small_sample, bool)
@@ -407,7 +485,7 @@ def test_arsenal_small_sample():
 def test_single_pitch_type():
     """Arsenal is a non-empty list of valid PitchTypeSummary entries, and a
     zero usage delta (the single-type / 100%-usage case) renders as 'Steady'."""
-    data = load_pitcher_data(TEST_PITCHER, window_days=30)
+    data = load_pitcher_data(TEST_PITCHER, recent_appearances=10)
     arsenal = compute_arsenal_summary(data)
     # Count of qualifying pitch types varies with the data; assert non-empty
     # rather than pinning an exact, data-coupled count.
@@ -420,16 +498,16 @@ def test_single_pitch_type():
 
 
 def test_cold_start_arsenal():
-    """With large window covering full season, delta strings contain 'Full season in window'."""
-    data = load_pitcher_data(TEST_PITCHER, window_days=9999)
+    """A window covering the full season reports the thin-frame hedge on deltas."""
+    data = load_pitcher_data(TEST_PITCHER, recent_appearances=9999)
     arsenal = compute_arsenal_summary(data)
     assert len(arsenal) > 0
     for pts in arsenal:
         assert pts.cold_start is True
-        assert "Full season in window" in pts.usage_delta
-        assert "Full season in window" in pts.p_plus_delta
-        assert "Full season in window" in pts.s_plus_delta
-        assert "Full season in window" in pts.l_plus_delta
+        assert "Underpowered comparison" in pts.usage_delta
+        assert "Underpowered comparison" in pts.p_plus_delta
+        assert "Underpowered comparison" in pts.s_plus_delta
+        assert "Underpowered comparison" in pts.l_plus_delta
 
 
 # ── Platoon Mix ──────────────────────────────────────────────────────
@@ -437,7 +515,7 @@ def test_cold_start_arsenal():
 
 def test_platoon_mix_shifts():
     """compute_platoon_mix returns PlatoonMix with per-type per-side usage rates and deltas."""
-    data = load_pitcher_data(TEST_PITCHER, window_days=30)
+    data = load_pitcher_data(TEST_PITCHER, recent_appearances=10)
     platoon = compute_platoon_mix(data)
     assert isinstance(platoon, PlatoonMix)
     assert isinstance(platoon.splits, list)
@@ -458,7 +536,7 @@ def test_platoon_missing_combo():
     splits carry valid usage, and a pitch not thrown to a side yields an
     unavailable split flagged with a 'not thrown' note.
     """
-    data = load_pitcher_data(TEST_PITCHER, window_days=30)
+    data = load_pitcher_data(TEST_PITCHER, recent_appearances=10)
     platoon = compute_platoon_mix(data)
     assert platoon.splits  # at least one (pitch_type, side) split
     for s in platoon.splits:
@@ -551,7 +629,7 @@ def test_platoon_mapping():
 
 def test_first_pitch_weaponry():
     """compute_first_pitch_weaponry returns FirstPitchWeaponry with per-type first-pitch %."""
-    data = load_pitcher_data(TEST_PITCHER, window_days=30)
+    data = load_pitcher_data(TEST_PITCHER, recent_appearances=10)
     fpw = compute_first_pitch_weaponry(data)
     assert isinstance(fpw, FirstPitchWeaponry)
     assert isinstance(fpw.entries, list)
@@ -569,14 +647,14 @@ def test_first_pitch_weaponry():
 
 def test_first_pitch_count():
     """Total first pitches equals number of batters faced across all seasons."""
-    data = load_pitcher_data(TEST_PITCHER, window_days=30)
+    data = load_pitcher_data(TEST_PITCHER, recent_appearances=10)
     fpw = compute_first_pitch_weaponry(data)
     assert fpw.total_first_pitches_season > 0
 
 
 def test_first_pitch_ordering():
     """First pitch entries are ordered by window_pct descending."""
-    data = load_pitcher_data(TEST_PITCHER, window_days=30)
+    data = load_pitcher_data(TEST_PITCHER, recent_appearances=10)
     fpw = compute_first_pitch_weaponry(data)
     for i in range(len(fpw.entries) - 1):
         assert fpw.entries[i].window_pct >= fpw.entries[i + 1].window_pct
@@ -587,7 +665,7 @@ def test_first_pitch_ordering():
 
 def test_csw_per_type():
     """compute_execution_metrics returns list of ExecutionMetrics; FC has csw_pct > 0."""
-    data = load_pitcher_data(TEST_PITCHER, window_days=30)
+    data = load_pitcher_data(TEST_PITCHER, recent_appearances=10)
     metrics = compute_execution_metrics(data)
     assert isinstance(metrics, list)
     assert len(metrics) > 0
@@ -615,7 +693,7 @@ def test_csw_descriptions_exact():
 
 def test_zone_rate():
     """ExecutionMetrics entries have zone_rate between 0-100, null zones excluded."""
-    data = load_pitcher_data(TEST_PITCHER, window_days=30)
+    data = load_pitcher_data(TEST_PITCHER, recent_appearances=10)
     metrics = compute_execution_metrics(data)
     for m in metrics:
         assert isinstance(m.zone_rate, float)
@@ -624,7 +702,7 @@ def test_zone_rate():
 
 def test_chase_rate():
     """ExecutionMetrics entries have chase_rate (O-Swing%) between 0-100, zones 11-14 only."""
-    data = load_pitcher_data(TEST_PITCHER, window_days=30)
+    data = load_pitcher_data(TEST_PITCHER, recent_appearances=10)
     metrics = compute_execution_metrics(data)
     for m in metrics:
         assert isinstance(m.chase_rate, float)
@@ -633,7 +711,7 @@ def test_chase_rate():
 
 def test_xwhiff_xswing():
     """ExecutionMetrics entries have xwhiff_p and xswing_p from pitcher_type_appearance CSV."""
-    data = load_pitcher_data(TEST_PITCHER, window_days=30)
+    data = load_pitcher_data(TEST_PITCHER, recent_appearances=10)
     metrics = compute_execution_metrics(data)
     # At least one pitch type should have xwhiff_p data (FC has enough pitches)
     fc_metrics = [m for m in metrics if m.pitch_type == "FC"]
@@ -645,7 +723,7 @@ def test_xwhiff_xswing():
 
 def test_xrv100_percentile():
     """ExecutionMetrics entries have xrv100_percentile as int 0-100, computed against distribution."""
-    data = load_pitcher_data(TEST_PITCHER, window_days=30)
+    data = load_pitcher_data(TEST_PITCHER, recent_appearances=10)
     metrics = compute_execution_metrics(data)
     fc_metrics = [m for m in metrics if m.pitch_type == "FC"]
     assert len(fc_metrics) == 1
@@ -678,7 +756,7 @@ def test_xrv100_percentile_excludes_minor_league():
 
 def test_xrv100_polarity():
     """Lower (more negative) xRV100 = better for pitcher = higher percentile."""
-    data = load_pitcher_data(TEST_PITCHER, window_days=30)
+    data = load_pitcher_data(TEST_PITCHER, recent_appearances=10)
     metrics = compute_execution_metrics(data)
     # Just verify the percentile is in valid range and the structure is correct
     # The polarity test is that the computation uses > (worse) to count n_worse
@@ -689,7 +767,7 @@ def test_xrv100_polarity():
 
 def test_execution_metrics_small_sample():
     """ExecutionMetrics.small_sample is True when < 10 pitches of that type in window."""
-    data = load_pitcher_data(TEST_PITCHER, window_days=1)
+    data = load_pitcher_data(TEST_PITCHER, recent_appearances=1)
     metrics = compute_execution_metrics(data)
     for m in metrics:
         assert isinstance(m.small_sample, bool)
@@ -699,7 +777,7 @@ def test_execution_metrics_small_sample():
 
 def test_execution_metrics_cold_start():
     """When window covers full season, cold_start is True."""
-    data = load_pitcher_data(TEST_PITCHER, window_days=9999)
+    data = load_pitcher_data(TEST_PITCHER, recent_appearances=9999)
     metrics = compute_execution_metrics(data)
     assert len(metrics) > 0
     for m in metrics:
@@ -711,7 +789,7 @@ def test_execution_metrics_cold_start():
 
 def test_rest_days():
     """compute_workload_context returns WorkloadContext with rest_days; first has None, rest have int >= 0."""
-    data = load_pitcher_data(TEST_PITCHER, window_days=9999)
+    data = load_pitcher_data(TEST_PITCHER, recent_appearances=9999)
     workload = compute_workload_context(data)
     assert isinstance(workload, WorkloadContext)
     assert len(workload.appearances) > 0
@@ -725,7 +803,7 @@ def test_rest_days():
 
 def test_rest_days_consecutive():
     """Two appearances on consecutive calendar days have rest_days = 0."""
-    data = load_pitcher_data(TEST_PITCHER, window_days=9999)
+    data = load_pitcher_data(TEST_PITCHER, recent_appearances=9999)
     workload = compute_workload_context(data)
     # Check if any rest_days == 0 exist (consecutive days)
     _ = [a.rest_days for a in workload.appearances if a.rest_days is not None]
@@ -740,7 +818,7 @@ def test_rest_days_consecutive():
 
 def test_ip_per_appearance():
     """WorkloadContext has appearances with ip field in baseball notation."""
-    data = load_pitcher_data(TEST_PITCHER, window_days=9999)
+    data = load_pitcher_data(TEST_PITCHER, recent_appearances=9999)
     workload = compute_workload_context(data)
     for app in workload.appearances:
         assert isinstance(app.ip, str)
@@ -753,7 +831,7 @@ def test_ip_per_appearance():
 
 def test_pitch_count_per_appearance():
     """WorkloadContext appearances have pitch_count matching statcast row count per game_pk."""
-    data = load_pitcher_data(TEST_PITCHER, window_days=9999)
+    data = load_pitcher_data(TEST_PITCHER, recent_appearances=9999)
     workload = compute_workload_context(data)
     for app in workload.appearances:
         assert isinstance(app.pitch_count, int)
@@ -765,7 +843,7 @@ def test_pitch_count_per_appearance():
 
 def test_consecutive_days():
     """WorkloadContext has max_consecutive_days as int >= 1."""
-    data = load_pitcher_data(TEST_PITCHER, window_days=9999)
+    data = load_pitcher_data(TEST_PITCHER, recent_appearances=9999)
     workload = compute_workload_context(data)
     assert isinstance(workload.max_consecutive_days, int)
     assert workload.max_consecutive_days >= 1
@@ -773,7 +851,7 @@ def test_consecutive_days():
 
 def test_consecutive_days_flag():
     """WorkloadContext has workload_concern bool, True when max_consecutive_days >= 3."""
-    data = load_pitcher_data(TEST_PITCHER, window_days=9999)
+    data = load_pitcher_data(TEST_PITCHER, recent_appearances=9999)
     workload = compute_workload_context(data)
     assert isinstance(workload.workload_concern, bool)
     if workload.max_consecutive_days >= 3:
@@ -787,7 +865,7 @@ def test_consecutive_days_flag():
 
 def test_tto_returns_analysis():
     """compute_tto_analysis returns TTOAnalysis dataclass."""
-    data = load_pitcher_data(TEST_PITCHER, window_days=9999)
+    data = load_pitcher_data(TEST_PITCHER, recent_appearances=9999)
     tto = compute_tto_analysis(data)
     assert isinstance(tto, TTOAnalysis)
     assert isinstance(tto.available, bool)
@@ -797,7 +875,7 @@ def test_tto_returns_analysis():
 
 def test_tto_splits_have_pass_numbers():
     """Each TTOSplit has a pass_number >= 1 and FB/secondary P+ fields."""
-    data = load_pitcher_data(TEST_PITCHER, window_days=9999)
+    data = load_pitcher_data(TEST_PITCHER, recent_appearances=9999)
     tto = compute_tto_analysis(data)
     for s in tto.splits:
         assert isinstance(s, TTOSplit)
@@ -812,7 +890,7 @@ def test_tto_splits_have_pass_numbers():
 def test_tto_starter_with_deep_outings():
     """Starter with TTO 2+ gets available=True, FB/sec split, and pitch types."""
     # Kochanowicz had 3 passes in our earlier exploration
-    data = load_pitcher_data(686799, window_days=9999)
+    data = load_pitcher_data(686799, recent_appearances=9999)
     tto = compute_tto_analysis(data)
     if len(tto.splits) >= 2:
         assert tto.available is True
@@ -830,7 +908,7 @@ def test_tto_starter_with_deep_outings():
 
 def test_tto_fb_sec_deltas():
     """TTO shows fastball and secondary P+ deltas separately."""
-    data = load_pitcher_data(686799, window_days=30)
+    data = load_pitcher_data(686799, recent_appearances=10)
     tto = compute_tto_analysis(data)
     if tto.available and len(tto.splits) >= 2:
         # First pass deltas are "--"
@@ -842,7 +920,7 @@ def test_tto_fb_sec_deltas():
 
 def test_tto_summary_mentions_fb():
     """TTO summary references fastball P+ specifically."""
-    data = load_pitcher_data(686799, window_days=30)
+    data = load_pitcher_data(686799, recent_appearances=10)
     tto = compute_tto_analysis(data)
     if tto.available:
         assert "Fastball P+" in tto.summary or "Secondary P+" in tto.summary
@@ -850,7 +928,7 @@ def test_tto_summary_mentions_fb():
 
 def test_tto_small_sample_flag():
     """Passes with < 50 pitches are flagged."""
-    data = load_pitcher_data(686799, window_days=9999)
+    data = load_pitcher_data(686799, recent_appearances=9999)
     tto = compute_tto_analysis(data)
     for s in tto.splits:
         if s.pitches < 50:
@@ -861,7 +939,7 @@ def test_tto_small_sample_flag():
 
 def test_tto_reliever_single_pass():
     """Reliever who only faces batters once gets available=False."""
-    data = load_pitcher_data(TEST_PITCHER, window_days=9999)
+    data = load_pitcher_data(TEST_PITCHER, recent_appearances=9999)
     tto = compute_tto_analysis(data)
     # Booser is mostly RP with single-inning outings
     # If he has < 2 TTO groups, available should be False
@@ -874,7 +952,7 @@ def test_tto_reliever_single_pass():
 
 def test_hard_hit_rate_returns_dataclass():
     """compute_hard_hit_rate returns a HardHitRate with hard_hit_pct between 0 and 100."""
-    data = load_pitcher_data(TEST_PITCHER, window_days=30)
+    data = load_pitcher_data(TEST_PITCHER, recent_appearances=10)
     hhr = compute_hard_hit_rate(data)
     assert isinstance(hhr, HardHitRate)
     assert 0.0 <= hhr.hard_hit_pct <= 100.0
@@ -882,7 +960,7 @@ def test_hard_hit_rate_returns_dataclass():
 
 def test_hard_hit_rate_counts_batted_balls():
     """hard_hit_pct counts only batted balls (hit_into_play) with launch_speed >= 95."""
-    data = load_pitcher_data(TEST_PITCHER, window_days=30)
+    data = load_pitcher_data(TEST_PITCHER, recent_appearances=10)
     hhr = compute_hard_hit_rate(data)
     # n_hard_hit should be <= n_batted_balls
     assert hhr.n_hard_hit <= hhr.n_batted_balls
@@ -897,14 +975,14 @@ def test_hard_hit_rate_counts_batted_balls():
 
 def test_hard_hit_rate_positive_batted_balls():
     """n_batted_balls is positive for test pitcher with batted ball events."""
-    data = load_pitcher_data(TEST_PITCHER, window_days=30)
+    data = load_pitcher_data(TEST_PITCHER, recent_appearances=10)
     hhr = compute_hard_hit_rate(data)
     assert hhr.n_batted_balls > 0
 
 
 def test_hard_hit_rate_small_sample():
     """small_sample is True when fewer than 10 batted balls in window."""
-    data = load_pitcher_data(TEST_PITCHER, window_days=1)
+    data = load_pitcher_data(TEST_PITCHER, recent_appearances=1)
     hhr = compute_hard_hit_rate(data)
     if hhr.n_batted_balls < 10:
         assert hhr.small_sample is True
@@ -912,14 +990,14 @@ def test_hard_hit_rate_small_sample():
 
 def test_hard_hit_rate_cold_start():
     """cold_start is True when window covers entire season."""
-    data = load_pitcher_data(TEST_PITCHER, window_days=9999)
+    data = load_pitcher_data(TEST_PITCHER, recent_appearances=9999)
     hhr = compute_hard_hit_rate(data)
     assert hhr.cold_start is True
 
 
 def test_hard_hit_rate_season_pct():
     """season_hard_hit_pct is computed from full season, not just window."""
-    data = load_pitcher_data(TEST_PITCHER, window_days=30)
+    data = load_pitcher_data(TEST_PITCHER, recent_appearances=10)
     hhr = compute_hard_hit_rate(data)
     # Verify against full statcast
     bip = data.statcast.filter(
@@ -932,7 +1010,7 @@ def test_hard_hit_rate_season_pct():
 
 def test_hard_hit_rate_delta_string():
     """delta string follows existing pattern (Up/Down/Steady with pp, or cold-start message)."""
-    data = load_pitcher_data(TEST_PITCHER, window_days=30)
+    data = load_pitcher_data(TEST_PITCHER, recent_appearances=10)
     hhr = compute_hard_hit_rate(data)
     assert any(word in hhr.delta for word in ["Up", "Down", "Steady", "Full season in window"])
 
@@ -942,7 +1020,7 @@ def test_hard_hit_rate_delta_string():
 
 def test_release_point_returns_metrics():
     """compute_release_point_metrics returns ReleasePointMetrics with non-empty pitch_types list."""
-    data = load_pitcher_data(TEST_PITCHER, window_days=30)
+    data = load_pitcher_data(TEST_PITCHER, recent_appearances=10)
     rp = compute_release_point_metrics(data)
     assert isinstance(rp, ReleasePointMetrics)
     assert isinstance(rp.pitch_types, list)
@@ -951,7 +1029,7 @@ def test_release_point_returns_metrics():
 
 def test_release_point_values_reasonable():
     """Release point values are in physically reasonable ranges."""
-    data = load_pitcher_data(TEST_PITCHER, window_days=30)
+    data = load_pitcher_data(TEST_PITCHER, recent_appearances=10)
     rp = compute_release_point_metrics(data)
     for pt in rp.pitch_types:
         # Horizontal release: -4 to 4 ft from center
@@ -967,7 +1045,7 @@ def test_release_point_values_reasonable():
 
 def test_release_point_per_pitch_type():
     """Each entry has pitch_type, pitch_name, and all float fields."""
-    data = load_pitcher_data(TEST_PITCHER, window_days=30)
+    data = load_pitcher_data(TEST_PITCHER, recent_appearances=10)
     rp = compute_release_point_metrics(data)
     for pt in rp.pitch_types:
         assert isinstance(pt, ReleasePointPitchType)
@@ -987,7 +1065,7 @@ def test_release_point_per_pitch_type():
 
 def test_release_point_delta_strings():
     """Delta strings contain Up/Down/Steady vocabulary."""
-    data = load_pitcher_data(TEST_PITCHER, window_days=30)
+    data = load_pitcher_data(TEST_PITCHER, recent_appearances=10)
     rp = compute_release_point_metrics(data)
     for pt in rp.pitch_types:
         for delta_str in [pt.release_x_delta, pt.release_z_delta, pt.extension_delta]:
@@ -997,20 +1075,20 @@ def test_release_point_delta_strings():
 
 
 def test_release_point_cold_start():
-    """With window_days=9999, cold_start=True and deltas contain 'Full season in window'."""
-    data = load_pitcher_data(TEST_PITCHER, window_days=9999)
+    """With recent_appearances=9999, cold_start=True and deltas report the thin-frame hedge."""
+    data = load_pitcher_data(TEST_PITCHER, recent_appearances=9999)
     rp = compute_release_point_metrics(data)
     assert rp.cold_start is True
     for pt in rp.pitch_types:
         assert pt.cold_start is True
-        assert "Full season in window" in pt.release_x_delta
-        assert "Full season in window" in pt.release_z_delta
-        assert "Full season in window" in pt.extension_delta
+        assert "Underpowered comparison" in pt.release_x_delta
+        assert "Underpowered comparison" in pt.release_z_delta
+        assert "Underpowered comparison" in pt.extension_delta
 
 
 def test_release_point_small_sample():
-    """With window_days=1, entries with < 10 pitches have small_sample=True."""
-    data = load_pitcher_data(TEST_PITCHER, window_days=1)
+    """With recent_appearances=1, entries with < 10 pitches have small_sample=True."""
+    data = load_pitcher_data(TEST_PITCHER, recent_appearances=1)
     rp = compute_release_point_metrics(data)
     for pt in rp.pitch_types:
         if pt.n_pitches_window < 10:
@@ -1019,7 +1097,7 @@ def test_release_point_small_sample():
 
 def test_release_point_ordering():
     """Entries are ordered by season pitch count descending."""
-    data = load_pitcher_data(TEST_PITCHER, window_days=30)
+    data = load_pitcher_data(TEST_PITCHER, recent_appearances=10)
     rp = compute_release_point_metrics(data)
     # Verify descending order -- first entry should be one of the top-usage pitches
     if len(rp.pitch_types) >= 2:
@@ -1031,7 +1109,7 @@ def test_release_point_ordering():
 
 def test_intermediate_probabilities_computed():
     """compute_intermediate_probabilities returns typed results with real data."""
-    data = load_pitcher_data(TEST_PITCHER, window_days=30)
+    data = load_pitcher_data(TEST_PITCHER, recent_appearances=10)
     result = compute_intermediate_probabilities(data)
     assert len(result) > 0
     for item in result:
@@ -1045,7 +1123,7 @@ def test_intermediate_probabilities_computed():
 
 def test_intermediate_bbe_prob_none():
     """BBE_prob columns do not exist in agg CSVs -- values must be None."""
-    data = load_pitcher_data(TEST_PITCHER, window_days=30)
+    data = load_pitcher_data(TEST_PITCHER, recent_appearances=10)
     result = compute_intermediate_probabilities(data)
     for item in result:
         assert item.bbe_prob_p is None
@@ -1054,7 +1132,7 @@ def test_intermediate_bbe_prob_none():
 
 def test_intermediate_p_and_s_variants():
     """P and S variants should both exist together for each metric."""
-    data = load_pitcher_data(TEST_PITCHER, window_days=30)
+    data = load_pitcher_data(TEST_PITCHER, recent_appearances=10)
     result = compute_intermediate_probabilities(data)
     for item in result:
         if item.xswing_p is not None:
@@ -1075,7 +1153,7 @@ def test_intermediate_p_and_s_variants():
 
 def test_intermediate_location_impact():
     """Location impact (P minus S) is computable for non-None pairs."""
-    data = load_pitcher_data(TEST_PITCHER, window_days=30)
+    data = load_pitcher_data(TEST_PITCHER, recent_appearances=10)
     result = compute_intermediate_probabilities(data)
     # Find first item where both xswing_p and xswing_s are not None
     found = False
@@ -1092,7 +1170,7 @@ def test_intermediate_location_impact():
 
 def test_intermediate_both_grains():
     """Window and season values should both be populated."""
-    data = load_pitcher_data(TEST_PITCHER, window_days=30)
+    data = load_pitcher_data(TEST_PITCHER, recent_appearances=10)
     result = compute_intermediate_probabilities(data)
     for item in result:
         # Window values come from pitcher_type_appearance grain
@@ -1107,7 +1185,7 @@ def test_intermediate_both_grains():
 
 def test_intermediate_missing_columns_graceful():
     """Missing columns (BBE_prob) produce None, not exceptions."""
-    data = load_pitcher_data(TEST_PITCHER, window_days=30)
+    data = load_pitcher_data(TEST_PITCHER, recent_appearances=10)
     result = compute_intermediate_probabilities(data)
     # Function completed without exception (implicit)
     # BBE_prob_P/S is the missing-column case
@@ -1123,7 +1201,7 @@ def test_intermediate_missing_columns_graceful():
 
 def test_component_attribution_13_outcomes():
     """Each pitch type has exactly 13 outcome contributions."""
-    data = load_pitcher_data(TEST_PITCHER, window_days=30)
+    data = load_pitcher_data(TEST_PITCHER, recent_appearances=10)
     result = compute_component_attribution(data)
     assert isinstance(result, list)
     assert len(result) > 0
@@ -1134,7 +1212,7 @@ def test_component_attribution_13_outcomes():
 
 def test_component_attribution_sum():
     """Sum of 13 contributions equals total_xrv100 within tolerance."""
-    data = load_pitcher_data(TEST_PITCHER, window_days=30)
+    data = load_pitcher_data(TEST_PITCHER, recent_appearances=10)
     result = compute_component_attribution(data)
     for attr in result:
         computed_sum = sum(c.contribution for c in attr.contributions)
@@ -1150,7 +1228,7 @@ def test_component_attribution_labels():
         "double", "ground_out", "home_run", "line_out",
         "low_line_out", "pop_out", "single", "triple",
     }
-    data = load_pitcher_data(TEST_PITCHER, window_days=30)
+    data = load_pitcher_data(TEST_PITCHER, recent_appearances=10)
     result = compute_component_attribution(data)
     for attr in result:
         labels = {c.outcome for c in attr.contributions}
@@ -1159,7 +1237,7 @@ def test_component_attribution_labels():
 
 def test_component_attribution_sorted_by_magnitude():
     """Contributions are sorted by |contribution| descending."""
-    data = load_pitcher_data(TEST_PITCHER, window_days=30)
+    data = load_pitcher_data(TEST_PITCHER, recent_appearances=10)
     result = compute_component_attribution(data)
     for attr in result:
         magnitudes = [abs(c.contribution) for c in attr.contributions]
@@ -1170,7 +1248,7 @@ def test_component_attribution_sorted_by_magnitude():
 
 def test_component_attribution_pitcher_type_grain():
     """With game_pk=None, returns season-level aggregation."""
-    data = load_pitcher_data(TEST_PITCHER, window_days=30)
+    data = load_pitcher_data(TEST_PITCHER, recent_appearances=10)
     result = compute_component_attribution(data, game_pk=None)
     assert len(result) > 0
     # Total n_pitches across all types should match all_pitches total
@@ -1186,7 +1264,7 @@ def test_component_attribution_pitcher_type_grain():
 
 def test_component_attribution_appearance_grain():
     """With a specific game_pk, returns per-appearance aggregation."""
-    data = load_pitcher_data(TEST_PITCHER, window_days=30)
+    data = load_pitcher_data(TEST_PITCHER, recent_appearances=10)
     all_pitches = data.agg_csvs["all_pitches"]
     game_pk = all_pitches["game_pk"][0]
     result = compute_component_attribution(data, game_pk=game_pk)
@@ -1203,7 +1281,7 @@ def test_component_attribution_appearance_grain():
 
 def test_component_attribution_pitch_names():
     """Each ComponentAttribution has correct human-readable pitch_name."""
-    data = load_pitcher_data(TEST_PITCHER, window_days=30)
+    data = load_pitcher_data(TEST_PITCHER, recent_appearances=10)
     result = compute_component_attribution(data)
     # Build expected name map from statcast
     name_df = data.statcast.select(["pitch_type", "pitch_name"]).unique()
@@ -1273,7 +1351,7 @@ MULTI_YEAR_PITCHER = 607625  # Multi-year pitcher with varied arsenal
 
 def test_arsenal_trends_single_season_returns_none():
     """ATRN-03: Pitcher with only one season of data gets None."""
-    data = load_pitcher_data(TEST_PITCHER, window_days=30)
+    data = load_pitcher_data(TEST_PITCHER, recent_appearances=10)
     # Simulate single-season by filtering agg_csvs to max season only
     from pitcher_narratives.data import PitcherData
 
@@ -1303,7 +1381,7 @@ def test_arsenal_trends_single_season_returns_none():
 
 def test_arsenal_trends_returns_arsenal_trends():
     """Multi-season pitcher returns ArsenalTrends container."""
-    data = load_pitcher_data(MULTI_YEAR_PITCHER, window_days=30)
+    data = load_pitcher_data(MULTI_YEAR_PITCHER, recent_appearances=10)
     result = compute_arsenal_trends(data)
     assert result is not None, "Multi-season pitcher should return ArsenalTrends"
     assert isinstance(result, ArsenalTrends)
@@ -1311,7 +1389,7 @@ def test_arsenal_trends_returns_arsenal_trends():
 
 def test_arsenal_trends_identifies_added_dropped():
     """ATRN-01: Correctly classifies added and dropped pitches."""
-    data = load_pitcher_data(MULTI_YEAR_PITCHER, window_days=30)
+    data = load_pitcher_data(MULTI_YEAR_PITCHER, recent_appearances=10)
     result = compute_arsenal_trends(data)
     assert result is not None
 
@@ -1341,7 +1419,7 @@ def test_arsenal_trends_identifies_added_dropped():
 
 def test_arsenal_trends_computes_yoy_deltas():
     """ATRN-02: Continued pitches have per-pitch-type YoY deltas."""
-    data = load_pitcher_data(MULTI_YEAR_PITCHER, window_days=30)
+    data = load_pitcher_data(MULTI_YEAR_PITCHER, recent_appearances=10)
     result = compute_arsenal_trends(data)
     assert result is not None
     assert len(result.continued) > 0, "Should have continued pitches"
@@ -1366,7 +1444,7 @@ def test_arsenal_trends_computes_yoy_deltas():
 
 def test_arsenal_trends_uses_qualitative_language():
     """Delta strings match existing qualitative style (Up/Down/Steady/sharply)."""
-    data = load_pitcher_data(MULTI_YEAR_PITCHER, window_days=30)
+    data = load_pitcher_data(MULTI_YEAR_PITCHER, recent_appearances=10)
     result = compute_arsenal_trends(data)
     assert result is not None
 
@@ -1388,7 +1466,7 @@ def test_arsenal_trends_uses_qualitative_language():
 
 def test_arsenal_trends_minimum_pitch_threshold():
     """Pitches below minimum threshold excluded from trends."""
-    data = load_pitcher_data(MULTI_YEAR_PITCHER, window_days=30)
+    data = load_pitcher_data(MULTI_YEAR_PITCHER, recent_appearances=10)
     result = compute_arsenal_trends(data)
     assert result is not None
 
@@ -1405,7 +1483,7 @@ def test_arsenal_trends_minimum_pitch_threshold():
 
 def test_arsenal_trends_season_fields():
     """ArsenalTrends has correct prior and current season values."""
-    data = load_pitcher_data(MULTI_YEAR_PITCHER, window_days=30)
+    data = load_pitcher_data(MULTI_YEAR_PITCHER, recent_appearances=10)
     result = compute_arsenal_trends(data)
     assert result is not None
     assert result.prior_season < result.current_season
@@ -1420,7 +1498,7 @@ def test_arsenal_trends_season_fields():
 
 def test_arsenal_trends_has_changes_property():
     """has_changes property reflects whether any changes exist."""
-    data = load_pitcher_data(MULTI_YEAR_PITCHER, window_days=30)
+    data = load_pitcher_data(MULTI_YEAR_PITCHER, recent_appearances=10)
     result = compute_arsenal_trends(data)
     assert result is not None
     assert result.has_changes is True, "Multi-year pitcher should have changes"
@@ -1428,7 +1506,7 @@ def test_arsenal_trends_has_changes_property():
 
 def test_arsenal_trends_velocity_deltas():
     """Continued pitches include velocity deltas from statcast data."""
-    data = load_pitcher_data(MULTI_YEAR_PITCHER, window_days=30)
+    data = load_pitcher_data(MULTI_YEAR_PITCHER, recent_appearances=10)
     result = compute_arsenal_trends(data)
     assert result is not None
 
@@ -1447,13 +1525,39 @@ def test_arsenal_trends_velocity_deltas():
 
 def test_arsenal_trends_pitch_names():
     """All trends include human-readable pitch names."""
-    data = load_pitcher_data(MULTI_YEAR_PITCHER, window_days=30)
+    data = load_pitcher_data(MULTI_YEAR_PITCHER, recent_appearances=10)
     result = compute_arsenal_trends(data)
     assert result is not None
 
     for trend in [*result.added, *result.dropped, *result.continued]:
         assert trend.pitch_name, f"pitch_name should not be empty for {trend.pitch_type}"
         assert isinstance(trend.pitch_name, str)
+
+
+def test_most_recent_row_breaks_doubleheader_ties_by_game_pk():
+    # Two appearances on the same date (a doubleheader): higher game_pk wins.
+    appearances = pl.DataFrame(
+        {
+            "game_date": ["2024-05-01", "2024-05-01", "2024-04-15"],
+            "game_pk": [745002, 745001, 744000],
+            "role": ["RP", "RP", "RP"],
+        }
+    )
+    row = _most_recent_row(appearances)
+    assert row["game_pk"] == 745002
+
+
+def test_most_recent_row_picks_latest_date():
+    appearances = pl.DataFrame(
+        {
+            "game_date": ["2024-04-15", "2024-05-01"],
+            "game_pk": [744000, 745001],
+            "role": ["RP", "SP"],
+        }
+    )
+    row = _most_recent_row(appearances)
+    assert row["game_date"] == "2024-05-01"
+    assert row["role"] == "SP"
 
 
 # ── Movement units (inches, not raw Statcast feet) ───────────────────
@@ -1469,7 +1573,7 @@ def test_league_baseline_movement_in_inches():
 
 def test_fastball_summary_movement_in_inches():
     """Fastball summary movement values are inches (Booser FC ride ~3-4 in)."""
-    data = load_pitcher_data(TEST_PITCHER, window_days=30)
+    data = load_pitcher_data(TEST_PITCHER, recent_appearances=10)
     summary = compute_fastball_summary(data)
     assert summary is not None
     assert abs(summary.season_pfx_z) > 1.0 or abs(summary.season_pfx_x) > 1.0
@@ -1479,7 +1583,23 @@ def test_fastball_summary_movement_in_inches():
 
 def test_arsenal_summary_movement_in_inches():
     """Arsenal per-type movement values are inches, not feet."""
-    data = load_pitcher_data(TEST_PITCHER, window_days=30)
+    data = load_pitcher_data(TEST_PITCHER, recent_appearances=10)
     arsenal = compute_arsenal_summary(data)
     ff = next(p for p in arsenal if p.pitch_type == "FF")
     assert 10.0 < ff.season_pfx_z < 25.0
+
+
+def test_outlier_tag_suppressed_below_sample_floor():
+    # z-score would be a strong OUTLIER, but N is below the floor -> suppressed.
+    tag = outlier_tag(value=100.0, avg=92.0, std=1.0, n=4)
+    assert tag == "SMALL SAMPLE, N=4 -- untagged"
+
+
+def test_outlier_tag_normal_string_unchanged_at_floor():
+    tag = outlier_tag(value=92.5, avg=92.0, std=1.0, n=10)
+    assert tag == "NORMAL (z=+0.5)"
+
+
+def test_outlier_tag_outlier_string_unchanged_above_floor():
+    tag = outlier_tag(value=95.0, avg=92.0, std=1.0, n=25)
+    assert tag == "OUTLIER (above avg, z=+3.0)"

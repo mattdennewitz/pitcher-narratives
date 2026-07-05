@@ -108,13 +108,18 @@ def _make_single_type_data() -> PitcherData:
         "pitch_number":  list(range(1, n + 1)),
     })
 
+    # 10 window appearances (all on _WINDOW_DATE) clear the G8 thin-frame
+    # floor (>= _THIN_APPEARANCES) while staying below the season total, so
+    # frame_sufficiency == "sufficient" and window-vs-season deltas compute.
+    # All window pitch data still lives on _WINDOW_DATE, so the arithmetic is
+    # unchanged from the single-appearance fixture.
     appearances = pl.DataFrame({
-        "game_pk":   [1, 2],
-        "game_date": [_SEASON_DATE, _WINDOW_DATE],
+        "game_pk":   [1] + list(range(2, 12)),
+        "game_date": [_SEASON_DATE] + [_WINDOW_DATE] * 10,
     })
     window_appearances = pl.DataFrame({
-        "game_pk":   [2],
-        "game_date": [_WINDOW_DATE],
+        "game_pk":   list(range(2, 12)),
+        "game_date": [_WINDOW_DATE] * 10,
     })
 
     pitch_type_baseline = pl.DataFrame({
@@ -183,13 +188,18 @@ def _make_two_type_data() -> PitcherData:
         "pitch_number":  list(range(1, n + 1)),
     })
 
+    # 10 window appearances (all on _WINDOW_DATE) clear the G8 thin-frame
+    # floor (>= _THIN_APPEARANCES) while staying below the season total, so
+    # frame_sufficiency == "sufficient" and window-vs-season deltas compute.
+    # All window pitch data still lives on _WINDOW_DATE, so the arithmetic is
+    # unchanged from the single-appearance fixture.
     appearances = pl.DataFrame({
-        "game_pk":   [1, 2],
-        "game_date": [_SEASON_DATE, _WINDOW_DATE],
+        "game_pk":   [1] + list(range(2, 12)),
+        "game_date": [_SEASON_DATE] + [_WINDOW_DATE] * 10,
     })
     window_appearances = pl.DataFrame({
-        "game_pk":   [2],
-        "game_date": [_WINDOW_DATE],
+        "game_pk":   list(range(2, 12)),
+        "game_date": [_WINDOW_DATE] * 10,
     })
 
     # usage_pct matches what compute_arsenal_summary derives from statcast above
@@ -448,59 +458,70 @@ def test_splus_lplus_divergence_direction_invariant() -> None:
 _IDENTITY_PITCHER = 592155  # Booser, Cam — real data present in repo fixtures
 
 
-def test_cross_path_morning_cue_and_report_context_cite_same_numbers() -> None:
-    """Morning cue and report PitcherContext for the same pitcher cite identical facts.
+def test_cross_path_recap_and_report_share_grounding() -> None:
+    """Morning (render_recap) and report (_run_pipeline) fact-check the writer's
+    capsule against the exact same source: ``_build_parity_union(ctx, specialists,
+    key_signals)``, built once inside the shared ``_render_capsule`` core (see
+    pipeline.py:_render_capsule, called by both render_recap and _run_pipeline).
 
-    build_story_cue_from_context projects from PitcherContext; this test
-    asserts that the numbers it renders match the raw fields on that same
-    context — proving no drift between the morning path and the report path.
-    This is the Phase 2 capstone gate (Step 5).
+    The old cue/DIGEST path (build_story_cue_from_context) is retired — Task 3
+    moved morning onto render_recap, so there is no separate cue projection to
+    compare against a report-side PitcherContext anymore. The parity guarantee
+    is now structural: both paths' fact-check ground truth is the *same
+    function call* over the *same* PitcherContext, and that ground truth
+    deterministically embeds the pitcher's real numbers (fastball season
+    velocity, per-pitch recent usage) via the trends/game-shape specialist
+    input builders (render_fastball_section / render_arsenal_section) that
+    _build_parity_union projects from ctx — not from LLM output.
+
+    This replaces the retired cue-string parity gate.
     """
     from pitcher_narratives.context import assemble_pitcher_context
-    from pitcher_narratives.curator import CurationPick
     from pitcher_narratives.data import load_pitcher_data
-    from pitcher_narratives.digest import build_story_cue_from_context
-    from pitcher_narratives.scout import ScoredAppearance, Signal
+    from pitcher_narratives.models import SpecialistOutputs
+    from pitcher_narratives.pipeline import _build_parity_union
 
-    data = load_pitcher_data(_IDENTITY_PITCHER, window_days=30)
+    data = load_pitcher_data(_IDENTITY_PITCHER, recent_appearances=10)
     ctx = assemble_pitcher_context(data)
 
-    recent = data.appearances.sort("game_date", descending=True).row(0, named=True)
-    app = ScoredAppearance(
-        pitcher_id=_IDENTITY_PITCHER,
-        pitcher_name=ctx.pitcher_name,
-        throws=ctx.throws,
-        game_date=recent["game_date"],
-        game_pk=int(recent["game_pk"]),
-        n_pitches=80,
-        score=5.0,
-        role=ctx.role,
-        signals=[Signal("velo_delta", 3.0, "test signal")],
-    )
-    pick = CurationPick(
-        pitcher_id=_IDENTITY_PITCHER,
-        category="clean_breakout",
-        angle="test angle",
-        conviction="medium",
-        conviction_reason="test",
+    # Empty specialist text isolates the deterministic ctx-derived ground
+    # truth (_build_capsule_ground_truth) inside the union — the part both
+    # morning and report build identically from the same ctx.
+    specialists = SpecialistOutputs(
+        stuff="", location="", runvalue="", trends="", game_shape="",
     )
 
-    cue = build_story_cue_from_context(app, pick, ctx)
+    grounding = _build_parity_union(ctx, specialists, key_signals=None)
 
-    # Fastball season velocity in the cue matches ctx.fastball exactly
+    # Fastball season velocity is embedded verbatim (render_fastball_section,
+    # included in both the trends and game-shape specialist inputs).
     if ctx.fastball is not None:
-        assert f"{ctx.fastball.season_velo:.1f} mph" in cue, (
-            f"Expected season_velo={ctx.fastball.season_velo:.1f} in cue"
+        assert f"{ctx.fastball.season_velo:.1f}" in grounding, (
+            f"Expected season_velo={ctx.fastball.season_velo:.1f} in shared grounding"
         )
 
-    # Per-pitch usage and S+/L+ for top pitch types match ctx.arsenal exactly
+    # Per-pitch recent usage for the arsenal is embedded verbatim
+    # (render_arsenal_section, included in the trends specialist input).
     for pt in ctx.arsenal[:3]:
-        assert f"{pt.season_usage_pct:.1f}%" in cue, (
-            f"Expected {pt.pitch_type} season_usage_pct={pt.season_usage_pct:.1f}% in cue"
+        assert f"{pt.window_usage_pct:.1f}%" in grounding, (
+            f"Expected {pt.pitch_type} window_usage_pct={pt.window_usage_pct:.1f}% "
+            "in shared grounding"
         )
-        assert f"S+ {pt.season_s_plus:.0f}" in cue, (
-            f"Expected {pt.pitch_type} season_s_plus={pt.season_s_plus:.0f} in cue"
+
+    # Per-pitch plus grades (S+/L+) are embedded verbatim (render_fastball_section)
+    # and are core fact-check anchors for the report's value; assert they survive
+    # in the shared grounding so a fabricated plus-grade can still be caught by the
+    # capsule auditor on either path.
+    if ctx.fastball is not None:
+        assert f"Stuff+ (S+): {ctx.fastball.season_s_plus:.0f} season" in grounding, (
+            f"Expected season S+={ctx.fastball.season_s_plus:.0f} in shared grounding"
         )
-        assert f"L+ {pt.season_l_plus:.0f}" in cue, (
-            f"Expected {pt.pitch_type} season_l_plus={pt.season_l_plus:.0f} in cue"
+        assert f"Location+ (L+): {ctx.fastball.season_l_plus:.0f} season" in grounding, (
+            f"Expected season L+={ctx.fastball.season_l_plus:.0f} in shared grounding"
         )
+
+    # Calling _build_parity_union twice on the same ctx (as morning's
+    # render_recap and report's _run_pipeline each do inside _render_capsule)
+    # produces byte-identical ground truth — the structural cross-path
+    # guarantee that replaces the old cue-vs-context comparison.
+    assert _build_parity_union(ctx, specialists, key_signals=None) == grounding

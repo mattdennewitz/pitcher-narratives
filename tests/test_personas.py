@@ -11,19 +11,20 @@ from pitcher_narratives.data import load_pitcher_data
 from pitcher_narratives.personas import (
     ANALYST,
     BRIEF,
-    CAPSULE,
     DEFAULT_PERSONA,
     GENERIC,
     NEWSLETTER,
     PERSONAS,
-    REPORT_CONTRACTS,
+    REPORT,
     SCOUT,
+    SCOUT_REPORT,
     SECTIONED,
     SHARED_WRITER_BASE,
     OutputContract,
     Persona,
     build_system_prompt,
     build_writer_system_prompt,
+    get_narration_mode,
     get_persona,
 )
 from pitcher_narratives.pipeline import PipelineResult, generate_pipeline_streaming, make_pipeline_agents
@@ -111,10 +112,10 @@ def test_scout_has_expected_fields():
     assert scout.parent is None
 
 
-def test_scout_report_contract_is_capsule():
-    """The scout report contract is CAPSULE with length_target (150, 350)."""
-    contract = REPORT_CONTRACTS["scout"]
-    assert contract is CAPSULE
+def test_scout_report_contract_is_scout_report():
+    """The scout report contract is SCOUT_REPORT with length_target (150, 350)."""
+    contract = REPORT.contracts["scout"]
+    assert contract is SCOUT_REPORT
     assert contract.length_target == (150, 350)
     assert all(isinstance(v, int) for v in contract.length_target)
 
@@ -133,6 +134,39 @@ def test_get_persona_unknown_raises_valueerror():
     """get_persona raises ValueError with the unknown id in the message."""
     with pytest.raises(ValueError, match="bogus"):
         get_persona("bogus")
+
+
+def test_report_mode_maps_personas_to_report_contracts():
+    """REPORT.contracts reproduces the legacy report-contracts mapping."""
+    assert REPORT.id == "report"
+    assert REPORT.contracts["scout"] is SCOUT_REPORT
+    assert REPORT.contracts["analyst"] is NEWSLETTER
+    assert REPORT.contracts["generic"] is SECTIONED
+
+
+def test_narration_mode_is_frozen():
+    """NarrationMode is immutable so registry identity is stable."""
+    import dataclasses
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        REPORT.id = "changed"  # type: ignore[misc]
+
+
+def test_get_narration_mode_returns_report():
+    """get_narration_mode('report') resolves to the REPORT instance."""
+    assert get_narration_mode("report") is REPORT
+
+
+def test_get_narration_mode_unknown_raises_valueerror():
+    """Unknown mode ids raise ValueError listing valid ids (not KeyError)."""
+    with pytest.raises(ValueError, match="bogus"):
+        get_narration_mode("bogus")
+
+
+def test_build_writer_system_prompt_mode_arg_is_byte_identical_to_default():
+    """Passing mode=REPORT explicitly equals the default single-arg call."""
+    for pid in ("scout", "analyst", "generic"):
+        p = get_persona(pid)
+        assert build_writer_system_prompt(p, REPORT) == build_writer_system_prompt(p)
 
 
 def test_fixture_exists():
@@ -262,7 +296,7 @@ def test_composed_prompt_starts_with_base():
 @pytest.fixture(scope="module")
 def ctx():
     """Load pitcher data once per module for pipeline smoke tests."""
-    data = load_pitcher_data(592155, window_days=30)
+    data = load_pitcher_data(592155, recent_appearances=10)
     return assemble_pitcher_context(data)
 
 
@@ -327,7 +361,7 @@ def test_analyst_has_expected_fields():
     assert analyst.id == "analyst"
     assert analyst.display_name == "Analyst"
     assert analyst.parent == "scout"
-    assert REPORT_CONTRACTS["analyst"] is NEWSLETTER
+    assert REPORT.contracts["analyst"] is NEWSLETTER
     assert NEWSLETTER.length_target == (450, 800)
     assert "newsletter" in analyst.description.lower() or "teaching" in analyst.description.lower()
 
@@ -463,7 +497,7 @@ def test_generic_has_expected_fields():
     assert generic.id == "generic"
     assert generic.display_name == "Generic"
     assert generic.parent == "scout"
-    assert REPORT_CONTRACTS["generic"] is SECTIONED
+    assert REPORT.contracts["generic"] is SECTIONED
     assert SECTIONED.length_target == (300, 500)
     assert "structured" in generic.description.lower() or "section" in generic.description.lower()
 
@@ -609,7 +643,7 @@ def test_brief_composes_with_every_persona(persona_id: str) -> None:
 
 def test_brief_is_not_a_persona_report_contract():
     """BRIEF is an alternate output target, not any persona's canonical report."""
-    assert BRIEF not in REPORT_CONTRACTS.values()
+    assert BRIEF not in REPORT.contracts.values()
 
 
 # ── Generic shape assertion helper (Phase 08: TEST-06) ──
@@ -792,12 +826,12 @@ def test_shared_base_surfaces_arm_slot_insight():
 # ── RT-4: fallback contract for unmapped personas ─────────────────────
 
 
-def test_build_writer_system_prompt_falls_back_to_capsule_for_unknown_persona():
-    """RT-4: build_writer_system_prompt uses CAPSULE for personas not in REPORT_CONTRACTS.
+def test_build_writer_system_prompt_falls_back_to_scout_report_for_unknown_persona():
+    """RT-4: build_writer_system_prompt uses SCOUT_REPORT for personas not in the mode's contracts.
 
-    A newly added voice persona whose id is not yet in REPORT_CONTRACTS must
-    not raise a KeyError.  It should produce a CAPSULE-shaped prompt (i.e.
-    contain the CAPSULE structure phrase) rather than crashing.
+    A newly added voice persona whose id is not yet in the mode's contracts must
+    not raise a KeyError.  It should produce a SCOUT_REPORT-shaped prompt (i.e.
+    contain the structure fingerprint phrase) rather than crashing.
     """
     unknown = Persona(
         id="future_voice",
@@ -807,8 +841,350 @@ def test_build_writer_system_prompt_falls_back_to_capsule_for_unknown_persona():
     )
     # Must not raise KeyError
     prompt = build_writer_system_prompt(unknown)
-    # CAPSULE structure is "2-3 paragraph" — the fallback contract's fingerprint
+    # SCOUT_REPORT structure is "2-3 paragraph" — the fallback contract's fingerprint
     assert "2-3 paragraph" in prompt, (
-        "build_writer_system_prompt should fall back to CAPSULE for unmapped personas; "
-        "expected CAPSULE structure phrase '2-3 paragraph' in composed prompt"
+        "build_writer_system_prompt should fall back to SCOUT_REPORT for unmapped "
+        "personas; expected structure phrase '2-3 paragraph' in composed prompt"
     )
+
+
+def test_report_validation_policy_matches_config_depths():
+    """REPORT keeps today's depths; config is the single source of truth."""
+    from pitcher_narratives.config import MAX_FACT_REVISIONS, MAX_REVISIONS
+    from pitcher_narratives.personas import REPORT, ValidationPolicy
+
+    assert REPORT.validation == ValidationPolicy(
+        anchor_depth=MAX_REVISIONS, fact_depth=MAX_FACT_REVISIONS
+    )
+    assert (REPORT.validation.anchor_depth, REPORT.validation.fact_depth) == (5, 2)
+
+
+def test_validation_policy_is_frozen():
+    from dataclasses import FrozenInstanceError
+
+    import pytest
+
+    from pitcher_narratives.personas import ValidationPolicy
+
+    policy = ValidationPolicy(anchor_depth=1, fact_depth=2)
+    with pytest.raises(FrozenInstanceError):
+        policy.anchor_depth = 3  # type: ignore[misc]
+
+
+def test_recap_mode_registered_and_resolvable():
+    from pitcher_narratives.personas import (
+        NARRATION_MODES,
+        RECAP,
+        get_narration_mode,
+    )
+
+    assert set(NARRATION_MODES) == {"report", "recap", "changes"}
+    assert get_narration_mode("recap") is RECAP
+    assert RECAP.id == "recap"
+
+
+def test_recap_validation_depths():
+    """RECAP caps anchor at 1, keeps fact at 2 (design §7)."""
+    from pitcher_narratives.personas import RECAP
+
+    assert (RECAP.validation.anchor_depth, RECAP.validation.fact_depth) == (1, 2)
+
+
+def test_recap_contract_shape_and_all_personas_mapped():
+    from pitcher_narratives.personas import RECAP, RECAP_BRIEF
+    from pitcher_narratives.personas import _SYNTHESIS_RULES
+
+    assert RECAP_BRIEF.id == "recap"
+    assert RECAP_BRIEF.length_target == (40, 90)
+    # RECAP writes FROM the analyses (synthesis rules), not by distilling a
+    # finished report — that is what lets it render off the shared spine.
+    # It uses the rules-only slice (no EXPLAIN THE MODEL) since the 40-90
+    # word cap can't hold grading-system exposition.
+    assert RECAP_BRIEF.input_framing is _SYNTHESIS_RULES
+    # Every persona is mapped, so build_writer_system_prompt never falls back.
+    assert set(RECAP.contracts) == {"scout", "analyst", "generic"}
+    assert all(c is RECAP_BRIEF for c in RECAP.contracts.values())
+
+
+def test_synthesis_framing_recomposes_from_rules_and_explain_the_model():
+    """_SYNTHESIS_FRAMING splits into _SYNTHESIS_RULES + _EXPLAIN_THE_MODEL so
+    REPORT/CHANGES composed prompts stay byte-identical after the split."""
+    from pitcher_narratives.personas import (
+        SCOUT_REPORT,
+        _EXPLAIN_THE_MODEL,
+        _SYNTHESIS_FRAMING,
+        _SYNTHESIS_RULES,
+    )
+
+    assert _SYNTHESIS_FRAMING == _SYNTHESIS_RULES + "\n\n" + _EXPLAIN_THE_MODEL
+    assert SCOUT_REPORT.input_framing.endswith(_EXPLAIN_THE_MODEL)
+
+
+def test_recap_framing_lacks_explain_the_model_but_keeps_key_signals_rule():
+    """RECAP's framing must not carry the EXPLAIN THE MODEL exposition
+    directive (incompatible with the 40-90 word cap), but must still carry
+    the Key Signals synthesis rule."""
+    from pitcher_narratives.personas import RECAP_BRIEF
+
+    assert "EXPLAIN THE MODEL" not in RECAP_BRIEF.input_framing
+    assert "Use the Key Signals" in RECAP_BRIEF.input_framing
+
+
+def test_changes_mandate_references_trend_analysis_not_specialist_block():
+    """The writer only sees specialist prose, never the Recent vs Prior
+    Window block itself (that's trends-specialist-internal) — so the
+    mandate must reference 'the trend analysis' instead."""
+    from pitcher_narratives.personas import _CHANGES_MANDATE
+
+    assert "Recent vs Prior Window block" not in _CHANGES_MANDATE
+    assert "the trend analysis" in _CHANGES_MANDATE
+    # Hedging guidance must survive the reword.
+    assert "hedge explicitly" in _CHANGES_MANDATE
+    assert "over-read a release-point move" in _CHANGES_MANDATE
+
+
+def test_recap_writer_prompt_has_no_explain_the_model_overlay_line():
+    """RECAP contract's input_framing lacks EXPLAIN THE MODEL, so the
+
+    persona overlay's EXPLAIN THE MODEL addendum must not leak into the
+    composed recap prompt either -- a 40-90 word recap has no room for
+    instructions about a section (EXPLAIN THE MODEL) it never writes.
+    """
+    from pitcher_narratives.personas import PERSONAS, RECAP, build_writer_system_prompt
+
+    for persona_id in ("scout", "analyst", "generic"):
+        prompt = build_writer_system_prompt(PERSONAS[persona_id], RECAP)
+        assert "EXPLAIN THE MODEL" not in prompt
+
+
+def test_scout_report_prompt_retains_explain_the_model_framing_and_overlay():
+    """Scout REPORT prompt still carries both the framing block (from
+
+    _SYNTHESIS_FRAMING) and the persona overlay's EXPLAIN THE MODEL line --
+    proving the recap fix didn't regress REPORT/CHANGES prompts.
+    """
+    from pitcher_narratives.personas import PERSONAS, REPORT, build_writer_system_prompt
+
+    prompt = build_writer_system_prompt(PERSONAS["scout"], REPORT)
+    assert prompt.count("EXPLAIN THE MODEL") == 2
+    assert (
+        "keep model explanations terse — a parenthetical or subordinate "
+        "clause, not a dedicated paragraph." in prompt
+    )
+
+
+def test_recap_writer_prompt_uses_brief_structure_not_report_structure():
+    """The composed RECAP writer prompt must carry the brief structure and the
+    synthesis framing — proving the mode selects the recap contract, not the
+    report capsule structure."""
+    from pitcher_narratives.personas import (
+        PERSONAS,
+        RECAP,
+        REPORT,
+        build_writer_system_prompt,
+    )
+
+    recap_prompt = build_writer_system_prompt(PERSONAS["scout"], RECAP)
+    report_prompt = build_writer_system_prompt(PERSONAS["scout"], REPORT)
+    # A distinctive phrase from _RECAP_STRUCTURE appears only in recap.
+    assert "executive brief" in recap_prompt.lower()
+    assert recap_prompt != report_prompt
+
+
+_FIXTURES = Path(__file__).parent / "fixtures"
+
+
+@pytest.mark.parametrize("persona_id", ["scout", "analyst", "generic"])
+def test_recap_writer_prompt_golden(persona_id):
+    from pitcher_narratives.personas import PERSONAS, RECAP, build_writer_system_prompt
+
+    prompt = build_writer_system_prompt(PERSONAS[persona_id], RECAP)
+    golden = (_FIXTURES / f"recap_writer_prompt_{persona_id}.txt").read_text()
+    assert prompt == golden
+    # Anti-tautology guard: the golden must actually be recap-shaped.
+    assert "executive brief" in prompt.lower()
+
+
+def test_changes_mode_registered_and_resolvable():
+    from pitcher_narratives.personas import (
+        CHANGES,
+        NARRATION_MODES,
+        get_narration_mode,
+    )
+
+    assert set(NARRATION_MODES) == {"report", "recap", "changes"}
+    assert get_narration_mode("changes") is CHANGES
+    assert CHANGES.id == "changes"
+
+
+def test_changes_validation_depths_match_report():
+    """CHANGES is a full-length synthesis, so it uses REPORT's 5/2 depths
+    (not RECAP's shallow 1/2). Calibrated in Phase 11."""
+    from pitcher_narratives.config import MAX_FACT_REVISIONS, MAX_REVISIONS
+    from pitcher_narratives.personas import CHANGES
+
+    assert CHANGES.validation.anchor_depth == MAX_REVISIONS
+    assert CHANGES.validation.fact_depth == MAX_FACT_REVISIONS
+
+
+def test_changes_contracts_reuse_report_lengths_and_synthesis_framing():
+    from pitcher_narratives.personas import (
+        CHANGES,
+        CHANGES_ANALYST,
+        CHANGES_GENERIC,
+        CHANGES_SCOUT,
+        _SYNTHESIS_FRAMING,
+    )
+
+    # Every persona is mapped, so build_writer_system_prompt never falls back.
+    assert set(CHANGES.contracts) == {"scout", "analyst", "generic"}
+    assert CHANGES.contracts["scout"] is CHANGES_SCOUT
+    assert CHANGES.contracts["analyst"] is CHANGES_ANALYST
+    assert CHANGES.contracts["generic"] is CHANGES_GENERIC
+    # Reuse the REPORT persona length targets (design §6 "reuse lengths").
+    assert CHANGES_SCOUT.length_target == (150, 350)
+    assert CHANGES_ANALYST.length_target == (450, 800)
+    assert CHANGES_GENERIC.length_target == (300, 500)
+    # Writes FROM the analyses (same spine input as REPORT/RECAP).
+    for c in (CHANGES_SCOUT, CHANGES_ANALYST, CHANGES_GENERIC):
+        assert c.input_framing is _SYNTHESIS_FRAMING
+
+
+def test_changes_writer_prompt_is_change_focused_and_distinct():
+    """The composed CHANGES writer prompt carries the change mandate and differs
+    from both the REPORT and RECAP prompts for the same persona."""
+    from pitcher_narratives.personas import (
+        CHANGES,
+        PERSONAS,
+        RECAP,
+        REPORT,
+        build_writer_system_prompt,
+    )
+
+    changes_prompt = build_writer_system_prompt(PERSONAS["scout"], CHANGES)
+    report_prompt = build_writer_system_prompt(PERSONAS["scout"], REPORT)
+    recap_prompt = build_writer_system_prompt(PERSONAS["scout"], RECAP)
+    # A distinctive phrase from _CHANGES_MANDATE appears only in changes.
+    assert "changes only" in changes_prompt.lower()
+    assert changes_prompt != report_prompt
+    assert changes_prompt != recap_prompt
+
+
+@pytest.mark.parametrize("persona_id", ["scout", "analyst", "generic"])
+def test_changes_writer_prompt_golden(persona_id):
+    from pitcher_narratives.personas import (
+        CHANGES,
+        PERSONAS,
+        build_writer_system_prompt,
+    )
+
+    prompt = build_writer_system_prompt(PERSONAS[persona_id], CHANGES)
+    golden = (_FIXTURES / f"changes_writer_prompt_{persona_id}.txt").read_text()
+    assert prompt == golden
+    # Anti-tautology guard: the golden must actually be change-shaped.
+    assert "changes only" in prompt.lower()
+
+
+def test_report_and_recap_are_single_frame():
+    from pitcher_narratives.personas import RECAP, REPORT
+    from pitcher_narratives.temporal import TemporalFrame
+
+    assert REPORT.temporal_frame == frozenset({TemporalFrame.RECENT})
+    assert RECAP.temporal_frame == frozenset({TemporalFrame.RECENT})
+
+
+def test_changes_declares_recent_and_prior_frames():
+    from pitcher_narratives.personas import CHANGES
+    from pitcher_narratives.temporal import TemporalFrame
+
+    assert CHANGES.temporal_frame == frozenset(
+        {TemporalFrame.RECENT, TemporalFrame.PRIOR}
+    )
+
+
+_MODE_FIXTURE_PREFIX = {"report": "writer_prompt", "recap": "recap_writer_prompt",
+                        "changes": "changes_writer_prompt"}
+
+
+@pytest.mark.parametrize("mode_id", ["report", "recap", "changes"])
+@pytest.mark.parametrize("persona_id", ["scout", "analyst", "generic"])
+def test_writer_prompt_golden_matrix(mode_id, persona_id):
+    """Every (mode, persona) writer prompt matches its committed golden."""
+    prompt = build_writer_system_prompt(get_persona(persona_id), get_narration_mode(mode_id))
+    fixture = _FIXTURES / f"{_MODE_FIXTURE_PREFIX[mode_id]}_{persona_id}.txt"
+    assert fixture.exists(), f"missing golden {fixture}"
+    assert prompt == fixture.read_text()
+
+
+# ── NarrationMode title / distill fields ──
+
+
+def test_mode_titles():
+    from pitcher_narratives.personas import CHANGES, RECAP, REPORT
+
+    assert REPORT.title == "Scouting Report"
+    assert CHANGES.title == "Change Report"
+    assert RECAP.title == "Recap"
+
+
+def test_mode_distill_flags():
+    from pitcher_narratives.personas import CHANGES, RECAP, REPORT
+
+    assert REPORT.distill is True
+    assert CHANGES.distill is True
+    assert RECAP.distill is False
+
+
+def test_mode_title_defaults_to_id():
+    """A mode constructed without a title falls back to id.title()."""
+    from pitcher_narratives.personas import NarrationMode, SCOUT_REPORT
+
+    m = NarrationMode(id="custom", contracts={"scout": SCOUT_REPORT})
+    assert m.title == "Custom"
+
+
+# ── explain_model opt-out ──────────────────────────────────────────────
+
+
+def test_build_system_prompt_explain_model_off_strips_mandate():
+    from pitcher_narratives.personas import SCOUT, SCOUT_REPORT, build_system_prompt
+
+    on = build_system_prompt(SCOUT, SCOUT_REPORT)
+    off = build_system_prompt(SCOUT, SCOUT_REPORT, explain_model=False)
+
+    assert "EXPLAIN THE MODEL" in on
+    assert "EXPLAIN THE MODEL" not in off
+    assert SCOUT.explain_model_addendum.strip() not in off
+
+
+def test_build_system_prompt_explain_model_default_byte_identical():
+    from pitcher_narratives.personas import ANALYST, NEWSLETTER, build_system_prompt
+
+    assert build_system_prompt(ANALYST, NEWSLETTER) == build_system_prompt(
+        ANALYST, NEWSLETTER, explain_model=True
+    )
+
+
+def test_build_system_prompt_explain_model_true_scout_byte_identical():
+    from pitcher_narratives.personas import SCOUT, SCOUT_REPORT, build_system_prompt
+
+    assert build_system_prompt(SCOUT, SCOUT_REPORT) == build_system_prompt(
+        SCOUT, SCOUT_REPORT, explain_model=True
+    )
+
+
+def test_build_system_prompt_explain_model_off_no_dangling_blanks():
+    from pitcher_narratives.personas import SCOUT, SCOUT_REPORT, build_system_prompt
+
+    off = build_system_prompt(SCOUT, SCOUT_REPORT, explain_model=False)
+    assert "\n\n\n" not in off
+
+
+def test_changes_mode_has_anchor_guidance():
+    from pitcher_narratives.personas import CHANGES, RECAP, REPORT
+
+    assert REPORT.anchor_guidance == ""
+    assert RECAP.anchor_guidance == ""
+    g = CHANGES.anchor_guidance
+    assert "change" in g.lower()
+    assert "UNDERWEIGHTED" in g

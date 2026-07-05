@@ -17,6 +17,7 @@ __all__ = [
     "AnchorWarning",
     "WarningCategory",
     "build_anchor_message",
+    "build_reconcile_message",
     "build_revision_message",
 ]
 
@@ -78,13 +79,18 @@ class AnchorResult(BaseModel):
         return len(self.warnings) == 0
 
 
+def _render_warnings(warnings: list[AnchorWarning]) -> str:
+    """Render anchor warnings as a bracketed-category bullet list."""
+    return "\n".join(f"- [{w.category}] {w.description}" for w in warnings)
+
+
 def build_anchor_message(synthesis: str, capsule: str) -> UserPrompt:
     """Build the anchor check user message."""
     return [
         f"## Synthesis (Data Analyst's Briefing)\n{synthesis}",
         CachePoint(),
         f"## Capsule (Editor's Narrative)\n{capsule}\n\n"
-        "Check the capsule against the synthesis. Report any issues or respond CLEAN.",
+        "Check the capsule against the synthesis. Report any issues, or return an empty warnings list if everything checks out.",
     ]
 
 
@@ -106,9 +112,7 @@ def build_revision_message(
     Returns:
         User prompt parts with cache breakpoint after synthesis.
     """
-    formatted_warnings = "\n".join(
-        f"- [{w.category}] {w.description}" for w in warnings
-    )
+    formatted_warnings = _render_warnings(warnings)
     return [
         f"## Data Analyst's Briefing\n{synthesis}",
         CachePoint(),
@@ -118,3 +122,42 @@ def build_revision_message(
         "Preserve the voice, structure, and all unflagged material. "
         "Do not add new analysis or metrics not in the briefing.",
     ]
+
+
+def build_reconcile_message(
+    synthesis: str, capsule: str, warnings: list[AnchorWarning]
+) -> str:
+    """Revision message for anchor warnings raised AFTER a data fact-revision.
+
+    The capsule's numbers were just corrected against source data, so this
+    variant of the revision message forbids touching them: when the anchor
+    says the synthesis disagrees with a number, the synthesis is the side
+    that may be wrong. The writer fixes the warnings through prose —
+    attribution, hedging, dropping unsupported causal claims — never by
+    editing figures back toward the synthesis.
+
+    Args:
+        synthesis: The data analyst's structured briefing.
+        capsule: The fact-checked, numerically authoritative capsule.
+        warnings: Anchor check warnings raised against the revised capsule.
+
+    Returns:
+        A single revision prompt string (no cache breakpoints — this is a
+        one-off reconcile pass, not part of the cached revision loop).
+    """
+    rendered = _render_warnings(warnings)
+    return (
+        "Your capsule was revised by a data fact-check: its numeric values are "
+        "now verified against source data and are authoritative. A subsequent "
+        "anchor check against the specialist synthesis raised the warnings "
+        "below. Revise the capsule to address them, under one hard rule:\n"
+        "DO NOT CHANGE ANY NUMERIC VALUE in the capsule. Where a warning says "
+        "the synthesis shows different numbers, keep the capsule's numbers "
+        "(the fact-check verified them; the synthesis may overstate) and fix "
+        "the prose instead — soften or attribute the claim, hedge the "
+        "mechanism, or drop an unsupported causal link.\n\n"
+        f"WARNINGS:\n{rendered}\n\n"
+        f"SPECIALIST SYNTHESIS:\n{synthesis}\n\n"
+        f"CURRENT CAPSULE:\n{capsule}\n\n"
+        "Return only the revised capsule text."
+    )

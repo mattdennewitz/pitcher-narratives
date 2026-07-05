@@ -1,3 +1,5 @@
+from datetime import date
+
 import polars as pl
 import pytest
 
@@ -11,7 +13,8 @@ from pitcher_narratives.data import (
     compute_pitch_type_baseline,
     compute_season_baseline,
     filter_game_type,
-    filter_to_window,
+    filter_to_prior_appearances,
+    filter_to_recent_appearances,
     load_agg_csvs,
     load_all_statcast,
     load_csv,
@@ -116,18 +119,74 @@ def test_pitch_type_baseline():
     assert not baseline.filter(pl.col("pitch_type") == "").height
 
 
-def test_window_filter():
-    """DATA-04: Window filter restricts to N days from max date in data."""
-    df = load_statcast(TEST_PITCHER)
-    appearances = classify_appearances(df)
-    filtered = filter_to_window(appearances, window_days=7)
-    if not filtered.is_empty():
-        from datetime import date, timedelta
-        from typing import cast
+def test_filter_to_recent_appearances_keeps_n_latest_games():
+    df = pl.DataFrame(
+        {
+            "game_date": [date(2024, 4, 1), date(2024, 4, 1), date(2024, 4, 5), date(2024, 4, 10)],
+            "game_pk": [1, 1, 2, 3],
+            "pitch_type": ["FF", "SL", "FF", "FF"],
+        }
+    )
+    out = filter_to_recent_appearances(df, 2)
+    # The 2 most-recent appearances are 4/10 (pk 3) and 4/5 (pk 2).
+    assert sorted(out["game_pk"].unique().to_list()) == [2, 3]
+    assert len(out) == 2
 
-        max_date = cast(date, appearances["game_date"].max())
-        cutoff = max_date - timedelta(days=7)
-        assert cast(date, filtered["game_date"].min()) >= cutoff
+
+def test_filter_to_recent_appearances_distinguishes_doubleheader_by_game_pk():
+    # Same calendar date, two game_pks -> two distinct appearances.
+    df = pl.DataFrame(
+        {
+            "game_date": [date(2024, 4, 1), date(2024, 4, 1), date(2024, 3, 20)],
+            "game_pk": [10, 11, 5],
+            "pitch_type": ["FF", "FF", "FF"],
+        }
+    )
+    out = filter_to_recent_appearances(df, 2)
+    assert sorted(out["game_pk"].unique().to_list()) == [10, 11]
+
+
+def test_filter_to_recent_appearances_returns_all_when_fewer_than_n():
+    df = pl.DataFrame(
+        {"game_date": [date(2024, 4, 1)], "game_pk": [1], "pitch_type": ["FF"]}
+    )
+    assert len(filter_to_recent_appearances(df, 10)) == 1
+
+
+def test_filter_to_recent_appearances_empty_input_returns_empty():
+    df = pl.DataFrame(
+        schema={"game_date": pl.Date, "game_pk": pl.Int64, "pitch_type": pl.Utf8}
+    )
+    assert filter_to_recent_appearances(df, 5).is_empty()
+
+
+def _appearances(dates_pks):
+    return pl.DataFrame(
+        {"game_date": [d for d, _ in dates_pks], "game_pk": [p for _, p in dates_pks]}
+    )
+
+
+def test_filter_to_prior_appearances_selects_offset_window():
+    df = _appearances([("2024-04-01", 1), ("2024-04-05", 2), ("2024-04-10", 3),
+                       ("2024-04-15", 4), ("2024-04-20", 5)])
+    out = filter_to_prior_appearances(df, recent_n=2, prior_m=2)
+    # recent 2 = pks 5,4; prior 2 = pks 3,2
+    assert sorted(out["game_pk"].to_list()) == [2, 3]
+
+
+def test_filter_to_prior_appearances_empty_when_fewer_than_recent():
+    df = _appearances([("2024-04-01", 1), ("2024-04-05", 2)])
+    assert filter_to_prior_appearances(df, recent_n=5, prior_m=3).is_empty()
+
+
+def test_filter_to_prior_appearances_partial_when_prior_runs_out():
+    df = _appearances([("2024-04-01", 1), ("2024-04-05", 2), ("2024-04-10", 3)])
+    out = filter_to_prior_appearances(df, recent_n=2, prior_m=5)
+    assert out["game_pk"].to_list() == [1]  # only pk1 remains after recent 3,2
+
+
+def test_filter_to_prior_appearances_empty_input():
+    assert filter_to_prior_appearances(pl.DataFrame(), recent_n=1, prior_m=1).is_empty()
 
 
 def test_classify_starter():
@@ -165,13 +224,33 @@ def test_swingman_classification():
 
 def test_load_pitcher_data_returns_complete_bundle():
     """Integration: load_pitcher_data returns all expected data."""
-    data = load_pitcher_data(TEST_PITCHER, window_days=30)
+    data = load_pitcher_data(TEST_PITCHER, recent_appearances=10)
     assert hasattr(data, "statcast")
     assert hasattr(data, "appearances")
     assert hasattr(data, "season_baseline")
     assert hasattr(data, "pitch_type_baseline")
     assert hasattr(data, "agg_csvs")
     assert hasattr(data, "window_appearances")
+
+
+def test_load_pitcher_data_slices_by_appearance_count(monkeypatch):
+    """P6-T2: load_pitcher_data delegates window slicing to filter_to_recent_appearances."""
+    from pitcher_narratives import data as data_mod
+
+    captured = {}
+
+    real = data_mod.filter_to_recent_appearances
+
+    def spy(df, n):
+        captured["n"] = n
+        return real(df, n)
+
+    monkeypatch.setattr(data_mod, "filter_to_recent_appearances", spy)
+    result = data_mod.load_pitcher_data(TEST_PITCHER, recent_appearances=3)
+    assert captured["n"] == 3
+    # window_appearances holds at most 3 distinct appearances.
+    n_appts = result.window_appearances.select("game_date", "game_pk").unique().height
+    assert n_appts <= 3
 
 
 def test_filter_game_type_no_column():

@@ -81,7 +81,7 @@ def test_game_shape_input_injects_sp_guidance_for_starter():
     # SOME pitcher to exercise the injection branch; the guidance content
     # assertions above already validate the string, so here we verify
     # the injection actually happens in the UserPrompt parts.
-    data = load_pitcher_data(592155, window_days=30)
+    data = load_pitcher_data(592155, recent_appearances=10)
     ctx = assemble_pitcher_context(data)
 
     parts = _build_game_shape_input(ctx)

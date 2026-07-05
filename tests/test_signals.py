@@ -3,8 +3,32 @@
 import pytest
 from pydantic import ValidationError
 
-from pitcher_narratives.signals import KeySignals, SIGNAL_EXTRACTOR_PROMPT, _FIELD_LABELS, render_key_signals
+from pitcher_narratives.signals import (
+    KeySignals,
+    SIGNAL_EXTRACTOR_PROMPT,
+    _FIELD_LABELS,
+    count_secondary_signals,
+    render_key_signals,
+)
 from pitcher_narratives.anchor import AnchorWarning
+
+
+class TestCountSecondarySignals:
+    def test_none_signals_counts_zero(self):
+        assert count_secondary_signals(None) == 0
+
+    def test_only_primary_populated_counts_zero(self):
+        ks = KeySignals(top_improvement="Slider S+ jumped", top_concern="Fastball velo down")
+        assert count_secondary_signals(ks) == 0
+
+    def test_counts_only_secondary_fields(self):
+        ks = KeySignals(
+            top_improvement="Slider S+ jumped",
+            top_concern="Fastball velo down",
+            development_pitch="Changeup usage rising",
+            sample_size_caution="Cutter sample thin",
+        )
+        assert count_secondary_signals(ks) == 2
 
 
 class TestAnchorWarningCategory:
@@ -50,7 +74,7 @@ class TestKeySignals:
             top_improvement="Slider S+ jumped to 135",
             top_concern="Fastball velo down 2.1 mph",
             development_pitch="Changeup has S+ 118 but L+ 72, would solve RHB platoon gap",
-            specialist_tension="Stuff says curveball is elite (S+ 128) but run value shows +1.2 xRV100",
+            specialist_tension="Stuff grades the curveball highly (S+ 128) but run value shows +1.2 xRV100",
             arsenal_dependency="Slider accounts for 68% of whiffs, rest of arsenal is replacement-level",
             connected_changes="Velo drop, S+ drop, and increased hard contact all point to fatigue pattern",
             platoon_vulnerability="P+ vs LHB is 82 with no secondary weapon to that side",
@@ -77,7 +101,7 @@ class TestRenderKeySignals:
         ks = KeySignals(
             top_improvement="Slider S+ jumped to 135",
             top_concern="Fastball velo down 2.1 mph",
-            specialist_tension="Stuff says curveball elite but run value disagrees",
+            specialist_tension="Stuff grades curveball highly but run value disagrees",
         )
         rendered = render_key_signals(ks)
         assert "- Specialist Tension:" in rendered
@@ -130,6 +154,52 @@ class TestBuildWriterInputWithSignals:
         )
         assert "## Key Signals" not in result
 
+    def test_missing_temporal_attr_does_not_raise(self):
+        """ctx without a .temporal attribute (as used by other unit tests here)
+        must not blow up build_writer_input — the temporal section is simply
+        omitted."""
+        from types import SimpleNamespace
+        from pitcher_narratives.pipeline import build_writer_input
+
+        ctx = SimpleNamespace(pitcher_name="Test Pitcher", throws="R", role="SP")
+
+        result = build_writer_input(
+            ctx, "stuff output", "location output", "runvalue output",
+            "trends output", "game_shape output",
+        )
+        assert "## Temporal Context" not in result
+
+    def test_includes_temporal_section_when_present(self):
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock
+        from pitcher_narratives.pipeline import build_writer_input
+
+        temporal = MagicMock()
+        temporal.current_season_appearances = 12
+        temporal.current_season_ip = 55.0
+        temporal.current_season = 2026
+        temporal.current_season_first_date = "2026-04-01"
+        temporal.analysis_date = "2026-07-03"
+        temporal.prior_season_appearances = 30
+        temporal.prior_season = 2025
+        temporal.prior_season_ip = 180.0
+        temporal.prior_year_relevance = "HIGH"
+        temporal.prior_year_relevance_reason = "recent history"
+
+        ctx = SimpleNamespace(
+            pitcher_name="Test Pitcher", throws="R", role="SP", temporal=temporal
+        )
+
+        result = build_writer_input(
+            ctx, "stuff output", "location output", "runvalue output",
+            "trends output", "game_shape output",
+        )
+        assert "## Temporal Context" in result
+        # Should appear before the specialist analyses.
+        temporal_pos = result.index("## Temporal Context")
+        stuff_pos = result.index("## Specialist Analysis 1")
+        assert temporal_pos < stuff_pos
+
 
 class TestWriterPromptKeySignals:
     def test_references_key_signals(self):
@@ -167,7 +237,7 @@ class TestDataFileSignalExtractor:
         from pitcher_narratives.data import load_pitcher_data
         from pitcher_narratives.context import assemble_pitcher_context
         from pitcher_narratives.pipeline import write_pipeline_data_file
-        data = load_pitcher_data(592155, window_days=30)
+        data = load_pitcher_data(592155, recent_appearances=10)
         ctx = assemble_pitcher_context(data)
         _path, content = write_pipeline_data_file(ctx, 592155, "gemini")
         assert "SIGNAL EXTRACTOR" in content
@@ -179,7 +249,7 @@ class TestDataFileSignalExtractor:
         from pitcher_narratives.data import load_pitcher_data
         from pitcher_narratives.context import assemble_pitcher_context
         from pitcher_narratives.pipeline import write_pipeline_data_file
-        data = load_pitcher_data(592155, window_days=30)
+        data = load_pitcher_data(592155, recent_appearances=10)
         ctx = assemble_pitcher_context(data)
         _path, content = write_pipeline_data_file(ctx, 592155, "gemini")
         signal_pos = content.index("SIGNAL EXTRACTOR")

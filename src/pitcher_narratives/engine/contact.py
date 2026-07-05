@@ -9,11 +9,11 @@ import polars as pl
 
 from pitcher_narratives.data import PitcherData
 from pitcher_narratives.engine._common import (
-    _COLD_START_STRING,
     _MIN_PITCHES,
     _get_window_game_dates,
-    _is_cold_start,
+    _sufficiency_delta_string,
     _usage_delta_string,
+    frame_sufficiency,
 )
 
 
@@ -56,7 +56,8 @@ def compute_hard_hit_rate(data: PitcherData) -> HardHitRate:
     Returns:
         HardHitRate dataclass with window/season rates, delta, and flags.
     """
-    cold_start = _is_cold_start(data)
+    sufficiency = frame_sufficiency(data)
+    cold_start = sufficiency != "sufficient"
     window_dates = _get_window_game_dates(data)
 
     # Window batted balls
@@ -76,7 +77,9 @@ def compute_hard_hit_rate(data: PitcherData) -> HardHitRate:
     season_hard = season_bip.filter(pl.col("launch_speed") >= 95.0).height
     season_hard_hit_pct = season_hard / season_n * 100.0 if season_n > 0 else 0.0
 
-    delta = _COLD_START_STRING if cold_start else _usage_delta_string(hard_hit_pct - season_hard_hit_pct)
+    delta = _sufficiency_delta_string(
+        sufficiency, _usage_delta_string(hard_hit_pct - season_hard_hit_pct)
+    )
 
     return HardHitRate(
         hard_hit_pct=hard_hit_pct,

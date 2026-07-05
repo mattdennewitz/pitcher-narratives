@@ -12,7 +12,7 @@ Voice and output format are orthogonal concerns, composed at build time:
 - ``SHARED_WRITER_BASE`` holds the *universal analytical rules* that every
   composed writer prompt must obey, exactly once.
 - ``_SYNTHESIS_FRAMING`` holds the framing shared by the specialist-synthesis
-  contracts (report writers); ``_CUE_FRAMING`` is for the digest contract.
+  contracts (report writers).
 
 ``build_system_prompt(persona, contract)`` composes:
 ``universal base + contract.input_framing + persona voice chain + contract.structure``.
@@ -21,28 +21,42 @@ Voice and output format are orthogonal concerns, composed at build time:
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
+
+from pitcher_narratives.config import MAX_FACT_REVISIONS, MAX_REVISIONS
+from pitcher_narratives.temporal import TemporalFrame
 
 log = logging.getLogger("pitcher_narratives.personas")
 
 __all__ = [
     "ANALYST",
     "BRIEF",
-    "CAPSULE",
+    "CHANGES",
+    "CHANGES_ANALYST",
+    "CHANGES_GENERIC",
+    "CHANGES_SCOUT",
+    "DEFAULT_MODE",
     "DEFAULT_PERSONA",
-    "DIGEST_ITEM",
     "GENERIC",
+    "NARRATION_MODES",
     "NEWSLETTER",
     "PERSONAS",
-    "REPORT_CONTRACTS",
+    "RECAP",
+    "RECAP_BRIEF",
+    "REPORT",
     "SCOUT",
+    "SCOUT_REPORT",
     "SECTIONED",
     "SHARED_WRITER_BASE",
+    "NarrationMode",
     "OutputContract",
     "Persona",
+    "ValidationPolicy",
     "build_system_prompt",
     "build_writer_system_prompt",
+    "get_narration_mode",
     "get_persona",
 ]
 
@@ -56,6 +70,7 @@ class Persona:
     description: str
     overlay: str
     parent: str | None = None
+    explain_model_addendum: str = ""
 
     def __post_init__(self) -> None:
         if not self.overlay:
@@ -121,7 +136,7 @@ timeline. Do not hallucinate cumulative fatigue across an offseason.
 # SYNTHESIS-INPUT FRAMING — shared by the specialist-synthesis contracts
 # ═══════════════════════════════════════════════════════════════════════
 
-_SYNTHESIS_FRAMING = """\
+_SYNTHESIS_RULES = """\
 INPUT: Five specialist analyses of a pitcher's recent window:
 1. Pitch quality analysis — physical pitch characteristics and S+ grades
 2. Location analysis — P vs S location impact per pitch
@@ -151,8 +166,10 @@ Changes, etc.) are high-value if they serve the thread — use your \
 judgment on weight. You are not required to mention every secondary \
 signal.
 - If specialists contradict each other on a pitch, acknowledge the \
-tension rather than silently picking one side.
+tension rather than silently picking one side.\
+"""
 
+_EXPLAIN_THE_MODEL = """\
 EXPLAIN THE MODEL: Every capsule must contextualize the grading system \
 when first referenced. S+ measures pitch physical quality, L+ measures \
 location, P+ is the combined Pitching+ grade. Explain what decisions \
@@ -161,19 +178,7 @@ used — so the reader understands the analytical foundation, not just \
 the conclusions.\
 """
 
-
-# ═══════════════════════════════════════════════════════════════════════
-# CUE-INPUT FRAMING — for the digest contract (one editorial cue, no specialists)
-# ═══════════════════════════════════════════════════════════════════════
-
-_CUE_FRAMING = """\
-You write one short item for a data-driven baseball morning digest.
-
-INPUT: a cue package for one pitcher's recent appearance — fired \
-scouting signals, the editor's framing (category, angle, conviction), \
-season context, and optionally a ## Key Signals block with \
-cross-specialist patterns.\
-"""
+_SYNTHESIS_FRAMING = _SYNTHESIS_RULES + "\n\n" + _EXPLAIN_THE_MODEL
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -238,6 +243,11 @@ twice if the second citation explains the first.
 HARD LIMIT: Do not exceed 800 words. If you approach 700 words, wrap up.\
 """
 
+# INTENT: the sectioned contract deliberately mirrors the five specialists.
+# It is the structured-consumer format — readers who want a labeled breakdown
+# and a summary table, not a narrative. The narrative-first thesis is carried
+# by the synthesis framing (cross-specialist threading still applies inside
+# each section); do not "fix" the section names to hide the specialists.
 _SECTIONED_STRUCTURE = """\
 TARGET: 300-500 words total across all sections. Each section is \
 2-4 sentences of concise declarative prose. The fixed sections and \
@@ -283,21 +293,6 @@ the total metric footprint across the capsule may exceed three.
 HARD LIMIT: Do not exceed 500 words. Concision is the voice.\
 """
 
-_DIGEST_STRUCTURE = """\
-CONTRACT:
-- Lead with the editor's angle. It is the story; do not bury it.
-- Ground every claim in the cue's numbers. Do not invent statistics.
-- Scale your tone to the stated conviction: a 'low' conviction story \
-is framed as something to monitor, not a breakout.
-- Key Signals (if a ## Key Signals block is present): treat it as the \
-priority lens. State each finding once with the best evidence — do not \
-restate a metric that already appears in the cue body. Weave the top \
-improvement or concern into the what-to-watch close.
-- Close with one sentence on what to watch in the next outing.
-- 150-250 words. No headline; prose only — the document supplies \
-headings.\
-"""
-
 _BRIEF_STRUCTURE = """\
 Compose a 2-3 sentence brief. No headings, no bullets, no tables — \
 prose only.
@@ -316,6 +311,109 @@ HARD LIMIT: 3 sentences. Roughly 40-90 words. If you reach three \
 sentences, stop.\
 """
 
+_RECAP_STRUCTURE = """\
+Write a tight executive brief — 2 to 4 sentences, one continuous thread, no \
+headings or bullets.
+
+- Lead with the single most important recent development for this pitcher \
+(the biggest change, adaptation, or execution trend in the analyses).
+- Support it with at most one or two grounding metrics drawn straight from \
+the analyses. Do not invent numbers or reach for a second storyline.
+- Close on what it means going forward. Keep it scannable and quotable.
+
+This is a recap, not a full scouting report: depth is traded for a single \
+clear takeaway. Target 40-90 words; never exceed 4 sentences."""
+
+# ═══════════════════════════════════════════════════════════════════════
+# CHANGES-MODE STRUCTURES — change-focused writer contracts (design §6).
+# Same synthesis framing + persona length targets as REPORT; the writer is
+# directed to report only what MOVED and lead with the biggest shift.
+# ═══════════════════════════════════════════════════════════════════════
+
+_CHANGES_MANDATE = """\
+FOCUS — CHANGES ONLY: Report what has CHANGED for this pitcher in the recent \
+window relative to his season baseline. This is not a full scouting report; it \
+is a change log written with a scout's eye.
+- Lead with the single biggest shift — the largest, most consequential change \
+across the five analyses. Your first sentence names it.
+- Report only what moved. A stable, unchanged trait is not a story here; omit \
+it unless it directly frames a change (e.g. a steady fastball that makes a \
+slider's new shape stand out).
+- Prefer deltas to states. "The slider added three inches of drop" beats "the \
+slider has good drop." If a metric did not change, it does not earn a sentence.
+- A quiet window is itself the finding. If little moved, say so plainly and \
+tentatively rather than manufacturing movement out of noise.
+- Distinguish mechanism from mix. When the trend analysis shows a \
+release-point or extension shift alongside a velo or shape change, that pairing \
+is a mechanical-adjustment signal — name it as such (e.g. "a lower slot is \
+driving the added run"). A usage shift with no release-point movement is a \
+pitch-mix or game-plan change instead. Never claim a mechanical cause the data \
+doesn't support, and hedge explicitly when the trend analysis itself says not to \
+over-read a release-point move.\
+"""
+
+_CHANGES_SCOUT_STRUCTURE = (
+    _CHANGES_MANDATE
+    + "\n\n"
+    + """\
+Compose a tight 2-3 paragraph change capsule. Prose only — no bullets, headers, \
+or tables.
+- Paragraph 1: the biggest shift, stated concretely, with the one metric that \
+proves it.
+- Paragraph 2+: the secondary changes that survive the sample size, and what \
+the combined picture means going forward.
+- At most three primary metrics carry the narrative.\
+"""
+)
+
+_CHANGES_NEWSLETTER_STRUCTURE = (
+    _CHANGES_MANDATE
+    + "\n\n"
+    + """\
+TARGET: 450-800 words, 4-6 paragraphs, framed as a change briefing.
+- Prose only. No tables, no bullet lists. Bolded leading phrases at the start \
+of paragraphs are allowed. No Markdown ## headings.
+- Open on the biggest shift as a hook, then walk the connected changes in \
+order of consequence.
+- Three-metric maximum per paragraph; you may cite the same metric twice if \
+the second citation explains the first.
+
+HARD LIMIT: Do not exceed 800 words. If you approach 700 words, wrap up.\
+"""
+)
+
+_CHANGES_SUMMARY_STRUCTURE = (
+    _CHANGES_MANDATE
+    + "\n\n"
+    + """\
+TARGET: 300-500 words of concise declarative prose, framed as a change summary.
+- Prose only. No Markdown headings, no tables, no bullet lists — one continuous \
+change log.
+- Lead with the biggest shift, then the secondary changes in order of \
+consequence. Each change is 2-4 sentences.
+- Three-metric maximum per change.
+
+HARD LIMIT: Do not exceed 500 words. Concision is the voice.\
+"""
+)
+
+_CHANGES_ANCHOR_GUIDANCE = """\
+CHANGE-FOCUSED CAPSULE: This capsule is a change log — its mandate is to \
+report what MOVED in the recent window versus the prior window, and to omit \
+or deprioritize stable traits. Apply your emphasis rules accordingly: a \
+primary or secondary signal that describes a STEADY state (an unchanged \
+strength, a stable grade) may legitimately be deprioritized or mentioned \
+only in passing — do not flag that as MISSED_SIGNAL or UNDERWEIGHTED. \
+Reserve those flags for signals that themselves describe a CHANGE the \
+capsule ignores or buries. Numeric deltas in this capsule are stated against \
+the PRIOR window unless the capsule says otherwise; do not flag them for \
+disagreeing with season-baseline figures."""
+
+# BRIEF vs RECAP_BRIEF: intentionally separate contracts. BRIEF distills the
+# finished report (report/changes modes, recover-only grounding); RECAP_BRIEF
+# writes a standalone brief straight from the analyses (recap mode). Since
+# recap skips distillation (NarrationMode.distill), they never co-occur in
+# one document.
 BRIEF = OutputContract(
     id="brief",
     length_target=(40, 90),
@@ -323,8 +421,19 @@ BRIEF = OutputContract(
     input_framing=_BRIEF_FRAMING_FROM_REPORT,
 )
 
-CAPSULE = OutputContract(
-    id="capsule",
+# RECAP: an executive-brief writer contract. Same grounded synthesis framing
+# as the scouting report (writes FROM the analyses), but a brief-shaped
+# structure. Voice still comes from the persona overlay, so one contract
+# serves all personas.
+RECAP_BRIEF = OutputContract(
+    id="recap",
+    length_target=(40, 90),
+    structure=_RECAP_STRUCTURE,
+    input_framing=_SYNTHESIS_RULES,
+)
+
+SCOUT_REPORT = OutputContract(
+    id="scout_report",
     length_target=(150, 350),
     structure=_CAPSULE_STRUCTURE,
     input_framing=_SYNTHESIS_FRAMING,
@@ -344,20 +453,165 @@ SECTIONED = OutputContract(
     input_framing=_SYNTHESIS_FRAMING,
 )
 
-DIGEST_ITEM = OutputContract(
-    id="digest_item",
-    length_target=(150, 250),
-    structure=_DIGEST_STRUCTURE,
-    input_framing=_CUE_FRAMING,
+CHANGES_SCOUT = OutputContract(
+    id="changes_scout",
+    length_target=(150, 350),
+    structure=_CHANGES_SCOUT_STRUCTURE,
+    input_framing=_SYNTHESIS_FRAMING,
 )
 
-# Pairs each persona with its canonical report contract so build_writer_system_prompt
-# remains a backward-compatible shim.
-REPORT_CONTRACTS: dict[str, OutputContract] = {
-    "scout": CAPSULE,
-    "analyst": NEWSLETTER,
-    "generic": SECTIONED,
+CHANGES_ANALYST = OutputContract(
+    id="changes_analyst",
+    length_target=(450, 800),
+    structure=_CHANGES_NEWSLETTER_STRUCTURE,
+    input_framing=_SYNTHESIS_FRAMING,
+)
+
+CHANGES_GENERIC = OutputContract(
+    id="changes_generic",
+    length_target=(300, 500),
+    structure=_CHANGES_SUMMARY_STRUCTURE,
+    input_framing=_SYNTHESIS_FRAMING,
+)
+
+
+@dataclass(frozen=True)
+class ValidationPolicy:
+    """Per-mode revision-depth knobs for the shared validation stack.
+
+    Detection always runs (cheap, mandatory); only remediation depth is
+    tuned. ``depth == 0`` is valid: the loop runs its detection pass, surfaces
+    residual flags, and declines to auto-fix (design §7).
+
+    Attributes:
+        anchor_depth: Max anchor-revision passes (``max_revisions``).
+        fact_depth: Max capsule fact-revision passes (``max_fact_revisions``).
+    """
+
+    anchor_depth: int
+    fact_depth: int
+
+
+@dataclass(frozen=True)
+class NarrationMode:
+    """A top-level narration selector composed with the Persona × OutputContract
+    machinery. A mode owns the persona → report-contract mapping (which output
+    structure each voice writes in). Voice stays orthogonal: Persona picks tone,
+    NarrationMode picks the output shape.
+
+    Phase 4 carries only ``id`` and ``contracts`` — the members the REPORT path
+    consumes today. Phase 7 adds ``validation``, the per-mode revision-depth
+    knobs threaded into the shared validation stack. The frame selector, focus
+    directive, and input assembler (design §4) are added by later phases (5/8/9)
+    that consume them; frozen-dataclass fields with defaults can be appended
+    without breaking existing construction.
+
+    ``title`` is the reader-facing H1 the CLI prints above the mode's streamed
+    capsule. ``distill`` controls whether the pipeline runs the second-step
+    summarizers (executive summary + brief); RECAP's capsule *is* a brief, so
+    it skips them.
+
+    ``anchor_guidance`` is an optional mode-specific overlay appended to the
+    anchor agent's system prompt — modes whose narrative mandate legitimately
+    reweights signals (CHANGES) use it to keep the anchor's emphasis rules
+    consistent with the writer's contract.
+    """
+
+    id: str
+    contracts: Mapping[str, OutputContract]
+    validation: ValidationPolicy = ValidationPolicy(
+        anchor_depth=MAX_REVISIONS, fact_depth=MAX_FACT_REVISIONS
+    )
+    temporal_frame: frozenset[TemporalFrame] = frozenset({TemporalFrame.RECENT})
+    title: str = ""
+    distill: bool = True
+    anchor_guidance: str = ""
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "contracts", MappingProxyType(dict(self.contracts)))
+        if not self.title:
+            object.__setattr__(self, "title", self.id.title())
+
+
+# REPORT reproduces today's report path: each persona's canonical output contract.
+REPORT = NarrationMode(
+    id="report",
+    contracts={
+        "scout": SCOUT_REPORT,
+        "analyst": NEWSLETTER,
+        "generic": SECTIONED,
+    },
+    validation=ValidationPolicy(
+        anchor_depth=MAX_REVISIONS, fact_depth=MAX_FACT_REVISIONS
+    ),
+    title="Scouting Report",
+)
+
+# RECAP reproduces the executive-brief path as a first-class mode. It caps the
+# anchor loop at 1 (short brief, less to drift) and keeps the fact loop at 2
+# (design §7). Standalone via `report --mode recap`; morning adopts it in 8B.
+RECAP = NarrationMode(
+    id="recap",
+    contracts={
+        "scout": RECAP_BRIEF,
+        "analyst": RECAP_BRIEF,
+        "generic": RECAP_BRIEF,
+    },
+    validation=ValidationPolicy(anchor_depth=1, fact_depth=2),
+    title="Recap",
+    distill=False,
+)
+
+# CHANGES foregrounds what moved in the recent window (design §6). In 9A it
+# rides the same RECENT-vs-SEASON spine as REPORT and differs only in the writer
+# contract; the recent-X-vs-prior-Y two-frame engine lands in 9B. Full-length
+# synthesis, so it keeps REPORT's 5/2 revision depths (calibrated in Phase 11).
+CHANGES = NarrationMode(
+    id="changes",
+    contracts={
+        "scout": CHANGES_SCOUT,
+        "analyst": CHANGES_ANALYST,
+        "generic": CHANGES_GENERIC,
+    },
+    validation=ValidationPolicy(
+        anchor_depth=MAX_REVISIONS, fact_depth=MAX_FACT_REVISIONS
+    ),
+    temporal_frame=frozenset({TemporalFrame.RECENT, TemporalFrame.PRIOR}),
+    title="Change Report",
+    anchor_guidance=_CHANGES_ANCHOR_GUIDANCE,
+)
+
+_NARRATION_MODES_INTERNAL: dict[str, NarrationMode] = {
+    "report": REPORT,
+    "recap": RECAP,
+    "changes": CHANGES,
 }
+
+# Import-time invariant: registry key must match mode.id.
+for _mid, _mode in _NARRATION_MODES_INTERNAL.items():
+    if _mode.id != _mid:
+        raise ValueError(
+            f"Registry key {_mid!r} does not match mode.id {_mode.id!r}"
+        )
+del _mid, _mode
+
+NARRATION_MODES: MappingProxyType[str, NarrationMode] = MappingProxyType(
+    _NARRATION_MODES_INTERNAL
+)
+
+DEFAULT_MODE: NarrationMode = NARRATION_MODES["report"]
+
+
+def get_narration_mode(mode_id: str) -> NarrationMode:
+    """Resolve a narration-mode id to its NarrationMode instance.
+
+    Raises ValueError (not KeyError) with the valid ids, mirroring get_persona.
+    """
+    try:
+        return NARRATION_MODES[mode_id]
+    except KeyError:
+        valid = ", ".join(sorted(NARRATION_MODES.keys()))
+        raise ValueError(f"Unknown narration mode {mode_id!r}; valid: {valid}") from None
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -374,8 +628,10 @@ conversational.
 - Vary sentence length. Short sentences land points.
 - Use scouting language: stuff, feel, finding a groove, getting tagged.
 - No clichés, no formulaic transitions, no "the data shows."
-- Start immediately with analysis. No introductory fluff.
+- Start immediately with analysis. No introductory fluff.\
+"""
 
+_SCOUT_EXPLAIN_THE_MODEL_ADDENDUM = """\
 For the EXPLAIN THE MODEL section: keep model explanations terse — \
 a parenthetical or subordinate clause, not a dedicated paragraph.\
 """
@@ -408,8 +664,10 @@ league-average S+ on a sweeper is close to 100").
 VOCABULARY:
 - Teaching vocabulary is permitted: "playability," "tunneling gap," \
 "pitch tree," "arsenal depth," "model," "credit," "grade," \
-"below-average," "holds up," "pencils out."
+"below-average," "holds up," "pencils out."\
+"""
 
+_ANALYST_EXPLAIN_THE_MODEL_ADDENDUM = """\
 For the EXPLAIN THE MODEL section: full-sentence depth. Each plus-metric's \
 first appearance gets a sentence explaining what the metric measures and \
 why the grade is what it is. This is the teaching persona.\
@@ -427,8 +685,10 @@ conversational; accessible, not simplified.
 
 VOCABULARY:
 - Plain declarative voice. No newsletter framing ("what we're seeing \
-here"), no conversational lead ("here's the thing about the slider").
+here"), no conversational lead ("here's the thing about the slider").\
+"""
 
+_GENERIC_EXPLAIN_THE_MODEL_ADDENDUM = """\
 For the EXPLAIN THE MODEL section: each `##` section's first \
 Pitching+ reference gets one sentence of context. "S+ measures \
 physical pitch quality — 112 for the slider means the model credited \
@@ -449,6 +709,7 @@ SCOUT = Persona(
         "conversational, sabermetric voice"
     ),
     overlay=_SCOUT_OVERLAY,
+    explain_model_addendum=_SCOUT_EXPLAIN_THE_MODEL_ADDENDUM,
 )
 
 ANALYST = Persona(
@@ -460,6 +721,7 @@ ANALYST = Persona(
     ),
     overlay=_ANALYST_OVERLAY,
     parent="scout",
+    explain_model_addendum=_ANALYST_EXPLAIN_THE_MODEL_ADDENDUM,
 )
 
 GENERIC = Persona(
@@ -471,6 +733,7 @@ GENERIC = Persona(
     ),
     overlay=_GENERIC_OVERLAY,
     parent="scout",
+    explain_model_addendum=_GENERIC_EXPLAIN_THE_MODEL_ADDENDUM,
 )
 
 _PERSONAS_INTERNAL: dict[str, Persona] = {
@@ -512,38 +775,67 @@ def get_persona(persona_id: str) -> Persona:
         raise ValueError(f"Unknown persona {persona_id!r}; valid: {valid}") from None
 
 
-def build_system_prompt(persona: Persona, contract: OutputContract) -> str:
+def build_system_prompt(
+    persona: Persona, contract: OutputContract, *, explain_model: bool = True
+) -> str:
     """Compose a writer system prompt from voice + output-target layers.
 
     Order: universal analytical rules + contract input framing + persona voice
     chain (parent overlay first, then own overlay) + contract structure. Parent
     references resolve via get_persona for a uniform error contract.
+
+    Each overlay's EXPLAIN THE MODEL addendum is appended only when the
+    contract's input_framing actually carries an EXPLAIN THE MODEL mandate
+    (REPORT/CHANGES contracts do via _SYNTHESIS_FRAMING; RECAP does not,
+    since its framing is the bare _SYNTHESIS_RULES). This keeps a 40-90
+    word recap from being told to explain a section it never writes, while
+    leaving REPORT/CHANGES prompts byte-identical to before.
+
+    ``explain_model=False`` strips the EXPLAIN THE MODEL mandate from the
+    input framing (for readers who don't need S+/L+/P+ re-taught every
+    capsule); because the per-persona addenda key off the mandate's
+    presence, they drop with it. ``explain_model=True`` is byte-identical
+    to before.
     """
-    parts = [SHARED_WRITER_BASE, contract.input_framing]
+    framing = contract.input_framing
+    if not explain_model:
+        framing = framing.replace("\n\n" + _EXPLAIN_THE_MODEL, "").replace(
+            _EXPLAIN_THE_MODEL, ""
+        )
+    wants_explain_model = "EXPLAIN THE MODEL" in framing
+    parts = [SHARED_WRITER_BASE, framing]
     if persona.parent is not None:
-        parts.append(get_persona(persona.parent).overlay)
+        parent = get_persona(persona.parent)
+        parts.append(parent.overlay)
+        if wants_explain_model and parent.explain_model_addendum:
+            parts.append(parent.explain_model_addendum)
     parts.append(persona.overlay)
+    if wants_explain_model and persona.explain_model_addendum:
+        parts.append(persona.explain_model_addendum)
     parts.append(contract.structure)
     return "\n\n".join(parts)
 
 
-def build_writer_system_prompt(persona: Persona) -> str:
-    """Compose the report-writer prompt for a persona.
+def build_writer_system_prompt(
+    persona: Persona, mode: NarrationMode = DEFAULT_MODE, *, explain_model: bool = True
+) -> str:
+    """Compose the report-writer prompt for a persona within a narration mode.
 
-    Thin shim over build_system_prompt that pairs the persona with the report
-    contract matching its current output format, keeping report call sites and
-    behaviour unchanged.
+    Thin shim over build_system_prompt that pairs the persona with the mode's
+    output contract for its voice, keeping report call sites and behaviour
+    unchanged (mode defaults to REPORT).
 
-    Personas not present in REPORT_CONTRACTS (e.g. newly added voice personas)
-    fall back to CAPSULE — the default report format — rather than raising a
-    KeyError.
+    Personas not present in the mode's contracts (e.g. newly added voice
+    personas) fall back to SCOUT_REPORT — the default report format — rather
+    than raising a KeyError.
     """
-    contract = REPORT_CONTRACTS.get(persona.id)
+    contract = mode.contracts.get(persona.id)
     if contract is None:
         log.warning(
-            "Persona %r has no REPORT_CONTRACTS entry; falling back to CAPSULE. "
-            "Add an entry to REPORT_CONTRACTS to suppress this warning.",
+            "Persona %r has no contract in mode %r; falling back to SCOUT_REPORT. "
+            "Add an entry to the mode's contracts to suppress this warning.",
             persona.id,
+            mode.id,
         )
-        contract = CAPSULE
-    return build_system_prompt(persona, contract)
+        contract = SCOUT_REPORT
+    return build_system_prompt(persona, contract, explain_model=explain_model)

@@ -14,8 +14,33 @@ TEST_PITCHER = 592155  # Booser, Cam
 @pytest.fixture(scope="module")
 def ctx():
     """Load data once per module (read-only test data)."""
-    data = load_pitcher_data(TEST_PITCHER, window_days=30)
+    data = load_pitcher_data(TEST_PITCHER, recent_appearances=10)
     return assemble_pitcher_context(data)
+
+
+def test_assemble_prior_context_differs_from_recent():
+    from pitcher_narratives.data import load_pitcher_data
+    from pitcher_narratives.context import assemble_pitcher_context, assemble_prior_context
+
+    data = load_pitcher_data(592155, recent_appearances=5)
+    recent = assemble_pitcher_context(data)
+    prior = assemble_prior_context(data, recent_n=5, prior_m=5)
+    # Both are fully-shaped PitcherContexts; the prior frame draws different
+    # appearances, so at least the window pitch counts differ.
+    assert isinstance(prior.arsenal, list)
+    recent_counts = {p.pitch_name: p.n_pitches_window for p in recent.arsenal}
+    prior_counts = {p.pitch_name: p.n_pitches_window for p in prior.arsenal}
+    assert recent_counts != prior_counts
+
+
+def test_assemble_prior_context_empty_prior_is_shaped():
+    from pitcher_narratives.data import load_pitcher_data
+    from pitcher_narratives.context import assemble_prior_context
+
+    data = load_pitcher_data(592155, recent_appearances=5)
+    # recent_n far beyond available -> prior slice empty -> still a valid ctx
+    prior = assemble_prior_context(data, recent_n=9999, prior_m=5)
+    assert prior.pitcher_name  # shaped, no crash (empty-frame guards from Phase 5)
 
 
 # ── Assembly tests ────────────────────────────────────────────────────
@@ -361,3 +386,43 @@ def test_to_prompt_pitch_shape_has_arm_angle(ctx):
     start = prompt.index("Pitch Shape vs Arm Slot")
     section = prompt[start : prompt.index("\n## ", start)]
     assert "deg" in section
+
+
+# ── MultiFrameContext (Phase 2) ──────────────────────────────────────
+
+
+def test_multi_frame_context_primary_and_for_frame(ctx):
+    from pitcher_narratives.context import MultiFrameContext
+    from pitcher_narratives.temporal import TemporalFrame
+
+    mfc = MultiFrameContext(frames={TemporalFrame.RECENT: ctx})
+    assert mfc.primary is ctx
+    assert mfc.for_frame(TemporalFrame.RECENT) is ctx
+
+    import pytest
+    with pytest.raises(ValueError, match="season"):
+        mfc.for_frame(TemporalFrame.SEASON)
+
+
+def test_assemble_multi_frame_primary_matches_single(ctx):
+    from pitcher_narratives.context import assemble_multi_frame_context
+    from pitcher_narratives.data import load_pitcher_data
+    from pitcher_narratives.temporal import TemporalFrame
+
+    data = load_pitcher_data(592155, recent_appearances=10)
+    mfc = assemble_multi_frame_context(data)
+
+    assert set(mfc.frames) == {TemporalFrame.RECENT}
+    # Behavior-preserving: the wrapped frame matches the existing assembly.
+    assert mfc.primary.pitcher_id == ctx.pitcher_id
+    assert mfc.primary.to_prompt() == ctx.to_prompt()
+
+
+def test_primary_frame_is_recent():
+    from pitcher_narratives.context import assemble_multi_frame_context
+    from pitcher_narratives.temporal import TemporalFrame
+
+    data = load_pitcher_data(TEST_PITCHER, recent_appearances=10)
+    mfc = assemble_multi_frame_context(data)
+    assert TemporalFrame.RECENT in mfc.frames
+    assert mfc.primary is mfc.for_frame(TemporalFrame.RECENT)

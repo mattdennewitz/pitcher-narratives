@@ -10,7 +10,7 @@ __init__.py re-exports specific names for the test suite.
 from __future__ import annotations
 
 import logging
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 import polars as pl
 
@@ -51,8 +51,20 @@ _FEET_TO_INCHES = 12.0
 _MIN_PITCHES = 10
 """Minimum pitches for per-type analysis; below this flag small_sample=True."""
 
-_COLD_START_STRING = "Full season in window -- no trend comparison"
-"""Delta string used when window covers entire season."""
+_THIN_APPEARANCES = 10
+"""Below this many appearances the frame is too thin for a power comparison."""
+
+_THIN_FRAME_STRING = "Underpowered comparison -- insufficient window sample"
+"""Delta string used when the window is non-empty but underpowered."""
+
+_EMPTY_FRAME_STRING = "No data for this frame"
+"""Delta string used when the frame contains no data."""
+
+_INSUFFICIENT_SAMPLE_STRING = "insufficient sample"
+"""Delta string used when the window pitch count is below _MIN_PITCHES."""
+
+FrameSufficiency = Literal["sufficient", "thin", "empty"]
+"""Three-state classification of a frame's power to support a comparison."""
 
 _CSW_DESCRIPTIONS = frozenset(
     {
@@ -217,7 +229,7 @@ def _per_season_velo(statcast: pl.DataFrame) -> dict[int, float]:
 
 
 def _pplus_delta_strings(
-    cold_start: bool,
+    sufficiency: FrameSufficiency,
     season_p: float,
     season_s: float,
     season_l: float,
@@ -225,9 +237,11 @@ def _pplus_delta_strings(
     window_s: float | None,
     window_l: float | None,
 ) -> tuple[str, str, str]:
-    """Compute P+/S+/L+ delta strings with cold start and None handling."""
-    if cold_start:
-        return _COLD_START_STRING, _COLD_START_STRING, _COLD_START_STRING
+    """Compute P+/S+/L+ delta strings with frame-state and None handling."""
+    if sufficiency == "empty":
+        return _EMPTY_FRAME_STRING, _EMPTY_FRAME_STRING, _EMPTY_FRAME_STRING
+    if sufficiency == "thin":
+        return _THIN_FRAME_STRING, _THIN_FRAME_STRING, _THIN_FRAME_STRING
     if window_p is None:
         return "No window data", "No window data", "No window data"
     return (
@@ -273,16 +287,56 @@ def _get_window_game_dates(data: PitcherData) -> list[Any]:
     return data.window_appearances["game_date"].unique().to_list()
 
 
-def _is_cold_start(data: PitcherData) -> bool:
-    """Check if window covers the full season (cold start).
+def _most_recent_row(appearances: pl.DataFrame) -> dict[str, Any]:
+    """Return the most-recent appearance as a named dict, deterministically.
+
+    Sorts by ``game_date`` then ``game_pk`` (both descending) so doubleheaders
+    (two ``game_pk`` on one date) resolve to a single stable "most recent" pick.
+
+    Args:
+        appearances: Per-appearance DataFrame with ``game_date`` and ``game_pk``.
+
+    Returns:
+        Row 0 after the deterministic sort, as a column->value dict.
+    """
+    return (
+        appearances.sort(
+            ["game_date", "game_pk"], descending=True, nulls_last=True
+        ).row(0, named=True)
+    )
+
+
+def frame_sufficiency(data: PitcherData) -> FrameSufficiency:
+    """Classify a frame's power to support a season-vs-window comparison.
+
+    Returns ``"empty"`` (no window appearances), ``"thin"`` (non-empty but
+    underpowered: the window covers the whole season -- so there is no prior
+    baseline to compare against -- or it holds fewer than ``_THIN_APPEARANCES``
+    appearances), and ``"sufficient"`` otherwise. This appearance-count frame
+    sufficiency gate replaces the previous cold-start detector (design §15 G8).
 
     Args:
         data: PitcherData bundle.
 
     Returns:
-        True when window_appearances covers all appearances.
+        The frame's :data:`FrameSufficiency` classification.
     """
-    return len(data.window_appearances) >= len(data.appearances)
+    n_window = len(data.window_appearances)
+    n_total = len(data.appearances)
+    if n_window == 0:
+        return "empty"
+    if n_window >= n_total or n_window < _THIN_APPEARANCES:
+        return "thin"
+    return "sufficient"
+
+
+def _sufficiency_delta_string(sufficiency: FrameSufficiency, computed: str) -> str:
+    """Return the frame-state string for a delta, or the computed string when sufficient."""
+    if sufficiency == "empty":
+        return _EMPTY_FRAME_STRING
+    if sufficiency == "thin":
+        return _THIN_FRAME_STRING
+    return computed
 
 
 def _weighted_window_metrics(

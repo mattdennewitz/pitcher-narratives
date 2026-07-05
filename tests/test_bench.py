@@ -20,7 +20,7 @@ from pitcher_narratives.bench.rubric import (
     weighted_overall,
 )
 from pitcher_narratives.bench.runner import run_provider
-from pitcher_narratives.bench.scorecard import JudgedRecord, aggregate, render_report
+from pitcher_narratives.bench.scorecard import JudgedRecord, _rubric_for, aggregate, render_report
 
 TEST_PITCHER = 592155
 
@@ -170,6 +170,16 @@ def _judged(score: int, rubric) -> JudgedOutput:
     )
 
 
+def test_rubric_for_namespaced_capsule_tiers():
+    """Namespaced capsule tiers resolve to CAPSULE_RUBRIC; specialists to AGENT."""
+    assert _rubric_for("capsule") is CAPSULE_RUBRIC
+    assert _rubric_for("capsule:report") is CAPSULE_RUBRIC
+    assert _rubric_for("capsule:recap") is CAPSULE_RUBRIC
+    assert _rubric_for("capsule:changes") is CAPSULE_RUBRIC
+    assert _rubric_for("specialist:stuff") is AGENT_RUBRIC
+    assert _rubric_for("specialist:trends") is AGENT_RUBRIC
+
+
 def test_aggregate_means_across_judges():
     """Two judges' scores for one output average per dimension."""
     records = [
@@ -215,7 +225,7 @@ def test_run_provider_captures_all_tiers():
     assert captured.error is None
     assert captured.wall_s >= 0
     for key in ("specialist:stuff", "specialist:location", "specialist:runvalue",
-                "specialist:trends", "specialist:game_shape", "capsule"):
+                "specialist:trends:report", "specialist:game_shape", "capsule:report"):
         assert key in captured.outputs, f"missing {key}"
         assert captured.outputs[key]
         assert captured.ground_truths.get(key), f"missing ground truth for {key}"
@@ -223,7 +233,50 @@ def test_run_provider_captures_all_tiers():
     # generic context doc -- otherwise the judge calls provided data
     # 'invented' and grounding scores are artifacts.
     assert "Arsenal Physical Profile" in captured.ground_truths["specialist:stuff"]
-    assert "Specialist Analysis" in captured.ground_truths["capsule"]
+    assert "Specialist Analysis" in captured.ground_truths["capsule:report"]
+
+
+@pytest.mark.skipif(
+    not __import__("pitcher_narratives.data", fromlist=["statcast_parquet_path"]).statcast_parquet_path(2026).exists(),
+    reason="statcast parquet files not present (set STATCAST_PATH)",
+)
+def test_run_provider_captures_per_mode_capsules():
+    """A multi-mode run captures a namespaced capsule + exec summary per mode,
+    the four mode-agnostic specialists once, and a per-mode TRENDS specialist
+    whose ground truth carries the CHANGES frame comparison."""
+    from pitcher_narratives.personas import get_narration_mode
+
+    modes = [get_narration_mode("report"), get_narration_mode("changes")]
+    captured = run_provider(
+        TEST_PITCHER, provider="gemini", thinking="low", persona="scout",
+        modes=modes, _model_override=TestModel(call_tools=[]),
+    )
+    assert captured.ok
+    # Four specialists captured once, mode-agnostic.
+    for spec in ("specialist:stuff", "specialist:location", "specialist:runvalue",
+                 "specialist:game_shape"):
+        assert captured.outputs[spec]
+        assert captured.ground_truths.get(spec), f"missing ground truth for {spec}"
+    # No bare, un-namespaced trends tier survives.
+    assert "specialist:trends" not in captured.outputs
+    # TRENDS is captured per mode, each with its own ground truth.
+    for mode_id in ("report", "changes"):
+        trends = f"specialist:trends:{mode_id}"
+        assert captured.outputs[trends]
+        assert captured.ground_truths.get(trends), f"missing ground truth for {trends}"
+    # The fix: the CHANGES trends ground truth carries the prior-vs-recent
+    # frame comparison the specialist actually saw; REPORT's does not.
+    changes_gt = captured.ground_truths["specialist:trends:changes"].lower()
+    report_gt = captured.ground_truths["specialist:trends:report"].lower()
+    assert "prior window" in changes_gt
+    assert "prior window" not in report_gt
+    assert changes_gt != report_gt
+    for mode_id in ("report", "changes"):
+        cap = f"capsule:{mode_id}"
+        assert captured.outputs.get(cap), f"missing {cap}"
+        assert "Specialist Analysis" in captured.ground_truths[cap]
+    # No bare "capsule" key survives the namespacing.
+    assert "capsule" not in captured.outputs
 
 
 # ── CLI ───────────────────────────────────────────────────────────────
@@ -250,3 +303,34 @@ def test_contestant_judge_uses_tool_output():
     assert "Prompted" not in type(agent._output_schema).__name__
     settings = agent.model_settings or {}
     assert "openrouter_reasoning" not in settings
+
+
+def test_parse_args_mode_and_prior_defaults(monkeypatch):
+    import sys as _sys
+
+    from pitcher_narratives.temporal import _DEFAULT_PRIOR_APPEARANCES
+
+    monkeypatch.setattr(_sys, "argv", ["bench", "-p", "693433"])
+    args = parse_args()
+    assert args.mode == "report"
+    assert args.prior == _DEFAULT_PRIOR_APPEARANCES
+
+
+def test_parse_args_accepts_comma_mode(monkeypatch):
+    import sys as _sys
+
+    monkeypatch.setattr(_sys, "argv", ["bench", "-p", "693433", "--mode", "report,recap"])
+    args = parse_args()
+    assert args.mode == "report,recap"
+
+
+def test_resolve_bench_modes_valid_and_invalid():
+    from pitcher_narratives.bench.__main__ import _resolve_bench_modes
+
+    modes = _resolve_bench_modes("report,changes")
+    assert [m.id for m in modes] == ["report", "changes"]
+    with pytest.raises(SystemExit) as exc:
+        _resolve_bench_modes("bogus")
+    assert exc.value.code == 2
+    with pytest.raises(SystemExit):
+        _resolve_bench_modes(" , ")

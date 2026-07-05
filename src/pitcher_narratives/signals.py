@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field
 __all__ = [
     "KeySignals",
     "SIGNAL_EXTRACTOR_PROMPT",
+    "count_secondary_signals",
     "render_key_signals",
 ]
 
@@ -49,6 +50,28 @@ _FIELD_LABELS: dict[str, str] = {
     "sample_size_caution": "Sample Size Caution",
 }
 
+_SECONDARY_FIELDS: tuple[str, ...] = (
+    "development_pitch",
+    "specialist_tension",
+    "arsenal_dependency",
+    "connected_changes",
+    "platoon_vulnerability",
+    "sample_size_caution",
+)
+
+
+def count_secondary_signals(signals: KeySignals | None) -> int:
+    """Count populated (non-None) secondary KeySignals fields.
+
+    Secondary signals are the cross-specialist insight engine; if they
+    fire rarely, narratives fall back to a thin top_improvement/top_concern
+    lead. Persisted via flag_record so calibration.py can measure the
+    real hit-rate instead of assuming these are populated.
+    """
+    if signals is None:
+        return 0
+    return sum(1 for f in _SECONDARY_FIELDS if getattr(signals, f) is not None)
+
 
 def render_key_signals(signals: KeySignals) -> str:
     """Render populated key signals as a labeled bullet list.
@@ -80,17 +103,17 @@ all specialists. Cite the pitch type and metric.
 
 SECONDARY (provide ONLY when the pattern is genuinely present, \
 otherwise leave as null):
-- development_pitch: A pitch with high S+ (>110) but low L+ (<90) \
+- development_pitch: A pitch with high S+ (110 or above) but low L+ (80 or below) \
 that would solve a documented platoon weakness. Name the pitch, \
 cite S+ and L+, and identify which platoon gap it addresses. \
 If nothing fits, null.
 - specialist_tension: Where two specialists disagree about the same \
-pitch. Example: stuff says the curveball is elite (S+ 128) but run \
+pitch. Example: stuff grades the curveball highly (S+ 128) but run \
 value shows it bleeding runs (+1.2 xRV100). Name both specialists \
 and their conflicting assessments. If all specialists agree, null.
 - arsenal_dependency: If one pitch is carrying the entire profile \
 while the rest is replacement-level. Cite the pitch and the evidence \
-(e.g., whiff share, xRV100 gap). If the arsenal is balanced, null.
+(e.g., xRV100 gap, xWhiff contrast across pitches). If the arsenal is balanced, null.
 - connected_changes: When multiple specialists are reporting different \
 facets of the same underlying shift. Example: trend sees velo drop, \
 stuff sees S+ drop, run value sees more hard contact — all one \

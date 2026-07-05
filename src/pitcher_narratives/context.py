@@ -6,9 +6,11 @@ to_prompt() method that renders prompt-ready markdown under 2,000 tokens.
 
 from __future__ import annotations
 
+import dataclasses
+
 from pydantic import BaseModel, ConfigDict
 
-from pitcher_narratives.data import PitcherData
+from pitcher_narratives.data import PitcherData, filter_to_prior_appearances
 from pitcher_narratives.engine import (
     ArsenalTrends,
     ComponentAttribution,
@@ -18,6 +20,7 @@ from pitcher_narratives.engine import (
     FirstPitchWeaponry,
     HardHitRate,
     IntermediateProbabilities,
+    _most_recent_row,
     PitchTypeSummary,
     PlatoonMix,
     ReleasePointMetrics,
@@ -45,8 +48,15 @@ from pitcher_narratives.shape import (
     PitchShapeProfile,
     compute_pitch_shape,
 )
+from pitcher_narratives.temporal import TemporalFrame
 
-__all__ = ["PitcherContext", "assemble_pitcher_context"]
+__all__ = [
+    "MultiFrameContext",
+    "PitcherContext",
+    "assemble_multi_frame_context",
+    "assemble_pitcher_context",
+    "assemble_prior_context",
+]
 
 _MAX_PITCH_TYPES = 4
 """Token budget: keep top 4 pitch types only in arsenal and execution tables."""
@@ -129,8 +139,8 @@ def assemble_pitcher_context(data: PitcherData) -> PitcherContext:
     arsenal_trend = compute_arsenal_trends(data)
     pitch_shape = compute_pitch_shape(data)
 
-    # Determine role from most recent appearance
-    most_recent = data.appearances.sort("game_date", descending=True).row(0, named=True)
+    # Determine role from most recent appearance (deterministic tiebreak)
+    most_recent = _most_recent_row(data.appearances)
     role = most_recent["role"]
 
     return PitcherContext(
@@ -155,3 +165,63 @@ def assemble_pitcher_context(data: PitcherData) -> PitcherContext:
         arsenal_trend=arsenal_trend,
         pitch_shape=pitch_shape,
     )
+
+
+class MultiFrameContext(BaseModel):
+    """One PitcherContext per temporal frame.
+
+    Wrapper shape (not per-field) so every PitcherContext field keeps its
+    type and all render_/_build_*_input helpers stay unchanged. Today only
+    RECENT is populated; later phases add PRIOR / MOST_RECENT / SEASON
+    frames (CHANGES/RECAP modes, see §5).
+    """
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    frames: dict[TemporalFrame, PitcherContext]
+
+    def for_frame(self, frame: TemporalFrame) -> PitcherContext:
+        try:
+            return self.frames[frame]
+        except KeyError:
+            available = ", ".join(sorted(f.value for f in self.frames))
+            raise ValueError(
+                f"frame {frame.value!r} not assembled; available: {available}"
+            ) from None
+
+    @property
+    def primary(self) -> PitcherContext:
+        """The default frame current call sites read (recent-appearance window)."""
+        return self.for_frame(TemporalFrame.RECENT)
+
+
+def assemble_multi_frame_context(data: PitcherData) -> MultiFrameContext:
+    """Assemble the multi-frame context.
+
+    Currently only the recent-appearance frame is built (it equals today's
+    assemble_pitcher_context output). Other appearance-count frames
+    (PRIOR / MOST_RECENT / SEASON) are added when CHANGES/RECAP modes land.
+    """
+    return MultiFrameContext(
+        frames={TemporalFrame.RECENT: assemble_pitcher_context(data)},
+    )
+
+
+def assemble_prior_context(
+    data: PitcherData, recent_n: int, prior_m: int
+) -> PitcherContext:
+    """Assemble a PitcherContext for the PRIOR appearance-count frame.
+
+    Re-slices ``window_appearances`` to the ``prior_m`` appearances immediately
+    older than the ``recent_n`` most-recent ones, leaving statcast and all
+    baselines untouched. The engine derives window metrics by filtering
+    ``data.statcast`` to the window's game dates, so replacing
+    ``window_appearances`` is sufficient to retarget every ``window_*`` field.
+    """
+    prior_data = dataclasses.replace(
+        data,
+        window_appearances=filter_to_prior_appearances(
+            data.appearances, recent_n, prior_m
+        ),
+    )
+    return assemble_pitcher_context(prior_data)

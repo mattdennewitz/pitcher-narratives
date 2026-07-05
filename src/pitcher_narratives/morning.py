@@ -28,20 +28,22 @@ from pitcher_narratives.context import PitcherContext, assemble_pitcher_context
 from pitcher_narratives.costs import UsageTracker
 from pitcher_narratives.curator import build_selector_briefing, select_slate_async
 from pitcher_narratives.data import load_pitcher_data
-from pitcher_narratives.digest import (
-    assemble_digest,
-    build_story_cue_from_context,
-    is_fallback_summary,
-    write_pick_summaries,
+from pitcher_narratives.digest import assemble_digest
+from pitcher_narratives.personas import PERSONAS, RECAP
+from pitcher_narratives.pipeline import (
+    PipelineResult,
+    flag_record,
+    make_pipeline_agents,
+    render_recap,
+    residual_banner,
+    run_analysis_spine,
 )
-from pitcher_narratives.models import AnalyzedContext
-from pitcher_narratives.personas import PERSONAS
-from pitcher_narratives.pipeline import make_pipeline_agents, run_analysis_spine
 from pitcher_narratives.scout import (
     ScoredAppearance,
     scout_appearances,
     top_per_role,
 )
+from pitcher_narratives.temporal import _DEFAULT_RECENT_APPEARANCES
 
 __all__ = ["run_morning"]
 
@@ -55,6 +57,26 @@ def _load_pitcher_context(pitcher_id: int) -> PitcherContext:
     return assemble_pitcher_context(data)
 
 
+def _build_validation_payload(
+    game_date: str, recap_results: dict[int, "PipelineResult"]
+) -> dict[str, object]:
+    """Per-pick calibration records for validation.json.
+
+    One ``flag_record`` per surviving pick, keyed by stringified pitcher id
+    (JSON object keys must be strings). Morning always runs RECAP on the
+    default recent-appearance span.
+    """
+    return {
+        "game_date": game_date,
+        "picks": {
+            str(pid): flag_record(
+                RECAP, pid, result, span=_DEFAULT_RECENT_APPEARANCES
+            )
+            for pid, result in recap_results.items()
+        },
+    }
+
+
 def run_morning(
     *,
     window_days: int,
@@ -64,10 +86,16 @@ def run_morning(
     persona_id: str,
     out_root: Path,
     max_concurrency: int = 4,
+    starters_only: bool = False,
     _selector_override: object = None,
     _writer_override: object = None,
 ) -> Path | None:
-    """Run the full morning workflow. Returns the run dir, or None on a quiet day."""
+    """Run the full morning workflow. Returns the run dir, or None on a quiet day.
+
+    When ``starters_only`` is set, the scouted board is filtered to starting
+    pitchers (role == "SP") before selection, so candidates, the full board,
+    and the digest all reflect starters only.
+    """
     started = time.monotonic()
     tracker = UsageTracker()
     persona = PERSONAS[persona_id]
@@ -75,8 +103,17 @@ def run_morning(
     # ── Scout ─────────────────────────────────────────────────────
     log.info("Scouting appearances...")
     all_scored = scout_appearances(window_days=window_days, min_pitches=min_pitches)
+    if starters_only:
+        n_before = len(all_scored)
+        all_scored = [a for a in all_scored if a.role == "SP"]
+        log.info("Filtered to starters: %d of %d appearances kept.", len(all_scored), n_before)
     if not all_scored:
-        print("No interesting appearances found — quiet day, no digest.", file=sys.stderr)
+        quiet = (
+            "No interesting starter appearances found — quiet day, no digest."
+            if starters_only
+            else "No interesting appearances found — quiet day, no digest."
+        )
+        print(quiet, file=sys.stderr)
         return None
     candidates = top_per_role(all_scored, top_n)
     game_date = max(c.game_date for c in all_scored)
@@ -94,7 +131,7 @@ def run_morning(
     briefing = build_selector_briefing(candidates)
 
     async def _llm_stages():
-        spine_agents = make_pipeline_agents(provider, "medium", persona)
+        agents = make_pipeline_agents(provider, "medium", persona, RECAP)
         spine_sem = asyncio.Semaphore(min(max_concurrency, 2))
 
         slate = await select_slate_async(
@@ -105,17 +142,20 @@ def run_morning(
         by_cat = Counter(p.category for p in picks)
         log.info("Slate: %d picks across categories %s.", len(picks), dict(by_cat))
 
-        async def _build_pick(p) -> tuple[int, str, AnalyzedContext] | None:
+        async def _build_pick(p) -> tuple[int, PipelineResult] | None:
             pitcher_name = appearances[p.pitcher_id].pitcher_name
             async with spine_sem:
                 try:
                     ctx = _load_pitcher_context(p.pitcher_id)
                     analyzed = await run_analysis_spine(
-                        ctx, agents=spine_agents, _model_override=_writer_override,
+                        ctx, agents=agents, _model_override=_writer_override,
                         tracker=tracker,
                     )
-                    cue = build_story_cue_from_context(appearances[p.pitcher_id], p, ctx)
-                    return p.pitcher_id, cue, analyzed
+                    recap_result = await render_recap(
+                        ctx, analyzed, agents=agents, pick=p,
+                        _model_override=_writer_override, tracker=tracker,
+                    )
+                    return p.pitcher_id, recap_result
                 except Exception:
                     log.error(
                         "Spine failed for pitcher_id=%d (%s); skipping pick.",
@@ -126,40 +166,46 @@ def run_morning(
         log.info("Running analysis spine for %d picks...", len(picks))
         build_results = await asyncio.gather(*(_build_pick(p) for p in picks))
 
-        cues: dict[int, str] = {}
-        analyzed_contexts: dict[int, AnalyzedContext] = {}
+        summaries: dict[int, str] = {}
+        recap_results: dict[int, PipelineResult] = {}
+        n_unverified = 0
         for result in build_results:
             if result is None:
                 continue
-            pid, cue, analyzed = result
-            cues[pid] = cue
-            analyzed_contexts[pid] = analyzed
+            pid, recap_result = result
+            text = recap_result.narrative
+            banner = residual_banner(recap_result, label="RECAP")
+            # Deliberately louder than is_unverified(): value-parity warnings also mark an item UNVERIFIED so no ungrounded number ships silently.
+            if banner is None and recap_result.value_parity_warnings:
+                banner = (
+                    "⚠️  RECAP UNVERIFIED — value-parity flags present; "
+                    "review before use."
+                )
+            if banner:
+                text = f"{banner}\n\n{text}"
+                n_unverified += 1
+            summaries[pid] = text
+            recap_results[pid] = recap_result
         dropped_names = [
             appearances[p.pitcher_id].pitcher_name
-            for p in picks if p.pitcher_id not in cues
+            for p in picks if p.pitcher_id not in summaries
         ]
-        picks = [p for p in picks if p.pitcher_id in cues]
+        picks = [p for p in picks if p.pitcher_id in summaries]
 
-        log.info("Writing %d summaries...", len(picks))
-        summaries = await write_pick_summaries(
-            picks, cues, appearances,
-            analyzed_contexts=analyzed_contexts,
-            provider=provider, persona=persona,
-            tracker=tracker, max_concurrency=max_concurrency,
-            _model_override=_writer_override,
-        )
-        return slate, picks, summaries, dropped_names
+        if n_unverified:
+            log.warning("%d recap item(s) shipped UNVERIFIED (residual fact-check flags)", n_unverified)
 
-    slate, picks, summaries, dropped_names = asyncio.run(_llm_stages())
+        return slate, picks, summaries, dropped_names, n_unverified, recap_results
+
+    slate, picks, summaries, dropped_names, n_unverified, recap_results = asyncio.run(_llm_stages())
 
     # ── Assemble + persist ────────────────────────────────────────
     wall_s = time.monotonic() - started
     cost_block = tracker.render_cost_block(wall_s=wall_s)
-    failed = sum(1 for text in summaries.values() if is_fallback_summary(text))
-    if failed:
+    if n_unverified:
         cost_block += (
-            f"\nnote: {failed} writer call(s) failed and fell back; "
-            f"their token cost is not captured above"
+            f"\nnote: {n_unverified} recap item(s) shipped UNVERIFIED "
+            f"(residual validation flags)"
         )
     digest = assemble_digest(
         slate=slate, summaries=summaries, appearances=appearances,
@@ -183,6 +229,10 @@ def run_morning(
         indent=2,
     ))
     (run_dir / "usage.json").write_text(json.dumps(tracker.to_json(), indent=2))
+    (run_dir / "validation.json").write_text(json.dumps(
+        _build_validation_payload(str(game_date), recap_results),
+        indent=2,
+    ))
 
     print(digest)
     return run_dir

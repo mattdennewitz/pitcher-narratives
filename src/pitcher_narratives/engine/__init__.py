@@ -17,13 +17,20 @@ from __future__ import annotations
 # modules import from ``_common`` directly, not through this facade.
 from pitcher_narratives.engine._common import (  # noqa: F401
     _CSW_DESCRIPTIONS,
+    _EMPTY_FRAME_STRING,
+    _INSUFFICIENT_SAMPLE_STRING,
     _MIN_PITCHES,
+    _THIN_FRAME_STRING,
+    FrameSufficiency,
     _identify_primary_fastball,
+    _most_recent_row,
     _movement_delta_string,
     _pplus_delta_string,
     _stand_to_platoon,
+    _sufficiency_delta_string,
     _usage_delta_string,
     _velo_delta_string,
+    frame_sufficiency,
 )
 from pitcher_narratives.engine.arsenal import (
     ArsenalPitchTrend,
