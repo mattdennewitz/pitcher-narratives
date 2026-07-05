@@ -18,6 +18,7 @@ __all__ = [
     "assemble_digest",
     "render_full_board",
     "render_full_board_json",
+    "render_full_board_table",
 ]
 
 log = logging.getLogger("pitcher_narratives.digest")
@@ -81,6 +82,32 @@ def render_full_board_json(board: list[ScoredAppearance]) -> str:
     }
     return json.dumps(payload, indent=2, default=str)
 
+
+
+def render_full_board_table(
+    board: list[ScoredAppearance], *, verbose: bool = False
+) -> str:
+    """Fixed-width table of scored appearances, flat-sorted by score descending.
+
+    ``verbose`` appends an indented detail row per signal (name, weight, detail).
+    """
+    ranked = sorted(board, key=lambda a: a.score, reverse=True)
+    lines = [
+        f"{'Score':>5}  {'Pitcher':<25} {'T':>1} {'Role':<4}  "
+        f"{'Date':<10}  {'#P':>3}  Signals",
+        f"{'─' * 5}  {'─' * 25} {'─':>1} {'─' * 4}  "
+        f"{'─' * 10}  {'─' * 3}  {'─' * 40}",
+    ]
+    for a in ranked:
+        signal_names = ", ".join(s.name for s in a.signals)
+        lines.append(
+            f"{a.score:5.1f}  {a.pitcher_name:<25} {a.throws:>1} {a.role:<4}  "
+            f"{a.game_date!s:<10}  {a.n_pitches:>3}  {signal_names}"
+        )
+        if verbose:
+            for s in a.signals:
+                lines.append(f"       └─ {s.name} ({s.weight:.1f}): {s.detail}")
+    return "\n".join(lines)
 
 def assemble_digest(
     *,

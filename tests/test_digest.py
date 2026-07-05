@@ -185,3 +185,24 @@ def test_digest_badge_comes_from_registry():
     cat = CATEGORY_BY_ID["clean_breakout"]
     assert f"## {cat.section_title}" in out
     assert f"[{cat.badge}]" in out
+
+
+def test_render_full_board_table_content_and_order():
+    from pitcher_narratives.digest import render_full_board_table
+
+    table = render_full_board_table([
+        _app(1, "SP", 3.0), _app(2, "RP", 9.0),
+    ])
+    assert "Score" in table and "Pitcher" in table and "Signals" in table
+    # Flat sort by score desc: Pitcher 2 (9.0) before Pitcher 1 (3.0).
+    assert table.index("Pitcher 2") < table.index("Pitcher 1")
+    assert "velo_delta" in table  # signal name column
+
+
+def test_render_full_board_table_verbose_adds_detail_rows():
+    from pitcher_narratives.digest import render_full_board_table
+
+    plain = render_full_board_table([_app(1, "SP", 5.0)])
+    verbose = render_full_board_table([_app(1, "SP", 5.0)], verbose=True)
+    assert "+2.1 mph vs season" not in plain
+    assert "+2.1 mph vs season" in verbose
