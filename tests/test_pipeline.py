@@ -1248,7 +1248,6 @@ class TestReconcileAnchorWarnings:
                 agents=agents,
                 anchor_depth=5,
                 fact_depth=1,
-                stream=False,
                 check_explainer=False,
             )
         )
@@ -1312,12 +1311,20 @@ class TestReconcileAnchorWarnings:
                 agents=agents,
                 anchor_depth=5,
                 fact_depth=1,
-                stream=False,
                 check_explainer=False,
             )
         )
 
         assert recorded["trend_frame_comparison"] == "SENTINEL_FRAME"
+
+
+def test_render_capsule_has_no_stream_parameter():
+    """WS2: the report path buffers the writer output — no live streaming."""
+    import inspect
+
+    from pitcher_narratives.pipeline import _render_capsule
+
+    assert "stream" not in inspect.signature(_render_capsule).parameters
 
 
 class TestFrameAwareCapsuleAudit:
@@ -2994,8 +3001,8 @@ def test_residual_banner_matches_report_wording():
 
 
 def test_render_capsule_non_streaming_returns_capsule(ctx, capsys):
-    """_render_capsule(stream=False) captures the writer output without
-    printing to stdout, and runs the anchor + capsule-audit loops."""
+    """_render_capsule always buffers the writer output (no live streaming)
+    and runs the anchor + capsule-audit loops."""
     from pitcher_narratives import pipeline
 
     agents = pipeline.make_pipeline_agents("gemini", "high")
@@ -3008,13 +3015,13 @@ def test_render_capsule_non_streaming_returns_capsule(ctx, capsys):
         )
         return await pipeline._render_capsule(
             ctx, analyzed, agents=agents, anchor_depth=1, fact_depth=1,
-            stream=False, check_explainer=False, _model_override=tm,
+            check_explainer=False, _model_override=tm,
         )
 
     rc = asyncio.run(_go())
     assert isinstance(rc.capsule, str) and rc.capsule  # non-empty
     assert rc.writer_input and rc.fact_check_source
-    # stream=False must NOT print the capsule to stdout.
+    # Buffered writer output must NOT print the capsule to stdout.
     assert rc.capsule not in capsys.readouterr().out
 
 
@@ -3065,7 +3072,7 @@ def test_render_capsule_reanchors_after_fact_revision(ctx):
         )
         return await pipeline._render_capsule(
             ctx, analyzed, agents=agents, anchor_depth=0, fact_depth=1,
-            stream=False, check_explainer=False,
+            check_explainer=False,
         )
 
     rc = asyncio.run(_go())

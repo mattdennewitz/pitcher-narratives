@@ -851,6 +851,25 @@ def test_emit_mode_result_returns_unverified_status(capsys):
     capsys.readouterr()  # absorb printed sections
 
 
+def test_emit_prints_capsule_once_and_no_corrected_section(capsys):
+    """The final narrative prints exactly once; no separate 'Corrected Capsule'."""
+    from pitcher_narratives.cli import _emit_mode_result
+    from pitcher_narratives.personas import REPORT
+    from pitcher_narratives.pipeline import PipelineResult, SpecialistOutputs
+
+    result = PipelineResult(
+        narrative="THE FINAL CAPSULE BODY",
+        specialists=SpecialistOutputs(
+            stuff="s", location="", runvalue="", trends="", game_shape=""
+        ),
+        capsule_revised=True,  # previously triggered a second '## Corrected Capsule'
+    )
+    _emit_mode_result(result, persona="scout", mode=REPORT)
+    out = capsys.readouterr().out
+    assert out.count("THE FINAL CAPSULE BODY") == 1
+    assert "Corrected Capsule" not in out
+
+
 def test_emit_mode_result_empty_narrative_is_not_unverified(capsys):
     """Empty narrative always returns False, even with residual audit flags.
 

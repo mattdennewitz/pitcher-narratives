@@ -300,16 +300,13 @@ def _emit_mode_result(pipe_result, *, persona: str, mode) -> bool:
     """
     from pitcher_narratives.pipeline import check_hallucinated_metrics, is_unverified
 
-    # Corrected capsule — the streamed text above is the pre-correction draft
-    # whenever fact-revision fired. Never let the headline text be the stale
-    # one: print the verified capsule as the authoritative version.
-    if pipe_result.capsule_revised and pipe_result.narrative:
-        print("\n\n## Corrected Capsule\n")
-        print(
-            "_The streamed text above is the pre-correction draft; this is the "
-            "fact-revised capsule._\n"
-        )
+    # The capsule — the final, post-fact-revision narrative, printed exactly
+    # once. The pipeline buffers the writer output (no live streaming), so this
+    # is the single authoritative copy under the mode's H1 title.
+    if pipe_result.narrative:
         print(pipe_result.narrative)
+    else:
+        print("_No capsule was produced._")
 
     # Verification stamp — travels with the document (the UNVERIFIED banner
     # on stderr and the exit code remain the CI-facing signals).
@@ -364,14 +361,14 @@ def _emit_mode_result(pipe_result, *, persona: str, mode) -> bool:
     if pipe_result.capsule_revised and not pipe_result.capsule_audit_flags:
         print(
             "Auditor flagged issue(s); the fact-revision corrected them and the "
-            "re-audit is clean. (See the Corrected Capsule section above.)"
+            "re-audit is clean."
         )
     elif pipe_result.capsule_audit_flags:
         n = len(pipe_result.capsule_audit_flags)
         if pipe_result.capsule_revised:
             print(
                 f"Auditor revised the report, but {n} issue(s) remain after "
-                "re-audit (see the Corrected Capsule section above):"
+                "re-audit:"
             )
         else:
             print(f"Auditor flagged {n} issue(s) (not auto-corrected):")

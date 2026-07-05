@@ -2266,7 +2266,6 @@ async def _render_capsule(
     agents: PipelineAgents,
     anchor_depth: int,
     fact_depth: int,
-    stream: bool,
     check_explainer: bool = True,
     overlay: str | None = None,
     persona_label: str = "",
@@ -2274,7 +2273,7 @@ async def _render_capsule(
     tracker: UsageTracker | None = None,
 ) -> _RenderedCapsule:
     """Writer + anchor + capsule-audit core, shared by the report pipeline and
-    the recap render. Report streams (stream=True); recap does not. ``overlay``
+    the recap render. Both buffer the writer output (no live streaming). ``overlay``
     prepends editorial direction to the writer input; ``check_explainer`` gates
     the Pitching+ explainer warnings (off for the short recap brief)."""
     specialists = analyzed.specialists
@@ -2292,17 +2291,8 @@ async def _render_capsule(
         writer_input = f"{overlay}\n\n{writer_input}"
     writer_kwargs = agent_kwargs(writer_input, _model_override)
 
-    if stream:
-        async with agents.writer.run_stream(**writer_kwargs) as stream_ctx:
-            chunks: list[str] = []
-            async for delta in stream_ctx.stream_text(delta=True):
-                print(delta, end="", flush=True)
-                chunks.append(delta)
-        print()
-        capsule = "".join(chunks)
-    else:
-        _res = await agents.writer.run(**writer_kwargs)
-        capsule = _res.output
+    _res = await agents.writer.run(**writer_kwargs)
+    capsule = _res.output
 
     # EXPLAIN THE MODEL post-processor (non-fatal quality gate).
     # Runs for all personas — a persona that silently drops Pitching+
@@ -2465,7 +2455,7 @@ async def render_recap(
         ctx, analyzed, agents=agents,
         anchor_depth=RECAP.validation.anchor_depth,
         fact_depth=RECAP.validation.fact_depth,
-        stream=False, check_explainer=False, overlay=overlay,
+        check_explainer=False, overlay=overlay,
         persona_label="recap", _model_override=_model_override, tracker=tracker,
     )
     value_parity = check_value_parity(rc.capsule, rc.fact_check_source)
@@ -2519,7 +2509,7 @@ async def _run_pipeline(
         ctx, analyzed, agents=agents,
         anchor_depth=mode.validation.anchor_depth,
         fact_depth=mode.validation.fact_depth,
-        stream=True, check_explainer=explain_model, overlay=None,
+        check_explainer=explain_model, overlay=None,
         persona_label=persona, _model_override=_model_override,
     )
     capsule = rc.capsule
