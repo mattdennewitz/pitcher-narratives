@@ -926,6 +926,61 @@ def test_emit_mode_result_runs_hallucination_guard_for_any_mode(capsys, monkeypa
     assert calls[0][0] == clean.narrative
 
 
+def _diag_pipe_result(*, narrative="cap", revised=False, fact_flags=0):
+    from pitcher_narratives.pipeline import AuditFlag, PipelineResult, SpecialistOutputs
+
+    flags = [
+        AuditFlag(category="velocity", specialist="stuff", claim=f"c{i}",
+                  data_shows="d", suggested_fix="")
+        for i in range(fact_flags)
+    ]
+    return PipelineResult(
+        narrative=narrative,
+        specialists=SpecialistOutputs(
+            stuff="STUFF-TEXT", location="", runvalue="", trends="", game_shape=""
+        ),
+        capsule_revised=revised,
+        capsule_audit_flags=flags,
+    )
+
+
+def test_build_diagnostics_dict_shape():
+    from pitcher_narratives.cli import build_diagnostics_dict
+
+    diag = build_diagnostics_dict(_diag_pipe_result(fact_flags=2, revised=True), "scout")
+    assert diag["verified"] is False  # residual fact flags -> unverified
+    assert diag["capsule_revised"] is True
+    assert diag["stuff_analysis"] == "STUFF-TEXT"
+    assert len(diag["capsule_fact_check"]) == 2
+    assert diag["hallucination"] == {"unknown_metrics": [], "outcome_stat_warnings": []}
+
+
+def test_build_diagnostics_dict_skips_guard_on_empty_narrative(monkeypatch):
+    """No hallucination guard call when there's nothing to check."""
+    from pitcher_narratives import pipeline as pipeline_module
+    from pitcher_narratives.cli import build_diagnostics_dict
+
+    calls = []
+    monkeypatch.setattr(
+        pipeline_module, "check_hallucinated_metrics",
+        lambda text, *, persona=None: calls.append(text)
+        or pipeline_module.HallucinationReport(unknown_metrics=[], outcome_stat_warnings=[]),
+    )
+    build_diagnostics_dict(_diag_pipe_result(narrative=""), "scout")
+    assert calls == []
+
+
+def test_render_diagnostics_text_has_sections():
+    from pitcher_narratives.cli import build_diagnostics_dict, render_diagnostics_text
+
+    text = render_diagnostics_text(build_diagnostics_dict(_diag_pipe_result(), "scout"))
+    assert "## Diagnostics" in text
+    assert "### Stuff Analysis" in text
+    assert "### Data Audit" in text
+    assert "### Capsule Fact-Check" in text
+    assert "### Anchor Check" in text
+
+
 def test_morning_subcommand_defaults(monkeypatch):
     monkeypatch.setattr(sys, "argv", ["cli", "morning"])
     args = parse_args()

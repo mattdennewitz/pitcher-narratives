@@ -292,13 +292,115 @@ def main() -> None:
         _run_report_command(args)
 
 
+def build_diagnostics_dict(pipe_result, persona: str) -> dict:
+    """Collect a mode's QA/diagnostics data into a JSON-serializable dict.
+
+    Runs the hallucination guard (only when the narrative is non-empty, matching
+    the historical behavior). Pure apart from that read-only guard call.
+    """
+    from pitcher_narratives.pipeline import check_hallucinated_metrics, is_unverified
+
+    diag = {
+        "verified": not is_unverified(pipe_result),
+        "capsule_revised": pipe_result.capsule_revised,
+        "revision_count": pipe_result.revision_count,
+        "stuff_analysis": pipe_result.specialists.stuff,
+        "data_audit": [
+            {"category": f.category, "specialist": f.specialist,
+             "claim": f.claim, "data_shows": f.data_shows}
+            for f in pipe_result.audit_flags
+        ],
+        "capsule_fact_check": [
+            {"category": f.category, "claim": f.claim, "data_shows": f.data_shows}
+            for f in pipe_result.capsule_audit_flags
+        ],
+        "anchor_warnings": [
+            {"category": w.category, "description": w.description}
+            for w in pipe_result.anchor_warnings
+        ],
+        "value_parity_warnings": list(pipe_result.value_parity_warnings),
+        "hallucination": {"unknown_metrics": [], "outcome_stat_warnings": []},
+    }
+    if pipe_result.narrative:
+        hr = check_hallucinated_metrics(pipe_result.narrative, persona=persona)
+        diag["hallucination"] = {
+            "unknown_metrics": list(hr.unknown_metrics),
+            "outcome_stat_warnings": list(hr.outcome_stat_warnings),
+        }
+    return diag
+
+
+def render_diagnostics_text(diag: dict) -> str:
+    """Format a diagnostics dict as the markdown QA appendix."""
+    lines = ["## Diagnostics", "", "### Stuff Analysis", "", diag["stuff_analysis"]]
+
+    lines += ["", "### Data Audit", ""]
+    if diag["data_audit"]:
+        for f in diag["data_audit"]:
+            lines.append(f"- **[{f['category']}]** {f['specialist']}: {f['claim']}")
+            lines.append(f"  - Data shows: {f['data_shows']}")
+    else:
+        lines.append("Clean — no issues found.")
+
+    lines += ["", "### Capsule Fact-Check", ""]
+    if diag["capsule_revised"] and not diag["capsule_fact_check"]:
+        lines.append(
+            "Auditor flagged issue(s); the fact-revision corrected them and the "
+            "re-audit is clean."
+        )
+    elif diag["capsule_fact_check"]:
+        n = len(diag["capsule_fact_check"])
+        if diag["capsule_revised"]:
+            lines.append(
+                f"Auditor revised the report, but {n} issue(s) remain after re-audit:"
+            )
+        else:
+            lines.append(f"Auditor flagged {n} issue(s) (not auto-corrected):")
+        for f in diag["capsule_fact_check"]:
+            lines.append(f"- **[{f['category']}]** {f['claim']}")
+            lines.append(f"  - Data shows: {f['data_shows']}")
+    else:
+        lines.append("Clean — no factual issues found.")
+
+    if diag["value_parity_warnings"]:
+        lines += ["", "### Value Parity (advisory)", "",
+                  "Report numbers with no match in the source data:"]
+        for w in diag["value_parity_warnings"]:
+            lines.append(f"- {w}")
+
+    lines += ["", "### Anchor Check", ""]
+    if diag["revision_count"] == 0 and not diag["anchor_warnings"]:
+        lines.append("Passed on first draft.")
+    elif diag["anchor_warnings"]:
+        lines.append(f"Revised {diag['revision_count']} time(s) — remaining issues:")
+        for w in diag["anchor_warnings"]:
+            lines.append(f"- **[{w['category']}]** {w['description']}")
+    else:
+        lines.append(f"Revised {diag['revision_count']} time(s) — passed.")
+
+    hall = diag["hallucination"]
+    if hall["unknown_metrics"] or hall["outcome_stat_warnings"]:
+        lines += ["", "### Hallucination Check", ""]
+        if hall["unknown_metrics"]:
+            lines.append(
+                f"Unknown metrics referenced: {', '.join(hall['unknown_metrics'])}"
+            )
+        if hall["outcome_stat_warnings"]:
+            lines.append(
+                "Traditional outcome stats referenced (prompt warns against these): "
+                f"{', '.join(hall['outcome_stat_warnings'])}"
+            )
+
+    return "\n".join(lines)
+
+
 def _emit_mode_result(pipe_result, *, persona: str, mode) -> bool:
     """Print one mode's reader-facing sections + diagnostics appendix.
 
     Returns whether the mode shipped unverified. Called immediately after the
     mode's capsule streamed, so the whole mode block is contiguous on stdout.
     """
-    from pitcher_narratives.pipeline import check_hallucinated_metrics, is_unverified
+    from pitcher_narratives.pipeline import is_unverified
 
     # The capsule — the final, post-fact-revision narrative, printed exactly
     # once. The pipeline buffers the writer output (no live streaming), so this
@@ -338,87 +440,15 @@ def _emit_mode_result(pipe_result, *, persona: str, mode) -> bool:
         else:
             print("_Brief unavailable — no text produced._")
 
-    # ── Diagnostics appendix ──────────────────────────────────────────
-    # Everything below is QA/pipeline output, not part of the report.
-    print("\n\n---\n\n## Diagnostics")
+    # ── Diagnostics appendix (still on stdout in this step) ──────────────
+    diag = build_diagnostics_dict(pipe_result, persona)
+    print("\n\n---\n")
+    print(render_diagnostics_text(diag))
 
-    print(f"\n\n### Stuff Analysis\n\n{pipe_result.specialists.stuff}")
-
-    print("\n\n### Data Audit\n")
-    if pipe_result.audit_flags:
-        for f in pipe_result.audit_flags:
-            print(f"- **[{f.category}]** {f.specialist}: {f.claim}")
-            print(f"  - Data shows: {f.data_shows}")
-    else:
-        print("Clean — no issues found.")
-
-    # Capsule fact-check. capsule_audit_flags is the post-re-audit residual:
-    # issues that REMAIN in the saved report. Three states:
-    #   revised + no residual  -> corrected and re-audit verified clean
-    #   residual flags present -> still-unresolved issues (list them)
-    #   neither                -> clean on first pass
-    print("\n\n### Capsule Fact-Check\n")
-    if pipe_result.capsule_revised and not pipe_result.capsule_audit_flags:
-        print(
-            "Auditor flagged issue(s); the fact-revision corrected them and the "
-            "re-audit is clean."
-        )
-    elif pipe_result.capsule_audit_flags:
-        n = len(pipe_result.capsule_audit_flags)
-        if pipe_result.capsule_revised:
-            print(
-                f"Auditor revised the report, but {n} issue(s) remain after "
-                "re-audit:"
-            )
-        else:
-            print(f"Auditor flagged {n} issue(s) (not auto-corrected):")
-        for f in pipe_result.capsule_audit_flags:
-            print(f"- **[{f.category}]** {f.claim}")
-            print(f"  - Data shows: {f.data_shows}")
-    else:
-        print("Clean — no factual issues found.")
-
-    # Value parity (advisory). Covers the capsule and the reader-facing
-    # summary/brief; each warning is prefixed with its surface.
-    if pipe_result.value_parity_warnings:
-        print("\n\n### Value Parity (advisory)\n")
-        print("Report numbers with no match in the source data:")
-        for w in pipe_result.value_parity_warnings:
-            print(f"- {w}")
-
-    print("\n\n### Anchor Check\n")
-    if pipe_result.revision_count == 0 and not pipe_result.anchor_warnings:
-        print("Passed on first draft.")
-    elif pipe_result.anchor_warnings:
-        print(f"Revised {pipe_result.revision_count} time(s) — remaining issues:")
-        for w in pipe_result.anchor_warnings:
-            print(f"- **[{w.category}]** {w.description}")
-    else:
-        print(f"Revised {pipe_result.revision_count} time(s) — passed.")
-
-    # Hallucination check — skipped if the narrative is empty (pipeline
-    # produced nothing, which is a failure worth flagging loudly).
-    if not pipe_result.narrative:
-        log.warning("Pipeline produced empty narrative — skipping hallucination check")
-        return False
-
-    hallucination_report = check_hallucinated_metrics(
-        pipe_result.narrative, persona=persona
-    )
-    if hallucination_report.is_clean:
-        log.info("Hallucination check passed (no unknown metrics or outcome stats).")
-    else:
-        print("\n\n### Hallucination Check\n")
-        if hallucination_report.unknown_metrics:
-            print(f"Unknown metrics referenced: {', '.join(hallucination_report.unknown_metrics)}")
-        if hallucination_report.outcome_stat_warnings:
-            print(
-                f"Traditional outcome stats referenced "
-                f"(prompt warns against these): "
-                f"{', '.join(hallucination_report.outcome_stat_warnings)}"
-            )
-
-    return unverified
+    # Empty narrative → the pipeline produced nothing to verify; never
+    # soft-block on it, regardless of residual flags. This preserves the
+    # pre-WS2 early-return contract (test_emit_mode_result_empty_narrative_...).
+    return unverified if pipe_result.narrative else False
 
 
 def _append_metrics_records(
