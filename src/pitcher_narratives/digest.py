@@ -108,15 +108,32 @@ def render_full_board_table(
                 lines.append(f"       └─ {s.name} ({s.weight:.1f}): {s.detail}")
     return "\n".join(lines)
 
+
+def _group_picks_by_category(
+    picks: list[CurationPick], *, only_ids: set[int] | None = None
+) -> dict[str, list[CurationPick]]:
+    """Bucket picks by category id, one bucket per registry category, in order.
+
+    ``only_ids`` restricts to picks whose ``pitcher_id`` is in the set (the
+    digest includes only picks that have a written summary; the terminal slate
+    includes every pick). Sharing this skeleton keeps the digest and the slate
+    from drifting on category-membership rules.
+    """
+    by_cat: dict[str, list[CurationPick]] = {c.id: [] for c in CATEGORIES}
+    for pick in picks:
+        if only_ids is not None and pick.pitcher_id not in only_ids:
+            continue
+        by_cat[pick.category].append(pick)
+    return by_cat
+
+
 def render_curation_slate(slate: CurationSlate, names: dict[int, str]) -> str:
     """Render a selected slate as category-grouped lines for terminal display.
 
     Categories appear in registry order under their badge; each pick is one
     line: ``<name> (<conviction>): <angle>``. Empty categories are skipped.
     """
-    by_cat: dict[str, list[CurationPick]] = {c.id: [] for c in CATEGORIES}
-    for pick in slate.picks:
-        by_cat[pick.category].append(pick)
+    by_cat = _group_picks_by_category(slate.picks)
     blocks: list[str] = []
     for cat in CATEGORIES:
         picks = by_cat[cat.id]
@@ -128,6 +145,7 @@ def render_curation_slate(slate: CurationSlate, names: dict[int, str]) -> str:
             lines.append(f"  {who} ({pick.conviction}): {pick.angle}")
         blocks.append("\n".join(lines))
     return "\n\n".join(blocks)
+
 
 def assemble_digest(
     *,
@@ -162,10 +180,7 @@ def assemble_digest(
             ]
         return lines
 
-    by_cat: dict[str, list[CurationPick]] = {c.id: [] for c in CATEGORIES}
-    for pick in slate.picks:
-        if pick.pitcher_id in summaries:
-            by_cat[pick.category].append(pick)
+    by_cat = _group_picks_by_category(slate.picks, only_ids=set(summaries))
 
     parts = [f"# Morning Digest — {game_date}", ""]
     for cat in CATEGORIES:

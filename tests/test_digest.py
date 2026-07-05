@@ -220,3 +220,16 @@ def test_render_full_board_table_verbose_adds_detail_rows():
     verbose = render_full_board_table([_app(1, "SP", 5.0)], verbose=True)
     assert "+2.1 mph vs season" not in plain
     assert "+2.1 mph vs season" in verbose
+
+
+def test_group_picks_by_category_respects_only_ids():
+    """The shared grouping helper honors only_ids (digest's summary filter)."""
+    from pitcher_narratives.digest import _group_picks_by_category
+
+    picks = [_pick2(1, "lab_project"), _pick2(2, "red_flag")]
+    grouped = _group_picks_by_category(picks, only_ids={1})
+    assert [p.pitcher_id for p in grouped["lab_project"]] == [1]
+    assert grouped["red_flag"] == []  # pitcher 2 excluded by only_ids
+    # Without only_ids, all picks are kept.
+    grouped_all = _group_picks_by_category(picks)
+    assert [p.pitcher_id for p in grouped_all["red_flag"]] == [2]

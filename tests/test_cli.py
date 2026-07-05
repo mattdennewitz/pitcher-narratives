@@ -1364,3 +1364,78 @@ def test_scoreboard_curate_prints_slate(monkeypatch, capsys):
     out = capsys.readouterr().out
     assert "CLEAN BREAKOUT" in out
     assert "Ace SP (high): velo up" in out
+
+
+# ── Code-review fixes (WS1/WS2 follow-up) ──
+
+
+def test_build_diagnostics_dict_empty_narrative_not_verified():
+    """An empty-narrative mode is not 'verified' and reports has_capsule=False."""
+    from pitcher_narratives.cli import build_diagnostics_dict
+
+    diag = build_diagnostics_dict(_diag_pipe_result(narrative=""), "scout")
+    assert diag["has_capsule"] is False
+    assert diag["verified"] is False
+
+
+def test_emit_empty_narrative_logs_warning(caplog):
+    """Empty-capsule failures are flagged loudly (repo convention)."""
+    import logging
+
+    from pitcher_narratives.cli import _emit_mode_result
+    from pitcher_narratives.personas import REPORT
+
+    with caplog.at_level(logging.WARNING):
+        _emit_mode_result(_diag_pipe_result(narrative=""), persona="scout", mode=REPORT)
+    assert any("empty narrative" in r.message.lower() for r in caplog.records)
+
+
+def test_emit_hallucination_pointer_on_stdout(capsys, monkeypatch):
+    """Hallucination flags surface a pointer on stdout even without -v."""
+    from pitcher_narratives import pipeline as pipeline_module
+    from pitcher_narratives.cli import _emit_mode_result
+    from pitcher_narratives.personas import REPORT
+
+    monkeypatch.setattr(
+        pipeline_module,
+        "check_hallucinated_metrics",
+        lambda text, *, persona=None: pipeline_module.HallucinationReport(
+            unknown_metrics=["FIP"], outcome_stat_warnings=[]
+        ),
+    )
+    _emit_mode_result(_diag_pipe_result(narrative="cap"), persona="scout", mode=REPORT)
+    out = capsys.readouterr().out
+    assert "hallucinated-metric flag" in out
+
+
+def test_emit_no_hallucination_pointer_when_clean(capsys):
+    """No pointer when the guard is clean."""
+    from pitcher_narratives.cli import _emit_mode_result
+    from pitcher_narratives.personas import REPORT
+
+    _emit_mode_result(_diag_pipe_result(narrative="cap"), persona="scout", mode=REPORT)
+    out = capsys.readouterr().out
+    assert "hallucinated-metric flag" not in out
+
+
+def test_scoreboard_curate_json_conflict_exits_2():
+    """--curate + --format json is a fail-fast error, not a silent no-op."""
+    from pitcher_narratives.cli import _run_scoreboard_command
+
+    with pytest.raises(SystemExit) as exc:
+        _run_scoreboard_command(_scoreboard_args(curate=True, format="json"))
+    assert exc.value.code == 2
+
+
+def test_scoreboard_verbose_non_table_warns(monkeypatch, caplog):
+    """`-v` under a non-table format warns instead of silently doing nothing."""
+    import logging
+
+    from pitcher_narratives import scout as scout_mod
+    from pitcher_narratives.cli import _run_scoreboard_command
+
+    board = [_scored(1, "Ace SP", "SP", 12.0)]
+    monkeypatch.setattr(scout_mod, "scout_appearances", lambda **kw: list(board))
+    with caplog.at_level(logging.WARNING):
+        _run_scoreboard_command(_scoreboard_args(verbose=True, format="md"))
+    assert any("only affects --format table" in r.message for r in caplog.records)

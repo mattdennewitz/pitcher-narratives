@@ -309,7 +309,11 @@ def build_diagnostics_dict(pipe_result, persona: str) -> dict:
     from pitcher_narratives.pipeline import check_hallucinated_metrics, is_unverified
 
     diag = {
-        "verified": not is_unverified(pipe_result),
+        # A mode with no capsule is not "verified" — there's nothing to verify.
+        # has_capsule lets a JSON consumer tell an empty/failed report apart
+        # from a genuinely clean one (both would otherwise be verified=true).
+        "has_capsule": bool(pipe_result.narrative),
+        "verified": bool(pipe_result.narrative) and not is_unverified(pipe_result),
         "capsule_revised": pipe_result.capsule_revised,
         "revision_count": pipe_result.revision_count,
         "stuff_analysis": pipe_result.specialists.stuff,
@@ -410,12 +414,20 @@ def _emit_mode_result(pipe_result, *, persona: str, mode, verbose: bool = False)
     """
     from pitcher_narratives.pipeline import is_unverified
 
+    # Diagnostics are built up front (this also runs the hallucination guard for
+    # every mode) so the stdout hallucination pointer below can consult them;
+    # they are only *displayed* on -v, or written to the JSON sidecar by the caller.
+    diag = build_diagnostics_dict(pipe_result, persona)
+
     # The capsule — the final, post-fact-revision narrative, printed exactly
     # once. The pipeline buffers the writer output (no live streaming), so this
     # is the single authoritative copy under the mode's H1 title.
     if pipe_result.narrative:
         print(pipe_result.narrative)
     else:
+        # Flag empty-capsule failures loudly (repo convention). The report still
+        # ships (exit 0, not soft-blocked) but operators/CI get a warning signal.
+        log.warning("Pipeline produced an empty narrative — report shipped without a capsule.")
         print("_No capsule was produced._")
 
     # Verification stamp — travels with the document (the UNVERIFIED banner
@@ -431,6 +443,18 @@ def _emit_mode_result(pipe_result, *, persona: str, mode, verbose: bool = False)
         )
     else:
         print("\n\n**Verification:** ✅ Verified — fact-check and anchor gates clean.")
+
+    # Hallucination pointer — the hallucination guard is advisory (it does NOT
+    # gate the exit code, unlike the fact-check/anchor stamp above), but its
+    # flags must not be silently hidden now that diagnostics are off stdout.
+    n_hallucination = len(diag["hallucination"]["unknown_metrics"]) + len(
+        diag["hallucination"]["outcome_stat_warnings"]
+    )
+    if n_hallucination:
+        print(
+            f"\n\n**Note:** ⚠️ {n_hallucination} possible hallucinated-metric "
+            "flag(s) — see diagnostics (-v or --diagnostics-file)."
+        )
 
     # Distilled sections — only for modes that ran the distillation agents.
     # RECAP's capsule is already a brief; a summary of a summary is noise.
@@ -449,9 +473,7 @@ def _emit_mode_result(pipe_result, *, persona: str, mode, verbose: bool = False)
             print("_Brief unavailable — no text produced._")
 
     # ── Diagnostics: off the reader stream ──────────────────────────────
-    # Built unconditionally (runs the hallucination guard for every mode) but
-    # only *displayed* on -v; the JSON sidecar is written by the caller.
-    diag = build_diagnostics_dict(pipe_result, persona)
+    # (diag was built up front — the hallucination guard has already run.)
     if verbose:
         print("\n\n---\n", file=sys.stderr)
         print(render_diagnostics_text(diag), file=sys.stderr)
@@ -708,6 +730,25 @@ def _run_morning_command(args: argparse.Namespace) -> None:
 def _run_scoreboard_command(args: argparse.Namespace) -> None:
     """Print the scouted full board to stdout — no LLM unless --curate is set."""
     setup_logging()
+
+    # --curate produces a human-readable slate; it has no place in machine JSON,
+    # and the JSON branch returns before the curate block. Fail fast rather than
+    # silently ignoring the flag.
+    if args.curate and args.format == "json":
+        print(
+            "Error: --curate is not supported with --format json "
+            "(curation prints a human-readable slate).",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+
+    # -v adds per-signal detail rows, which only the table renderer emits; under
+    # any other format it would be a silent no-op, so say so.
+    if args.verbose and args.format != "table":
+        log.warning(
+            "-v/--verbose only affects --format table; it is ignored for --format %s.",
+            args.format,
+        )
 
     # Lazy imports: polars (~90ms) and the scout/digest modules are heavy;
     # importing at call time keeps `pitcher-narratives --help` fast.
