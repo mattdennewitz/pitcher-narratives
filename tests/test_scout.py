@@ -55,6 +55,37 @@ def test_role_map_coverage_warning(monkeypatch, caplog):
     assert any("missing from the role map" in r.message for r in caplog.records)
 
 
+def test_stale_aggregate_warning_when_statcast_leads(monkeypatch, caplog):
+    """Warns when the statcast parquet has games newer than the appearance agg.
+
+    Mirror of the role-map guard: when statcast leads the aggregates, the most
+    recent outings exist in statcast but never enter the scored window. Forcing
+    a far-future statcast max guarantees the lead regardless of fixture dates.
+    """
+    import logging
+    from datetime import date
+
+    import pitcher_narratives.scout as scout
+
+    monkeypatch.setattr(scout, "_statcast_max_mlb_date", lambda: date(2100, 1, 1))
+    with caplog.at_level(logging.WARNING, logger="pitcher_narratives.scout"):
+        scout.scout_appearances(window_days=1, min_pitches=20)
+    assert any("Appearance aggregate is stale" in r.message for r in caplog.records)
+
+
+def test_no_stale_warning_when_statcast_not_ahead(monkeypatch, caplog):
+    """No stale-aggregate warning when statcast is not ahead of the aggregate."""
+    import logging
+    from datetime import date
+
+    import pitcher_narratives.scout as scout
+
+    monkeypatch.setattr(scout, "_statcast_max_mlb_date", lambda: date(2000, 1, 1))
+    with caplog.at_level(logging.WARNING, logger="pitcher_narratives.scout"):
+        scout.scout_appearances(window_days=1, min_pitches=20)
+    assert not any("Appearance aggregate is stale" in r.message for r in caplog.records)
+
+
 def test_divergence_ignores_tiny_pitch_type_samples():
     """A pitch type thrown too few times can't establish a stuff/command split.
 

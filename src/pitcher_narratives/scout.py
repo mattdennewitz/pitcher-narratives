@@ -107,6 +107,15 @@ def top_per_role(results: list[ScoredAppearance], top_n: int) -> list[ScoredAppe
     return merged
 
 
+def _statcast_max_mlb_date() -> date | None:
+    """Most recent MLB game date in the statcast parquet, or None if unavailable."""
+    df = load_all_statcast(columns=["game_date", "level"])
+    if df.is_empty():
+        return None
+    val = df.filter(pl.col("level") == "MLB")["game_date"].max()
+    return cast(date, val) if val is not None else None
+
+
 def _get_max_date(appearance_df: pl.DataFrame) -> date:
     """Get the most recent date in the appearance data."""
     val = appearance_df["game_date"].max()
@@ -143,6 +152,22 @@ def scout_appearances(
 
     # Determine date window
     max_date = _get_max_date(app_df)
+
+    # Guard against a stale appearance aggregate. The scout iterates the
+    # appearance aggregates, but velocity and role signals are sourced from the
+    # statcast parquet. If statcast leads the aggregates (e.g. `make pull-statcast`
+    # ran without `make pull-aggs`), the most recent outings exist in statcast but
+    # never enter the window -- they are silently invisible to scoring. This is
+    # the mirror image of the role-map guard below, which handles statcast lagging.
+    statcast_max = _statcast_max_mlb_date()
+    if statcast_max is not None and statcast_max > max_date:
+        log.warning(
+            "Appearance aggregate is stale: statcast has MLB games through %s but the "
+            "appearance aggregate stops at %s. Outings after %s are invisible to the "
+            "scout -- run `make pull-aggs` (or `make pull-data`) to refresh.",
+            statcast_max, max_date, max_date,
+        )
+
     cutoff = max_date - timedelta(days=window_days - 1)
     app_window = app_df.filter(
         (pl.col("game_date") >= cutoff) & (pl.col("n_pitches") >= min_pitches)
