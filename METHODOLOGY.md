@@ -197,7 +197,7 @@ Each fired `Signal` carries `name`, `weight`, and a human-readable
 
 ## Curator (`curator.py`)
 
-The `--curate` flag on `pitcher-scout` sends the top scored appearances
+The `--curate` flag on `pitcher-narratives scoreboard` sends the scored appearances
 to an LLM via `curate_appearances` in `curator.py`, using the provider
 selected by `--provider`. The curator's job is editorial selection: it
 picks the 3–5 most compelling stories from the top of the heuristic
