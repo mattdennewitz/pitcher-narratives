@@ -105,6 +105,14 @@ def parse_args() -> argparse.Namespace:
             "offline depth calibration (see docs/calibration.md). Off by default."
         ),
     )
+    report.add_argument(
+        "--diagnostics-file",
+        default=None,
+        help=(
+            "Write the QA/diagnostics appendix as JSON to this path (one object "
+            "per narration mode). Off by default; stdout stays the reader report."
+        ),
+    )
 
     report.add_argument(
         "--no-explain-model",
@@ -394,10 +402,10 @@ def render_diagnostics_text(diag: dict) -> str:
     return "\n".join(lines)
 
 
-def _emit_mode_result(pipe_result, *, persona: str, mode) -> bool:
-    """Print one mode's reader-facing sections + diagnostics appendix.
+def _emit_mode_result(pipe_result, *, persona: str, mode, verbose: bool = False) -> tuple[bool, dict]:
+    """Print one mode's reader-facing sections to stdout; diagnostics stay off it.
 
-    Returns whether the mode shipped unverified. Called immediately after the
+    Returns (unverified, diagnostics_dict). Called immediately after the
     mode's capsule streamed, so the whole mode block is contiguous on stdout.
     """
     from pitcher_narratives.pipeline import is_unverified
@@ -440,15 +448,24 @@ def _emit_mode_result(pipe_result, *, persona: str, mode) -> bool:
         else:
             print("_Brief unavailable — no text produced._")
 
-    # ── Diagnostics appendix (still on stdout in this step) ──────────────
+    # ── Diagnostics: off the reader stream ──────────────────────────────
+    # Built unconditionally (runs the hallucination guard for every mode) but
+    # only *displayed* on -v; the JSON sidecar is written by the caller.
     diag = build_diagnostics_dict(pipe_result, persona)
-    print("\n\n---\n")
-    print(render_diagnostics_text(diag))
+    if verbose:
+        print("\n\n---\n", file=sys.stderr)
+        print(render_diagnostics_text(diag), file=sys.stderr)
 
-    # Empty narrative → the pipeline produced nothing to verify; never
-    # soft-block on it, regardless of residual flags. This preserves the
-    # pre-WS2 early-return contract (test_emit_mode_result_empty_narrative_...).
-    return unverified if pipe_result.narrative else False
+    # Empty narrative → nothing to verify; never soft-block (pre-WS2 contract).
+    return (unverified if pipe_result.narrative else False), diag
+
+
+def _write_diagnostics_file(path, diagnostics_by_mode: dict) -> None:
+    """Write per-mode diagnostics dicts to a JSON file (keyed by mode id)."""
+    import json
+    from pathlib import Path
+
+    Path(path).write_text(json.dumps(diagnostics_by_mode, indent=2, default=str))
 
 
 def _append_metrics_records(
@@ -588,6 +605,7 @@ def _run_report_command(args: argparse.Namespace) -> None:
     # are deduped here so a mode never streams twice.
     any_unverified = False
     results: dict[str, PipelineResult] = {}
+    diagnostics_by_mode: dict[str, dict] = {}
     first = True
     for mode in selected_modes:
         if mode.id in results:
@@ -610,10 +628,20 @@ def _run_report_command(args: argparse.Namespace) -> None:
             sys.exit(2)
         pipe_result = mode_results[mode.id]
         results[mode.id] = pipe_result
-        if _emit_mode_result(pipe_result, persona=args.persona, mode=mode):
+        unverified, diag = _emit_mode_result(
+            pipe_result, persona=args.persona, mode=mode, verbose=args.verbose,
+        )
+        diagnostics_by_mode[mode.id] = diag
+        if unverified:
             any_unverified = True
             banner = residual_banner(pipe_result, label=mode.id.upper())
             print(f"\n{banner}", file=sys.stderr)
+
+    if args.diagnostics_file:
+        try:
+            _write_diagnostics_file(args.diagnostics_file, diagnostics_by_mode)
+        except OSError as e:
+            log.error("Failed to write diagnostics file: %s", e)
 
     # Soft block: each mode's report is fully printed/saved, but if the
     # fact-check loop (B) could not ground every claim, warn loudly and exit

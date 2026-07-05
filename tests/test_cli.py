@@ -324,48 +324,49 @@ def test_cli_missing_api_key():
 
 
 def test_cli_anchor_check_in_output():
-    """Integration: Anchor check section appears in stdout output."""
+    """Integration: Anchor check section appears in stderr output under -v."""
     result = subprocess.run(
-        [sys.executable, "-m", "pitcher_narratives.cli", "report", "-p", "592155"],
+        [sys.executable, "-m", "pitcher_narratives.cli", "report", "-p", "592155", "-v"],
         capture_output=True,
         text=True,
         timeout=60,
         env=_test_env(PITCHER_NARRATIVES_TEST_MODEL="1"),
     )
     assert result.returncode == 0
-    assert "### Anchor Check" in result.stdout
+    assert "### Anchor Check" in result.stderr
+    assert "### Anchor Check" not in result.stdout
 
 
 def test_cli_narrative_output_has_required_sections():
     """Locks in the reader-first report format:
 
-      1. # Scouting Report        (mode title H1, streamed capsule)
+      1. # Scouting Report        (mode title H1, buffered capsule)
       2. **Verification:** line   (in-document verification stamp)
       3. ## Executive Summary     (distilled bullets)
       4. ## Brief                 (2-3 sentence recent-vs-window summary)
-      5. ---  + ## Diagnostics    (demarcated QA appendix)
+      5. ## Diagnostics (stderr, under -v)
       6. ### Stuff Analysis / ### Data Audit / ### Capsule Fact-Check /
          ### Anchor Check         (demoted to appendix subsections)
     """
     result = subprocess.run(
-        [sys.executable, "-m", "pitcher_narratives.cli", "report", "-p", "592155"],
+        [sys.executable, "-m", "pitcher_narratives.cli", "report", "-p", "592155", "-v"],
         capture_output=True, text=True, timeout=60,
         env=_test_env(PITCHER_NARRATIVES_TEST_MODEL="1"),
     )
     assert result.returncode == 0, f"stderr: {result.stderr}"
     stdout = "\n" + result.stdout
+    stderr = "\n" + result.stderr
 
     assert "\n# Scouting Report\n" in stdout
     assert "\n**Verification:**" in stdout
     assert "\n## Executive Summary\n" in stdout
     assert "\n## Brief\n" in stdout
-    assert "\n## Diagnostics\n" in stdout
-    assert "\n### Stuff Analysis\n" in stdout
-    assert "\n### Data Audit\n" in stdout
-    assert "\n### Capsule Fact-Check\n" in stdout
-    assert "\n### Anchor Check\n" in stdout
-    # Diagnostics must come after the reader-facing sections.
-    assert stdout.index("## Diagnostics") > stdout.index("## Executive Summary")
+    assert "\n## Diagnostics\n" not in stdout       # off the reader stream
+    assert "\n## Diagnostics\n" in stderr            # -v surfaces it
+    assert "\n### Stuff Analysis\n" in stderr
+    assert "\n### Data Audit\n" in stderr
+    assert "\n### Capsule Fact-Check\n" in stderr
+    assert "\n### Anchor Check\n" in stderr
 
 
 def test_cli_mode_blocks_are_labeled_and_contiguous():
@@ -373,7 +374,7 @@ def test_cli_mode_blocks_are_labeled_and_contiguous():
     H1 title is followed by ITS diagnostics before the next mode's H1."""
     result = subprocess.run(
         [sys.executable, "-m", "pitcher_narratives.cli", "report", "-p", "592155",
-         "--mode", "report,changes"],
+         "--mode", "report,changes", "-v"],
         capture_output=True, text=True, timeout=120,
         env=_test_env(PITCHER_NARRATIVES_TEST_MODEL="1"),
     )
@@ -382,9 +383,9 @@ def test_cli_mode_blocks_are_labeled_and_contiguous():
     i_report = stdout.index("# Scouting Report")
     i_changes = stdout.index("# Change Report")
     assert i_report < i_changes
-    # The report block's diagnostics appear before the changes H1.
-    assert i_report < stdout.index("## Diagnostics") < i_changes
-    assert stdout.count("## Diagnostics") == 2
+    assert "## Diagnostics" not in stdout
+    # Add -v to the argv above; both modes' diagnostics land on stderr.
+    assert result.stderr.count("## Diagnostics") == 2
 
 
 def test_cli_recap_mode_has_no_summary_or_brief_sections():
@@ -400,7 +401,7 @@ def test_cli_recap_mode_has_no_summary_or_brief_sections():
     assert "## Executive Summary" not in result.stdout
     assert "## Brief" not in result.stdout
     assert "**Verification:**" in result.stdout
-    assert "## Diagnostics" in result.stdout
+    assert "## Diagnostics" not in result.stdout
 
 
 # ── Integration: --print-prompts ──
@@ -846,8 +847,8 @@ def test_emit_mode_result_returns_unverified_status(capsys):
     clean = _pipe_result_with_flags(0)
     flagged = _pipe_result_with_flags(2)
 
-    assert _emit_mode_result(clean, persona="scout", mode=REPORT) is False
-    assert _emit_mode_result(flagged, persona="scout", mode=REPORT) is True
+    assert _emit_mode_result(clean, persona="scout", mode=REPORT)[0] is False
+    assert _emit_mode_result(flagged, persona="scout", mode=REPORT)[0] is True
     capsys.readouterr()  # absorb printed sections
 
 
@@ -893,7 +894,7 @@ def test_emit_mode_result_empty_narrative_is_not_unverified(capsys):
         capsule_audit_flags=flags,
     )
 
-    assert _emit_mode_result(result, persona="scout", mode=REPORT) is False
+    assert _emit_mode_result(result, persona="scout", mode=REPORT)[0] is False
     capsys.readouterr()
 
 
@@ -979,6 +980,39 @@ def test_render_diagnostics_text_has_sections():
     assert "### Data Audit" in text
     assert "### Capsule Fact-Check" in text
     assert "### Anchor Check" in text
+
+
+def test_emit_default_stdout_has_no_diagnostics(capsys):
+    from pitcher_narratives.cli import _emit_mode_result
+    from pitcher_narratives.personas import REPORT
+
+    _emit_mode_result(_diag_pipe_result(), persona="scout", mode=REPORT, verbose=False)
+    captured = capsys.readouterr()
+    assert "## Diagnostics" not in captured.out
+    assert "## Diagnostics" not in captured.err  # not verbose -> nowhere
+
+
+def test_emit_verbose_puts_diagnostics_on_stderr(capsys):
+    from pitcher_narratives.cli import _emit_mode_result
+    from pitcher_narratives.personas import REPORT
+
+    _emit_mode_result(_diag_pipe_result(), persona="scout", mode=REPORT, verbose=True)
+    captured = capsys.readouterr()
+    assert "## Diagnostics" not in captured.out
+    assert "## Diagnostics" in captured.err
+    assert "### Anchor Check" in captured.err
+
+
+def test_emit_returns_unverified_and_diag_dict(capsys):
+    from pitcher_narratives.cli import _emit_mode_result
+    from pitcher_narratives.personas import REPORT
+
+    unverified, diag = _emit_mode_result(
+        _diag_pipe_result(fact_flags=2), persona="scout", mode=REPORT
+    )
+    capsys.readouterr()
+    assert unverified is True
+    assert isinstance(diag, dict) and "verified" in diag
 
 
 def test_morning_subcommand_defaults(monkeypatch):
@@ -1078,11 +1112,39 @@ def test_cli_report_changes_recap_all_run():
     assert result.stdout.count("## Executive Summary") == 2
 
 
+def test_report_writes_diagnostics_json_file(tmp_path):
+    out = tmp_path / "diag.json"
+    result = subprocess.run(
+        [sys.executable, "-m", "pitcher_narratives.cli", "report", "-p", "592155",
+         "--diagnostics-file", str(out)],
+        capture_output=True, text=True, timeout=60,
+        env=_test_env(PITCHER_NARRATIVES_TEST_MODEL="1"),
+    )
+    assert result.returncode == 0, f"stderr: {result.stderr}"
+    import json
+    payload = json.loads(out.read_text())
+    assert "report" in payload
+    assert "verified" in payload["report"]
+    assert "## Diagnostics" not in result.stdout  # sidecar, not stdout
+
+
 def test_report_parser_metrics_out_defaults_none(monkeypatch):
     """--metrics-out is off by default (no calibration output unless opted in)."""
     monkeypatch.setattr(sys, "argv", ["main.py", "report", "-p", "592155"])
     args = parse_args()
     assert args.metrics_out is None
+
+
+def test_report_parse_diagnostics_file(monkeypatch):
+    monkeypatch.setattr(sys, "argv", ["cli", "report", "-p", "1", "--diagnostics-file", "d.json"])
+    args = parse_args()
+    assert args.diagnostics_file == "d.json"
+
+
+def test_report_diagnostics_file_default_none(monkeypatch):
+    monkeypatch.setattr(sys, "argv", ["cli", "report", "-p", "1"])
+    args = parse_args()
+    assert args.diagnostics_file is None
 
 
 def test_append_metrics_records_writes_jsonl(tmp_path):
