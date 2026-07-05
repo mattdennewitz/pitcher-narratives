@@ -185,9 +185,40 @@ def parse_args() -> argparse.Namespace:
         help="Restrict the board to starting pitchers (role SP)",
     )
     scoreboard.add_argument(
-        "--json",
+        "--format",
+        choices=["table", "md", "json"],
+        default="md",
+        help="Output format: fixed-width table, markdown board, or JSON (default: md)",
+    )
+    scoreboard.add_argument(
+        "-n",
+        "--top",
+        type=int,
+        default=0,
+        help="Keep only the top N appearances per role by score (default: 0 = no limit)",
+    )
+    scoreboard.add_argument(
+        "--min-score",
+        type=float,
+        default=0.0,
+        help="Drop appearances below this interest score (default: 0.0 = keep all)",
+    )
+    scoreboard.add_argument(
+        "-v",
+        "--verbose",
         action="store_true",
-        help="Emit the board as JSON instead of markdown",
+        help="In table format, show a per-signal detail row under each appearance",
+    )
+    scoreboard.add_argument(
+        "--curate",
+        action="store_true",
+        help="Run the LLM selector on the board and print the selected slate",
+    )
+    scoreboard.add_argument(
+        "--provider",
+        choices=["gemini", "claude"],
+        default="gemini",
+        help="LLM provider for --curate (default: gemini)",
     )
 
     return parser.parse_args()
@@ -620,15 +651,20 @@ def _run_morning_command(args: argparse.Namespace) -> None:
 
 
 def _run_scoreboard_command(args: argparse.Namespace) -> None:
-    """Print the scouted full board to stdout — no LLM, no cost."""
+    """Print the scouted full board to stdout — no LLM unless --curate is set."""
     setup_logging()
 
     # Lazy imports: polars (~90ms) and the scout/digest modules are heavy;
     # importing at call time keeps `pitcher-narratives --help` fast.
     import polars as pl
 
-    from pitcher_narratives.digest import render_full_board, render_full_board_json
-    from pitcher_narratives.scout import scout_appearances
+    from pitcher_narratives.digest import (
+        render_curation_slate,
+        render_full_board,
+        render_full_board_json,
+        render_full_board_table,
+    )
+    from pitcher_narratives.scout import scout_appearances, top_per_role
 
     try:
         board = scout_appearances(window_days=args.window, min_pitches=args.min_pitches)
@@ -638,10 +674,14 @@ def _run_scoreboard_command(args: argparse.Namespace) -> None:
 
     if args.starters_only:
         board = [a for a in board if a.role == "SP"]
+    if args.top > 0:
+        board = top_per_role(board, args.top)
+    if args.min_score > 0:
+        board = [a for a in board if a.score >= args.min_score]
 
     # JSON always emits valid output (empty board -> empty appearances list) so
     # downstream consumers can parse stdout unconditionally.
-    if args.json:
+    if args.format == "json":
         print(render_full_board_json(board))
         return
 
@@ -652,7 +692,24 @@ def _run_scoreboard_command(args: argparse.Namespace) -> None:
 
     game_date = max(a.game_date for a in board)
     print(f"# Scoreboard — {game_date}\n")
-    print(render_full_board(board))
+    if args.format == "table":
+        print(render_full_board_table(board, verbose=args.verbose))
+    else:
+        print(render_full_board(board))
+
+    if args.curate:
+        env_var = API_KEYS[args.provider]
+        if not os.environ.get(env_var):
+            print(f"\nError: {env_var} not set.", file=sys.stderr)
+            sys.exit(1)
+        from pitcher_narratives.curator import select_slate
+
+        print(f"\n{'═' * 72}", file=sys.stderr)
+        print("SELECTOR — choosing the slate...", file=sys.stderr)
+        print(f"{'═' * 72}\n", file=sys.stderr)
+        slate = select_slate(board, provider=args.provider)
+        names = {a.pitcher_id: a.pitcher_name for a in board}
+        print(render_curation_slate(slate, names))
 
 
 if __name__ == "__main__":

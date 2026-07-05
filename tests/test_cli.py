@@ -1070,6 +1070,17 @@ def test_report_explain_model_defaults_true(monkeypatch):
 # ── scoreboard subcommand ──
 
 
+def _scoreboard_args(**over):
+    import argparse
+
+    base = dict(
+        window=1, min_pitches=20, starters_only=False, format="md",
+        top=0, min_score=0.0, verbose=False, curate=False, provider="gemini",
+    )
+    base.update(over)
+    return argparse.Namespace(**base)
+
+
 def test_scoreboard_parse_defaults(monkeypatch):
     monkeypatch.setattr(sys, "argv", ["main.py", "scoreboard"])
     args = parse_args()
@@ -1077,6 +1088,12 @@ def test_scoreboard_parse_defaults(monkeypatch):
     assert args.window == 1
     assert args.min_pitches == 20
     assert args.starters_only is False
+    assert args.format == "md"
+    assert args.top == 0
+    assert args.min_score == 0.0
+    assert args.verbose is False
+    assert args.curate is False
+    assert args.provider == "gemini"
 
 
 def test_scoreboard_parse_flags(monkeypatch):
@@ -1090,16 +1107,12 @@ def test_scoreboard_parse_flags(monkeypatch):
 
 def test_scoreboard_prints_full_board(monkeypatch, capsys):
     """scoreboard prints the render_full_board markdown, no LLM."""
-    import argparse
-
     from pitcher_narratives import scout as scout_mod
     from pitcher_narratives.cli import _run_scoreboard_command
 
     board = [_scored(1, "Ace SP", "SP", 12.0), _scored(2, "Setup RP", "RP", 6.0)]
     monkeypatch.setattr(scout_mod, "scout_appearances", lambda **kw: list(board))
-    _run_scoreboard_command(
-        argparse.Namespace(window=1, min_pitches=20, starters_only=False, json=False)
-    )
+    _run_scoreboard_command(_scoreboard_args())
     out = capsys.readouterr().out
     assert "# Scoreboard — 2026-07-04" in out
     assert "## The Full Board" in out
@@ -1107,39 +1120,30 @@ def test_scoreboard_prints_full_board(monkeypatch, capsys):
 
 
 def test_scoreboard_starters_only_drops_relievers(monkeypatch, capsys):
-    import argparse
-
     from pitcher_narratives import scout as scout_mod
     from pitcher_narratives.cli import _run_scoreboard_command
 
     board = [_scored(1, "Ace SP", "SP", 12.0), _scored(2, "Setup RP", "RP", 6.0)]
     monkeypatch.setattr(scout_mod, "scout_appearances", lambda **kw: list(board))
-    _run_scoreboard_command(
-        argparse.Namespace(window=1, min_pitches=20, starters_only=True, json=False)
-    )
+    _run_scoreboard_command(_scoreboard_args(starters_only=True))
     out = capsys.readouterr().out
     assert "Ace SP" in out
     assert "Setup RP" not in out
 
 
 def test_scoreboard_quiet_day(monkeypatch, capsys):
-    import argparse
-
     from pitcher_narratives import scout as scout_mod
     from pitcher_narratives.cli import _run_scoreboard_command
 
     monkeypatch.setattr(scout_mod, "scout_appearances", lambda **kw: [])
-    _run_scoreboard_command(
-        argparse.Namespace(window=1, min_pitches=20, starters_only=False, json=False)
-    )
+    _run_scoreboard_command(_scoreboard_args())
     captured = capsys.readouterr()
     assert captured.out == ""
     assert "quiet day" in captured.err
 
 
 def test_scoreboard_json_output(monkeypatch, capsys):
-    """--json emits parseable JSON with the scored appearances."""
-    import argparse
+    """--format json emits parseable JSON with the scored appearances."""
     import json
 
     from pitcher_narratives import scout as scout_mod
@@ -1147,26 +1151,80 @@ def test_scoreboard_json_output(monkeypatch, capsys):
 
     board = [_scored(1, "Ace SP", "SP", 12.0), _scored(2, "Setup RP", "RP", 6.0)]
     monkeypatch.setattr(scout_mod, "scout_appearances", lambda **kw: list(board))
-    _run_scoreboard_command(
-        argparse.Namespace(window=1, min_pitches=20, starters_only=False, json=True)
-    )
+    _run_scoreboard_command(_scoreboard_args(format="json"))
     payload = json.loads(capsys.readouterr().out)
     assert payload["game_date"] == "2026-07-04"
     assert [a["pitcher_name"] for a in payload["appearances"]] == ["Ace SP", "Setup RP"]
 
 
 def test_scoreboard_json_empty_is_valid(monkeypatch, capsys):
-    """--json on a quiet day still emits valid JSON to stdout (no stderr)."""
-    import argparse
+    """--format json on a quiet day still emits valid JSON to stdout (no stderr)."""
     import json
 
     from pitcher_narratives import scout as scout_mod
     from pitcher_narratives.cli import _run_scoreboard_command
 
     monkeypatch.setattr(scout_mod, "scout_appearances", lambda **kw: [])
-    _run_scoreboard_command(
-        argparse.Namespace(window=1, min_pitches=20, starters_only=False, json=True)
-    )
+    _run_scoreboard_command(_scoreboard_args(format="json"))
     captured = capsys.readouterr()
     assert json.loads(captured.out) == {"game_date": None, "appearances": []}
     assert captured.err == ""
+
+
+def test_scoreboard_parse_format_and_curate_flags(monkeypatch):
+    monkeypatch.setattr(
+        sys, "argv",
+        ["main.py", "scoreboard", "--format", "table", "-n", "5",
+         "--min-score", "4.0", "-v", "--curate", "--provider", "claude"],
+    )
+    args = parse_args()
+    assert args.format == "table"
+    assert args.top == 5
+    assert args.min_score == 4.0
+    assert args.verbose is True
+    assert args.curate is True
+    assert args.provider == "claude"
+
+
+def test_scoreboard_table_format(monkeypatch, capsys):
+    from pitcher_narratives import scout as scout_mod
+    from pitcher_narratives.cli import _run_scoreboard_command
+
+    board = [_scored(1, "Ace SP", "SP", 12.0), _scored(2, "Setup RP", "RP", 6.0)]
+    monkeypatch.setattr(scout_mod, "scout_appearances", lambda **kw: list(board))
+    _run_scoreboard_command(_scoreboard_args(format="table"))
+    out = capsys.readouterr().out
+    assert "Score" in out and "Signals" in out
+    assert "Ace SP" in out and "Setup RP" in out
+
+
+def test_scoreboard_min_score_filter(monkeypatch, capsys):
+    from pitcher_narratives import scout as scout_mod
+    from pitcher_narratives.cli import _run_scoreboard_command
+
+    board = [_scored(1, "Ace SP", "SP", 12.0), _scored(2, "Weak RP", "RP", 2.0)]
+    monkeypatch.setattr(scout_mod, "scout_appearances", lambda **kw: list(board))
+    _run_scoreboard_command(_scoreboard_args(min_score=5.0))
+    out = capsys.readouterr().out
+    assert "Ace SP" in out
+    assert "Weak RP" not in out
+
+
+def test_scoreboard_curate_prints_slate(monkeypatch, capsys):
+    from pitcher_narratives import curator as curator_mod
+    from pitcher_narratives import scout as scout_mod
+    from pitcher_narratives.cli import _run_scoreboard_command
+    from pitcher_narratives.curator import CurationPick, CurationSlate
+
+    board = [_scored(1, "Ace SP", "SP", 12.0)]
+    monkeypatch.setattr(scout_mod, "scout_appearances", lambda **kw: list(board))
+    slate = CurationSlate(picks=[CurationPick(
+        pitcher_id=1, category="clean_breakout", angle="velo up",
+        conviction="high", conviction_reason="shape agrees",
+    )])
+    monkeypatch.setattr(curator_mod, "select_slate", lambda *a, **k: slate)
+    monkeypatch.setenv("GEMINI_API_KEY", "x")
+    _run_scoreboard_command(_scoreboard_args(curate=True))
+    out = capsys.readouterr().out
+    assert "CLEAN BREAKOUT" in out
+    assert "Ace SP (high): velo up" in out
