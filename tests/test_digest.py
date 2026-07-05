@@ -163,3 +163,25 @@ def test_digest_renders_new_category_sections_in_order():
     )
     assert "[COMMAND BREAKOUT]" in out
     assert "[VELO DROP]" in out
+
+
+def test_digest_has_no_local_category_dicts():
+    """Category metadata lives only in curator; digest must not redefine it."""
+    import pitcher_narratives.digest as d
+
+    assert not hasattr(d, "_CATEGORY_BADGES")
+    assert not hasattr(d, "_CATEGORY_ORDER")
+    assert not hasattr(d, "_CATEGORY_SECTION_TITLES")
+
+
+def test_digest_badge_comes_from_registry():
+    from pitcher_narratives.curator import CATEGORY_BY_ID
+
+    slate = CurationSlate(picks=[_pick(1)])
+    out = assemble_digest(
+        slate=slate, summaries={1: "s."}, appearances={1: _app(1)},
+        board=[_app(1)], game_date=date(2026, 6, 10), cost_block="c",
+    )
+    cat = CATEGORY_BY_ID["clean_breakout"]
+    assert f"## {cat.section_title}" in out
+    assert f"[{cat.badge}]" in out

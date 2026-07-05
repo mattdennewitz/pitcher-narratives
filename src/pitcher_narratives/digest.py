@@ -11,7 +11,7 @@ import json
 import logging
 from datetime import date
 
-from pitcher_narratives.curator import CurationPick, CurationSlate
+from pitcher_narratives.curator import CATEGORIES, CurationPick, CurationSlate
 from pitcher_narratives.scout import ScoredAppearance
 
 __all__ = [
@@ -26,27 +26,6 @@ log = logging.getLogger("pitcher_narratives.digest")
 # ── Assembly ────────────────────────────────────────────────────────
 
 
-_CATEGORY_BADGES = {
-    "clean_breakout": "CLEAN BREAKOUT",
-    "command_breakout": "COMMAND BREAKOUT",
-    "lab_project": "LAB PROJECT",
-    "identity_crisis": "IDENTITY CRISIS",
-    "velo_drop": "VELO DROP",
-    "red_flag": "RED FLAG",
-}
-
-_CATEGORY_ORDER = [
-    "clean_breakout", "command_breakout", "lab_project",
-    "identity_crisis", "velo_drop", "red_flag",
-]
-_CATEGORY_SECTION_TITLES = {
-    "clean_breakout": "Clean Breakouts",
-    "command_breakout": "Command Breakouts",
-    "lab_project": "Lab Projects",
-    "identity_crisis": "Identity Crises",
-    "velo_drop": "Velocity Drops",
-    "red_flag": "Red Flags",
-}
 _CONVICTION_RANK = {"high": 0, "medium": 1, "low": 2}
 
 
@@ -124,30 +103,27 @@ def assemble_digest(
             ),
         )
 
-    def _section(title: str, picks: list[CurationPick]) -> list[str]:
-        lines = [f"## {title}", ""]
+    def _section(cat, picks: list[CurationPick]) -> list[str]:
+        lines = [f"## {cat.section_title}", ""]
         for pick in _ordered(picks):
             name = appearances[pick.pitcher_id].pitcher_name
-            badge = _CATEGORY_BADGES.get(pick.category, pick.category.upper().replace("_", " "))
-            if pick.category not in _CATEGORY_BADGES:
-                log.warning("Unknown pick category %r for %s; using raw name as badge.", pick.category, name)
             lines += [
-                f"### {name} — `{pick.category}` [{badge}]",
+                f"### {name} — `{pick.category}` [{cat.badge}]",
                 "",
                 summaries[pick.pitcher_id],
                 "",
             ]
         return lines
 
-    by_cat: dict[str, list[CurationPick]] = {c: [] for c in _CATEGORY_ORDER}
+    by_cat: dict[str, list[CurationPick]] = {c.id: [] for c in CATEGORIES}
     for pick in slate.picks:
         if pick.pitcher_id in summaries:
             by_cat[pick.category].append(pick)
 
     parts = [f"# Morning Digest — {game_date}", ""]
-    for cat in _CATEGORY_ORDER:
-        if by_cat[cat]:
-            parts += _section(_CATEGORY_SECTION_TITLES[cat], by_cat[cat])
+    for cat in CATEGORIES:
+        if by_cat[cat.id]:
+            parts += _section(cat, by_cat[cat.id])
     parts.append(render_full_board(board))
     footer = cost_block
     if dropped_picks:
