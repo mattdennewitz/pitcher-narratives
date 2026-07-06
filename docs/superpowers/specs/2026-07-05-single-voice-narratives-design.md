@@ -33,10 +33,11 @@ of them (and the axes that multiply them) is the simplification.
 - **Structure binds to the deliverable (mode), not the voice.** The `Persona ×
   OutputContract` matrix collapses; each mode owns its own structure, framing,
   and length.
-- **The scouting report is model-focused.** Its job is to make the model's read
-  legible — what the model sees, what it weighted, why it graded the pitcher as
-  it did — with the pitcher assessment as the vehicle. `EXPLAIN THE MODEL` is
-  **core** to the report (and changes) framing, not decoration.
+- **The scouting report explains the player through the lens of the model.**
+  The player is the subject; the model is *how* we explain him — what it sees,
+  what it weighted, why it graded him as it did — used to illuminate the pitcher,
+  not admired for its own sake. `EXPLAIN THE MODEL` is **core** to the report
+  (and changes) framing, not decoration.
 
 ## 3. The voice
 
@@ -61,9 +62,10 @@ voice, so there is nothing to select, inherit, or disambiguate. Downstream
 | **Changes report** | `changes` | Exec-summary bullets **+** medium prose on what moved (recent window vs longer history) | 250–450 words | `True` (bullets) |
 | **Morning report** | `recap` | A single capsule on the most recent appearance. **No bullets.** | 60–120 words | `False` |
 
-- **Scouting report** — a narrative that explains how our model sees a pitcher
-  over a period. Public/newsletter-usable. Bullets are the at-a-glance layer;
-  the prose is the read.
+- **Scouting report** — a narrative that explains the pitcher through the lens
+  of the model: the player is the subject, the model is how we read him, over a
+  period. Public/newsletter-usable. Bullets are the at-a-glance layer; the prose
+  is the read.
 - **Changes report** — compares a short recent window against a longer
   historical period; leads with the biggest shift; reports what moved.
 - **Morning report** — the per-pitcher capsule about yesterday's outing. The
