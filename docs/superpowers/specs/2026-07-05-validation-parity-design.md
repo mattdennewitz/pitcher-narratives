@@ -82,8 +82,9 @@ That single gap is:
   and folds any hallucinated-metric flags into the entry's UNVERIFIED
   determination (same treatment as residual/value-parity flags today,
   `morning.py:177-184`).
-- Without `--strict`, behavior is **byte-identical to today** (no hallucination
-  call, no new flags).
+- Without `--strict`, **validation behavior is unchanged** (no hallucination
+  call, no new UNVERIFIED flags). The only default-mode change is the added
+  `validation: fast` footer stamp (§3.3) — a deliberate transparency addition.
 
 ### 3.2 Record results
 
@@ -129,8 +130,9 @@ That single gap is:
   (behavior preserved, output byte-identical); `--strict` calls it per entry,
   folds a synthetic hallucinated metric into the UNVERIFIED count, and records it
   in `validation.json`; the footer stamp reflects the mode.
-- A regression test asserting the default digest text is unchanged by the flag's
-  addition.
+- A regression test asserting fast mode makes no `check_hallucinated_metrics`
+  call and adds no new UNVERIFIED flags (only the `validation: fast` footer line
+  differs from pre-WS4 output).
 
 ## 6. Open questions — resolved
 
