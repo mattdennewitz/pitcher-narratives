@@ -13,10 +13,10 @@ It works at two scales:
   day's appearances, selects the most compelling stories by category, and
   writes a capsule for each (`pitcher-narratives morning`).
 
-Every single-pitcher run is driven by a **narration mode** — the same data spine
-rendered as a full `report`, a change-focused `changes` write-up, or a short
-`recap` brief. Pick one (or several at once) with `--mode`. See
-[Narration modes](#narration-modes).
+Every single-pitcher run is driven by a **narration mode** — the same data spine,
+one writer voice, rendered as a full `report`, a change-focused `changes`
+write-up, or a short `recap` capsule. Pick one (or several at once) with
+`--mode`. See [Narration modes](#narration-modes).
 
 ## Requirements
 
@@ -49,7 +49,7 @@ uv run pitcher-narratives report -p 657277 -n 10
 
 `-n/--recent` is the analysis window measured in **most-recent appearances**
 (default `10`), not calendar days. Add `--mode changes` for a
-what-moved write-up, or `--mode recap` for a short brief — details in
+what-moved write-up, or `--mode recap` for a short capsule — details in
 [Narration modes](#narration-modes).
 
 ## The CLIs
@@ -76,8 +76,6 @@ window of recent appearances, in one or more [narration modes](#narration-modes)
 | `--print-prompts` | flag | off | Renders the pipeline prompts to stderr and exits without calling the LLM |
 | `--provider` | enum | `gemini` | `gemini` \| `claude` |
 | `--thinking` | enum | `medium` | `minimal` \| `low` \| `medium` \| `high` \| `xhigh` |
-| `--persona` | enum | `scout` | Writer voice: `scout` \| `analyst` \| `generic` |
-| `--list-personas` | flag | off | Print available personas and exit |
 | `--no-explain-model` | flag | off | Skip S+/L+/P+ model explanations in the capsule (repeat readers) |
 | `--diagnostics-file` | path | *none* | Write the QA/diagnostics appendix as JSON (one object per mode); stdout stays the reader report |
 
@@ -96,8 +94,9 @@ Stdout emits one labeled block per requested mode, in `--mode` order — the
 **reader document only**: `# <Mode Title>` (`Scouting Report` / `Change Report`
 / `Recap`), the final capsule (printed once — the pipeline buffers the writer
 output rather than streaming it), a `**Verification:**` stamp (✅ verified / ⚠️
-UNVERIFIED with counts), and a distilled `## Executive Summary` + `## Brief` for
-`report`/`changes` only (recap's capsule is already the brief).
+UNVERIFIED with counts), and — for `report`/`changes` only — a distilled
+`## Executive Summary` (recap's capsule is already the short-form deliverable,
+so it skips distillation).
 
 The QA/diagnostics appendix (`### Stuff Analysis`, `### Data Audit`,
 `### Capsule Fact-Check`, `### Value Parity`, `### Anchor Check`,
@@ -114,51 +113,45 @@ model — useful when iterating on prompt wording.
 
 ### Narration modes
 
-A **narration mode** selects the output shape written on top of the shared data
-spine. Voice (`--persona`) stays orthogonal: the persona picks tone, the mode
-picks structure and the temporal frame.
+A **narration mode** selects the output shape and temporal frame the single
+writer voice (`WRITER_VOICE`) renders in. The voice — tone, scouting register,
+how deep to explain the grading model — never changes; the mode picks
+structure, length, and what temporal frame the writer sees.
 
-| Mode | Temporal frame | Shape | Notes |
+| Mode | Temporal frame | Deliverable | Notes |
 |---|---|---|---|
-| `report` (default) | recent vs season | Full scouting capsule | Today's report path; deepest validation budget |
-| `changes` | recent vs **prior** window | Change-focused write-up | Two-frame engine: code-computes recent-`-n`-vs-prior-`--prior` deltas and hands the writer a "Recent vs Prior Window" comparison block |
-| `recap` | recent vs season | Short executive brief | Shallower anchor loop (less prose to drift); the mode `pitcher-narratives morning` uses per pick |
+| `report` (default) | recent vs season | `## Executive Summary` bullets + 350–600 word flowing prose capsule (3–5 paragraphs) | Today's full report path; deepest validation budget |
+| `changes` | recent vs **prior** window | `## Executive Summary` bullets + 250–450 word change-focused write-up | Two-frame engine: code-computes recent-`-n`-vs-prior-`--prior` deltas and hands the writer a "Recent vs Prior Window" comparison block |
+| `recap` | recent vs season | 60–120 word (3–5 sentence) capsule only — no bullets | Shallower anchor loop (less prose to drift); the mode `pitcher-narratives morning` uses per pick |
 
 Pass one mode, or several comma-separated (`--mode report,changes`); each mode
 renders its own capsule and section block, and the run exits non-zero if *any*
 of them is unverified. A duplicated mode id is de-duplicated, not double-run.
 
-#### What each mode × voice produces
+#### The three deliverables
 
-The mode picks the **structure and temporal frame**; the voice (`--persona`)
-picks the **tone**. Together they determine the shape of the
-`# Scouting Report` capsule. The three voices are:
+Every deliverable is written in the same single voice — a field-facing
+analyst voice that explains the model as it goes, never cheerleads, and
+never admires the grading system for its own sake. Only the mode changes:
 
-- **`scout`** (default) — front-office scouting capsule, conversational
-  sabermetric voice.
-- **`analyst`** — newsletter-style, a teaching voice for analytically-inclined
-  fans.
-- **`generic`** — neutral-analytical breakdown for general fans.
-
-|  | `--mode report` | `--mode changes` | `--mode recap` |
-|---|---|---|---|
-| **`scout`** | 2–3 paragraph prose capsule, 150–350 words. Explains the S+/L+/P+ model on first use. Setup → verdict. | 2–3 paragraph **change log**, 150–350 words, prose only. Leads with the single biggest shift; reports deltas, omits what didn't move. | Same brief as every voice (see below). |
-| **`analyst`** | Newsletter essay, 450–800 words / 4–6 paragraphs, prose (bold lead-ins ok, no `##` headings, no tables). Narrative hook + teaching. | Change **briefing**, 450–800 words / 4–6 paragraphs, prose. Opens on the biggest shift, walks connected changes by consequence. | Same brief as every voice (see below). |
-| **`generic`** | Structured breakdown, 300–500 words: six fixed `##` sections (`Stuff`, `Location`, `Run Value & Execution`, `Trend`, `Game Shape`) **plus a `Summary Table`** (`Signal \| Key Finding \| Grade`). | Change **summary**, 300–500 words — one continuous change log, prose only. *No headings and no table* (unlike report/generic). | Same brief as every voice (see below). |
-
-`recap` collapses the voices: all three personas write the **same executive
-brief** — 2–4 sentences, 40–90 words, one thread, no headings/bullets/tables,
-model-teaching skipped. The persona overlay still nudges word choice, but the
-length and structure are identical. This is the mode `pitcher-narratives
-morning` uses for every digest pick.
+- **`report`** — the full scouting read: an `## Executive Summary` of bullets
+  distilled from the capsule, followed by a 350–600 word, 3–5 paragraph prose
+  narrative. Prose only (no headings, no bullet lists, no tables inside the
+  capsule itself). Leads with the model's single most important read on the
+  pitcher; explains S+/L+/P+ on first use (unless `--no-explain-model`).
+- **`changes`** — the same executive-summary bullets, then a 250–450 word
+  change log framed against the **prior** window: leads with the single
+  biggest shift, reports only what moved, and omits stable traits unless they
+  frame a change.
+- **`recap`** — a short 60–120 word (3–5 sentence) capsule and nothing else.
+  No executive summary, no bullets, no headings — the capsule *is* the whole
+  deliverable, which is why distillation is skipped. This is the shape
+  `pitcher-narratives morning` writes for every digest pick.
 
 Every mode also produces the same QA/diagnostics appendix (`### Stuff
 Analysis`, `### Data Audit`, `### Capsule Fact-Check`, `### Value Parity`,
 `### Anchor Check`, and — when triggered — `### Hallucination Check`),
-available off the reader stream via `-v` or `--diagnostics-file`; only
-`report`/`changes` also distill a `## Executive Summary` and `## Brief`
-(recap skips distillation, since its capsule already is the brief). Only the
-capsule text itself changes with mode × voice.
+available off the reader stream via `-v` or `--diagnostics-file`.
 
 ### `pitcher-narratives morning`
 
@@ -172,7 +165,7 @@ category → write a capsule for each → assemble a digest. See
 | `--candidates` | int | `25` | Scout candidates per role fed to the selector |
 | `--min-pitches` | int | `20` | Minimum pitches for an appearance to be scored |
 | `--provider` | enum | `gemini` | `gemini` \| `claude` |
-| `--persona` | enum | `scout` | Writer voice |
+| `--starters-only` | flag | off | Restrict the board to starting pitchers (role SP) before selection |
 | `--out` | path | `morning-runs` | Output directory root |
 
 ```bash
@@ -226,7 +219,7 @@ table and weights.
 
 3. **Write** — concurrent writer agents produce one capsule per pick
    (`digest.py`), each run through the `recap` narration mode so the digest
-   shares the same validated brief path as `report --mode recap`.
+   shares the same validated capsule path as `report --mode recap`.
 4. **Assemble** — a deterministic markdown digest, grouped by category.
 
 Each run writes `<out>/<game-date>/`: `digest.md`, `slate.json`, `briefing.md`,
@@ -304,7 +297,7 @@ pitcher-narratives/
 │   ├── curator.py        # LLM slate selection (category-bucketed)
 │   ├── digest.py         # story cues + concurrent writers + assembly
 │   ├── morning.py        # morning-run orchestration
-│   ├── personas.py       # writer personas (scout / analyst / generic)
+│   ├── personas.py       # single writer voice + narration modes (report/changes/recap)
 │   ├── costs.py          # token + dollar usage tracking
 │   ├── config.py         # providers, model settings, thinking caps
 │   ├── agent_skills.py   # pydantic-ai skills toolset wiring

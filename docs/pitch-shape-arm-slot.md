@@ -142,9 +142,9 @@ controls:
    something in the movement interaction."
 
 3. **Writer** (`personas.py`): `SHARED_WRITER_BASE` instructs the
-   writer (all personas) to treat arm-slot shape findings from
-   specialists as high-value mechanism evidence and work them into the
-   capsule rather than dropping them during synthesis.
+   writer to treat arm-slot shape findings from specialists as
+   high-value mechanism evidence and work them into the capsule
+   rather than dropping them during synthesis.
 
 The data flows engine → context → specialist → writer with the tag
 intact at every hop, and the specialist-audit loop can verify any

@@ -506,6 +506,41 @@ def test_render_recap_threads_pick_angle_into_writer_input():
     assert "A very distinctive angle marker XYZ123" in captured["overlay"]
 
 
+def test_morning_emits_recap_capsule_per_selected_pitcher(tmp_path, monkeypatch):
+    """Morning runs the shared spine and yields a recap-shaped capsule per pick.
+
+    Regression guard for spec §4/§8 phase 4: morning already wires each
+    selected pitcher through render_recap (RECAP mode), whose capsule skips
+    distillation (no executive-summary bullets) and produces a non-empty
+    narrative. This test locks that shape in.
+    """
+    from pitcher_narratives import pipeline as _pl
+
+    captured: list = []
+    _real_render_recap = _pl.render_recap
+
+    async def _spy_render_recap(ctx, analyzed, *, agents, pick=None, **kw):
+        result = await _real_render_recap(ctx, analyzed, agents=agents, pick=pick, **kw)
+        captured.append(result)
+        return result
+
+    _patch_data(monkeypatch)
+    monkeypatch.setattr(morning, "render_recap", _spy_render_recap)
+    run_dir = morning.run_morning(
+        window_days=1, top_n=25, min_pitches=20,
+        provider="gemini", out_root=tmp_path,
+        _selector_override=_selector_model(),
+        _writer_override=TestModel(call_tools=[]),
+    )
+    assert run_dir is not None
+
+    # _selector_model() picks pitcher_id 1 and 2 -> one recap capsule each.
+    assert len(captured) == 2
+    for result in captured:
+        assert result.narrative  # non-empty narrative
+        assert result.executive_summary == []  # RECAP mode skips distill: no exec bullets
+
+
 def test_build_validation_payload_records_flags_per_pick():
     """The validation.json payload carries one flag_record per surviving pick."""
     from pitcher_narratives.models import SpecialistOutputs
