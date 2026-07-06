@@ -723,3 +723,11 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 **Placeholder scan:** Task 6 Step 1 leaves the test body to fill from the file's existing harness — flagged explicitly with what to assert; not a silent TBD. All source changes carry full code.
 
 **Type consistency:** `build_mode_writer_prompt` (Tasks 1–4) → renamed to `build_writer_system_prompt` (Task 5) consistently; `make_pipeline_agents(provider, thinking, mode, ...)` used identically in Tasks 2/4 tests; `label` param name consistent across `_render_capsule` callers.
+
+
+---
+
+## Amendments (during execution)
+
+- **Task 2 (added scope):** removing `PipelineResult.brief` also requires deleting the CLI `## Brief` print block (`cli.py` ~469-473) and updating the coupled `test_cli.py` assertions (`~363` `"\n## Brief\n" in stdout`; `test_cli_recap_mode_has_no_summary_or_brief_sections` ~391-402). This CLI Brief removal was missing from the original plan. Task 2 also pulls forward the `morning.py:134` call fix to `make_pipeline_agents(provider, "medium", RECAP)` (drop the dead `persona = PERSONAS[persona_id]` line; leave `run_morning`'s `persona_id` for Task 4).
+- **Task 4 (reduced scope):** the `morning.py:134` positional call is already fixed in Task 2; Task 4 Step 4 only removes the `morning --persona` flag and `run_morning`'s `persona_id` param.

@@ -84,15 +84,10 @@ from pitcher_narratives.engine import (
     render_league_baselines,
 )
 from pitcher_narratives.personas import (
-    BRIEF,
     DEFAULT_MODE,
-    DEFAULT_PERSONA,
     NarrationMode,
-    Persona,
     RECAP,
-    build_system_prompt,
-    build_writer_system_prompt,
-    get_persona,
+    build_mode_writer_prompt,
 )
 
 if TYPE_CHECKING:
@@ -1292,12 +1287,12 @@ def _render_pipeline_data_sections(
     by callers that want the rendered text without a disk roundtrip
     (e.g. cli.py --print-prompts).
 
-    The persona arg controls which composed writer prompt is rendered in
-    the WRITER section. When prior_ctx is provided, the TRENDS specialist
-    input includes the RECENT-vs-PRIOR comparison block; when None (the
-    default), output is unchanged from before this parameter existed.
+    The WRITER section renders the single mode-composed writer prompt.
+    The persona kwarg is retained as a no-op (removed in Task 4). When
+    prior_ctx is provided, the TRENDS specialist input includes the
+    RECENT-vs-PRIOR comparison block; when None (the default), output is
+    unchanged from before this parameter existed.
     """
-    persona_obj = get_persona(persona)
     sep = "═" * 72
     sections: list[str] = []
 
@@ -1339,7 +1334,7 @@ def _render_pipeline_data_sections(
 
     # Narrative pipeline: writer + anchor + executive summary
     sections.append(f"\n{sep}\nWRITER\n{sep}\n")
-    sections.append(f"## System Prompt\n\n{build_writer_system_prompt(persona_obj)}\n")
+    sections.append(f"## System Prompt\n\n{build_mode_writer_prompt(DEFAULT_MODE)}\n")
     sections.append(
         "## User Message\n\n"
         "[Receives: key signals + all 5 specialist outputs]\n"
@@ -1347,17 +1342,6 @@ def _render_pipeline_data_sections(
 
     sections.append(f"\n{sep}\nEXECUTIVE SUMMARY (second step — summarizes the final report)\n{sep}\n")
     sections.append(f"## System Prompt\n\n{_EXECUTIVE_SUMMARY_PROMPT}\n")
-    sections.append(
-        "## User Message\n\n"
-        + build_summary_input(
-            "[final report capsule, post anchor-revision]",
-            "[writer input: key signals + clean specialist analyses]",
-        )
-        + "\n"
-    )
-
-    sections.append(f"\n{sep}\nBRIEF (second step — summarizes the final report)\n{sep}\n")
-    sections.append(f"## System Prompt\n\n{build_system_prompt(persona_obj, BRIEF)}\n")
     sections.append(
         "## User Message\n\n"
         + build_summary_input(
@@ -1394,8 +1378,8 @@ def write_pipeline_data_file(
         ctx: Assembled pitcher context.
         pitcher_id: MLB pitcher ID for the filename.
         provider: LLM provider key for the filename.
-        persona: Persona id string (default "scout"); controls which
-            composed writer prompt is rendered in the WRITER section.
+        persona: Retained as a no-op (removed in Task 4); the WRITER
+            section now renders the single mode-composed writer prompt.
         prior_ctx: Optional prior-window context; when provided, the
             TRENDS specialist section includes the RECENT-vs-PRIOR
             comparison block. None (default) leaves output unchanged.
@@ -1430,7 +1414,6 @@ class PipelineResult(BaseModel):
     """Result from the multi-agent pipeline."""
     narrative: str
     executive_summary: list[str] = []
-    brief: str = ""
     specialists: SpecialistOutputs
     key_signals: KeySignals | None = None
     audit_flags: list[AuditFlag] = []
@@ -1541,7 +1524,6 @@ class PipelineAgents(NamedTuple):
     anchor: Agent[None, AnchorResult]
     summary: Agent[None, str]
     signal_extractor: Agent[None, KeySignals]
-    brief: Agent[None, str]
     mini_model_name: str = ""  # bare model name for UsageTracker calls in the spine
 
     def specialist_dict(self) -> dict[str, Agent[None, str]]:
@@ -1563,7 +1545,6 @@ class PipelineAgents(NamedTuple):
 def make_pipeline_agents(
     provider: str = "gemini",
     thinking: ThinkingEffort = "high",
-    persona: Persona = DEFAULT_PERSONA,
     mode: NarrationMode = DEFAULT_MODE,
     explain_model: bool = True,
 ) -> PipelineAgents:
@@ -1599,17 +1580,16 @@ def make_pipeline_agents(
     # output; on Claude mini=True already disables thinking, leaving the full
     # MEDIUM budget for output.
     signal_settings = make_model_settings(provider, cap_thinking(thinking, "medium"), 0.3, max_tokens=TOKEN_BUDGET_MEDIUM, mini=True)
-    # Second-step summarizers (executive summary + brief) distill the finished
-    # report from a large grounded input. Thinking is disabled so its tokens
-    # don't consume the output budget (which truncated the response); the cap is
-    # MEDIUM for headroom. They differ only in temperature.
+    # Second-step summarizer (executive summary) distills the finished report
+    # from a large grounded input. Thinking is disabled so its tokens don't
+    # consume the output budget (which truncated the response); the cap is
+    # MEDIUM for headroom.
     def _distillation_settings(temperature: float) -> ModelSettings:
         return make_model_settings(
             provider, cap_thinking(thinking, "low"), temperature,
             max_tokens=TOKEN_BUDGET_MEDIUM, mini=True, disable_thinking=True,
         )
     report_summary_settings = _distillation_settings(0.3)
-    brief_settings = _distillation_settings(0.6)
 
     # Prose agents carry the shared skills toolset so they can consult
     # project skills (e.g. statcast-data-conventions) on demand. The
@@ -1636,23 +1616,13 @@ def make_pipeline_agents(
                      model_settings=writer_settings, toolsets=skills, retries=3,
                      defer_model_check=True)
 
-    def _brief(prompt: str) -> Agent[None, str]:
-        # Mini model: BRIEF distills an already-written, anchored report —
-        # cheaper than composing it. Persona voice instructions still apply
-        # via build_system_prompt(persona, BRIEF). Tool-free (a hallucinated
-        # skill call must not kill this non-critical extra); retries=3 mirrors
-        # the writer's resilience.
-        return Agent(mini_model, output_type=str, system_prompt=prompt,
-                     model_settings=brief_settings, retries=3,
-                     defer_model_check=True)
-
     return PipelineAgents(
         stuff=_specialist(_STUFF_SPECIALIST_PROMPT),
         location=_mini_specialist(_LOCATION_SPECIALIST_PROMPT),
         runvalue=_mini_specialist(_RUNVALUE_SPECIALIST_PROMPT),
         trends=_mini_specialist_compact(_TREND_SPECIALIST_PROMPT),
         game_shape=_mini_specialist_compact(_GAME_SHAPE_SPECIALIST_PROMPT),
-        writer=_writer(build_writer_system_prompt(persona, mode, explain_model=explain_model)),
+        writer=_writer(build_mode_writer_prompt(mode, explain_model=explain_model)),
         auditor=Agent(mini_model, output_type=AuditResult, system_prompt=_DATA_AUDITOR_PROMPT,
                       model_settings=checker_settings, retries=5, defer_model_check=True),
         capsule_auditor=Agent(mini_model, output_type=AuditResult, system_prompt=_CAPSULE_AUDITOR_PROMPT,
@@ -1667,7 +1637,6 @@ def make_pipeline_agents(
                       model_settings=report_summary_settings, retries=3, defer_model_check=True),
         signal_extractor=Agent(mini_model, output_type=KeySignals, system_prompt=SIGNAL_EXTRACTOR_PROMPT,
                                model_settings=signal_settings, retries=3, defer_model_check=True),
-        brief=_brief(build_system_prompt(persona, BRIEF)),
         mini_model_name=model_label(mini_model),
     )
 
@@ -1996,43 +1965,29 @@ def _parse_summary_bullets(raw: str) -> list[str]:
 async def _run_summaries(
     *,
     summary_agent: Agent[None, str],
-    brief_agent: Agent[None, str],
     capsule: str,
     writer_input: str,
     _model_override: Any = None,
-) -> tuple[list[str], str]:
+) -> list[str]:
     """Second-step summarization of the FINISHED capsule.
 
-    Runs the executive summary and BRIEF concurrently, each fed the final
-    capsule plus recover-only grounding (see build_summary_input). Returns
-    ([], "") without calling either agent when the capsule is empty/
-    whitespace. Each summarizer catches its own failure and degrades to an
-    empty value, so one failing agent never cancels the other.
+    Runs the executive summary against the final capsule plus recover-only
+    grounding (see build_summary_input). Returns [] without calling the agent
+    when the capsule is empty/whitespace. The summarizer catches its own
+    failure and degrades to an empty list rather than killing the run.
     """
     if not capsule.strip():
         log.warning("Final capsule is empty; skipping summarization.")
-        return [], ""
+        return []
 
     summary_input = build_summary_input(capsule, writer_input)
 
-    async def _run_summary() -> list[str]:
-        try:
-            result = await summary_agent.run(**agent_kwargs(summary_input, _model_override))
-            return _parse_summary_bullets(result.output)
-        except Exception:
-            log.warning("Executive summary agent failed, skipping.", exc_info=True)
-            return []
-
-    async def _run_brief() -> str:
-        try:
-            result = await brief_agent.run(**agent_kwargs(summary_input, _model_override))
-            return result.output.strip()
-        except Exception:
-            log.warning("Brief agent failed, skipping.", exc_info=True)
-            return ""
-
-    bullets, brief = await asyncio.gather(_run_summary(), _run_brief())
-    return bullets, brief
+    try:
+        result = await summary_agent.run(**agent_kwargs(summary_input, _model_override))
+        return _parse_summary_bullets(result.output)
+    except Exception:
+        log.warning("Executive summary agent failed, skipping.", exc_info=True)
+        return []
 
 
 async def run_capsule_audit(
@@ -2268,7 +2223,7 @@ async def _render_capsule(
     fact_depth: int,
     check_explainer: bool = True,
     overlay: str | None = None,
-    persona_label: str = "",
+    label: str = "",
     _model_override: Any = None,
     tracker: UsageTracker | None = None,
 ) -> _RenderedCapsule:
@@ -2306,7 +2261,7 @@ async def _render_capsule(
     if check_explainer and not pre_revision_explainer_ok:
         log.warning(
             "[%s] capsule is missing model explanation content",
-            persona_label,
+            label,
         )
 
     # Anchor check + revision loop
@@ -2341,7 +2296,7 @@ async def _render_capsule(
     if check_explainer and revision_count > 0 and pre_revision_explainer_ok and _explainer_dropped(capsule):
         log.warning(
             "[%s] anchor revision removed model explanation content from capsule",
-            persona_label,
+            label,
         )
 
     # Fact-checking layer (B then A) on the final capsule. Both check against the
@@ -2371,7 +2326,7 @@ async def _render_capsule(
     if check_explainer and capsule_revised and pre_revision_explainer_ok and _explainer_dropped(capsule):
         log.warning(
             "[%s] capsule fact-revision removed model explanation content from capsule",
-            persona_label,
+            label,
         )
 
     # A fact-revision can rewrite the capsule out from under the anchor result
@@ -2456,7 +2411,7 @@ async def render_recap(
         anchor_depth=RECAP.validation.anchor_depth,
         fact_depth=RECAP.validation.fact_depth,
         check_explainer=False, overlay=overlay,
-        persona_label="recap", _model_override=_model_override, tracker=tracker,
+        label="recap", _model_override=_model_override, tracker=tracker,
     )
     value_parity = check_value_parity(rc.capsule, rc.fact_check_source)
     return PipelineResult(
@@ -2492,8 +2447,8 @@ async def _run_pipeline(
     Phase 2: Writer composes capsule from specialist outputs + key signals.
     Phase 2.5: Anchor check + revision loop.
     """
-    persona_obj = get_persona(persona)
-    agents = make_pipeline_agents(provider, thinking, persona_obj, mode, explain_model=explain_model)
+    # persona kwarg retained as no-op until CLI de-persona (Task 4); single voice now
+    agents = make_pipeline_agents(provider, thinking, mode, explain_model=explain_model)
 
     # Phases 1 → 1.75: specialist → audit → signal extraction
     log.info("Running analysis spine...")
@@ -2510,7 +2465,7 @@ async def _run_pipeline(
         anchor_depth=mode.validation.anchor_depth,
         fact_depth=mode.validation.fact_depth,
         check_explainer=explain_model, overlay=None,
-        persona_label=persona, _model_override=_model_override,
+        label=mode.id, _model_override=_model_override,
     )
     capsule = rc.capsule
     writer_input = rc.writer_input
@@ -2525,36 +2480,32 @@ async def _run_pipeline(
     # Second step: summarize the FINISHED, anchored report (not the
     # pre-revision specialist data). writer_input is attached as recover-only
     # grounding inside _run_summaries. RECAP is already a brief-length capsule,
-    # so distilling it further would duplicate (and cost two agent calls).
+    # so distilling it further would duplicate (and cost an extra agent call).
     if mode.distill:
-        log.info("Writing summary and brief from the final report...")
-        summary_bullets, brief_text = await _run_summaries(
+        log.info("Writing executive summary from the final report...")
+        summary_bullets = await _run_summaries(
             summary_agent=agents.summary,
-            brief_agent=agents.brief,
             capsule=capsule,
             writer_input=writer_input,
             _model_override=_model_override,
         )
 
-        # The brief and executive summary are the reader-facing outputs and may
-        # recover figures the capsule fact-check never saw, so value-parity them too
-        # against the same source. Warnings are labeled by surface so an operator can
-        # tell where an ungrounded number entered.
+        # The executive summary is a reader-facing output and may recover figures
+        # the capsule fact-check never saw, so value-parity it too against the same
+        # source. Warnings are labeled by surface so an operator can tell where an
+        # ungrounded number entered.
         summary_parity = check_value_parity("\n".join(summary_bullets), fact_check_source)
-        brief_parity = check_value_parity(brief_text, fact_check_source)
         value_parity_warnings = (
             [f"[capsule] {w}" for w in value_parity.unmatched]
             + [f"[summary] {w}" for w in summary_parity.unmatched]
-            + [f"[brief] {w}" for w in brief_parity.unmatched]
         )
     else:
-        summary_bullets, brief_text = [], ""
+        summary_bullets = []
         value_parity_warnings = [f"[capsule] {w}" for w in value_parity.unmatched]
 
     return PipelineResult(
         narrative=capsule,
         executive_summary=summary_bullets,
-        brief=brief_text,
         specialists=specialists,
         key_signals=key_signals,
         audit_flags=audit_flags,
@@ -2590,7 +2541,8 @@ def generate_pipeline_streaming(
         ctx: Assembled pitcher context.
         provider: LLM provider key.
         thinking: Thinking effort level.
-        persona: Persona id string (resolved to Persona object internally).
+        persona: Retained as a no-op (removed in Task 4); the single voice
+            is fixed and the writer prompt is composed from ``mode``.
         mode: Narration mode controlling writer prompt selection.
         _model_override: Optional model override for testing.
 
@@ -2628,7 +2580,7 @@ def run_narration_modes(
         modes: Narration modes to render; defaults to [DEFAULT_MODE].
         provider: LLM provider key.
         thinking: Thinking effort level.
-        persona: Persona id string.
+        persona: Retained as a no-op (removed in Task 4); single voice now.
         _model_override: Optional model override for testing.
         prior_ctx: Optional prior-window context; forwarded only to modes
             whose temporal_frame includes PRIOR (CHANGES). None for

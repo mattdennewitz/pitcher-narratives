@@ -343,9 +343,8 @@ def test_cli_narrative_output_has_required_sections():
       1. # Scouting Report        (mode title H1, buffered capsule)
       2. **Verification:** line   (in-document verification stamp)
       3. ## Executive Summary     (distilled bullets)
-      4. ## Brief                 (2-3 sentence recent-vs-window summary)
-      5. ## Diagnostics (stderr, under -v)
-      6. ### Stuff Analysis / ### Data Audit / ### Capsule Fact-Check /
+      4. ## Diagnostics (stderr, under -v)
+      5. ### Stuff Analysis / ### Data Audit / ### Capsule Fact-Check /
          ### Anchor Check         (demoted to appendix subsections)
     """
     result = subprocess.run(
@@ -360,7 +359,7 @@ def test_cli_narrative_output_has_required_sections():
     assert "\n# Scouting Report\n" in stdout
     assert "\n**Verification:**" in stdout
     assert "\n## Executive Summary\n" in stdout
-    assert "\n## Brief\n" in stdout
+    assert "\n## Brief\n" not in stdout             # the separate brief was removed
     assert "\n## Diagnostics\n" not in stdout       # off the reader stream
     assert "\n## Diagnostics\n" in stderr            # -v surfaces it
     assert "\n### Stuff Analysis\n" in stderr
@@ -724,8 +723,10 @@ def test_cli_print_prompts_uses_selected_persona(tmp_path):
     assert "## Summary Table" not in result.stderr
 
 
-def test_cli_print_prompts_uses_generic_persona(tmp_path):
-    """CLI-03: --print-prompts --persona generic renders the generic overlay."""
+def test_cli_print_prompts_dump_is_single_voice(tmp_path):
+    """The prompt dump renders the single mode-composed writer voice regardless
+    of --persona: the old persona-specific structures (e.g. the generic voice's
+    "## Summary Table") no longer appear."""
     result = subprocess.run(
         [
             sys.executable,
@@ -745,8 +746,10 @@ def test_cli_print_prompts_uses_generic_persona(tmp_path):
         env=_test_env(),
     )
     assert result.returncode == 0, f"stderr: {result.stderr}"
-    # Generic overlay's unique structural marker.
-    assert "## Summary Table" in result.stderr
+    # The single writer voice is dumped (shared analytical rules preamble)...
+    assert "ANALYTICAL RULES" in result.stderr
+    # ...and the removed generic-voice structure is gone.
+    assert "## Summary Table" not in result.stderr
 
 
 # ── Subcommand routing ──────────────────────────────────────────────

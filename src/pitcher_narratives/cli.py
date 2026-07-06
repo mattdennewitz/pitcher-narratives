@@ -456,7 +456,7 @@ def _emit_mode_result(pipe_result, *, persona: str, mode, verbose: bool = False)
             "flag(s) — see diagnostics (-v or --diagnostics-file)."
         )
 
-    # Distilled sections — only for modes that ran the distillation agents.
+    # Distilled section — only for modes that ran the distillation agent.
     # RECAP's capsule is already a brief; a summary of a summary is noise.
     if mode.distill:
         print("\n\n## Executive Summary\n")
@@ -465,12 +465,6 @@ def _emit_mode_result(pipe_result, *, persona: str, mode, verbose: bool = False)
                 print(f"- {bullet}")
         else:
             print("_Summary unavailable — no bullets produced._")
-
-        print("\n\n## Brief\n")
-        if pipe_result.brief:
-            print(pipe_result.brief)
-        else:
-            print("_Brief unavailable — no text produced._")
 
     # ── Diagnostics: off the reader stream ──────────────────────────────
     # (diag was built up front — the hallucination guard has already run.)

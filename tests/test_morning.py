@@ -477,9 +477,9 @@ def test_render_recap_threads_pick_angle_into_writer_input():
     editor's angle rather than the analyses' own default thread."""
     from pitcher_narratives import pipeline as _pl
     from pitcher_narratives.curator import CurationPick
-    from pitcher_narratives.personas import RECAP, get_persona
+    from pitcher_narratives.personas import RECAP
 
-    agents = _pl.make_pipeline_agents("gemini", "medium", get_persona("scout"), RECAP)
+    agents = _pl.make_pipeline_agents("gemini", "medium", RECAP)
     ctx = _make_minimal_context()
     analyzed = _fake_analyzed()
     pick = CurationPick(

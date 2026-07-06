@@ -27,7 +27,7 @@ from pitcher_narratives.personas import (
     get_narration_mode,
     get_persona,
 )
-from pitcher_narratives.pipeline import PipelineResult, generate_pipeline_streaming, make_pipeline_agents
+from pitcher_narratives.pipeline import PipelineResult, generate_pipeline_streaming
 
 _FIXTURE = Path(__file__).parent / "fixtures" / "writer_prompt_scout.txt"
 _FIXTURE_ANALYST = Path(__file__).parent / "fixtures" / "writer_prompt_analyst.txt"
@@ -308,23 +308,13 @@ class TestPipelinePersonaIntegration:
         with pytest.raises(ImportError):
             from pitcher_narratives.pipeline import _WRITER_PROMPT  # noqa: F401
 
-    def test_default_and_explicit_scout_produce_identical_writer_prompts(self):
-        """PERSONA-08: No-arg and explicit-SCOUT produce the same writer prompt."""
-        agents_default = make_pipeline_agents("gemini", "high")
-        agents_explicit = make_pipeline_agents("gemini", "high", SCOUT)
-        assert agents_default.writer._system_prompts == agents_explicit.writer._system_prompts
-
-    def test_writer_receives_composed_persona_prompt(self):
-        """PERSONA-07: Writer agent's system prompt is the full composed persona prompt."""
-        agents = make_pipeline_agents("gemini", "high")
-        expected = build_writer_system_prompt(SCOUT)
-        assert agents.writer._system_prompts == (expected,)
-
-    def test_writer_prompt_matches_frozen_fixture(self):
-        """PERSONA-07 + TEST-05: Writer prompt equals the frozen fixture byte-for-byte."""
-        agents = make_pipeline_agents("gemini", "high")
-        fixture = _FIXTURE.read_text()
-        assert agents.writer._system_prompts[0] == fixture
+    # The old persona→writer pipeline-wiring assertions (default==explicit SCOUT,
+    # writer == build_writer_system_prompt(SCOUT), writer == persona frozen
+    # fixture) were removed in the single-voice refactor (Task 2): the writer is
+    # now composed from the mode, not the persona. The mode-composed wiring is
+    # covered by tests/test_pipeline_persona_wiring.py::
+    # test_writer_prompt_is_mode_composed. The pure-composer fixture check for
+    # build_writer_system_prompt(SCOUT) still lives in test_scout_pipeline_smoke.
 
 
 def test_scout_pipeline_smoke(ctx):

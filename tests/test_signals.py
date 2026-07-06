@@ -203,13 +203,13 @@ class TestBuildWriterInputWithSignals:
 
 class TestWriterPromptKeySignals:
     def test_references_key_signals(self):
-        from pitcher_narratives.personas import SCOUT, build_writer_system_prompt
-        prompt = build_writer_system_prompt(SCOUT)
+        from pitcher_narratives.personas import REPORT, build_mode_writer_prompt
+        prompt = build_mode_writer_prompt(REPORT)
         assert "Key Signals" in prompt
 
     def test_distinguishes_primary_secondary(self):
-        from pitcher_narratives.personas import SCOUT, build_writer_system_prompt
-        prompt = build_writer_system_prompt(SCOUT)
+        from pitcher_narratives.personas import REPORT, build_mode_writer_prompt
+        prompt = build_mode_writer_prompt(REPORT)
         assert "Primary" in prompt or "primary" in prompt
         assert "Secondary" in prompt or "secondary" in prompt
 

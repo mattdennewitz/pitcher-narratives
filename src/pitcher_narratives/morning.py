@@ -29,7 +29,7 @@ from pitcher_narratives.costs import UsageTracker
 from pitcher_narratives.curator import build_selector_briefing, select_slate_async
 from pitcher_narratives.data import load_pitcher_data
 from pitcher_narratives.digest import assemble_digest
-from pitcher_narratives.personas import PERSONAS, RECAP
+from pitcher_narratives.personas import RECAP
 from pitcher_narratives.pipeline import (
     PipelineResult,
     flag_record,
@@ -98,7 +98,6 @@ def run_morning(
     """
     started = time.monotonic()
     tracker = UsageTracker()
-    persona = PERSONAS[persona_id]
 
     # ── Scout ─────────────────────────────────────────────────────
     log.info("Scouting appearances...")
@@ -131,7 +130,7 @@ def run_morning(
     briefing = build_selector_briefing(candidates)
 
     async def _llm_stages():
-        agents = make_pipeline_agents(provider, "medium", persona, RECAP)
+        agents = make_pipeline_agents(provider, "medium", RECAP)
         spine_sem = asyncio.Semaphore(min(max_concurrency, 2))
 
         slate = await select_slate_async(

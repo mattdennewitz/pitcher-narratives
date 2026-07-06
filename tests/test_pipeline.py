@@ -192,41 +192,35 @@ class TestRunSummaries:
             self.called = True
             raise RuntimeError("boom")
 
-    def test_empty_capsule_skips_both_agents(self):
+    def test_empty_capsule_skips_summary_agent(self):
         from pitcher_narratives.pipeline import _run_summaries
         boom = self._BoomAgent()
-        bullets, brief = asyncio.run(_run_summaries(
-            summary_agent=boom, brief_agent=boom,
+        bullets = asyncio.run(_run_summaries(
+            summary_agent=boom,
             capsule="   \n  ", writer_input="ignored",
         ))
         assert bullets == []
-        assert brief == ""
-        assert boom.called is False  # the guard must skip both agents, not just swallow their errors
+        assert boom.called is False  # the guard must skip the agent, not just swallow its error
 
-    def test_populated_capsule_runs_both(self):
+    def test_populated_capsule_runs_summary(self):
         from pitcher_narratives.pipeline import _run_summaries
         agents = make_pipeline_agents("gemini", "high")
         tm = TestModel(call_tools=[], custom_output_text="- one\n- two")
-        bullets, brief = asyncio.run(_run_summaries(
-            summary_agent=agents.summary, brief_agent=agents.brief,
+        bullets = asyncio.run(_run_summaries(
+            summary_agent=agents.summary,
             capsule="A real capsule.", writer_input="grounding",
             _model_override=tm,
         ))
         assert bullets == ["one", "two"]
-        assert brief == "- one\n- two"
 
-    def test_one_failure_degrades_without_cancelling_sibling(self):
+    def test_summary_failure_degrades_to_empty(self):
         from pitcher_narratives.pipeline import _run_summaries
-        agents = make_pipeline_agents("gemini", "high")
-        tm = TestModel(call_tools=[], custom_output_text="- kept")
-        # Summary agent booms; brief must still produce output.
-        bullets, brief = asyncio.run(_run_summaries(
-            summary_agent=self._BoomAgent(), brief_agent=agents.brief,
+        # Summary agent booms; the helper must degrade to [] rather than crash.
+        bullets = asyncio.run(_run_summaries(
+            summary_agent=self._BoomAgent(),
             capsule="A real capsule.", writer_input="grounding",
-            _model_override=tm,
         ))
         assert bullets == []
-        assert brief == "- kept"
 
 
 # ── Data builder tests ───────────────────────────────────────────────
@@ -288,12 +282,6 @@ class TestMakePipelineAgents:
     def test_has_signal_extractor(self):
         agents = make_pipeline_agents("gemini", "high")
         assert agents.signal_extractor is not None
-
-    def test_brief_uses_mini_model(self):
-        agents = make_pipeline_agents("gemini", "high")
-        # BRIEF distills an already-written report — a mini model suffices.
-        assert agents.brief.model == agents.summary.model
-        assert agents.brief.model != agents.writer.model
 
     def test_has_capsule_auditor_on_mini_model(self):
         agents = make_pipeline_agents("gemini", "high")
@@ -528,32 +516,31 @@ class TestGeneratePipelineStreaming:
         assert captured.get("report") is None
 
     def test_recap_mode_skips_distillation(self, ctx):
-        """RECAP mode must not run the exec-summary/brief agents: capsule IS the brief."""
+        """RECAP mode must not run the exec-summary agent: capsule IS the brief."""
         from pydantic_ai.models.test import TestModel
         from pitcher_narratives.personas import RECAP
         from pitcher_narratives.pipeline import run_narration_modes
 
+        assert RECAP.distill is False
         model = TestModel(call_tools=[])
         results = run_narration_modes(ctx, modes=[RECAP], _model_override=model)
         r = results["recap"]
+        # distill=False → the summary agent never runs, so no bullets.
         assert r.executive_summary == []
-        assert r.brief == ""
 
     def test_report_mode_still_distills(self, ctx):
-        """REPORT mode must still run the exec-summary/brief agents."""
+        """REPORT mode must still run the exec-summary agent (mode.distill)."""
         from pydantic_ai.models.test import TestModel
         from pitcher_narratives.personas import REPORT
         from pitcher_narratives.pipeline import run_narration_modes
 
+        assert REPORT.distill is True
         model = TestModel(call_tools=[])
         results = run_narration_modes(ctx, modes=[REPORT], _model_override=model)
         r = results["report"]
-        # The brief assertion below is the real distillation check: TestModel
-        # text doesn't parse into bullets, so the summary can only be checked
-        # for type. If summary/brief generation is ever split into separate
-        # conditionals, give the summary its own behavioral assertion.
+        # TestModel text doesn't parse into bullets, so the summary can only be
+        # checked for type here; mode.distill above is the behavioral gate.
         assert isinstance(r.executive_summary, list)
-        assert isinstance(r.brief, str) and len(r.brief) > 0
 
     def test_max_revisions_constant_is_nonzero(self):
         """MAX_REVISIONS must allow at least one revision pass."""
@@ -565,22 +552,6 @@ class TestGeneratePipelineStreaming:
         from pitcher_narratives.config import MAX_REVISIONS
         assert MAX_REVISIONS == 5
 
-    def test_pipeline_result_includes_brief(self, ctx):
-        """The terminal layer runs the BRIEF agent and returns its text.
-
-        BRIEF is wired as an additional agent alongside the writer and
-        executive summary — same input, non-critical — so a successful run
-        populates PipelineResult.brief with non-empty text. (custom_output_text
-        can't be used here: it would force the structured auditor/anchor/signal
-        agents into plain responses, which TestModel rejects.)
-        """
-        test_model = TestModel(call_tools=[])
-        result = generate_pipeline_streaming(
-            ctx, provider="gemini", thinking="high", _model_override=test_model,
-        )
-        assert isinstance(result.brief, str)
-        assert len(result.brief) > 0
-
     def test_pipeline_result_includes_executive_summary(self, ctx):
         """The terminal layer runs the executive summary against the final
         capsule and returns parsed bullets."""
@@ -589,18 +560,6 @@ class TestGeneratePipelineStreaming:
             ctx, provider="gemini", thinking="high", _model_override=test_model,
         )
         assert isinstance(result.executive_summary, list)
-
-    def test_brief_agent_has_no_skill_toolset(self):
-        """The brief agent stays tool-free (like the executive summary).
-
-        A 2-3 sentence synthesis of already-clean specialist text needs no
-        skills, and staying tool-free means a hallucinated skill call cannot
-        kill this non-critical concurrent agent.
-        """
-        from pitcher_narratives.agent_skills import skill_toolset
-        agents = make_pipeline_agents()
-        toolsets = list(getattr(agents.brief, "_user_toolsets", []))
-        assert skill_toolset() not in toolsets
 
     def test_pipeline_result_has_fact_check_fields(self, ctx):
         test_model = TestModel(call_tools=[])
@@ -1232,7 +1191,7 @@ class TestReconcileAnchorWarnings:
             trends=sentinel, game_shape=sentinel,
             writer=writer, auditor=sentinel, capsule_auditor=auditor,
             anchor=anchor, summary=sentinel, signal_extractor=sentinel,
-            brief=sentinel, mini_model_name="test-mini",
+            mini_model_name="test-mini",
         )
         analyzed = AnalyzedContext(
             specialists=SpecialistOutputs(
@@ -1294,7 +1253,7 @@ class TestReconcileAnchorWarnings:
             trends=sentinel, game_shape=sentinel,
             writer=writer, auditor=sentinel, capsule_auditor=auditor,
             anchor=anchor, summary=sentinel, signal_extractor=sentinel,
-            brief=sentinel, mini_model_name="test-mini",
+            mini_model_name="test-mini",
         )
         analyzed = AnalyzedContext(
             specialists=SpecialistOutputs(
@@ -1781,10 +1740,10 @@ def test_run_pipeline_logs_warning_when_capsule_missing_explainer(caplog):
         f"Expected at least one explainer-missing warning, "
         f"got records: {[r.getMessage() for r in caplog.records]}"
     )
-    # The warning's formatted message includes the persona id in brackets
+    # The warning's formatted message includes the mode id in brackets
     warning_msg = explainer_warnings[0].getMessage()
-    assert "[scout]" in warning_msg, (
-        f"Expected '[scout]' in warning message, got: {warning_msg!r}"
+    assert "[report]" in warning_msg, (
+        f"Expected '[report]' in warning message, got: {warning_msg!r}"
     )
 
 
@@ -3100,9 +3059,9 @@ def test_render_recap_produces_validated_pipeline_result(ctx):
     """render_recap renders a recap from a pre-computed AnalyzedContext and runs
     the validation stack (recap depths), returning a PipelineResult."""
     from pitcher_narratives import pipeline
-    from pitcher_narratives.personas import RECAP, get_persona
+    from pitcher_narratives.personas import RECAP
 
-    agents = pipeline.make_pipeline_agents("gemini", "medium", get_persona("scout"), RECAP)
+    agents = pipeline.make_pipeline_agents("gemini", "medium", RECAP)
     tm_spine = TestModel(call_tools=[], custom_output_text="Specialist analysis.")
     tm = TestModel(call_tools=[])
 
@@ -3115,7 +3074,6 @@ def test_render_recap_produces_validated_pipeline_result(ctx):
     assert isinstance(result, PipelineResult)
     assert result.narrative                              # recap text present
     assert result.executive_summary == []                # recap has no exec summary
-    assert result.brief == ""                             # recap has no # Brief
     # is_unverified applies to a recap result just like a report result.
     from pitcher_narratives.pipeline import is_unverified
     assert isinstance(is_unverified(result), bool)
@@ -3127,9 +3085,9 @@ def test_render_recap_records_validation_calls_with_model_name(ctx, monkeypatch)
     costs to None and silently undercounts the digest's true spend."""
     from pitcher_narratives import pipeline
     from pitcher_narratives.costs import UsageTracker
-    from pitcher_narratives.personas import RECAP, get_persona
+    from pitcher_narratives.personas import RECAP
 
-    agents = pipeline.make_pipeline_agents("gemini", "medium", get_persona("scout"), RECAP)
+    agents = pipeline.make_pipeline_agents("gemini", "medium", RECAP)
     tm_spine = TestModel(call_tools=[], custom_output_text="Specialist analysis.")
     tm = TestModel(call_tools=[])
     tracker = UsageTracker()

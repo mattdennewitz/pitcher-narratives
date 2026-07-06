@@ -1,17 +1,16 @@
-"""RED phase tests for Task 1: pipeline persona wiring.
+"""Wiring tests for the mode-composed writer (single-voice refactor, Task 2).
 
 These tests verify that:
 1. _WRITER_PROMPT is deleted from pipeline.py
 2. make_pipeline_agents backward compat (2-arg)
-3. Default == explicit SCOUT parity
-4. Writer receives composed persona prompt
-5. generate_pipeline_streaming accepts persona kwarg
-6. test_signals.py tests still pass (tested separately via pytest)
+3. make_pipeline_agents has no `persona` parameter
+4. The writer agent's system prompt is composed from the mode
+5. PipelineAgents no longer carries a `brief` agent
+6. generate_pipeline_streaming still accepts a `mode` kwarg
+7. CHANGES anchor guidance lands on the anchor agent
 """
 
 import pytest
-
-from pitcher_narratives.personas import SCOUT, build_writer_system_prompt
 
 
 class TestPipelinePersonaWiring:
@@ -21,40 +20,30 @@ class TestPipelinePersonaWiring:
             from pitcher_narratives.pipeline import _WRITER_PROMPT  # noqa: F401
 
     def test_backward_compat_two_arg(self):
-        """make_pipeline_agents('gemini', 'high') still works (analyst.py:618)."""
+        """make_pipeline_agents('gemini', 'high') still works."""
         from pitcher_narratives.pipeline import make_pipeline_agents
         agents = make_pipeline_agents("gemini", "high")
         assert agents.writer is not None
 
-    def test_default_equals_explicit_scout(self):
-        """No-arg and explicit-SCOUT produce identical writer prompts."""
-        from pitcher_narratives.pipeline import make_pipeline_agents
-        agents_default = make_pipeline_agents("gemini", "high")
-        agents_explicit = make_pipeline_agents("gemini", "high", SCOUT)
-        assert agents_default.writer._system_prompts == agents_explicit.writer._system_prompts
-
-    def test_writer_receives_composed_prompt(self):
-        """Writer agent's system prompt is the full composed persona prompt."""
-        from pitcher_narratives.pipeline import make_pipeline_agents
-        agents = make_pipeline_agents("gemini", "high")
-        expected = build_writer_system_prompt(SCOUT)
-        assert agents.writer._system_prompts == (expected,)
-
-    def test_generate_pipeline_streaming_accepts_persona(self):
-        """generate_pipeline_streaming accepts persona keyword argument."""
+    def test_make_pipeline_agents_has_no_persona_param(self):
+        """The single voice is fixed; no persona knob on the factory."""
         import inspect
-        from pitcher_narratives.pipeline import generate_pipeline_streaming
-        sig = inspect.signature(generate_pipeline_streaming)
-        assert "persona" in sig.parameters
+        from pitcher_narratives.pipeline import make_pipeline_agents
+        assert "persona" not in inspect.signature(make_pipeline_agents).parameters
 
-    def test_make_pipeline_agents_accepts_mode(self):
-        """make_pipeline_agents accepts a mode keyword defaulting to REPORT."""
-        import inspect
+    def test_writer_prompt_is_mode_composed(self):
+        """Writer agent's system prompt is the mode-composed writer prompt."""
+        from pitcher_narratives.pipeline import make_pipeline_agents
+        from pitcher_narratives.personas import REPORT, build_mode_writer_prompt
+        agents = make_pipeline_agents("gemini", "high", REPORT)
+        assert agents.writer._system_prompts == (build_mode_writer_prompt(REPORT),)
+
+    def test_pipeline_agents_has_no_brief(self):
+        """The separate brief agent is gone from PipelineAgents."""
         from pitcher_narratives.pipeline import make_pipeline_agents
         from pitcher_narratives.personas import REPORT
-        sig = inspect.signature(make_pipeline_agents)
-        assert "mode" in sig.parameters
-        assert sig.parameters["mode"].default is REPORT
+        agents = make_pipeline_agents("gemini", "high", REPORT)
+        assert not hasattr(agents, "brief")
 
     def test_generate_pipeline_streaming_accepts_mode(self):
         """generate_pipeline_streaming accepts a mode keyword."""
@@ -67,11 +56,11 @@ class TestPipelinePersonaWiring:
         system prompt; REPORT's anchor prompt stays byte-identical to the
         base prompt (no guidance overlay)."""
         from pitcher_narratives.anchor import ANCHOR_PROMPT
-        from pitcher_narratives.personas import CHANGES, REPORT, get_persona
+        from pitcher_narratives.personas import CHANGES, REPORT
         from pitcher_narratives.pipeline import make_pipeline_agents
 
-        changes_agents = make_pipeline_agents("gemini", "high", get_persona("scout"), CHANGES)
-        report_agents = make_pipeline_agents("gemini", "high", get_persona("scout"), REPORT)
+        changes_agents = make_pipeline_agents("gemini", "high", CHANGES)
+        report_agents = make_pipeline_agents("gemini", "high", REPORT)
         changes_prompt = changes_agents.anchor._system_prompts[0]
         report_prompt = report_agents.anchor._system_prompts[0]
 
