@@ -148,6 +148,16 @@ def parse_args() -> argparse.Namespace:
         default="morning-runs",
         help="Output directory root (default: morning-runs)",
     )
+    morning.add_argument(
+        "--strict",
+        action="store_true",
+        help=(
+            "Run the metric-hallucination cross-check on every digest entry "
+            "(fully validates the run, at a small per-entry cost). Off by "
+            "default: the fast digest runs the anchor + fact-audit loops but "
+            "skips this cross-check."
+        ),
+    )
 
     scoreboard = sub.add_parser(
         "scoreboard",
@@ -662,6 +672,7 @@ def _run_morning_command(args: argparse.Namespace) -> None:
             provider=args.provider,
             out_root=Path(args.out),
             starters_only=args.starters_only,
+            strict=args.strict,
         )
     except AgentRunError as exc:
         print(f"Morning run failed: {exc}", file=sys.stderr)

@@ -541,6 +541,58 @@ def test_morning_emits_recap_capsule_per_selected_pitcher(tmp_path, monkeypatch)
         assert result.executive_summary == []  # RECAP mode skips distill: no exec bullets
 
 
+def test_morning_fast_mode_skips_hallucination_and_stamps_footer(tmp_path, monkeypatch):
+    """Default morning: no check_hallucinated_metrics call; footer says 'validation: fast'."""
+    _patch_data(monkeypatch)
+    monkeypatch.setattr(
+        morning, "check_hallucinated_metrics",
+        lambda text: (_ for _ in ()).throw(AssertionError("must not be called in fast mode")),
+        raising=False,
+    )
+    run_dir = morning.run_morning(
+        window_days=1, top_n=25, min_pitches=20,
+        provider="gemini", out_root=tmp_path,
+        strict=False,
+        _selector_override=_selector_model(),
+        _writer_override=TestModel(call_tools=[]),
+    )
+    digest = (run_dir / "digest.md").read_text()
+    assert "validation: fast (hallucination check skipped)" in digest
+    assert "validation: strict" not in digest
+
+
+def test_morning_strict_runs_hallucination_check_and_records(tmp_path, monkeypatch):
+    """--strict: runs the check per entry, marks not-clean entries UNVERIFIED, records in validation.json."""
+    from pitcher_narratives.pipeline import HallucinationReport
+
+    _patch_data(monkeypatch)
+    seen = []
+
+    def fake_check(text):
+        seen.append(text)
+        return HallucinationReport(unknown_metrics=["fabricated+"], outcome_stat_warnings=[])
+
+    monkeypatch.setattr(morning, "check_hallucinated_metrics", fake_check, raising=False)
+
+    run_dir = morning.run_morning(
+        window_days=1, top_n=25, min_pitches=20,
+        provider="gemini", out_root=tmp_path,
+        strict=True,
+        _selector_override=_selector_model(),
+        _writer_override=TestModel(call_tools=[]),
+    )
+    digest = (run_dir / "digest.md").read_text()
+    assert "validation: strict" in digest
+    assert seen, "check_hallucinated_metrics must run per entry in strict mode"
+    assert "UNVERIFIED" in digest  # not-clean entry banner-flagged
+
+    payload = json.loads((run_dir / "validation.json").read_text())
+    # every recorded pick carries its hallucination result under strict mode
+    for rec in payload["picks"].values():
+        assert rec["hallucination"]["unknown_metrics"] == ["fabricated+"]
+        assert rec["hallucination"]["is_clean"] is False
+
+
 def test_build_validation_payload_records_flags_per_pick():
     """The validation.json payload carries one flag_record per surviving pick."""
     from pitcher_narratives.models import SpecialistOutputs

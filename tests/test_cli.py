@@ -768,6 +768,13 @@ def test_morning_subcommand_defaults(monkeypatch):
     assert args.min_pitches == 20
     assert args.provider == "gemini"
     assert args.out == "morning-runs"
+    assert args.strict is False
+
+
+def test_morning_parser_accepts_strict_flag(monkeypatch):
+    monkeypatch.setattr(sys, "argv", ["cli", "morning", "--strict"])
+    args = parse_args()
+    assert args.strict is True
 
 
 def test_cli_recap_mode_runs_and_produces_output():
