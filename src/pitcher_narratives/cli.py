@@ -300,7 +300,7 @@ def main() -> None:
         _run_report_command(args)
 
 
-def build_diagnostics_dict(pipe_result, persona: str) -> dict:
+def build_diagnostics_dict(pipe_result) -> dict:
     """Collect a mode's QA/diagnostics data into a JSON-serializable dict.
 
     Runs the hallucination guard (only when the narrative is non-empty, matching
@@ -334,7 +334,7 @@ def build_diagnostics_dict(pipe_result, persona: str) -> dict:
         "hallucination": {"unknown_metrics": [], "outcome_stat_warnings": []},
     }
     if pipe_result.narrative:
-        hr = check_hallucinated_metrics(pipe_result.narrative, persona=persona)
+        hr = check_hallucinated_metrics(pipe_result.narrative)
         diag["hallucination"] = {
             "unknown_metrics": list(hr.unknown_metrics),
             "outcome_stat_warnings": list(hr.outcome_stat_warnings),
@@ -406,7 +406,7 @@ def render_diagnostics_text(diag: dict) -> str:
     return "\n".join(lines)
 
 
-def _emit_mode_result(pipe_result, *, persona: str, mode, verbose: bool = False) -> tuple[bool, dict]:
+def _emit_mode_result(pipe_result, *, mode, verbose: bool = False) -> tuple[bool, dict]:
     """Print one mode's reader-facing sections to stdout; diagnostics stay off it.
 
     Returns (unverified, diagnostics_dict). Called immediately after the
@@ -417,7 +417,7 @@ def _emit_mode_result(pipe_result, *, persona: str, mode, verbose: bool = False)
     # Diagnostics are built up front (this also runs the hallucination guard for
     # every mode) so the stdout hallucination pointer below can consult them;
     # they are only *displayed* on -v, or written to the JSON sidecar by the caller.
-    diag = build_diagnostics_dict(pipe_result, persona)
+    diag = build_diagnostics_dict(pipe_result)
 
     # The capsule — the final, post-fact-revision narrative, printed exactly
     # once. The pipeline buffers the writer output (no live streaming), so this
@@ -554,7 +554,6 @@ def _run_report_command(args: argparse.Namespace) -> None:
         sys.exit(1)
 
     if args.verbose:
-        log.info("persona=%s", args.persona)
         _print_verbose_summary(pitcher_data)
 
     # Support test mode: use TestModel when env var is set
@@ -645,7 +644,7 @@ def _run_report_command(args: argparse.Namespace) -> None:
         pipe_result = mode_results[mode.id]
         results[mode.id] = pipe_result
         unverified, diag = _emit_mode_result(
-            pipe_result, persona=args.persona, mode=mode, verbose=args.verbose,
+            pipe_result, mode=mode, verbose=args.verbose,
         )
         diagnostics_by_mode[mode.id] = diag
         if unverified:

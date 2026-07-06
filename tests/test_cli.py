@@ -645,52 +645,6 @@ def test_cli_persona_scout_and_no_flag_are_identical():
     assert with_scout.stdout.strip()
 
 
-# ── Integration: verbose persona logging ──
-
-
-def test_cli_verbose_logs_persona():
-    """CLI-04: -v logs persona=<id> to stderr."""
-    result = subprocess.run(
-        [
-            sys.executable,
-            "-m",
-            "pitcher_narratives.cli",
-            "report",
-            "-p",
-            "592155",
-            "-v",
-            "--persona",
-            "analyst",
-        ],
-        capture_output=True,
-        text=True,
-        timeout=60,
-        env=_test_env(PITCHER_NARRATIVES_TEST_MODEL="1"),
-    )
-    assert result.returncode == 0, f"stderr: {result.stderr}"
-    assert "persona=analyst" in result.stderr
-
-
-def test_cli_no_verbose_no_persona_log():
-    """CLI-04: without -v, stderr does NOT contain the persona= log line."""
-    result = subprocess.run(
-        [
-            sys.executable,
-            "-m",
-            "pitcher_narratives.cli",
-            "report",
-            "-p",
-            "592155",
-            "--persona",
-            "analyst",
-        ],
-        capture_output=True,
-        text=True,
-        timeout=60,
-        env=_test_env(PITCHER_NARRATIVES_TEST_MODEL="1"),
-    )
-    assert result.returncode == 0, f"stderr: {result.stderr}"
-    assert "persona=analyst" not in result.stderr
 
 
 # ── Integration: --print-prompts renders the selected persona ──
@@ -850,8 +804,8 @@ def test_emit_mode_result_returns_unverified_status(capsys):
     clean = _pipe_result_with_flags(0)
     flagged = _pipe_result_with_flags(2)
 
-    assert _emit_mode_result(clean, persona="scout", mode=REPORT)[0] is False
-    assert _emit_mode_result(flagged, persona="scout", mode=REPORT)[0] is True
+    assert _emit_mode_result(clean, mode=REPORT)[0] is False
+    assert _emit_mode_result(flagged, mode=REPORT)[0] is True
     capsys.readouterr()  # absorb printed sections
 
 
@@ -868,7 +822,7 @@ def test_emit_prints_capsule_once_and_no_corrected_section(capsys):
         ),
         capsule_revised=True,  # previously triggered a second '## Corrected Capsule'
     )
-    _emit_mode_result(result, persona="scout", mode=REPORT)
+    _emit_mode_result(result, mode=REPORT)
     out = capsys.readouterr().out
     assert out.count("THE FINAL CAPSULE BODY") == 1
     assert "Corrected Capsule" not in out
@@ -897,7 +851,7 @@ def test_emit_mode_result_empty_narrative_is_not_unverified(capsys):
         capsule_audit_flags=flags,
     )
 
-    assert _emit_mode_result(result, persona="scout", mode=REPORT)[0] is False
+    assert _emit_mode_result(result, mode=REPORT)[0] is False
     capsys.readouterr()
 
 
@@ -916,18 +870,18 @@ def test_emit_mode_result_runs_hallucination_guard_for_any_mode(capsys, monkeypa
     calls = []
     from pitcher_narratives import pipeline as pipeline_module
 
-    def _spy(text, *, persona=None):
-        calls.append((text, persona))
+    def _spy(text):
+        calls.append(text)
         return pipeline_module.HallucinationReport(unknown_metrics=[], outcome_stat_warnings=[])
 
     monkeypatch.setattr(pipeline_module, "check_hallucinated_metrics", _spy)
 
     clean = _pipe_result_with_flags(0)
-    cli_module._emit_mode_result(clean, persona="scout", mode=REPORT)
+    cli_module._emit_mode_result(clean, mode=REPORT)
     capsys.readouterr()
 
     assert len(calls) == 1
-    assert calls[0][0] == clean.narrative
+    assert calls[0] == clean.narrative
 
 
 def _diag_pipe_result(*, narrative="cap", revised=False, fact_flags=0):
@@ -951,7 +905,7 @@ def _diag_pipe_result(*, narrative="cap", revised=False, fact_flags=0):
 def test_build_diagnostics_dict_shape():
     from pitcher_narratives.cli import build_diagnostics_dict
 
-    diag = build_diagnostics_dict(_diag_pipe_result(fact_flags=2, revised=True), "scout")
+    diag = build_diagnostics_dict(_diag_pipe_result(fact_flags=2, revised=True))
     assert diag["verified"] is False  # residual fact flags -> unverified
     assert diag["capsule_revised"] is True
     assert diag["stuff_analysis"] == "STUFF-TEXT"
@@ -967,17 +921,17 @@ def test_build_diagnostics_dict_skips_guard_on_empty_narrative(monkeypatch):
     calls = []
     monkeypatch.setattr(
         pipeline_module, "check_hallucinated_metrics",
-        lambda text, *, persona=None: calls.append(text)
+        lambda text: calls.append(text)
         or pipeline_module.HallucinationReport(unknown_metrics=[], outcome_stat_warnings=[]),
     )
-    build_diagnostics_dict(_diag_pipe_result(narrative=""), "scout")
+    build_diagnostics_dict(_diag_pipe_result(narrative=""))
     assert calls == []
 
 
 def test_render_diagnostics_text_has_sections():
     from pitcher_narratives.cli import build_diagnostics_dict, render_diagnostics_text
 
-    text = render_diagnostics_text(build_diagnostics_dict(_diag_pipe_result(), "scout"))
+    text = render_diagnostics_text(build_diagnostics_dict(_diag_pipe_result()))
     assert "## Diagnostics" in text
     assert "### Stuff Analysis" in text
     assert "### Data Audit" in text
@@ -989,7 +943,7 @@ def test_emit_default_stdout_has_no_diagnostics(capsys):
     from pitcher_narratives.cli import _emit_mode_result
     from pitcher_narratives.personas import REPORT
 
-    _emit_mode_result(_diag_pipe_result(), persona="scout", mode=REPORT, verbose=False)
+    _emit_mode_result(_diag_pipe_result(), mode=REPORT, verbose=False)
     captured = capsys.readouterr()
     assert "## Diagnostics" not in captured.out
     assert "## Diagnostics" not in captured.err  # not verbose -> nowhere
@@ -999,7 +953,7 @@ def test_emit_verbose_puts_diagnostics_on_stderr(capsys):
     from pitcher_narratives.cli import _emit_mode_result
     from pitcher_narratives.personas import REPORT
 
-    _emit_mode_result(_diag_pipe_result(), persona="scout", mode=REPORT, verbose=True)
+    _emit_mode_result(_diag_pipe_result(), mode=REPORT, verbose=True)
     captured = capsys.readouterr()
     assert "## Diagnostics" not in captured.out
     assert "## Diagnostics" in captured.err
@@ -1011,7 +965,7 @@ def test_emit_returns_unverified_and_diag_dict(capsys):
     from pitcher_narratives.personas import REPORT
 
     unverified, diag = _emit_mode_result(
-        _diag_pipe_result(fact_flags=2), persona="scout", mode=REPORT
+        _diag_pipe_result(fact_flags=2), mode=REPORT
     )
     capsys.readouterr()
     assert unverified is True
@@ -1376,7 +1330,7 @@ def test_build_diagnostics_dict_empty_narrative_not_verified():
     """An empty-narrative mode is not 'verified' and reports has_capsule=False."""
     from pitcher_narratives.cli import build_diagnostics_dict
 
-    diag = build_diagnostics_dict(_diag_pipe_result(narrative=""), "scout")
+    diag = build_diagnostics_dict(_diag_pipe_result(narrative=""))
     assert diag["has_capsule"] is False
     assert diag["verified"] is False
 
@@ -1389,7 +1343,7 @@ def test_emit_empty_narrative_logs_warning(caplog):
     from pitcher_narratives.personas import REPORT
 
     with caplog.at_level(logging.WARNING):
-        _emit_mode_result(_diag_pipe_result(narrative=""), persona="scout", mode=REPORT)
+        _emit_mode_result(_diag_pipe_result(narrative=""), mode=REPORT)
     assert any("empty narrative" in r.message.lower() for r in caplog.records)
 
 
@@ -1402,11 +1356,11 @@ def test_emit_hallucination_pointer_on_stdout(capsys, monkeypatch):
     monkeypatch.setattr(
         pipeline_module,
         "check_hallucinated_metrics",
-        lambda text, *, persona=None: pipeline_module.HallucinationReport(
+        lambda text: pipeline_module.HallucinationReport(
             unknown_metrics=["FIP"], outcome_stat_warnings=[]
         ),
     )
-    _emit_mode_result(_diag_pipe_result(narrative="cap"), persona="scout", mode=REPORT)
+    _emit_mode_result(_diag_pipe_result(narrative="cap"), mode=REPORT)
     out = capsys.readouterr().out
     assert "hallucinated-metric flag" in out
 
@@ -1416,7 +1370,7 @@ def test_emit_no_hallucination_pointer_when_clean(capsys):
     from pitcher_narratives.cli import _emit_mode_result
     from pitcher_narratives.personas import REPORT
 
-    _emit_mode_result(_diag_pipe_result(narrative="cap"), persona="scout", mode=REPORT)
+    _emit_mode_result(_diag_pipe_result(narrative="cap"), mode=REPORT)
     out = capsys.readouterr().out
     assert "hallucinated-metric flag" not in out
 

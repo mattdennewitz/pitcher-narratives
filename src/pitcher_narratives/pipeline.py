@@ -2674,6 +2674,12 @@ _KNOWN_METRICS = frozenset(
         "SwStr%",
         "K-BB%",
         "xFIP",
+        # Teaching vocabulary the single field-analyst voice may use (formerly
+        # the per-persona analyst allowlist).
+        "playability",
+        "tunneling gap",
+        "pitch tree",
+        "arsenal depth",
     }
 )
 
@@ -2700,19 +2706,6 @@ _TRADITIONAL_STATS = frozenset(
         "IP",
     }
 )
-
-# Per-persona teaching vocabulary that should not be flagged as unknown.
-# Each persona adds domain-specific terms that are safe in that persona's
-# voice but not part of the standard _KNOWN_METRICS set.
-_PERSONA_KNOWN_METRICS: dict[str, frozenset[str]] = {
-    "analyst": frozenset({
-        "playability",
-        "tunneling gap",
-        "pitch tree",
-        "arsenal depth",
-    }),
-    "generic": frozenset(),
-}
 
 _METRIC_PATTERN = re.compile(
     r"\b("
@@ -2759,10 +2752,7 @@ _TRADITIONAL_PATTERN = re.compile(
 _VARIANT_SUFFIX = re.compile(r"_[SP]$")
 
 
-def check_hallucinated_metrics(
-    report_text: str,
-    persona: str | None = None,
-) -> HallucinationReport:
+def check_hallucinated_metrics(report_text: str) -> HallucinationReport:
     """Find metric-like and traditional stat terms in report text.
 
     Scans the LLM output for patterns that look like advanced baseball
@@ -2774,9 +2764,6 @@ def check_hallucinated_metrics(
         report_text: The LLM-generated report text. Must be a non-empty
             string — an empty narrative is a pipeline failure, not a
             "clean" report, so the caller should check before invoking.
-        persona: Optional persona id. When set, per-persona vocabulary from
-            _PERSONA_KNOWN_METRICS is added to the allowlist for this check.
-            When None, only _KNOWN_METRICS and _TRADITIONAL_STATS are consulted.
 
     Returns:
         HallucinationReport with unknown_metrics and outcome_stat_warnings.
@@ -2798,18 +2785,9 @@ def check_hallucinated_metrics(
         )
 
     found = set(_METRIC_PATTERN.findall(report_text))
-    if persona:
-        if persona not in _PERSONA_KNOWN_METRICS:
-            log.debug(
-                "no persona-specific metric allowlist for %r (typo or unregistered persona?)",
-                persona,
-            )
-        persona_known = _PERSONA_KNOWN_METRICS.get(persona, frozenset())
-    else:
-        persona_known = frozenset()
 
     def _is_known(metric: str) -> bool:
-        if metric in _KNOWN_METRICS or metric in _TRADITIONAL_STATS or metric in persona_known:
+        if metric in _KNOWN_METRICS or metric in _TRADITIONAL_STATS:
             return True
         # Tolerate Stuff/Pitch-side variant suffixes (xRV100_S, xWhiff_P) when
         # the base metric is known. The original token is still reported if the
