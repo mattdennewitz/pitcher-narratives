@@ -103,7 +103,7 @@ CATEGORIES: tuple[Category, ...] = (
 CATEGORY_BY_ID: dict[str, Category] = {c.id: c for c in CATEGORIES}
 
 # Import-time invariant: the registry must exactly cover the CurationPick
-# category Literal (mirrors the persona/mode registry checks in personas.py).
+# category Literal (mirrors the narration-mode registry check in personas.py).
 _declared_category_ids = set(get_args(CurationPick.model_fields["category"].annotation))
 if set(CATEGORY_BY_ID) != _declared_category_ids:
     raise ValueError(

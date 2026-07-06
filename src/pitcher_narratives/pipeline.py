@@ -87,7 +87,7 @@ from pitcher_narratives.personas import (
     DEFAULT_MODE,
     NarrationMode,
     RECAP,
-    build_mode_writer_prompt,
+    build_writer_system_prompt,
 )
 
 if TYPE_CHECKING:
@@ -1332,7 +1332,7 @@ def _render_pipeline_data_sections(
 
     # Narrative pipeline: writer + anchor + executive summary
     sections.append(f"\n{sep}\nWRITER\n{sep}\n")
-    sections.append(f"## System Prompt\n\n{build_mode_writer_prompt(DEFAULT_MODE)}\n")
+    sections.append(f"## System Prompt\n\n{build_writer_system_prompt(DEFAULT_MODE)}\n")
     sections.append(
         "## User Message\n\n"
         "[Receives: key signals + all 5 specialist outputs]\n"
@@ -1617,7 +1617,7 @@ def make_pipeline_agents(
         runvalue=_mini_specialist(_RUNVALUE_SPECIALIST_PROMPT),
         trends=_mini_specialist_compact(_TREND_SPECIALIST_PROMPT),
         game_shape=_mini_specialist_compact(_GAME_SHAPE_SPECIALIST_PROMPT),
-        writer=_writer(build_mode_writer_prompt(mode, explain_model=explain_model)),
+        writer=_writer(build_writer_system_prompt(mode, explain_model=explain_model)),
         auditor=Agent(mini_model, output_type=AuditResult, system_prompt=_DATA_AUDITOR_PROMPT,
                       model_settings=checker_settings, retries=5, defer_model_check=True),
         capsule_auditor=Agent(mini_model, output_type=AuditResult, system_prompt=_CAPSULE_AUDITOR_PROMPT,

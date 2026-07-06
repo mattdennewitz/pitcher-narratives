@@ -34,9 +34,9 @@ class TestPipelinePersonaWiring:
     def test_writer_prompt_is_mode_composed(self):
         """Writer agent's system prompt is the mode-composed writer prompt."""
         from pitcher_narratives.pipeline import make_pipeline_agents
-        from pitcher_narratives.personas import REPORT, build_mode_writer_prompt
+        from pitcher_narratives.personas import REPORT, build_writer_system_prompt
         agents = make_pipeline_agents("gemini", "high", REPORT)
-        assert agents.writer._system_prompts == (build_mode_writer_prompt(REPORT),)
+        assert agents.writer._system_prompts == (build_writer_system_prompt(REPORT),)
 
     def test_pipeline_agents_has_no_brief(self):
         """The separate brief agent is gone from PipelineAgents."""
