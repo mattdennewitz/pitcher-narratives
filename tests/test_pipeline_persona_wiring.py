@@ -67,3 +67,12 @@ class TestPipelinePersonaWiring:
         assert CHANGES.anchor_guidance in changes_prompt
         assert CHANGES.anchor_guidance not in report_prompt
         assert report_prompt == ANCHOR_PROMPT
+
+
+def test_entry_points_have_no_persona():
+    import inspect
+    from pitcher_narratives.pipeline import (
+        generate_pipeline_streaming, run_narration_modes, write_pipeline_data_file,
+    )
+    for fn in (generate_pipeline_streaming, run_narration_modes, write_pipeline_data_file):
+        assert "persona" not in inspect.signature(fn).parameters, fn.__name__

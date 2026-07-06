@@ -108,7 +108,7 @@ def test_run_morning_writes_all_artifacts(tmp_path, monkeypatch):
     _patch_data(monkeypatch)
     run_dir = morning.run_morning(
         window_days=1, top_n=25, min_pitches=20,
-        provider="gemini", persona_id="scout", out_root=tmp_path,
+        provider="gemini", out_root=tmp_path,
         _selector_override=_selector_model(),
         _writer_override=TestModel(call_tools=[]),
     )
@@ -148,7 +148,7 @@ def test_run_morning_starters_only_filters_board(tmp_path, monkeypatch):
     })
     run_dir = morning.run_morning(
         window_days=1, top_n=25, min_pitches=20,
-        provider="gemini", persona_id="scout", out_root=tmp_path,
+        provider="gemini", out_root=tmp_path,
         starters_only=True,
         _selector_override=starters_selector,
         _writer_override=TestModel(call_tools=[]),
@@ -167,7 +167,7 @@ def test_run_morning_starters_only_quiet_when_no_starters(tmp_path, monkeypatch)
     )
     run_dir = morning.run_morning(
         window_days=1, top_n=25, min_pitches=20,
-        provider="gemini", persona_id="scout", out_root=tmp_path,
+        provider="gemini", out_root=tmp_path,
         starters_only=True,
         _selector_override=_selector_model(),
         _writer_override=TestModel(call_tools=[]),
@@ -205,7 +205,7 @@ def test_run_morning_single_event_loop(tmp_path, monkeypatch):
     _patch_data(monkeypatch)
     morning.run_morning(
         window_days=1, top_n=25, min_pitches=20,
-        provider="gemini", persona_id="scout", out_root=tmp_path,
+        provider="gemini", out_root=tmp_path,
         _selector_override=selector, _writer_override=writer,
     )
     assert len(loops) >= 2
@@ -229,7 +229,7 @@ def test_run_morning_drops_picks_when_recap_render_fails(tmp_path, monkeypatch):
     _patch_data(monkeypatch)
     run_dir = morning.run_morning(
         window_days=1, top_n=25, min_pitches=20,
-        provider="gemini", persona_id="scout", out_root=tmp_path,
+        provider="gemini", out_root=tmp_path,
         _selector_override=_selector_model(),
         _writer_override=_ExplodingWriter(),
     )
@@ -243,7 +243,7 @@ def test_run_morning_quiet_day_returns_none(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(morning, "scout_appearances", lambda **kw: [])
     result = morning.run_morning(
         window_days=1, top_n=25, min_pitches=20,
-        provider="gemini", persona_id="scout", out_root=tmp_path,
+        provider="gemini", out_root=tmp_path,
     )
     assert result is None
     assert not list(tmp_path.iterdir())
@@ -275,7 +275,7 @@ def test_full_board_lists_beyond_candidate_cap(tmp_path, monkeypatch):
     })
     run_dir = morning.run_morning(
         window_days=1, top_n=1, min_pitches=20,
-        provider="gemini", persona_id="scout", out_root=tmp_path,
+        provider="gemini", out_root=tmp_path,
         _selector_override=selector,
         _writer_override=TestModel(call_tools=[]),
     )
@@ -306,7 +306,7 @@ def test_morning_renders_recap_from_real_spine(tmp_path, monkeypatch):
     model = TestModel(call_tools=[])
     morning.run_morning(
         window_days=1, top_n=25, min_pitches=20,
-        provider="gemini", persona_id="scout", out_root=tmp_path,
+        provider="gemini", out_root=tmp_path,
         _selector_override=_selector_model(),
         _writer_override=model,
     )
@@ -333,7 +333,7 @@ def test_run_morning_duplicate_pitcher_keeps_highest_scored(tmp_path, monkeypatc
     monkeypatch.setattr(morning, "run_analysis_spine", AsyncMock(return_value=_fake_analyzed()))
     run_dir = morning.run_morning(
         window_days=2, top_n=25, min_pitches=20,
-        provider="gemini", persona_id="scout", out_root=tmp_path,
+        provider="gemini", out_root=tmp_path,
         _selector_override=_selector_model(),
         _writer_override=TestModel(call_tools=[]),
     )
@@ -357,7 +357,7 @@ def test_spine_failure_drops_pick_and_discloses_in_footer(tmp_path, monkeypatch)
 
     run_dir = morning.run_morning(
         window_days=1, top_n=25, min_pitches=20,
-        provider="gemini", persona_id="scout", out_root=tmp_path,
+        provider="gemini", out_root=tmp_path,
         _selector_override=_selector_model(),
         _writer_override=TestModel(call_tools=[]),
     )
@@ -405,7 +405,7 @@ def test_semaphore_bounds_concurrency(tmp_path, monkeypatch):
 
     morning.run_morning(
         window_days=1, top_n=25, min_pitches=20,
-        provider="gemini", persona_id="scout", out_root=tmp_path,
+        provider="gemini", out_root=tmp_path,
         max_concurrency=max_concurrency,
         _selector_override=selector,
         _writer_override=TestModel(call_tools=[]),
@@ -462,7 +462,7 @@ def test_morning_marks_unverified_recap_items(tmp_path, monkeypatch):
     _patch_data(monkeypatch)
     run_dir = morning.run_morning(
         window_days=1, top_n=2, min_pitches=1,
-        provider="gemini", persona_id="scout", out_root=tmp_path,
+        provider="gemini", out_root=tmp_path,
         _selector_override=_selector_model(),
         _writer_override=TestModel(call_tools=[]),
     )

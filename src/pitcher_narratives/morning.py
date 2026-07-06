@@ -83,7 +83,6 @@ def run_morning(
     top_n: int,
     min_pitches: int,
     provider: str,
-    persona_id: str,
     out_root: Path,
     max_concurrency: int = 4,
     starters_only: bool = False,

@@ -1278,7 +1278,6 @@ async def audit_and_revise_specialists(
 def _render_pipeline_data_sections(
     ctx: PitcherContext,
     *,
-    persona: str = "scout",
     prior_ctx: PitcherContext | None = None,
 ) -> list[str]:
     """Render all pipeline prompt sections as a list of strings.
@@ -1288,8 +1287,7 @@ def _render_pipeline_data_sections(
     (e.g. cli.py --print-prompts).
 
     The WRITER section renders the single mode-composed writer prompt.
-    The persona kwarg is retained as a no-op (removed in Task 4). When
-    prior_ctx is provided, the TRENDS specialist input includes the
+    When prior_ctx is provided, the TRENDS specialist input includes the
     RECENT-vs-PRIOR comparison block; when None (the default), output is
     unchanged from before this parameter existed.
     """
@@ -1366,7 +1364,6 @@ def write_pipeline_data_file(
     pitcher_id: int,
     provider: str,
     *,
-    persona: str = "scout",
     prior_ctx: PitcherContext | None = None,
 ) -> tuple[str, str]:
     """Write all pipeline prompts to a data file for end-to-end tracing.
@@ -1378,8 +1375,6 @@ def write_pipeline_data_file(
         ctx: Assembled pitcher context.
         pitcher_id: MLB pitcher ID for the filename.
         provider: LLM provider key for the filename.
-        persona: Retained as a no-op (removed in Task 4); the WRITER
-            section now renders the single mode-composed writer prompt.
         prior_ctx: Optional prior-window context; when provided, the
             TRENDS specialist section includes the RECENT-vs-PRIOR
             comparison block. None (default) leaves output unchanged.
@@ -1395,7 +1390,7 @@ def write_pipeline_data_file(
     """
     from pathlib import Path
 
-    sections = _render_pipeline_data_sections(ctx, persona=persona, prior_ctx=prior_ctx)
+    sections = _render_pipeline_data_sections(ctx, prior_ctx=prior_ctx)
     text = "\n".join(sections)
 
     filename = f"data-{pitcher_id}-{provider}-pipeline.md"
@@ -2433,7 +2428,6 @@ async def _run_pipeline(
     *,
     provider: str = "gemini",
     thinking: ThinkingEffort = "high",
-    persona: str = "scout",
     mode: NarrationMode = DEFAULT_MODE,
     explain_model: bool = True,
     _model_override: Any = None,
@@ -2447,7 +2441,6 @@ async def _run_pipeline(
     Phase 2: Writer composes capsule from specialist outputs + key signals.
     Phase 2.5: Anchor check + revision loop.
     """
-    # persona kwarg retained as no-op until CLI de-persona (Task 4); single voice now
     agents = make_pipeline_agents(provider, thinking, mode, explain_model=explain_model)
 
     # Phases 1 → 1.75: specialist → audit → signal extraction
@@ -2523,7 +2516,6 @@ def generate_pipeline_streaming(
     *,
     provider: str = "gemini",
     thinking: ThinkingEffort = "high",
-    persona: str = "scout",
     mode: NarrationMode = DEFAULT_MODE,
     explain_model: bool = True,
     _model_override: Any = None,
@@ -2541,8 +2533,6 @@ def generate_pipeline_streaming(
         ctx: Assembled pitcher context.
         provider: LLM provider key.
         thinking: Thinking effort level.
-        persona: Retained as a no-op (removed in Task 4); the single voice
-            is fixed and the writer prompt is composed from ``mode``.
         mode: Narration mode controlling writer prompt selection.
         _model_override: Optional model override for testing.
 
@@ -2551,7 +2541,7 @@ def generate_pipeline_streaming(
     """
     return asyncio.run(
         _run_pipeline(ctx, provider=provider, thinking=thinking,
-                      persona=persona, mode=mode, explain_model=explain_model,
+                      mode=mode, explain_model=explain_model,
                       _model_override=_model_override, prior_ctx=prior_ctx)
     )
 
@@ -2562,7 +2552,6 @@ def run_narration_modes(
     modes: list[NarrationMode] | None = None,
     provider: str = "gemini",
     thinking: ThinkingEffort = "high",
-    persona: str = "scout",
     explain_model: bool = True,
     _model_override: Any = None,
     prior_ctx: PitcherContext | None = None,
@@ -2580,7 +2569,6 @@ def run_narration_modes(
         modes: Narration modes to render; defaults to [DEFAULT_MODE].
         provider: LLM provider key.
         thinking: Thinking effort level.
-        persona: Retained as a no-op (removed in Task 4); single voice now.
         _model_override: Optional model override for testing.
         prior_ctx: Optional prior-window context; forwarded only to modes
             whose temporal_frame includes PRIOR (CHANGES). None for
@@ -2599,7 +2587,7 @@ def run_narration_modes(
         mode_prior = prior_ctx if TemporalFrame.PRIOR in mode.temporal_frame else None
         results[mode.id] = generate_pipeline_streaming(
             ctx, provider=provider, thinking=thinking,
-            persona=persona, mode=mode, explain_model=explain_model,
+            mode=mode, explain_model=explain_model,
             _model_override=_model_override, prior_ctx=mode_prior,
         )
     return results

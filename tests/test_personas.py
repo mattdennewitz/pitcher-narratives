@@ -330,7 +330,6 @@ def test_scout_pipeline_smoke(ctx):
         ctx,
         provider="gemini",
         thinking="high",
-        persona="scout",
         _model_override=test_model,
     )
     assert isinstance(result, PipelineResult)
@@ -466,7 +465,6 @@ def test_analyst_pipeline_smoke(ctx):
         ctx,
         provider="gemini",
         thinking="high",
-        persona="analyst",
         _model_override=test_model,
     )
     assert isinstance(result, PipelineResult)
@@ -790,7 +788,6 @@ def test_generic_pipeline_smoke(ctx):
         ctx,
         provider="gemini",
         thinking="high",
-        persona="generic",
         _model_override=test_model,
     )
     assert isinstance(result, PipelineResult)

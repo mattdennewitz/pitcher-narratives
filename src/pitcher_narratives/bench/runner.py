@@ -69,7 +69,6 @@ def run_provider(
     *,
     provider: str,
     thinking: str = "medium",
-    persona: str = "scout",
     recent_appearances: int = _DEFAULT_RECENT_APPEARANCES,
     modes: list[NarrationMode] | None = None,
     prior: int = _DEFAULT_PRIOR_APPEARANCES,
@@ -110,7 +109,6 @@ def run_provider(
             modes=selected_modes,
             provider=provider,
             thinking=thinking,  # type: ignore[arg-type]
-            persona=persona,
             _model_override=_model_override,
             prior_ctx=prior_ctx,
         )

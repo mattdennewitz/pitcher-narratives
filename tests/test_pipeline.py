@@ -1727,7 +1727,6 @@ def test_run_pipeline_logs_warning_when_capsule_missing_explainer(caplog):
             ctx,
             provider="gemini",
             thinking="high",
-            persona="scout",
             _model_override=TestModel(call_tools=[]),
         )
 
@@ -1782,7 +1781,6 @@ def test_check_explainer_present_happy_path_is_silent(caplog, monkeypatch):
             ctx,
             provider="gemini",
             thinking="high",
-            persona="scout",
             _model_override=TestModel(call_tools=[]),
         )
 
@@ -2861,7 +2859,6 @@ def test_pipeline_threads_report_validation_depths(monkeypatch):
         ctx,
         provider="gemini",
         thinking="high",
-        persona="scout",
         mode=REPORT,
         _model_override=TestModel(call_tools=[]),
     )

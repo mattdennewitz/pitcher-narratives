@@ -218,7 +218,7 @@ def test_run_provider_captures_all_tiers():
     """A provider run captures 5 specialists + exec summary + capsule and
     the ground-truth context document."""
     captured = run_provider(
-        TEST_PITCHER, provider="gemini", thinking="low", persona="scout",
+        TEST_PITCHER, provider="gemini", thinking="low",
         _model_override=TestModel(call_tools=[]),
     )
     assert captured.ok
@@ -248,7 +248,7 @@ def test_run_provider_captures_per_mode_capsules():
 
     modes = [get_narration_mode("report"), get_narration_mode("changes")]
     captured = run_provider(
-        TEST_PITCHER, provider="gemini", thinking="low", persona="scout",
+        TEST_PITCHER, provider="gemini", thinking="low",
         modes=modes, _model_override=TestModel(call_tools=[]),
     )
     assert captured.ok

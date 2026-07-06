@@ -97,9 +97,8 @@ def test_provider_openai_rejected(monkeypatch):
 def test_pitcher_required(monkeypatch):
     """CLI-01: Missing -p flag under 'report' subcommand leaves pitcher as None.
 
-    Note: argparse allows -p to be absent (required=False) so that
-    --list-personas can run standalone. _run_report_command() re-asserts
-    the -p requirement for the normal pipeline path and exits 2.
+    Note: argparse allows -p to be absent (required=False); _run_report_command()
+    re-asserts the -p requirement for the normal pipeline path and exits 2.
     """
     monkeypatch.setattr(sys, "argv", ["main.py", "report"])
     args = parse_args()
@@ -109,56 +108,15 @@ def test_pitcher_required(monkeypatch):
     # test_cli_no_args_shows_help integration test).
 
 
-# ── Unit: --persona parsing ──
-
-
-def test_persona_default(monkeypatch):
-    """CLI-01/CLI-05: --persona defaults to 'scout' when omitted."""
-    monkeypatch.setattr(sys, "argv", ["main.py", "report", "-p", "592155"])
-    args = parse_args()
-    assert args.persona == "scout"
-
-
-def test_persona_flag_accepted(monkeypatch):
-    """CLI-01: --persona analyst parses into args.persona."""
+def test_persona_flag_no_longer_recognized(monkeypatch):
+    """--persona/--list-personas were removed (Task 4, single-voice refactor);
+    argparse now rejects both as unrecognized arguments."""
     monkeypatch.setattr(
-        sys, "argv", ["main.py", "report", "-p", "592155", "--persona", "analyst"]
-    )
-    args = parse_args()
-    assert args.persona == "analyst"
-
-
-def test_persona_case_normalization(monkeypatch):
-    """CLI-01: --persona SCOUT normalizes to 'scout' via type=str.lower."""
-    monkeypatch.setattr(
-        sys, "argv", ["main.py", "report", "-p", "592155", "--persona", "SCOUT"]
-    )
-    args = parse_args()
-    assert args.persona == "scout"
-
-
-def test_persona_invalid_exits_2(monkeypatch):
-    """CLI-01: --persona bogus is rejected by argparse with exit code 2."""
-    monkeypatch.setattr(
-        sys, "argv", ["main.py", "report", "-p", "592155", "--persona", "bogus"]
+        sys, "argv", ["main.py", "report", "-p", "592155", "--persona", "scout"]
     )
     with pytest.raises(SystemExit) as exc_info:
         parse_args()
     assert exc_info.value.code == 2
-
-
-def test_list_personas_flag_default(monkeypatch):
-    """CLI-02: --list-personas defaults to False when omitted."""
-    monkeypatch.setattr(sys, "argv", ["main.py", "report", "-p", "592155"])
-    args = parse_args()
-    assert args.list_personas is False
-
-
-def test_list_personas_flag_set(monkeypatch):
-    """CLI-02: --list-personas sets list_personas True (no -p required)."""
-    monkeypatch.setattr(sys, "argv", ["main.py", "report", "--list-personas"])
-    args = parse_args()
-    assert args.list_personas is True
 
 
 def _test_env(**extra: str) -> dict[str, str]:
@@ -188,6 +146,21 @@ def test_cli_valid_pitcher_exit_0():
     )
     assert result.returncode == 0
     assert result.stdout.strip()  # Non-empty output
+
+
+def test_cli_report_runs_with_no_persona_flag():
+    """Smoke test (Task 4): `report` has no --persona flag anymore; the
+    subcommand still runs to completion and produces output with just -p."""
+    result = subprocess.run(
+        [sys.executable, "-m", "pitcher_narratives.cli", "report", "-p", "592155"],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        env=_test_env(PITCHER_NARRATIVES_TEST_MODEL="1"),
+    )
+    assert result.returncode == 0, f"stderr: {result.stderr}"
+    assert result.stdout.strip()
+    assert "--persona" not in result.stderr
 
 
 def test_cli_invalid_pitcher_exit_1():
@@ -490,197 +463,13 @@ def test_cli_print_prompts_report_mode_omits_trend_comparison(tmp_path):
     assert "Recent vs Prior Window" not in result.stderr
 
 
-# ── Integration: --list-personas ──
-
-
-def test_cli_list_personas_exits_0_without_data():
-    """CLI-02: --list-personas exits 0, bypasses data loading and LLM.
-
-    Uses _test_env() with no API key and no PITCHER_NARRATIVES_TEST_MODEL —
-    proves the short-circuit is early enough that neither the preflight
-    API-key check nor the TestModel path are reached.
-    """
-    result = subprocess.run(
-        [sys.executable, "-m", "pitcher_narratives.cli", "report", "--list-personas"],
-        capture_output=True,
-        text=True,
-        timeout=30,
-        env=_test_env(),  # No API key, no TEST_MODEL — proves LLM bypass
-    )
-    assert result.returncode == 0, f"stderr: {result.stderr}"
-    assert "analyst" in result.stdout
-    assert "generic" in result.stdout
-    assert "scout" in result.stdout
-    # Alphabetical order
-    assert (
-        result.stdout.index("analyst")
-        < result.stdout.index("generic")
-        < result.stdout.index("scout")
-    )
-    # Data loader never ran — no pitcher summary lines landed on stderr.
-    assert "Booser" not in result.stderr
-
-
-def test_cli_list_personas_contains_display_names_and_descriptions():
-    """CLI-02: --list-personas output contains display_name and description."""
-    result = subprocess.run(
-        [sys.executable, "-m", "pitcher_narratives.cli", "report", "--list-personas"],
-        capture_output=True,
-        text=True,
-        timeout=30,
-        env=_test_env(),
-    )
-    assert result.returncode == 0
-    assert "Newsletter" in result.stdout  # analyst description substring
-    assert "Front-office" in result.stdout  # scout description substring
-    assert "Structured breakdown" in result.stdout  # generic description
-
-
-# ── Integration: --persona selection ──
-
-
-def test_cli_persona_analyst_exits_0():
-    """CLI-01: --persona analyst with TestModel completes successfully."""
-    result = subprocess.run(
-        [
-            sys.executable,
-            "-m",
-            "pitcher_narratives.cli",
-            "report",
-            "-p",
-            "592155",
-            "--persona",
-            "analyst",
-        ],
-        capture_output=True,
-        text=True,
-        timeout=60,
-        env=_test_env(PITCHER_NARRATIVES_TEST_MODEL="1"),
-    )
-    assert result.returncode == 0, f"stderr: {result.stderr}"
-    assert len(result.stdout.strip()) > 0
-
-
-def test_cli_persona_uppercase_normalizes():
-    """CLI-01: --persona SCOUT normalizes via type=str.lower and runs."""
-    result = subprocess.run(
-        [
-            sys.executable,
-            "-m",
-            "pitcher_narratives.cli",
-            "report",
-            "-p",
-            "592155",
-            "--persona",
-            "SCOUT",
-        ],
-        capture_output=True,
-        text=True,
-        timeout=60,
-        env=_test_env(PITCHER_NARRATIVES_TEST_MODEL="1"),
-    )
-    assert result.returncode == 0, f"stderr: {result.stderr}"
-
-
-def test_cli_invalid_persona_exits_2():
-    """CLI-01: --persona bogus exits 2 with choices listed in stderr."""
-    result = subprocess.run(
-        [
-            sys.executable,
-            "-m",
-            "pitcher_narratives.cli",
-            "report",
-            "-p",
-            "592155",
-            "--persona",
-            "bogus",
-        ],
-        capture_output=True,
-        text=True,
-        timeout=30,
-        env=_test_env(PITCHER_NARRATIVES_TEST_MODEL="1"),
-    )
-    assert result.returncode == 2
-    # argparse lists valid choices in its error message.
-    assert "scout" in result.stderr
-    assert "analyst" in result.stderr
-    assert "generic" in result.stderr
-
-
-def test_cli_persona_scout_and_no_flag_are_identical():
-    """CLI-05: --persona scout and no --persona flag both exit 0.
-
-    Observational equivalence: since TestModel output is canned,
-    deeper output equality is fragile. We assert both runs exit 0
-    and both stdouts are non-empty. Prompt-level equivalence is
-    locked by the unit tests (test_persona_default) and by
-    test_cli_print_prompts_uses_selected_persona.
-    """
-    run_args = {
-        "capture_output": True,
-        "text": True,
-        "timeout": 60,
-        "env": _test_env(PITCHER_NARRATIVES_TEST_MODEL="1"),
-    }
-    no_flag = subprocess.run(
-        [sys.executable, "-m", "pitcher_narratives.cli", "report", "-p", "592155"],
-        **run_args,
-    )
-    with_scout = subprocess.run(
-        [
-            sys.executable,
-            "-m",
-            "pitcher_narratives.cli",
-            "report",
-            "-p",
-            "592155",
-            "--persona",
-            "scout",
-        ],
-        **run_args,
-    )
-    assert no_flag.returncode == 0, f"stderr: {no_flag.stderr}"
-    assert with_scout.returncode == 0, f"stderr: {with_scout.stderr}"
-    assert no_flag.stdout.strip()
-    assert with_scout.stdout.strip()
-
-
-
-
-# ── Integration: --print-prompts renders the selected persona ──
-
-
-def test_cli_print_prompts_uses_selected_persona(tmp_path):
-    """CLI-03: --print-prompts renders the SELECTED persona's writer prompt."""
-    result = subprocess.run(
-        [
-            sys.executable,
-            "-m",
-            "pitcher_narratives.cli",
-            "report",
-            "-p",
-            "592155",
-            "--persona",
-            "analyst",
-            "--print-prompts",
-        ],
-        capture_output=True,
-        text=True,
-        timeout=60,
-        cwd=tmp_path,
-        env=_test_env(),  # --print-prompts bypasses API-key check
-    )
-    assert result.returncode == 0, f"stderr: {result.stderr}"
-    # Analyst overlay uniquely mentions "newsletter" voice.
-    assert "newsletter" in result.stderr.lower()
-    # Sanity: generic-only structural marker must NOT appear.
-    assert "## Summary Table" not in result.stderr
+# ── Integration: --print-prompts renders the single voice ──
 
 
 def test_cli_print_prompts_dump_is_single_voice(tmp_path):
-    """The prompt dump renders the single mode-composed writer voice regardless
-    of --persona: the old persona-specific structures (e.g. the generic voice's
-    "## Summary Table") no longer appear."""
+    """The prompt dump renders the single mode-composed writer voice: the old
+    persona-specific structures (e.g. the generic voice's "## Summary Table")
+    no longer appear. --persona is gone (Task 4); there is only one voice."""
     result = subprocess.run(
         [
             sys.executable,
@@ -689,8 +478,6 @@ def test_cli_print_prompts_dump_is_single_voice(tmp_path):
             "report",
             "-p",
             "592155",
-            "--persona",
-            "generic",
             "--print-prompts",
         ],
         capture_output=True,
@@ -980,7 +767,6 @@ def test_morning_subcommand_defaults(monkeypatch):
     assert args.candidates == 25
     assert args.min_pitches == 20
     assert args.provider == "gemini"
-    assert args.persona == "scout"
     assert args.out == "morning-runs"
 
 

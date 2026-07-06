@@ -6,7 +6,7 @@ outputs, scores.json, and report.md to a timestamped run directory.
 
 Usage:
     python -m pitcher_narratives.bench -p 693433 [--providers gemini,claude]
-        [--judges panel|gemini|claude] [--thinking medium] [--persona scout]
+        [--judges panel|gemini|claude] [--thinking medium]
         [--out bench-runs]
 """
 
@@ -50,7 +50,6 @@ def parse_args() -> argparse.Namespace:
              "(each output judged by every other contestant)",
     )
     parser.add_argument("--thinking", default="medium", help="Thinking effort for contestants")
-    parser.add_argument("--persona", default="scout", help="Writer persona")
     parser.add_argument(
         "-n",
         "--recent",
@@ -118,7 +117,6 @@ def main() -> None:
             args.pitcher,
             provider=provider,
             thinking=args.thinking,
-            persona=args.persona,
             recent_appearances=args.recent,
             modes=modes,
             prior=args.prior,
@@ -131,7 +129,6 @@ def main() -> None:
                 args.pitcher,
                 provider=provider,
                 thinking=args.thinking,
-                persona=args.persona,
                 recent_appearances=args.recent,
                 modes=modes,
                 prior=args.prior,
@@ -190,7 +187,6 @@ def main() -> None:
         "modes": ", ".join(m.id for m in modes),
         "judge_mode": args.judges,
         "thinking": args.thinking,
-        "persona": args.persona,
         "wall_clock": ", ".join(f"{r.provider} {r.wall_s:.0f}s" for r in runs),
         "failures": ", ".join(f"{r.provider}: {r.error}" for r in runs if not r.ok) or "none",
     }

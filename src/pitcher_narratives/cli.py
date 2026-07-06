@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING
 from dotenv import load_dotenv
 
 from pitcher_narratives.config import API_KEYS, setup_logging
-from pitcher_narratives.personas import PERSONAS, REPORT, get_narration_mode
+from pitcher_narratives.personas import REPORT, get_narration_mode
 from pitcher_narratives.temporal import _DEFAULT_PRIOR_APPEARANCES, _DEFAULT_RECENT_APPEARANCES
 
 if TYPE_CHECKING:
@@ -34,8 +34,6 @@ def parse_args() -> argparse.Namespace:
     sub = parser.add_subparsers(dest="command", required=True)
 
     report = sub.add_parser("report", help="Generate one pitcher's scouting report")
-    # Note: required=False so `--list-personas` works standalone.
-    # _run_report_command() re-asserts that -p is present when --list-personas is not used.
     report.add_argument("-p", "--pitcher", type=int, required=False, help="MLB pitcher ID (e.g., 592155)")
     report.add_argument(
         "-n",
@@ -76,18 +74,6 @@ def parse_args() -> argparse.Namespace:
         choices=["minimal", "low", "medium", "high", "xhigh"],
         default="medium",
         help="Thinking/reasoning effort level (default: medium)",
-    )
-    report.add_argument(
-        "--persona",
-        type=str.lower,
-        choices=sorted(PERSONAS.keys()),
-        default="scout",
-        help="Writer persona to use (default: scout)",
-    )
-    report.add_argument(
-        "--list-personas",
-        action="store_true",
-        help="List available personas (id, display name, description) and exit",
     )
     report.add_argument(
         "--mode",
@@ -156,13 +142,6 @@ def parse_args() -> argparse.Namespace:
         choices=["gemini", "claude"],
         default="gemini",
         help="LLM provider (default: gemini)",
-    )
-    morning.add_argument(
-        "--persona",
-        type=str.lower,
-        choices=sorted(PERSONAS.keys()),
-        default="scout",
-        help="Writer persona (default: scout)",
     )
     morning.add_argument(
         "--out",
@@ -255,24 +234,6 @@ def _resolve_modes(raw: str | None) -> list["NarrationMode"]:
             log.error("%s", e)
             sys.exit(2)
     return modes
-
-
-def _print_personas() -> None:
-    """Print all personas to stdout, sorted by id.
-
-    Plain text output — one block per persona (id line, 4-space-indented
-    display_name, 4-space-indented description), blank line between blocks.
-    Pipe-friendly (no color codes).
-    """
-    items = sorted(PERSONAS.items(), key=lambda kv: kv[0])
-    blocks = []
-    for persona_id, persona in items:
-        blocks.append(
-            f"{persona_id}\n"
-            f"    {persona.display_name}\n"
-            f"    {persona.description}"
-        )
-    print("\n\n".join(blocks))
 
 
 def _print_verbose_summary(data: PitcherData) -> None:
@@ -516,12 +477,6 @@ def _append_metrics_records(
 
 def _run_report_command(args: argparse.Namespace) -> None:
     """Generate one pitcher's report (the pre-subcommand behavior)."""
-    # --list-personas short-circuits BEFORE setup_logging, data loading,
-    # and API key check. No LLM, no data file, no network.
-    if args.list_personas:
-        _print_personas()
-        sys.exit(0)
-
     if args.pitcher is None:
         print(
             "pitcher-narratives: error: -p/--pitcher is required",
@@ -598,7 +553,7 @@ def _run_report_command(args: argparse.Namespace) -> None:
 
     try:
         data_file, data_text = write_pipeline_data_file(
-            ctx, args.pitcher, args.provider, persona=args.persona, prior_ctx=prior_ctx
+            ctx, args.pitcher, args.provider, prior_ctx=prior_ctx
         )
     except OSError as e:
         log.error("Failed to write prompt data file: %s", e)
@@ -633,7 +588,6 @@ def _run_report_command(args: argparse.Namespace) -> None:
                 modes=[mode],
                 provider=args.provider,
                 thinking=args.thinking,
-                persona=args.persona,
                 explain_model=args.explain_model,
                 _model_override=model_override,
                 prior_ctx=prior_ctx,
@@ -706,7 +660,6 @@ def _run_morning_command(args: argparse.Namespace) -> None:
             top_n=args.candidates,
             min_pitches=args.min_pitches,
             provider=args.provider,
-            persona_id=args.persona,
             out_root=Path(args.out),
             starters_only=args.starters_only,
         )
