@@ -50,10 +50,12 @@ __all__ = [
     "SCOUT_REPORT",
     "SECTIONED",
     "SHARED_WRITER_BASE",
+    "WRITER_VOICE",
     "NarrationMode",
     "OutputContract",
     "Persona",
     "ValidationPolicy",
+    "build_mode_writer_prompt",
     "build_system_prompt",
     "build_writer_system_prompt",
     "get_narration_mode",
@@ -409,6 +411,90 @@ capsule ignores or buries. Numeric deltas in this capsule are stated against \
 the PRIOR window unless the capsule says otherwise; do not flag them for \
 disagreeing with season-baseline figures."""
 
+# ═══════════════════════════════════════════════════════════════════════
+# SINGLE WRITER VOICE — the field-facing analyst/scout hybrid (design §3)
+# ═══════════════════════════════════════════════════════════════════════
+
+WRITER_VOICE = """\
+You are a field-facing baseball analyst — the voice that sits between the \
+analytics department and the coaching staff, translating what the model sees \
+into language a front office and a pitching coach both trust.
+
+VOICE:
+- Direct and specific. Analyst-to-analyst, not fan-facing. Vary sentence \
+length; short sentences land points.
+- Use scouting language: stuff, feel, finding a groove, getting tagged.
+- Explain the model as you go. When you name S+, L+, or P+, take a clause or \
+a sentence to say what it measures and what the model decided — enough that \
+the read stands on the model, not on assertion. Explain to illuminate the \
+pitcher, never to admire the model.
+- No cheerleading, no clichés, no formulaic transitions, no "the data shows," \
+no newsletter framing ("what we're seeing here"). Start immediately with the \
+analysis.\
+"""
+
+# ═══════════════════════════════════════════════════════════════════════
+# PER-MODE OUTPUT STRUCTURES (design §4) — one structure per deliverable
+# ═══════════════════════════════════════════════════════════════════════
+
+_REPORT_STRUCTURE = """\
+Compose a flowing prose narrative — 350-600 words, 3-5 paragraphs — that \
+explains this pitcher through the lens of the model.
+
+STRUCTURE:
+- Lead with what the model sees: the single most important read on this \
+pitcher right now, grounded in the grade that drives it.
+- Develop the read across the arsenal — how the stuff plays, where location \
+helps or hurts, what the run-value and trend picture add. Thread the \
+specialist findings into one story; do not section them.
+- Weave platoon splits where they matter. Close on a clear-eyed verdict.
+- Prose only. No headings, no bullet lists, no tables.
+- At most three primary metrics carry any single paragraph; you may cite a \
+metric twice if the second citation explains the first.
+
+HARD LIMIT: 600 words. If you approach 550, wrap up.\
+"""
+
+_CHANGES_STRUCTURE = """\
+Compose a medium-length change report — 250-450 words — framed as what MOVED \
+in the recent window versus the longer historical period.
+
+STRUCTURE:
+- Lead with the single biggest shift, stated concretely, with the one grade \
+or metric that proves it — and what the model reads into it.
+- Walk the connected changes in order of consequence. Report only what moved; \
+a stable trait earns a sentence only when it frames a change.
+- Prefer deltas to states. Distinguish a mechanical adjustment (a release or \
+extension shift alongside a velo or shape change) from a pitch-mix change.
+- Prose only. No headings, no bullet lists, no tables.
+- Three-metric maximum per change.
+
+HARD LIMIT: 450 words. If you approach 400, wrap up.\
+"""
+
+_RECAP_CAPSULE_STRUCTURE = """\
+Write a tight capsule on the pitcher's most recent appearance — 3 to 5 \
+sentences, one continuous thread, no headings or bullets.
+
+- Lead with the single most important thing the model saw in the most recent \
+appearance (the biggest change, adaptation, or execution read).
+- Support it with one or two grounding metrics drawn straight from the \
+analyses.
+- Close on what it means going forward. Keep it scannable and quotable.
+
+Target 60-120 words; never exceed 5 sentences.\
+"""
+
+# Per-mode input framing (design §4.1). report/changes carry EXPLAIN THE MODEL
+# (model-focused); recap is bare synthesis. The changes mandate rides in the
+# framing now (not the structure). EXPLAIN THE MODEL stays appended last so the
+# explain_model=False strip in build_mode_writer_prompt removes it cleanly.
+_REPORT_FRAMING = _SYNTHESIS_FRAMING  # _SYNTHESIS_RULES + "\n\n" + _EXPLAIN_THE_MODEL
+_CHANGES_FRAMING = (
+    _SYNTHESIS_RULES + "\n\n" + _CHANGES_MANDATE + "\n\n" + _EXPLAIN_THE_MODEL
+)
+_RECAP_FRAMING = _SYNTHESIS_RULES
+
 # BRIEF vs RECAP_BRIEF: intentionally separate contracts. BRIEF distills the
 # finished report (report/changes modes, recover-only grounding); RECAP_BRIEF
 # writes a standalone brief straight from the analyses (recap mode). Since
@@ -526,6 +612,9 @@ class NarrationMode:
     title: str = ""
     distill: bool = True
     anchor_guidance: str = ""
+    structure: str = ""
+    input_framing: str = ""
+    length_target: tuple[int, int] = (0, 0)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "contracts", MappingProxyType(dict(self.contracts)))
@@ -545,6 +634,9 @@ REPORT = NarrationMode(
         anchor_depth=MAX_REVISIONS, fact_depth=MAX_FACT_REVISIONS
     ),
     title="Scouting Report",
+    structure=_REPORT_STRUCTURE,
+    input_framing=_REPORT_FRAMING,
+    length_target=(350, 600),
 )
 
 # RECAP reproduces the executive-brief path as a first-class mode. It caps the
@@ -560,6 +652,9 @@ RECAP = NarrationMode(
     validation=ValidationPolicy(anchor_depth=1, fact_depth=2),
     title="Recap",
     distill=False,
+    structure=_RECAP_CAPSULE_STRUCTURE,
+    input_framing=_RECAP_FRAMING,
+    length_target=(60, 120),
 )
 
 # CHANGES foregrounds what moved in the recent window (design §6). In 9A it
@@ -579,6 +674,9 @@ CHANGES = NarrationMode(
     temporal_frame=frozenset({TemporalFrame.RECENT, TemporalFrame.PRIOR}),
     title="Change Report",
     anchor_guidance=_CHANGES_ANCHOR_GUIDANCE,
+    structure=_CHANGES_STRUCTURE,
+    input_framing=_CHANGES_FRAMING,
+    length_target=(250, 450),
 )
 
 _NARRATION_MODES_INTERNAL: dict[str, NarrationMode] = {
@@ -839,3 +937,21 @@ def build_writer_system_prompt(
         )
         contract = SCOUT_REPORT
     return build_system_prompt(persona, contract, explain_model=explain_model)
+
+
+def build_mode_writer_prompt(
+    mode: NarrationMode, *, explain_model: bool = True
+) -> str:
+    """Compose the writer system prompt for a deliverable (mode).
+
+    Order: universal analytical rules + mode input framing + the single
+    writer voice + mode structure. ``explain_model=False`` strips the
+    EXPLAIN THE MODEL mandate from the framing (report/changes only; recap
+    never carries it).
+    """
+    framing = mode.input_framing
+    if not explain_model:
+        framing = framing.replace("\n\n" + _EXPLAIN_THE_MODEL, "").replace(
+            _EXPLAIN_THE_MODEL, ""
+        )
+    return "\n\n".join([SHARED_WRITER_BASE, framing, WRITER_VOICE, mode.structure])
