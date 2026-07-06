@@ -20,7 +20,7 @@ mode selects the output shape. The pieces compose at build time:
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from types import MappingProxyType
 
 from pitcher_narratives.config import MAX_FACT_REVISIONS, MAX_REVISIONS
@@ -293,7 +293,7 @@ class NarrationMode:
     anchor_guidance: str = ""
     structure: str = ""
     input_framing: str = ""
-    length_target: tuple[int, int] = (0, 0)
+    length_target: tuple[int, int] = field(kw_only=True)
 
     def __post_init__(self) -> None:
         if not self.title:

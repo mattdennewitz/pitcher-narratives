@@ -2245,7 +2245,7 @@ async def _render_capsule(
     capsule = _res.output
 
     # EXPLAIN THE MODEL post-processor (non-fatal quality gate).
-    # Runs for all personas — a persona that silently drops Pitching+
+    # Runs for every mode — a capsule that silently drops Pitching+
     # context produces a warning but does not fail the pipeline.
     # capsule.strip() guards check_explainer_present, which raises on an empty
     # capsule (writer stream yielded no text). An empty capsule degrades
@@ -2457,7 +2457,7 @@ async def _run_pipeline(
         ctx, analyzed, agents=agents,
         anchor_depth=mode.validation.anchor_depth,
         fact_depth=mode.validation.fact_depth,
-        check_explainer=explain_model, overlay=None,
+        check_explainer=explain_model and ("EXPLAIN THE MODEL" in mode.input_framing), overlay=None,
         label=mode.id, _model_override=_model_override,
     )
     capsule = rc.capsule
@@ -2805,9 +2805,10 @@ def check_explainer_present(capsule: str) -> bool:
     the Pitching+ family tokens appears in the capsule — a proxy for
     "the writer referenced the grading framework." A False return
     triggers a non-fatal stderr warning in the pipeline so operators
-    can see when a persona silently dropped the EXPLAIN THE MODEL
-    content. Called both before and after the anchor revision loop so
-    explainer drift introduced during revision is also surfaced.
+    can see when the writer silently dropped the EXPLAIN THE MODEL
+    content for a mode that requires it. Called both before and after
+    the anchor revision loop so explainer drift introduced during
+    revision is also surfaced.
 
     Args:
         capsule: The writer agent's narrative output.

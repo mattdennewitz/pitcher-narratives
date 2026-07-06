@@ -112,6 +112,12 @@ def test_narration_mode_rejects_non_positive_length_target():
         NarrationMode(id="bad", length_target=(0, 100))
 
 
+def test_narration_mode_requires_length_target():
+    """length_target has no default — omitting it is a construction-time error."""
+    with pytest.raises(TypeError, match="length_target"):
+        NarrationMode(id="x")
+
+
 @pytest.mark.parametrize("mode_id", ["report", "changes"])
 def test_explain_model_false_leaves_no_dangling_blank_lines(mode_id):
     """Stripping EXPLAIN THE MODEL must not leave a triple newline gap."""
