@@ -562,10 +562,20 @@ def test_morning_fast_mode_skips_hallucination_and_stamps_footer(tmp_path, monke
 
 
 def test_morning_strict_runs_hallucination_check_and_records(tmp_path, monkeypatch):
-    """--strict: runs the check per entry, marks not-clean entries UNVERIFIED, records in validation.json."""
+    """--strict: runs the check per entry, marks not-clean entries UNVERIFIED, records in validation.json.
+
+    Under TestModel(call_tools=[]) the capsule auditor emits synthetic
+    residual flags, so ``residual_banner(...)`` already returns a banner for
+    every entry before the strict fold ever runs -- that would make this
+    test pass for the wrong reason (see test_morning_marks_unverified_recap_items,
+    which relies on exactly that mechanism). Neutralize residual_banner here
+    so the hallucination fold (``if banner is None and not hr.is_clean`` in
+    morning.py) is the sole banner source, and assert its exact wording.
+    """
     from pitcher_narratives.pipeline import HallucinationReport
 
     _patch_data(monkeypatch)
+    monkeypatch.setattr(morning, "residual_banner", lambda *a, **k: None)
     seen = []
 
     def fake_check(text):
@@ -584,7 +594,9 @@ def test_morning_strict_runs_hallucination_check_and_records(tmp_path, monkeypat
     digest = (run_dir / "digest.md").read_text()
     assert "validation: strict" in digest
     assert seen, "check_hallucinated_metrics must run per entry in strict mode"
-    assert "UNVERIFIED" in digest  # not-clean entry banner-flagged
+    # The hallucination-fold-specific wording (not just generic "UNVERIFIED")
+    # proves the fold branch -- not residual_banner or value-parity -- fired.
+    assert "hallucinated-metric flags present" in digest
 
     payload = json.loads((run_dir / "validation.json").read_text())
     # every recorded pick carries its hallucination result under strict mode
