@@ -1,7 +1,12 @@
 # Format Axis Decoupling (WS3) — Design
 
+> **SUPERSEDED (2026-07-05)** by `2026-07-05-single-voice-narratives-design.md`.
+> Collapsing to a single voice binds output structure to the deliverable (mode),
+> so the orthogonal `--format` axis this spec proposed is no longer needed.
+> Retained for history; do not implement.
+
 **Date:** 2026-07-05
-**Status:** Approved design (full decouple), pending implementation plan
+**Status:** Superseded — see banner above
 **Topic:** Make output *structure* an axis orthogonal to *voice* (`Persona`) and
 *analytical framing* (`NarrationMode`), collapsing the multiplying
 `OutputContract` constants into a composable set.
