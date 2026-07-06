@@ -78,6 +78,15 @@ def test_mode_distill_flags():
     assert RECAP.distill is False
 
 
+def test_mode_explains_model_flags():
+    """explains_model is the first-class fact the pipeline gates the capsule
+    explainer-check on -- REPORT/CHANGES carry the EXPLAIN THE MODEL mandate,
+    RECAP does not."""
+    assert REPORT.explains_model is True
+    assert CHANGES.explains_model is True
+    assert RECAP.explains_model is False
+
+
 # ── ValidationPolicy ─────────────────────────────────────────────────────
 
 

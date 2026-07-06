@@ -281,6 +281,10 @@ class NarrationMode:
     anchor agent's system prompt — modes whose narrative mandate legitimately
     reweights signals (CHANGES) use it to keep the anchor's emphasis rules
     consistent with the writer's mandate.
+
+    ``explains_model`` declares whether this mode's writer prompt carries the
+    EXPLAIN THE MODEL mandate — the pipeline uses it (not a substring sniff
+    of ``input_framing``) to gate the capsule explainer-presence check.
     """
 
     id: str
@@ -291,6 +295,7 @@ class NarrationMode:
     title: str = ""
     distill: bool = True
     anchor_guidance: str = ""
+    explains_model: bool = True
     structure: str = ""
     input_framing: str = ""
     length_target: tuple[int, int] = field(kw_only=True)
@@ -313,6 +318,7 @@ REPORT = NarrationMode(
         anchor_depth=MAX_REVISIONS, fact_depth=MAX_FACT_REVISIONS
     ),
     title="Scouting Report",
+    explains_model=True,
     structure=_REPORT_STRUCTURE,
     input_framing=_REPORT_FRAMING,
     length_target=(350, 600),
@@ -326,6 +332,7 @@ RECAP = NarrationMode(
     validation=ValidationPolicy(anchor_depth=1, fact_depth=2),
     title="Recap",
     distill=False,
+    explains_model=False,
     structure=_RECAP_CAPSULE_STRUCTURE,
     input_framing=_RECAP_FRAMING,
     length_target=(60, 120),
@@ -343,6 +350,7 @@ CHANGES = NarrationMode(
     temporal_frame=frozenset({TemporalFrame.RECENT, TemporalFrame.PRIOR}),
     title="Change Report",
     anchor_guidance=_CHANGES_ANCHOR_GUIDANCE,
+    explains_model=True,
     structure=_CHANGES_STRUCTURE,
     input_framing=_CHANGES_FRAMING,
     length_target=(250, 450),

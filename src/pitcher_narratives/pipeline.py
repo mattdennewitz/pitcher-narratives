@@ -2405,6 +2405,8 @@ async def render_recap(
         ctx, analyzed, agents=agents,
         anchor_depth=RECAP.validation.anchor_depth,
         fact_depth=RECAP.validation.fact_depth,
+        # RECAP.explains_model is False; mode isn't in scope here, so this
+        # stays an explicit literal (kept consistent with NarrationMode.explains_model).
         check_explainer=False, overlay=overlay,
         label="recap", _model_override=_model_override, tracker=tracker,
     )
@@ -2457,7 +2459,7 @@ async def _run_pipeline(
         ctx, analyzed, agents=agents,
         anchor_depth=mode.validation.anchor_depth,
         fact_depth=mode.validation.fact_depth,
-        check_explainer=explain_model and ("EXPLAIN THE MODEL" in mode.input_framing), overlay=None,
+        check_explainer=explain_model and mode.explains_model, overlay=None,
         label=mode.id, _model_override=_model_override,
     )
     capsule = rc.capsule
