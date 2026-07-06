@@ -248,7 +248,8 @@ def test_explain_model_false_strips_mandate_for_report():
 
 def test_changes_framing_carries_the_change_mandate():
     p = build_mode_writer_prompt(CHANGES)
-    assert "report what has CHANGED" in p or "what MOVED" in p
+    # Matches the existing _CHANGES_MANDATE text verbatim (case-sensitive).
+    assert "Report what has CHANGED" in p
 
 
 @pytest.mark.parametrize("mode_id,phrase", [
@@ -621,7 +622,7 @@ Rename `build_mode_writer_prompt` → `build_writer_system_prompt` in `personas.
 
 - [ ] **Step 4: Rewrite `test_personas.py`**
 
-Delete every test coupled to the removed symbols (per the WS3 inventory): the `OutputContract` rejection tests (67–86 → moved to `test_single_voice.py` as `NarrationMode` length validation), the `REPORT.contracts[...] is ...` identity tests (117–144, 364, 500, 646, 905–906, 1040–1050, 1142), the 9 persona×mode byte-identical fixture tests (172–216, 323–352, 997–1116), the persona-overlay/registry tests (219–290, 358–552, 893–930), the BRIEF framing tests (558–646), and the `build_system_prompt(..., explain_model=...)` tests (1149–1179 → re-express against `build_writer_system_prompt(REPORT, explain_model=False)` in `test_single_voice.py`). Keep and adapt: `get_narration_mode` valid/invalid tests, `NARRATION_MODES` registry-key invariant, `NarrationMode.title` default (1140–1143 → construct without `contracts`), `RECAP.distill is False`/`REPORT.distill is True`, the mode `validation`/`temporal_frame`/`anchor_guidance` tests. Move any still-relevant length-validation assertion into `test_single_voice.py`.
+Delete every test coupled to the removed symbols (per the WS3 inventory): the `OutputContract` rejection tests (67–86 → moved to `test_single_voice.py` as `NarrationMode` length validation), the `REPORT.contracts[...] is ...` identity tests (117–144, 364, 500, 646, 905–906, 1040–1050, 1142), the 9 persona×mode byte-identical fixture tests (172–216, 323–352, 997–1116), the persona-overlay/registry tests (219–290, 358–552, 893–930), the BRIEF framing tests (558–646), and the `build_system_prompt(..., explain_model=...)` tests (1149–1179 → re-express against `build_writer_system_prompt(REPORT, explain_model=False)` in `test_single_voice.py`). Keep and adapt: `get_narration_mode` valid/invalid tests, `NARRATION_MODES` registry-key invariant, `NarrationMode.title` default (1140–1143 → construct without `contracts`, passing a valid `length_target` e.g. `(150, 350)` so the new `__post_init__` validation passes), `RECAP.distill is False`/`REPORT.distill is True`, the mode `validation`/`temporal_frame`/`anchor_guidance` tests. Move any still-relevant length-validation assertion into `test_single_voice.py`.
 
 - [ ] **Step 5: Delete the 6 old fixtures + fold voice-golden**
 
