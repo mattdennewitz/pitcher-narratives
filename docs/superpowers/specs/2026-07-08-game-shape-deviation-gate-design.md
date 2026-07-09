@@ -128,6 +128,22 @@ calibrate both `Z_GATE_*` against the *window-aggregated* z distribution, not
 the per-appearance one. Acceptable for v1; revisit the delta unit if it makes
 the gate too quiet.
 
+**Empirical calibration result (2026-07-08, real LEAGUE_SP artifact, 45 sampled
+starters, window of 10 appearances).** The window-aggregated z distribution
+came out tight, confirming the shrinkage note: velo cells p10/p50/p90 =
+−0.48 / 0.11 / 0.70 (min −1.26); pplus cells p10/p50/p90 = −0.63 / 0.05 / 0.83.
+Passes 2–3 (huge league n) were uniformly within the gates for all 45 starters;
+material cells only emerged at pass 4 (deep outings), where the pplus tail blows
+out to ±5–8 z. With the `−2.0 / +1.5` defaults this flagged 8/45 starters and
+silenced 37/45 — a clean separation that is neither silent-for-all nor
+flag-all — so **the defaults were kept unchanged**. Golden pair proving the
+separation (`tests/test_tto_deviation_golden.py`): 592332 Kevin Gausman (fader,
+pass-4 pplus z=−5.71 fatigue / pass-4 velo z=+2.00 stamina) vs 624133 Ranger
+Suárez (typical, every cell within [−0.10, −0.05] → silent).
+
+The artifact is generated data (not committed). Regenerate after the underlying
+statcast/aggs change: `python -m pitcher_narratives.tto_baseline`.
+
 **P+-corroboration veto on fatigue findings.** P+ is the reality check on
 velocity. A negative ΔVelo finding is only narrated as *fatigue* when ΔP+
 corroborates it:

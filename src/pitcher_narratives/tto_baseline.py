@@ -22,7 +22,7 @@ import polars as pl
 from pitcher_narratives.data import (
     classify_game_roles,
     load_all_statcast,
-    load_csv,
+    load_full_agg,
     tto_baseline_path,
 )
 
@@ -116,7 +116,7 @@ def write_tto_baseline(df: pl.DataFrame, path: Path | None = None) -> Path:
 def main() -> None:
     """Build and write the league-SP TTO baseline artifact from live data."""
     statcast = load_all_statcast()
-    all_pitches = load_csv("all_pitches", None)
+    all_pitches = load_full_agg("all_pitches")
     df = build_tto_baseline(statcast, all_pitches)
     out = write_tto_baseline(df)
     print(f"wrote {out} ({df.height} rows)")

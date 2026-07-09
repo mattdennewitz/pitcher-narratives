@@ -1594,7 +1594,22 @@ class TestTrendSpecialistReceivesYoySection:
         assert "velo +2.0 mph" in joined
 
 
-@pytest.mark.usefixtures("_patch_baselines", "_patch_render_sections")
+@pytest.fixture
+def _patch_no_tto_baseline(monkeypatch):
+    """Force the TTO baseline loader to None for game-shape unit tests.
+
+    Once ``var/tto_baseline.parquet`` is built, ``load_tto_baseline()`` returns
+    a real DataFrame and ``_build_game_shape_input`` feeds the MagicMock
+    ``ctx.tto`` to ``evaluate_tto_deviations``. Patching the loader to None keeps
+    these prompt-shape tests deterministic (silence block, no material fade)
+    regardless of whether the on-disk artifact exists. ``_build_game_shape_input``
+    imports the loader from ``pitcher_narratives.data`` at call time, so patch it
+    at its source module.
+    """
+    monkeypatch.setattr("pitcher_narratives.data.load_tto_baseline", lambda: None)
+
+
+@pytest.mark.usefixtures("_patch_baselines", "_patch_render_sections", "_patch_no_tto_baseline")
 class TestGameShapeSpecialistReceivesYoyData:
     """Verify _build_game_shape_input includes cross-season data with correct attributes."""
 
