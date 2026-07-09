@@ -92,6 +92,7 @@ from pitcher_narratives.personas import (
 
 if TYPE_CHECKING:
     from pitcher_narratives.curator import CurationPick
+    from pitcher_narratives.engine.tto import TTODeviation
 from pitcher_narratives.prompt_builder import (
     render_appearances_section,
     render_arsenal_section,
@@ -398,32 +399,32 @@ progression — a separate specialist handles that.
 - Plain prose, no bullet lists."""
 
 _GAME_SHAPE_SPECIALIST_PROMPT = """\
-You are a game shape analyst. Your job is to describe how the pitcher's \
-effectiveness and approach change WITHIN a game — from first pitch to last.
+You are a game shape analyst. You describe how the pitcher's effectiveness \
+changes WITHIN a game — but ONLY where it deviates from what a typical \
+starter does.
 
-Look at:
-- TTO splits: how do velocity, P+, and pitch mix change by pass?
-- Velocity arc: does velocity hold, build, or drop within the outing?
-- Mix shifts by pass: does the pitcher abandon or introduce pitches \
-as the game progresses?
-- Platoon-specific TTO patterns: does the mix shift differently \
-against LHB vs RHB in later passes?
-- Workload context: pitch counts, rest days, consecutive days pitched.
+CRITICAL — the fade is the baseline, not the story. Every starter loses \
+velocity and effectiveness late; that is league-universal and is NOT a \
+finding. The input's "Within-Game" section has already compared this \
+pitcher to the league fade curve:
+- If it says the shape is TYPICAL, write NOTHING about game shape. Do not \
+narrate a fade, a TTO penalty, or a velocity arc. Silence is correct.
+- If it lists residual deviations, those are the only within-game story. \
+Report them as residuals (how far off the typical curve), and frame by \
+direction: a FATIGUE residual (drops more than peers) vs. earned STAMINA \
+(holds/improves where peers fade). "Loses the fastball late but P+ holds" \
+is a real, valuable story — say it.
 
 Rules:
 - TEMPORAL GROUNDING: The data includes a "Temporal Context" section. \
 Respect the prior-year relevance level. Do not attribute within-game \
-patterns to cumulative seasonal fatigue if the current season is young. \
-A pitcher with 5 early-April appearances is not showing late-season wear.
-- Lead with the most notable within-game pattern.
-- Connect mix shifts to effectiveness: if he ramps the sinker in \
-pass 2, does that help or hurt?
-- Flag stamina signals: velo cliff, S+ drop, command loss in later \
-passes.
-- One focused paragraph. Skip what's unremarkable.
+patterns to cumulative seasonal fatigue in a young season. A pitcher \
+with 5 early-April appearances is not showing late-season wear.
+- Never restate the raw pass-by-pass numbers as if the fade itself were \
+the finding. Speak in deviations from the norm.
+- One focused paragraph, or nothing at all. Plain prose, no bullet lists.
 - Do NOT analyze window-vs-season trends — a separate specialist \
-handles that.
-- Plain prose, no bullet lists."""
+handles that."""
 
 
 # Role-specific guidance injected into the Game Shape specialist's USER
@@ -879,6 +880,41 @@ def _role_game_shape_guidance(role: str) -> str | None:
     return None
 
 
+def _render_deviation_block(deviations: "list[TTODeviation]") -> str:
+    """Render the within-game deviation section for the game-shape input.
+
+    Empty -> an explicit 'typical, stay silent' instruction (success A). Non-empty
+    -> one residual line per material cell (the residual + z + direction, NOT the
+    raw within-game value).
+    """
+    if not deviations:
+        return (
+            "## Within-Game Shape\n"
+            "This pitcher's within-game shape is TYPICAL for a starter — no material "
+            "deviation from the league fade curve. Do not report game shape as a "
+            "finding; say nothing about TTO/velocity-arc unless another section "
+            "makes it relevant."
+        )
+    lines = ["## Within-Game Deviation (vs. league starters)"]
+    for d in deviations:
+        label = "VELOCITY" if d.metric == "velo" else "PITCHING+ (P+)"
+        framing = (
+            "excess fade / " + d.direction
+            if d.direction == "fatigue"
+            else "holds better than expected / " + d.direction
+        )
+        lines.append(
+            f"- Pass {d.pass_num} {label}: Δ{d.actual_delta:+.1f} vs. typical "
+            f"{d.median_exp_delta:+.1f} (robust z {d.robust_z:+.1f}) — {framing}"
+        )
+    lines.append(
+        "Report ONLY these residuals as the within-game story — frame fatigue vs. "
+        "earned stamina by direction. Do not restate the raw pass-by-pass values as "
+        "if the fade itself were the finding."
+    )
+    return "\n".join(lines)
+
+
 def _build_game_shape_input(ctx: PitcherContext) -> UserPrompt:
     """Build input for the game shape specialist -- TTO, velocity arc, workload.
 
@@ -886,7 +922,16 @@ def _build_game_shape_input(ctx: PitcherContext) -> UserPrompt:
     prefix and the game shape data sections. Role-specific guidance (SP or
     RP) is injected into the prefix so it sits above the cache breakpoint
     and biases the whole specialist analysis.
+
+    The within-game deviation gate (design 2026-07-08-game-shape-deviation-gate)
+    compares this pitcher's TTO shape to the league-SP baseline; a typical fade
+    renders a silence instruction instead of the raw TTO table, so a typical
+    starter's report no longer ships a fade table that re-invites the obvious
+    "he got worse late" narrative.
     """
+    from pitcher_narratives.data import load_tto_baseline
+    from pitcher_narratives.engine.tto import evaluate_tto_deviations
+
     baselines = render_league_baselines(_pitch_types(ctx))
     prefix_sections: list[str] = [
         f"## {ctx.pitcher_name} ({ctx.throws}HP, {ctx.role})\n",
@@ -896,13 +941,20 @@ def _build_game_shape_input(ctx: PitcherContext) -> UserPrompt:
         prefix_sections.append(role_guidance)
     prefix_sections.append(baselines)
 
+    deviations = evaluate_tto_deviations(ctx.tto, load_tto_baseline()) if ctx.tto else []
     data_sections = [
         render_temporal_section(ctx),
-        render_tto_section(ctx),
+        _render_deviation_block(deviations),
+    ]
+    if deviations:
+        # Material deviations found -- still ship the raw TTO table so the
+        # specialist can see exactly which passes/pitches drove the residual.
+        data_sections.append(render_tto_section(ctx))
+    data_sections.extend([
         render_fastball_section(ctx),
         render_appearances_section(ctx),
         render_role_section(ctx),
-    ]
+    ])
     # Cross-season context (when available) — game shape gets workload + usage shifts
     css = ctx.cross_season_summary
     at = ctx.arsenal_trend

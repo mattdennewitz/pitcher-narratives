@@ -1633,9 +1633,14 @@ class TestGameShapeSpecialistReceivesYoyData:
         assert "## Temporal Context" in output
 
     def test_temporal_section_appears_first_among_data_sections(self):
+        # Re-baselined for the deviation gate (2026-07-08): with no TTO
+        # baseline artifact available, `_build_game_shape_input` no longer
+        # emits the raw "## TTO" table unconditionally -- it emits the
+        # "## Within-Game Shape" silence block in its place. Ordering vs.
+        # Temporal Context is still the property under test.
         ctx = _make_mock_ctx()
         output = _flatten_prompt(_build_game_shape_input(ctx))
-        assert output.index("## Temporal Context") < output.index("## TTO")
+        assert output.index("## Temporal Context") < output.index("## Within-Game Shape")
 
 
 # ── check_explainer_present unit tests (Phase 08: PERSONA-11) ──
