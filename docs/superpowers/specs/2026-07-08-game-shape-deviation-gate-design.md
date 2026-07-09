@@ -74,7 +74,7 @@ cell.
 |---|---|
 | `cohort_key` | v1: always `LEAGUE_SP`. The upgrade seam (see §6). |
 | `pass_num` | 2, 3, … (pass 1 is the Δ≡0 reference; not stored). |
-| `metric` | `velo` \| `pplus`. Long form so new metrics are new rows, not new columns — the shared contract for scope-C generalization. |
+| `metric` | Exact enum string — one of `"velo"` or `"pplus"` (the ΔVelo and ΔP+ concepts used in the prose map to these literal values). Long form so new metrics are new rows, not new columns — the shared contract for scope-C generalization. |
 | `median_exp_delta` | median per-appearance (passN − pass1) delta across league SP. |
 | `mad` | median absolute deviation of that delta. |
 | `n` | appearances in the cell (for a sample-adequacy guard). |
@@ -119,14 +119,24 @@ genuinely non-obvious story we *want*.
 - `Z_GATE_STAMINA = +1.5` — a beneficial deviation (elite stamina / mechanical
   hold) is easier to surface; it is a high-value, low-risk story.
 
+**Calibration note (read this before tuning `Z_GATE_*`).** The baseline
+dispersion (MAD) is computed over *per-appearance* deltas, but the runtime
+residual uses the pitcher's *window-aggregated* delta, which has lower
+variance. Window-aggregated robust z-scores are therefore systematically
+**shrunken toward zero** — do not be surprised that they look small, and
+calibrate both `Z_GATE_*` against the *window-aggregated* z distribution, not
+the per-appearance one. Acceptable for v1; revisit the delta unit if it makes
+the gate too quiet.
+
 **P+-corroboration veto on fatigue findings.** P+ is the reality check on
 velocity. A negative ΔVelo finding is only narrated as *fatigue* when ΔP+
 corroborates it:
-- ΔVelo neg-material **and** ΔP+ neg-material → **fatigue finding** (real).
-- ΔVelo neg-material **and** ΔP+ *positive*-material → **not vetoed**; surfaced
-  via the P+ positive cell as "velo erodes but effectiveness holds/climbs."
-- ΔVelo neg-material **and** ΔP+ typical → **veto** the velo fatigue finding →
-  silence.
+
+| ΔVelo cell (`velo`) | ΔP+ cell (`pplus`) | Outcome |
+|---|---|---|
+| neg-material (`z ≤ -2.0`) | neg-material (`z ≤ -2.0`) | **Fatigue finding** — corroborated; narrate as fatigue |
+| neg-material (`z ≤ -2.0`) | positive-material (`z ≥ +1.5`) | **Resilience finding** — *not* vetoed; surfaced via the P+ positive cell ("velo erodes but effectiveness holds/climbs") |
+| neg-material (`z ≤ -2.0`) | typical (`-2.0 < z < +1.5`) | **Veto** the velo fatigue finding → silence |
 
 A 1.5-mph drop for an 89-mph starter whose P+ has not moved is not fatigue — it
 is just pitching; the veto suppresses that false narrative without swallowing
@@ -224,7 +234,8 @@ untouched.
   unavailable → silence.
 - **`Z_GATE_*` calibration check:** the thresholds separate a known fader from a
   median starter on real distributions (documented calibration, not a guessed
-  constant).
+  constant), honoring the §3.3 calibration note on per-appearance-vs-window
+  variance shrinkage.
 
 ## 9. Open questions (resolved)
 
@@ -234,7 +245,6 @@ untouched.
 - Skip vs. hedge on the typical case → **silence** (success A).
 - Gate → per-cell, directional, **asymmetric** (`−2.0` fatigue / `+1.5`
   stamina), with the **P+ veto** on fatigue (§3.3).
-- Baseline unit caveat: dispersion is over *per-appearance* deltas while the
-  runtime residual uses the pitcher's *window-aggregated* delta (lower
-  variance), making the gate slightly conservative — acceptable for v1;
-  revisit during `Z_GATE` calibration if it makes the gate too quiet.
+- Baseline unit caveat (per-appearance dispersion vs. window-aggregated
+  residual) → **promoted to the Calibration note in §3.3**; calibrate against
+  the window-aggregated z distribution.
