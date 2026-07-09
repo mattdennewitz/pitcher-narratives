@@ -16,6 +16,7 @@ from pitcher_narratives.engine._common import (
     _pplus_delta_string,
     _velo_delta_string,
 )
+from pitcher_narratives.engine.deviation import evaluate_deviation
 
 # ── Times Through Order ───────────────────────────────────────────────
 
@@ -387,5 +388,82 @@ def compute_tto_analysis(data: PitcherData) -> TTOAnalysis:
     summary = "; ".join(summary_parts) if summary_parts else f"{len(splits)} passes through the order"
 
     return TTOAnalysis(splits=splits, available=True, summary=summary, mix_shifts=mix_shifts)
+
+
+# ── Deviation gate (design 2026-07-08-game-shape-deviation-gate) ──────
+
+
+@dataclass(frozen=True)
+class TTODeviation:
+    """A material within-game deviation of one metric at one pass vs. the
+    league-SP baseline."""
+
+    pass_num: int
+    metric: str  # "velo" | "pplus"
+    actual_delta: float
+    median_exp_delta: float
+    robust_z: float
+    direction: str  # "fatigue" | "stamina"
+
+
+def evaluate_tto_deviations(
+    tto: "TTOAnalysis",
+    baseline: "pl.DataFrame | None",
+    *,
+    min_pitches: int = 15,
+) -> list["TTODeviation"]:
+    """Material within-game deviations vs. the LEAGUE_SP baseline (design §3-4).
+
+    Silence (empty list) when TTO is unavailable, the baseline is absent, or no
+    cell is material. Applies the P+-corroboration veto: a negative-material
+    ``velo`` deviation is kept (fatigue) only if ``pplus`` is also
+    negative-material; a positive-material ``pplus`` surfaces independently
+    (resilience); an otherwise-unsupported velo drop is vetoed.
+    """
+    if not getattr(tto, "available", False) or baseline is None:
+        return []
+    by_pass = {s.pass_number: s for s in tto.splits}
+    p1 = by_pass.get(1)
+    if p1 is None or p1.avg_velo is None or p1.avg_p_plus is None:
+        return []
+
+    # baseline -> {(pass_num, metric): (median, mad)}
+    b = {
+        (r["pass_num"], r["metric"]): (r["median_exp_delta"], r["mad"])
+        for r in baseline.to_dicts()
+        if r["cohort_key"] == "LEAGUE_SP"
+    }
+
+    # First pass: compute a Deviation per (pass>=2, metric) cell.
+    raw: dict[tuple[int, str], "TTODeviation"] = {}
+    for pass_num, split in sorted(by_pass.items()):
+        if pass_num < 2 or split.pitches < min_pitches:
+            continue
+        for metric, actual, ref in (
+            ("velo", split.avg_velo, p1.avg_velo),
+            ("pplus", split.avg_p_plus, p1.avg_p_plus),
+        ):
+            if actual is None:
+                continue
+            cell = b.get((pass_num, metric))
+            if cell is None:
+                continue
+            median_exp, mad = cell
+            d = evaluate_deviation(actual - ref, median_exp, mad)
+            if d.material:
+                raw[(pass_num, metric)] = TTODeviation(
+                    pass_num, metric, actual - ref, median_exp, d.robust_z, d.direction
+                )
+
+    # P+ veto: drop a fatigue velo cell unless the same pass's pplus is also
+    # negative-material (fatigue). Positive-material pplus stays (resilience).
+    out: list["TTODeviation"] = []
+    for (pass_num, metric), dev in raw.items():
+        if metric == "velo" and dev.direction == "fatigue":
+            pplus = raw.get((pass_num, "pplus"))
+            if pplus is None or pplus.direction != "fatigue":
+                continue  # vetoed
+        out.append(dev)
+    return sorted(out, key=lambda d: (d.pass_num, d.metric))
 
 
