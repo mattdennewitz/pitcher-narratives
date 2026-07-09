@@ -270,3 +270,47 @@ untouched.
 - Baseline unit caveat (per-appearance dispersion vs. window-aggregated
   residual) → **promoted to the Calibration note in §3.3**; calibrate against
   the window-aggregated z distribution.
+
+## 11. v2 scoping — breadth beyond deep outings (empirical finding from v1 calibration)
+
+v1 calibration (Task 5, 45-starter sample) confirmed the gate is effectively a
+**deep-outing (pass-4+) detector**: window-aggregation shrinks passes 2–3 toward
+the league curve for nearly every starter, so material findings survive only at
+depth, and only for pitchers who reach pass 4 with ≥ `min_pitches` window
+pitches. That is the correct conservative behavior for v1's goal (kill the
+universal false-positive), but it has consequences to design around in v2.
+
+### Implications
+- **Coverage skews to durable/ace starters.** Short-outing arms, openers,
+  piggyback/bulk pitchers, and innings-limited starters are *structurally
+  silent* — not evaluated, not "typical."
+- **Survivor / endogeneity bias.** Managers pull the worst faders *before* pass
+  4, so v1 sees only fatigue a pitcher was allowed to pitch through; it misses
+  preempted fatigue. The reference class is "starts that went deep."
+- **Findings skew positive.** Deep-outing pitchers are the resilient ones, so
+  the feature credits late durability far more often than it flags fatigue
+  (1/45 fatigue in the sample).
+- **Reader ambiguity of silence.** "No game-shape finding" now conflates
+  typical-fade, not-deep-enough-to-evaluate, and (operationally) missing-artifact.
+- **Thin / late-accruing samples.** Pass-4 cells are noisier and accrue slowly
+  both league-wide and per-pitcher; early season is quieter and more
+  dataset-sensitive.
+
+### v2 levers (priority order)
+1. **Per-appearance deviation framing** — the real breadth lever (see the §3.3
+   unit caveat). Flag "did he fade unusually in *this* start vs. his own norm"
+   instead of window-mean-vs-league; recovers the shallow-depth signal that
+   window-shrinkage flattens. NOTE: lowering `Z_GATE_*` does **not** help — it
+   re-flags nearly everyone at passes 2–3, reintroducing the false-positive.
+2. **De-bias the pull decision** — model expected fade *conditional on having
+   been left in* (pitch count, leverage, score) so preempted fatigue isn't
+   censored out of the data.
+3. **Depth-independent shape signals** — intra-inning velo arc, first-pitch vs.
+   two-strike, mix shifts: computable without a deep outing, for breadth across
+   typical-depth starters.
+4. **Cohorting (`SP_POWER`/`SP_FINESSE`, §6)** — improves the *fairness* of the
+   pass-4 comparison but adds no *reach*; it re-buckets the same deep-outing
+   population.
+5. **Disambiguate silence** in diagnostics — distinguish "evaluated & typical"
+   from "not evaluated (never reached depth)" so operators/readers aren't misled.
+
