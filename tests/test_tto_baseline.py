@@ -62,9 +62,13 @@ def test_build_emits_long_form_league_sp_rows():
     # per-appearance velo deltas at pass2: −1.0 and −3.0 → median −2.0
     assert round(velo2["median_exp_delta"][0], 3) == -2.0
     assert velo2["n"][0] == 2
+    # MAD = median(|−1−(−2)|, |−3−(−2)|) = median(1, 1) = 1.0
+    assert round(velo2["mad"][0], 3) == 1.0
     pplus2 = base.filter((pl.col("pass_num") == 2) & (pl.col("metric") == "pplus"))
     # pplus deltas: (101−105)=−4, (97−105)=−8 → median −6.0
     assert round(pplus2["median_exp_delta"][0], 3) == -6.0
+    # MAD = median(|−4−(−6)|, |−8−(−6)|) = median(2, 2) = 2.0
+    assert round(pplus2["mad"][0], 3) == 2.0
 
 
 def test_load_tto_baseline_missing_returns_none(tmp_path, monkeypatch):

@@ -141,6 +141,12 @@ separation (`tests/test_tto_deviation_golden.py`): 592332 Kevin Gausman (fader,
 pass-4 pplus z=−5.71 fatigue / pass-4 velo z=+2.00 stamina) vs 624133 Ranger
 Suárez (typical, every cell within [−0.10, −0.05] → silent).
 
+Because window-aggregation shrinks passes 2–3 toward the league curve for
+nearly all starters, v1 is effectively a deep-outing (pass-4+) detector -- a
+starter who does not reach pass 4 with ≥`min_pitches` window pitches is
+structurally incapable of firing a finding. This is expected/conservative
+behavior, not a defect.
+
 The artifact is generated data (not committed). Regenerate after the underlying
 statcast/aggs change: `python -m pitcher_narratives.tto_baseline`.
 

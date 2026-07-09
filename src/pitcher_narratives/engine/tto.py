@@ -406,11 +406,19 @@ class TTODeviation:
     direction: str  # "fatigue" | "stamina"
 
 
+_MIN_BASELINE_N = 100
+"""Floor on the baseline cell's per-appearance sample size (design §3.3
+sample-adequacy guard). Pass-2/3 league cells run to the thousands; the real
+pass-4 LEAGUE_SP cell has n=471, so 100 keeps pass 4 while dropping truly
+thin pass-5+ cells that could manufacture a finding from a volatile MAD."""
+
+
 def evaluate_tto_deviations(
     tto: "TTOAnalysis",
     baseline: "pl.DataFrame | None",
     *,
     min_pitches: int = 15,
+    min_baseline_n: int = _MIN_BASELINE_N,
 ) -> list["TTODeviation"]:
     """Material within-game deviations vs. the LEAGUE_SP baseline (design §3-4).
 
@@ -418,7 +426,11 @@ def evaluate_tto_deviations(
     cell is material. Applies the P+-corroboration veto: a negative-material
     ``velo`` deviation is kept (fatigue) only if ``pplus`` is also
     negative-material; a positive-material ``pplus`` surfaces independently
-    (resilience); an otherwise-unsupported velo drop is vetoed.
+    (resilience); an otherwise-unsupported velo drop is vetoed. Also enforces
+    the sample-adequacy guard on both sides of the join (design §3.3): a
+    pitcher-side pass with fewer than ``min_pitches`` window pitches, or a
+    baseline cell with fewer than ``min_baseline_n`` per-appearance
+    observations, is skipped rather than treated as material.
     """
     if not getattr(tto, "available", False) or baseline is None:
         return []
@@ -427,9 +439,9 @@ def evaluate_tto_deviations(
     if p1 is None or p1.avg_velo is None or p1.avg_p_plus is None:
         return []
 
-    # baseline -> {(pass_num, metric): (median, mad)}
+    # baseline -> {(pass_num, metric): (median, mad, n)}
     b = {
-        (r["pass_num"], r["metric"]): (r["median_exp_delta"], r["mad"])
+        (r["pass_num"], r["metric"]): (r["median_exp_delta"], r["mad"], r["n"])
         for r in baseline.to_dicts()
         if r["cohort_key"] == "LEAGUE_SP"
     }
@@ -448,7 +460,9 @@ def evaluate_tto_deviations(
             cell = b.get((pass_num, metric))
             if cell is None:
                 continue
-            median_exp, mad = cell
+            median_exp, mad, baseline_n = cell
+            if baseline_n < min_baseline_n:
+                continue
             d = evaluate_deviation(actual - ref, median_exp, mad)
             if d.material:
                 raw[(pass_num, metric)] = TTODeviation(

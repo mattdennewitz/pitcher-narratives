@@ -86,3 +86,22 @@ def test_small_sample_pass_is_skipped():
     # pitches below min_pitches threshold should not produce a deviation
     tto = _tto(_split(1, 96.0, 105.0), _split(3, 91.5, 95.0, pitches=10))
     assert evaluate_tto_deviations(tto, _BASE) == []
+
+
+def test_thin_baseline_cell_is_skipped_even_with_material_z():
+    # Same corroborated-fatigue shape as test_corroborated_fatigue_is_surfaced
+    # (material z on both metrics), but the pass-3 baseline cell's n is below
+    # the floor -- the finding must be suppressed rather than manufactured
+    # from a volatile MAD (design §3.3 sample-adequacy guard).
+    thin_base = pl.DataFrame(
+        {
+            "cohort_key": ["LEAGUE_SP"] * 4,
+            "pass_num": [2, 2, 3, 3],
+            "metric": ["velo", "pplus", "velo", "pplus"],
+            "median_exp_delta": [-0.4, -1.8, -1.1, -3.5],
+            "mad": [1.0, 2.0, 1.0, 2.0],
+            "n": [5000, 5000, 40, 40],
+        }
+    )
+    tto = _tto(_split(1, 96.0, 105.0), _split(3, 91.5, 95.0))
+    assert evaluate_tto_deviations(tto, thin_base) == []
