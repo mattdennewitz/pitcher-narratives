@@ -65,7 +65,7 @@ def _make_minimal_context():
             prior_season=2025, prior_season_appearances=0, prior_season_ip="0.0",
             prior_year_relevance="LOW", prior_year_relevance_reason="No data",
         ),
-        tto=None, cross_season_summary=None, arsenal_trend=None,
+        cross_season_summary=None, arsenal_trend=None,
     )
 
 
