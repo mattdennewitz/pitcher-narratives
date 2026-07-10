@@ -99,7 +99,6 @@ from pitcher_narratives.prompt_builder import (
     render_release_point_section,
     render_role_section,
     render_temporal_section,
-    render_tto_section,
     render_yoy_section,
 )
 from pitcher_narratives.shape import render_pitch_shape

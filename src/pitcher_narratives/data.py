@@ -7,7 +7,6 @@ filters to configurable lookback windows.
 
 from __future__ import annotations
 
-import functools
 import logging
 import os
 from dataclasses import dataclass
@@ -36,10 +35,8 @@ __all__ = [
     "load_pitcher_data",
     "load_run_values",
     "load_statcast",
-    "load_tto_baseline",
     "statcast_dir",
     "statcast_parquet_path",
-    "tto_baseline_path",
 ]
 
 _DEFAULT_DATA_DIR = Path(__file__).resolve().parent.parent.parent
@@ -552,30 +549,3 @@ def load_pitcher_data(
         pitcher_name=pitcher_name,
         throws=throws,
     )
-
-
-def tto_baseline_path() -> Path:
-    """Path to the offline league-SP TTO baseline artifact (generated data)."""
-    override = os.environ.get("PITCHER_NARRATIVES_TTO_BASELINE")
-    return Path(override) if override else DATA_DIR / "var" / "tto_baseline.parquet"
-
-
-@functools.cache
-def load_tto_baseline() -> pl.DataFrame | None:
-    """Load the TTO baseline artifact, or None if it has not been built.
-
-    None (not an exception) so the deviation evaluator degrades to silence
-    rather than crashing a report when the artifact is absent. Logs a
-    warning on the degraded path so the silence is diagnosable (design
-    2026-07-08-game-shape-deviation-gate §5).
-    """
-    path = tto_baseline_path()
-    if not path.exists():
-        log.warning(
-            "TTO baseline artifact not found at %s; game-shape deviation "
-            "analysis is disabled -- run `python -m pitcher_narratives.tto_baseline` "
-            "to build it.",
-            path,
-        )
-        return None
-    return pl.read_parquet(path)

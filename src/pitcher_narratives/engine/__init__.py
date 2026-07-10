@@ -3,7 +3,7 @@
 Transforms PitcherData into pre-computed analysis ready for LLM
 consumption. This module is a thin facade: every public symbol is
 implemented in a focused concern module (baselines, arsenal, execution,
-workload, mechanics, contact, tto, attribution) and re-exported here so
+workload, mechanics, contact, attribution) and re-exported here so
 existing ``from pitcher_narratives.engine import X`` imports keep working.
 
 Shared private helpers live in ``_common``; a handful are re-exported here
@@ -76,13 +76,6 @@ from pitcher_narratives.engine.mechanics import (
     ReleasePointPitchType,
     compute_release_point_metrics,
 )
-from pitcher_narratives.engine.tto import (
-    TTOAnalysis,
-    TTOPitchType,
-    TTOPlatoonSplit,
-    TTOSplit,
-    compute_tto_analysis,
-)
 from pitcher_narratives.engine.workload import (
     AppearanceWorkload,
     CrossSeasonSummary,
@@ -112,10 +105,6 @@ __all__ = [
     "PlatoonSplit",
     "ReleasePointMetrics",
     "ReleasePointPitchType",
-    "TTOAnalysis",
-    "TTOPitchType",
-    "TTOPlatoonSplit",
-    "TTOSplit",
     "TemporalContext",
     "VelocityArc",
     "WorkloadContext",
@@ -132,7 +121,6 @@ __all__ = [
     "compute_platoon_mix",
     "compute_release_point_metrics",
     "compute_temporal_context",
-    "compute_tto_analysis",
     "compute_velocity_arc",
     "compute_workload_context",
     "format_s_variant_comparisons",

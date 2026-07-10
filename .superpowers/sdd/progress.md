@@ -19,9 +19,11 @@ CONFIRMED baseline (2026-07-09, on 0740cfc): **821 passed, 2 failed** in ~19 min
 NOTE: full suite ~19 min — implementers use targeted test files during iteration, full suite once at task end.
 
 ## Tasks
-- [ ] Task 1: Cut the game-shape specialist (spine 5 → 4)
+- [x] Task 1: Cut the game-shape specialist (spine 5 → 4) — complete (commit de8bb4a, review clean: spec ✅, quality Approved). Suite 799 passed / 2 baseline. Implementer also (correctly, in-scope) fixed test_cli.py + test_fact_parity.py construction sites and deleted TestGameShapeSpecialistReceivesYoyData (tests-for-deleted-code).
 - [ ] Task 2: Delete the TTO engine, deviation gate, and context/prompt wiring
 - [ ] Task 3: Grep gate + full-suite + end-to-end verification
 
 ## Notes / Minor findings (for final whole-branch review)
-(none yet)
+Task 1 (2 Minor, none blocking):
+- pipeline.py data-auditor prompt: "e.g. trends or game-shape data" → "e.g. trends data" — correct bonus cleanup, not itemized in brief. Harmless.
+- Implementer report notes Edit/Write tool intermittently false-errored "file not read yet"; edits done via py_compile-verified scripts. No code artifacts; process note only.

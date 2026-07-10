@@ -25,7 +25,6 @@ from pitcher_narratives.engine import (
     PlatoonMix,
     ReleasePointMetrics,
     TemporalContext,
-    TTOAnalysis,
     VelocityArc,
     WorkloadContext,
     compute_arsenal_summary,
@@ -40,7 +39,6 @@ from pitcher_narratives.engine import (
     compute_platoon_mix,
     compute_release_point_metrics,
     compute_temporal_context,
-    compute_tto_analysis,
     compute_velocity_arc,
     compute_workload_context,
 )
@@ -91,7 +89,6 @@ class PitcherContext(BaseModel):
     release_point: ReleasePointMetrics
     workload: WorkloadContext
     temporal: TemporalContext
-    tto: TTOAnalysis | None
 
     cross_season_summary: CrossSeasonSummary | None = None
     """Year-over-year pitcher-level metric deltas (velocity, P+, S+, L+)."""
@@ -134,7 +131,6 @@ def assemble_pitcher_context(data: PitcherData) -> PitcherContext:
     release_point = compute_release_point_metrics(data)
     workload = compute_workload_context(data)
     temporal = compute_temporal_context(data, workload)
-    tto = compute_tto_analysis(data)
     cross_season_summary = compute_cross_season_summary(data)
     arsenal_trend = compute_arsenal_trends(data)
     pitch_shape = compute_pitch_shape(data)
@@ -160,7 +156,6 @@ def assemble_pitcher_context(data: PitcherData) -> PitcherContext:
         release_point=release_point,
         workload=workload,
         temporal=temporal,
-        tto=tto,
         cross_season_summary=cross_season_summary,
         arsenal_trend=arsenal_trend,
         pitch_shape=pitch_shape,

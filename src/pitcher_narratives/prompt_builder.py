@@ -9,7 +9,6 @@ the context; ``build_pitcher_prompt`` orchestrates them in display order.
 from __future__ import annotations
 
 from pitcher_narratives.context import _MAX_PITCH_TYPES, PitcherContext
-from pitcher_narratives.engine import TTOPitchType, TTOPlatoonSplit
 from pitcher_narratives.shape import render_pitch_shape
 
 __all__ = [
@@ -27,7 +26,6 @@ __all__ = [
     "render_release_point_section",
     "render_role_section",
     "render_temporal_section",
-    "render_tto_section",
     "render_yoy_section",
 ]
 
@@ -204,98 +202,6 @@ def render_fastball_section(ctx: PitcherContext) -> str:
 
     if fb.small_sample:
         lines.append("- *Small sample*")
-    return "\n".join(lines)
-
-def render_tto_section(ctx: PitcherContext) -> str:
-    tto = ctx.tto
-    if tto is None or not tto.available:
-        return ""
-    lines = ["## Times Through Order"]
-    lines.append(f"- {tto.summary}")
-
-    # Mix shift flags
-    if tto.mix_shifts:
-        for ms in tto.mix_shifts:
-            lines.append(f"- **Mix shift:** {ms}")
-
-    # Main table with FB/Secondary P+ split
-    lines.append("")
-    lines.append("| Pass | Pitches | Velo | P+ | FB P+ | Sec P+ | Velo Delta | P+ Delta |")
-    lines.append("|------|---------|------|----|-------|--------|------------|----------|")
-    for s in tto.splits:
-        velo = f"{s.avg_velo:.1f}" if s.avg_velo else "--"
-        pp = f"{s.avg_p_plus:.0f}" if s.avg_p_plus else "--"
-        fb = f"{s.fb_p_plus:.0f}" if s.fb_p_plus else "--"
-        sec = f"{s.sec_p_plus:.0f}" if s.sec_p_plus else "--"
-        sample = " *" if s.small_sample else ""
-        lines.append(
-            f"| {s.pass_number}{sample} "
-            f"| {s.pitches} "
-            f"| {velo} "
-            f"| {pp} "
-            f"| {fb} ({s.fb_p_plus_delta}) "
-            f"| {sec} ({s.sec_p_plus_delta}) "
-            f"| {s.velo_delta} "
-            f"| {s.p_plus_delta} |"
-        )
-
-    # Per-pitch-type breakdown with usage %
-    lines.append("")
-    lines.append("**Pitch mix & P+ by pass:**")
-    all_types: dict[str, dict[int, TTOPitchType]] = {}
-    for s in tto.splits:
-        for pt in s.pitch_types:
-            if pt.pitch_type not in all_types:
-                all_types[pt.pitch_type] = {}
-            all_types[pt.pitch_type][s.pass_number] = pt
-
-    pass_nums = [s.pass_number for s in tto.splits]
-    header_passes = " | ".join(f"Pass {n}" for n in pass_nums)
-    lines.append(f"| Pitch | {header_passes} |")
-    sep_passes = " | ".join("---" for _ in pass_nums)
-    lines.append(f"|-------|{sep_passes}|")
-
-    for pt_name, by_pass in sorted(all_types.items()):
-        cells: list[str] = []
-        for pn in pass_nums:
-            if pn in by_pass:
-                entry = by_pass[pn]
-                pp = f"{entry.avg_p_plus:.0f}" if entry.avg_p_plus else "--"
-                cells.append(f"{entry.usage_pct:.0f}% P+{pp} ({entry.usage_delta}, {entry.p_plus_delta})")
-            else:
-                cells.append("dropped")
-        lines.append(f"| {pt_name} | {' | '.join(cells)} |")
-
-    # Platoon within TTO — only render if meaningful data exists
-    has_platoon = any(len(s.platoon) > 0 for s in tto.splits)
-    if has_platoon:
-        lines.append("")
-        lines.append("**Platoon mix by pass:**")
-        for stand_label, stand_val in [("vs LHB", "L"), ("vs RHB", "R")]:
-            # Collect per-pass data for this side
-            stand_data: dict[str, dict[int, TTOPlatoonSplit]] = {}
-            for s in tto.splits:
-                for p in s.platoon:
-                    if p.stand == stand_val:
-                        if p.pitch_type not in stand_data:
-                            stand_data[p.pitch_type] = {}
-                        stand_data[p.pitch_type][s.pass_number] = p
-            if not stand_data:
-                continue
-            lines.append(f"*{stand_label}:*")
-            lines.append(f"| Pitch | {header_passes} |")
-            lines.append(f"|-------|{sep_passes}|")
-            for pt_name, by_pass_platoon in sorted(stand_data.items()):
-                cells = []
-                for pn in pass_nums:
-                    if pn in by_pass_platoon:
-                        e = by_pass_platoon[pn]
-                        pp = f"P+{e.avg_p_plus:.0f}" if e.avg_p_plus else ""
-                        cells.append(f"{e.usage_pct:.0f}% {pp} ({e.pitches}p)")
-                    else:
-                        cells.append("--")
-                lines.append(f"| {pt_name} | {' | '.join(cells)} |")
-
     return "\n".join(lines)
 
 def render_arsenal_section(ctx: PitcherContext) -> str:
