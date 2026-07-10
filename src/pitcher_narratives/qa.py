@@ -6,6 +6,7 @@ Public: parse_grade_question, answer_question, QuestionError, GradeQuestion.
 
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass, field
 
@@ -35,6 +36,8 @@ __all__ = [
     "parse_grade_question",
     "resolve_pitch_against_arsenal",
 ]
+
+log = logging.getLogger(__name__)
 
 
 class QuestionError(Exception):
@@ -189,18 +192,37 @@ async def answer_question(
 
     grade_input = build_grade_input(ctx, q.grade_family)
     ground_truth = "\n".join(p for p in grade_input if isinstance(p, str))
-    scoping = (
+    scoping_parts = [
         f"Explain ONLY the {pitch_name} ({pitch_type}) and its "
         f"{GRADE_LABELS[q.grade_family]}. Use the rest of the arsenal as contrast."
-    )
+    ]
+    if q.cited_value is not None:
+        scoping_parts.append(
+            f"The question cited a grade of {q.cited_value:.0f}; if that disagrees "
+            "with the actual grade in the data, state the correct value."
+        )
+    if len(q.pitch_candidates) > 1:
+        scoping_parts.append(
+            f'"{q.pitch_noun}" was ambiguous; you are answering about {pitch_name} '
+            f"({pitch_type}), his most-thrown match — note this."
+        )
+    scoping = " ".join(scoping_parts)
 
     agent = build_qa_agent(provider)
     result = await agent.run(**agent_kwargs([scoping, *grade_input], model_override))
     answer = result.output
 
-    audit = await run_data_audit(ground_truth, answer, provider=provider, model_override=model_override)
-    if not audit.is_clean:
-        revision = build_fact_revision_message(ground_truth, answer, audit.flags)
-        result = await agent.run(**agent_kwargs(revision, model_override))
-        answer = result.output
+    # Fact-check + one revision, mirroring the report's single-revision pattern.
+    # Degrade to the first grounded answer if the auditor or revision LLM call
+    # fails, rather than surfacing a raw traceback on a user-facing command.
+    try:
+        audit = await run_data_audit(
+            ground_truth, answer, provider=provider, model_override=model_override
+        )
+        if not audit.is_clean:
+            revision = build_fact_revision_message(ground_truth, answer, audit.flags)
+            result = await agent.run(**agent_kwargs(revision, model_override))
+            answer = result.output
+    except Exception:  # noqa: BLE001 - never fail a good first answer on audit trouble
+        log.warning("audit/revision failed; returning unrevised answer", exc_info=True)
     return answer
