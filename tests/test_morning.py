@@ -18,7 +18,6 @@ def _fake_analyzed() -> AnalyzedContext:
         specialists=SpecialistOutputs(
             stuff="Stuff analysis.", location="Location analysis.",
             runvalue="Run value analysis.", trends="Trends analysis.",
-            game_shape="Game shape analysis.",
         ),
     )
 
@@ -427,7 +426,7 @@ def test_signals_failed_flag_set_on_extractor_failure(monkeypatch):
     from pitcher_narratives.models import SpecialistOutputs
 
     fake_specs = SpecialistOutputs(
-        stuff="S", location="L", runvalue="R", trends="T", game_shape="G"
+        stuff="S", location="L", runvalue="R", trends="T"
     )
     monkeypatch.setattr(_pl, "run_specialists", AsyncMock(return_value=fake_specs))
     monkeypatch.setattr(
@@ -443,7 +442,7 @@ def test_signals_failed_flag_set_on_extractor_failure(monkeypatch):
     class _FakeAgents:
         # Specialist/auditor attrs are passed as args to monkeypatched helpers;
         # they must exist but are never actually called.
-        stuff = location = runvalue = trends = game_shape = auditor = _noop
+        stuff = location = runvalue = trends = auditor = _noop
         signal_extractor = bad_extractor
         mini_model_name = ""
         def specialist_dict(self):
@@ -614,7 +613,7 @@ def test_build_validation_payload_records_flags_per_pick():
     result = PipelineResult(
         narrative="n",
         specialists=SpecialistOutputs(
-            stuff="s", location="l", runvalue="r", trends="t", game_shape="g"),
+            stuff="s", location="l", runvalue="r", trends="t"),
         revision_count=1,
         capsule_revised=True,
     )

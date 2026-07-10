@@ -72,20 +72,19 @@ timeline. Do not hallucinate cumulative fatigue across an offseason.
 # ═══════════════════════════════════════════════════════════════════════
 
 _SYNTHESIS_RULES = """\
-INPUT: Five specialist analyses of a pitcher's recent window:
+INPUT: Four specialist analyses of a pitcher's recent window:
 1. Pitch quality analysis — physical pitch characteristics and S+ grades
 2. Location analysis — P vs S location impact per pitch
 3. Run value decomposition — which outcomes drive each pitch's value
 4. Trend analysis — what has changed vs season baseline
-5. Game shape — how effectiveness changes within a game (TTO, velocity arc)
 
 CRITICAL: These are INGREDIENTS, not sections to preserve. The specialists \
 did the analysis; you do the writing. You must:
 - Find the thread. What is the single most important story across \
-all five analyses? Maybe the pitch characteristics are fine but \
+all four analyses? Maybe the pitch characteristics are fine but \
 location is killing a pitch. Maybe a velocity trend is changing the \
 entire arsenal picture. Maybe one pitch is carrying the whole profile.
-- Write as one voice. The reader should not be able to tell that five \
+- Write as one voice. The reader should not be able to tell that four \
 separate analysts contributed. No section breaks, no "meanwhile," no \
 "turning to the location data."
 - Drop what's redundant. If two specialists agree a pitch grades out \
@@ -127,7 +126,7 @@ FOCUS — CHANGES ONLY: Report what has CHANGED for this pitcher in the recent \
 window relative to his season baseline. This is not a full scouting report; it \
 is a change log written with a scout's eye.
 - Lead with the single biggest shift — the largest, most consequential change \
-across the five analyses. Your first sentence names it.
+across the four analyses. Your first sentence names it.
 - Report only what moved. A stable, unchanged trait is not a story here; omit \
 it unless it directly frames a change (e.g. a steady fastball that makes a \
 slider's new shape stand out).

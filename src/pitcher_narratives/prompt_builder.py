@@ -40,7 +40,6 @@ def build_pitcher_prompt(ctx: PitcherContext) -> str:
     sections.append(render_executive_summary(ctx))
     sections.append(render_role_section(ctx))
     sections.append(render_fastball_section(ctx))
-    sections.append(render_tto_section(ctx))
     sections.append(render_arsenal_section(ctx))
     sections.append(render_execution_section(ctx))
     sections.append(render_intermediates_section(ctx))
@@ -124,11 +123,6 @@ def render_executive_summary(ctx: PitcherContext) -> str:
                 bullets.append(
                     f"Notable mix change: {biggest_shift.pitch_name} usage {shift:+.1f}pp vs season"
                 )
-
-    # TTO insight for starters
-    tto = ctx.tto
-    if tto and tto.available and tto.summary:
-        bullets.append(f"TTO: {tto.summary}")
 
     # Velocity arc from last outing
     va = ctx.velocity_arc

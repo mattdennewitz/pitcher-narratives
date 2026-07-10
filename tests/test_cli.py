@@ -577,7 +577,7 @@ def _pipe_result_with_flags(n: int):
     return PipelineResult(
         narrative="x",
         specialists=SpecialistOutputs(
-            stuff="", location="", runvalue="", trends="", game_shape=""
+            stuff="", location="", runvalue="", trends=""
         ),
         capsule_audit_flags=flags,
     )
@@ -605,7 +605,7 @@ def test_emit_prints_capsule_once_and_no_corrected_section(capsys):
     result = PipelineResult(
         narrative="THE FINAL CAPSULE BODY",
         specialists=SpecialistOutputs(
-            stuff="s", location="", runvalue="", trends="", game_shape=""
+            stuff="s", location="", runvalue="", trends=""
         ),
         capsule_revised=True,  # previously triggered a second '## Corrected Capsule'
     )
@@ -633,7 +633,7 @@ def test_emit_mode_result_empty_narrative_is_not_unverified(capsys):
     result = PipelineResult(
         narrative="",
         specialists=SpecialistOutputs.model_construct(
-            stuff="", location="", runvalue="", trends="", game_shape=""
+            stuff="", location="", runvalue="", trends=""
         ),
         capsule_audit_flags=flags,
     )
@@ -682,7 +682,7 @@ def _diag_pipe_result(*, narrative="cap", revised=False, fact_flags=0):
     return PipelineResult(
         narrative=narrative,
         specialists=SpecialistOutputs(
-            stuff="STUFF-TEXT", location="", runvalue="", trends="", game_shape=""
+            stuff="STUFF-TEXT", location="", runvalue="", trends=""
         ),
         capsule_revised=revised,
         capsule_audit_flags=flags,
@@ -910,7 +910,7 @@ def test_append_metrics_records_writes_jsonl(tmp_path):
         return PipelineResult(
             narrative="x",
             specialists=SpecialistOutputs(
-                stuff="", location="", runvalue="", trends="", game_shape=""
+                stuff="", location="", runvalue="", trends=""
             ),
             revision_count=rev,
         )

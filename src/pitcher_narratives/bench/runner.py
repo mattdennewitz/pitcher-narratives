@@ -22,7 +22,6 @@ from pitcher_narratives.frame_delta import (
 )
 from pitcher_narratives.personas import REPORT, NarrationMode
 from pitcher_narratives.pipeline import (
-    _build_game_shape_input,
     _build_location_input,
     _build_runvalue_input,
     _build_stuff_input,
@@ -77,8 +76,8 @@ def run_provider(
     """Run the full pipeline for one provider and capture all outputs.
 
     Runs every requested narration mode via the production dispatcher
-    ``run_narration_modes``. Four specialist tiers (stuff, location,
-    runvalue, game_shape) are mode-agnostic by construction — their
+    ``run_narration_modes``. Three specialist tiers (stuff, location,
+    runvalue) are mode-agnostic by construction — their
     inputs do not depend on the mode — and are captured once from the
     first mode's result. The TRENDS specialist is captured per mode
     (``specialist:trends:<mode.id>``) because CHANGES feeds it a prior-vs-
@@ -125,7 +124,7 @@ def run_provider(
 
     wall_s = time.monotonic() - start
 
-    # Four specialist tiers are mode-agnostic (their inputs don't depend
+    # Three specialist tiers are mode-agnostic (their inputs don't depend
     # on the mode); capture them once from the first result. Their ground
     # truths are deterministic functions of ctx.
     first = next(iter(results.values()))
@@ -133,13 +132,11 @@ def run_provider(
         "specialist:stuff": first.specialists.stuff,
         "specialist:location": first.specialists.location,
         "specialist:runvalue": first.specialists.runvalue,
-        "specialist:game_shape": first.specialists.game_shape,
     }
     ground_truths = {
         "specialist:stuff": _flatten_prompt(_build_stuff_input(ctx)),
         "specialist:location": _flatten_prompt(_build_location_input(ctx)),
         "specialist:runvalue": _flatten_prompt(_build_runvalue_input(ctx)),
-        "specialist:game_shape": _flatten_prompt(_build_game_shape_input(ctx)),
     }
 
     # The TRENDS specialist differs by mode: CHANGES feeds it a prior-vs-
@@ -171,7 +168,6 @@ def run_provider(
             result.specialists.location,
             result.specialists.runvalue,
             result.specialists.trends,
-            result.specialists.game_shape,
             key_signals=result.key_signals,
         )
         outputs[f"capsule:{mode_id}"] = result.narrative
