@@ -9,9 +9,32 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
+from pydantic_ai import Agent
+
+from pitcher_narratives.agent_skills import skill_toolset
+from pitcher_narratives.config import (
+    PROVIDERS,
+    TOKEN_BUDGET_LARGE,
+    agent_kwargs,
+    make_model_settings,
+)
+from pitcher_narratives.context import assemble_pitcher_context
+from pitcher_narratives.data import load_pitcher_data
+from pitcher_narratives.pipeline import (
+    build_fact_revision_message,
+    build_grade_input,
+    run_data_audit,
+)
 from pitcher_narratives.resolver import extract_pitcher_from_question
 
-__all__ = ["GradeQuestion", "QuestionError", "answer_question", "parse_grade_question"]
+__all__ = [
+    "GradeQuestion",
+    "QuestionError",
+    "answer_question",
+    "build_qa_agent",
+    "parse_grade_question",
+    "resolve_pitch_against_arsenal",
+]
 
 
 class QuestionError(Exception):
@@ -104,3 +127,80 @@ def parse_grade_question(question: str) -> GradeQuestion:
         pitch_candidates=candidates,
         cited_value=_detect_value(question),
     )
+
+
+QA_SYSTEM_PROMPT = """\
+You explain why a single pitch earns its Pitching+ grade (P+/S+/L+), for a \
+front-office reader.
+
+You are given pre-computed data for the pitcher's full arsenal: per-pitch \
+grades, each physical trait tagged NORMAL or OUTLIER versus league, the \
+S-variant league average for each pitch type, stuff-model predictions \
+(xWhiff/xSwing/xRV100), and arm-slot shape. A leading instruction names the \
+ONE pitch and grade to explain.
+
+Consult the `explaining-pitch-grades` skill for the method before answering.
+
+Rules:
+- Explain ONLY the named pitch and grade; use the rest of the arsenal as contrast.
+- Every number comes from the provided data — never compute or invent a statistic.
+- If the data needed is missing, say so plainly.
+- Answer in 1-3 tight paragraphs of scout prose. No preamble."""
+
+
+def build_qa_agent(provider: str = "gemini") -> Agent[None, str]:
+    """The focused grade-explanation agent: capable model + the skill library."""
+    return Agent(
+        PROVIDERS[provider],
+        output_type=str,
+        system_prompt=QA_SYSTEM_PROMPT,
+        model_settings=make_model_settings(provider, "medium", 0.3, max_tokens=TOKEN_BUDGET_LARGE),
+        toolsets=[skill_toolset()],
+        retries=3,
+        defer_model_check=True,
+    )
+
+
+def resolve_pitch_against_arsenal(candidates: list[str], arsenal: list) -> tuple[str, str]:
+    """Pick the arsenal pitch matching the parsed candidates (most-thrown wins).
+
+    Raises QuestionError listing the real arsenal if none of the candidates
+    are thrown (e.g. asking about a splitter he doesn't have).
+    """
+    present = [p for p in arsenal if p.pitch_type in candidates]
+    if not present:
+        thrown = ", ".join(f"{p.pitch_name} ({p.pitch_type})" for p in arsenal)
+        raise QuestionError(f"He doesn't throw that. Pitches: {thrown}.")
+    best = max(present, key=lambda p: p.n_pitches_window)
+    return best.pitch_type, best.pitch_name
+
+
+async def answer_question(
+    question: str,
+    *,
+    provider: str = "gemini",
+    model_override=None,
+) -> str:
+    """Answer 'why does <pitcher>'s <pitch> grade <value> <grade>' in prose."""
+    q = parse_grade_question(question)
+    data = load_pitcher_data(q.pitcher_id)
+    ctx = assemble_pitcher_context(data)
+    pitch_type, pitch_name = resolve_pitch_against_arsenal(q.pitch_candidates, ctx.arsenal)
+
+    grade_input = build_grade_input(ctx, q.grade_family)
+    ground_truth = "\n".join(p for p in grade_input if isinstance(p, str))
+    scoping = (
+        f"Explain ONLY the {pitch_name} ({pitch_type}) and its "
+        f"{GRADE_LABELS[q.grade_family]}. Use the rest of the arsenal as contrast."
+    )
+
+    agent = build_qa_agent(provider)
+    result = await agent.run(**agent_kwargs([scoping, *grade_input], model_override))
+    answer = result.output
+
+    audit = await run_data_audit(ground_truth, answer, provider=provider, model_override=model_override)
+    if not audit.is_clean:
+        revision = build_fact_revision_message(ground_truth, answer, audit.flags)
+        result = await agent.run(**agent_kwargs(revision, model_override))
+        answer = result.output
+    return answer
