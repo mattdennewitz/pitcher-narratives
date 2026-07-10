@@ -1,6 +1,6 @@
 ---
 name: explaining-pitch-grades
-description: Use when explaining why a specific pitch earns its Pitching+ grade (P+, S+/Stuff+, or L+/Location+) from the provided arsenal data — anchoring the grade to its pitch-type class baseline, reading NORMAL/OUTLIER shape, and reconciling the grade with xRV100.
+description: Use when explaining, justifying, or reconciling why a specific pitch earns its Pitching+ grade (P+, S+/Stuff+, or L+/Location+) from the provided arsenal data — grade explanations, class-baseline comparisons, grade-vs-xRV100 discrepancies, NORMAL/OUTLIER shape questions.
 audience: runtime
 ---
 
