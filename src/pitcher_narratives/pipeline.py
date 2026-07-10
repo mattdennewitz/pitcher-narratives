@@ -132,7 +132,7 @@ __all__ = [
     "flag_record", "flag_summary", "generate_pipeline_streaming", "is_unverified",
     "make_pipeline_agents", "render_recap", "residual_banner", "run_analysis_spine",
     "run_anchor_revision_loop",
-    "run_capsule_audit", "run_narration_modes", "run_spine_core", "run_spine_tail",
+    "run_capsule_audit", "run_data_audit", "run_narration_modes", "run_spine_core", "run_spine_tail",
     "run_specialists",
     "write_pipeline_data_file",
 ]
@@ -1339,6 +1339,24 @@ async def audit_and_revise_specialists(
         all_flags,
         residual,
     )
+
+
+async def run_data_audit(
+    ground_truth: str,
+    answer: str,
+    *,
+    provider: str = "gemini",
+    model_override: Any = None,
+) -> AuditResult:
+    """Fact-check a single free-form answer against its ground-truth input.
+
+    Reuses the spine's data-auditor agent so a Q&A answer gets the same
+    anti-fabrication guard as a report specialist.
+    """
+    agents = make_pipeline_agents(provider)
+    audit_input = _build_specialist_audit_input(ground_truth, answer)
+    result = await agents.auditor.run(**agent_kwargs(audit_input, model_override))
+    return result.output
 
 
 # ═══════════════════════════════════════════════════════════════════════
