@@ -20,8 +20,14 @@ NOTE: full suite ~19 min — implementers use targeted test files during iterati
 
 ## Tasks
 - [x] Task 1: Cut the game-shape specialist (spine 5 → 4) — complete (commit de8bb4a, review clean: spec ✅, quality Approved). Suite 799 passed / 2 baseline. Implementer also (correctly, in-scope) fixed test_cli.py + test_fact_parity.py construction sites and deleted TestGameShapeSpecialistReceivesYoyData (tests-for-deleted-code).
-- [ ] Task 2: Delete the TTO engine, deviation gate, and context/prompt wiring
-- [ ] Task 3: Grep gate + full-suite + end-to-end verification
+- [x] Task 2: Delete the TTO engine, deviation gate, and context/prompt wiring — complete (commits 4a89c30 + fix 2b90a36; review found 2 Important, both fixed; re-verified: grep gate clean, covering tests pass). Suite 775 passed / 2 baseline. Review Important findings fixed: (1) residual tto=None kwargs in test_context.py + test_morning.py dropped; (2) scripts/tto_operating_envelope.py deleted (owner-approved — imported deleted deviation gate; tto_validity.py kept, imports only surviving code). Minor: engine/_common.py docstring 'tto' removed.
+- [x] Task 3: Grep gate + full-suite + end-to-end verification — complete (no commit needed; grep gate empty both patterns, suite 775 passed / 2 baseline, offline 4-specialist smoke passed). HEAD 2b90a36.
+
+## FINAL WHOLE-BRANCH REVIEW (opus, 0740cfc..2b90a36): READY TO MERGE — YES.
+No Critical, no Important. All Minors are non-defects / pre-existing / already-fixed (engine/_common docstring fix confirmed in 2b90a36). Reviewer imported every touched module under the real interpreter: grep gate empty across src/tests/scripts; facades consistent; spine exactly 4 (trends kept index 3); surviving 4 specialists behaviorally unchanged; only game-shape/TTO tests removed. Suite: 775 passed / 2 documented pre-existing baseline failures.
+
+FEATURE COMPLETE. Feature commits: de8bb4a (spine 5→4), 4a89c30 (delete engine/gate/wiring), 2b90a36 (review fixes) [+ plan doc 67af36f, off design-spec base 0740cfc].
+Branch: refactor/retire-within-game-detector (worktree .claude/worktrees/retire-within-game), independent of feat/pitch-grade-qa.
 
 ## Notes / Minor findings (for final whole-branch review)
 Task 1 (2 Minor, none blocking):

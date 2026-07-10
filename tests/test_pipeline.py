@@ -1492,8 +1492,6 @@ def _patch_render_sections(monkeypatch):
             "- Added pitches: Sweeper\n"
             "- Slider: usage Up 5.0 pp, velo Up 1.5 mph"
         ),
-        "render_appearances_section": "## Appearances\n3 in window",
-        "render_role_section": "## Role\nSP",
         "render_temporal_section": (
             "## Temporal Context\n"
             "- Analysis date: 2026-07-03\n"

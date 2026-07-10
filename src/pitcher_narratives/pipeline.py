@@ -92,12 +92,10 @@ from pitcher_narratives.personas import (
 if TYPE_CHECKING:
     from pitcher_narratives.curator import CurationPick
 from pitcher_narratives.prompt_builder import (
-    render_appearances_section,
     render_arsenal_section,
     render_fastball_section,
     render_hard_hit_section,
     render_release_point_section,
-    render_role_section,
     render_temporal_section,
     render_yoy_section,
 )
