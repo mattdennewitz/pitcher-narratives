@@ -126,6 +126,7 @@ __all__ = [
     "KeySignals", "PipelineAgents", "PipelineResult",
     "UserPrompt", "audit_and_revise_specialists", "build_capsule_audit_input",
     "build_fact_revision_message",
+    "build_grade_input",
     "build_summary_input",
     "build_writer_input", "build_recap_overlay", "check_explainer_present", "check_hallucinated_metrics",
     "flag_record", "flag_summary", "generate_pipeline_streaming", "is_unverified",
@@ -806,6 +807,23 @@ def _build_location_input(ctx: PitcherContext) -> UserPrompt:
         wl = f"{p.window_l_plus:.0f}" if p.window_l_plus is not None else "--"
         data_lines.append(f"- {p.pitch_name} ({p.pitch_type}): P+ {wp}, S+ {ws}, L+ {wl}")
     return ["\n".join(header_lines), CachePoint(), "\n".join(data_lines)]
+
+
+def build_grade_input(ctx: PitcherContext, family: str) -> UserPrompt:
+    """Public dispatcher: the grounded specialist input for a grade family.
+
+    S -> stuff input (S+ evidence); L -> location input (L+ evidence);
+    P -> stuff + location (P+ = stuff + location; P - S isolates location).
+    Reused verbatim from the analysis spine so the ask command and the
+    report share one grounded evidence surface.
+    """
+    if family == "S":
+        return _build_stuff_input(ctx)
+    if family == "L":
+        return _build_location_input(ctx)
+    if family == "P":
+        return [*_build_stuff_input(ctx), *_build_location_input(ctx)]
+    raise ValueError(f"Unknown grade family {family!r}; expected 'S', 'L', or 'P'")
 
 
 def _build_runvalue_input(ctx: PitcherContext) -> UserPrompt:
