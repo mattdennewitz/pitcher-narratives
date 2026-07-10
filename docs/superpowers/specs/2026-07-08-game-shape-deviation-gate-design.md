@@ -1,7 +1,15 @@
 # Population-Baseline Deviation Gate — Game-Shape v1 — Design
 
+> **RETIRED (2026-07-09).** Do not implement or merge. Empirical follow-up
+> (Linear PLUS-139/140; `scripts/tto_*.py`) proved the per-pitcher within-game
+> deviation is regression-to-mean **noise**: it fails outcome face-validity (ΔP+
+> ~uncorrelated with Δrun-value), its deep findings are 96% survivor-biased, and
+> its split-half reliability is ≈ 0 while positive controls (velo 0.99, overall
+> xwOBA 0.42) are high. Superseded by
+> `2026-07-09-retire-within-game-detector-design.md`. Retained for the record.
+
 **Date:** 2026-07-08
-**Status:** Approved design, pending implementation plan
+**Status:** Superseded / retired — see banner above
 **Topic:** Stop the analysis from surfacing league-universal patterns (the
 third-time-through fade, late-game velocity decline) as if they were
 pitcher-specific insights. Compare each pitcher's within-game shape against a
