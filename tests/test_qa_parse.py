@@ -2,7 +2,7 @@
 
 import pytest
 
-from pitcher_narratives.qa import GradeQuestion, QuestionError, parse_grade_question
+from pitcher_narratives.qa import QuestionError, parse_grade_question
 
 
 def test_parses_jones_fastball_stuff():
