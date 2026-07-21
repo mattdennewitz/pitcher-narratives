@@ -92,7 +92,7 @@ def _detect_grade(q: str) -> str:
 
 def _detect_pitch(q: str) -> tuple[str, list[str]]:
     # Longest key first so "four-seam" wins over "fastball", "curveball" over "curve".
-    for noun in sorted(PITCH_SYNONYMS, key=len, reverse=True):
+    for noun in sorted(PITCH_SYNONYMS, key=lambda noun: len(noun), reverse=True):
         if noun in q:
             return noun, PITCH_SYNONYMS[noun]
     return "", []
@@ -212,17 +212,36 @@ async def answer_question(
     result = await agent.run(**agent_kwargs([scoping, *grade_input], model_override))
     answer = result.output
 
-    # Fact-check + one revision, mirroring the report's single-revision pattern.
-    # Degrade to the first grounded answer if the auditor or revision LLM call
-    # fails, rather than surfacing a raw traceback on a user-facing command.
+    # An unavailable first audit leaves the first answer as the only available
+    # grounded result. Once that audit identifies an error, however, never
+    # return either draft without a clean verification pass.
     try:
         audit = await run_data_audit(
             ground_truth, answer, provider=provider, model_override=model_override
         )
-        if not audit.is_clean:
-            revision = build_fact_revision_message(ground_truth, answer, audit.flags)
-            result = await agent.run(**agent_kwargs(revision, model_override))
-            answer = result.output
-    except Exception:  # noqa: BLE001 - never fail a good first answer on audit trouble
-        log.warning("audit/revision failed; returning unrevised answer", exc_info=True)
-    return answer
+    except Exception:
+        log.warning("initial audit failed; returning the first answer", exc_info=True)
+        return answer
+
+    if audit.is_clean:
+        return answer
+
+    try:
+        revision = build_fact_revision_message(ground_truth, answer, audit.flags)
+        result = await agent.run(**agent_kwargs(revision, model_override))
+        revised_answer = result.output
+        revision_audit = await run_data_audit(
+            ground_truth, revised_answer, provider=provider, model_override=model_override
+        )
+    except Exception as exc:
+        log.warning("revision or re-audit failed", exc_info=True)
+        raise QuestionError("Couldn't safely verify the answer; please try again.") from exc
+
+    if not revision_audit.is_clean:
+        log.warning(
+            "revised answer still has %d fact-check flag(s)",
+            len(revision_audit.flags),
+        )
+        raise QuestionError("Couldn't safely verify the answer; please try again.")
+
+    return revised_answer
