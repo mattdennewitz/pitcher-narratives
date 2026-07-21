@@ -1,17 +1,16 @@
 """Multi-agent specialist→auditor→writer report pipeline (v1.7 prototype).
 
 Architecture:
-  Phase 1: 5 specialist agents run in parallel, each producing a focused
+  Phase 1: 4 specialist agents run in parallel, each producing a focused
   micro-analysis with league baselines (including stddev and S-variant
   benchmarks) injected for grounding:
     - Stuff Explainer: velocity/movement → S+ grades via S-variant predictions
     - Location Analyst: P vs S divergence, zone/chase rates, location impact
     - Run Value Decomposer: 13-outcome attribution, dominant value drivers
     - Trend Spotter: window vs season deltas in velocity, movement, usage, grades
-    - Game Shape Analyst: TTO degradation, velocity arc, within-game mix shifts
 
   Phase 1.5: Per-specialist audit + revision loop. Each specialist's output
-  is audited independently (5 audits run in parallel) against the raw data
+  is audited independently (4 audits run in parallel) against the raw data
   and league baselines. Flagged specialists are re-run with their original
   input + audit corrections to produce clean output. The writer never sees
   flawed prose — only corrected versions.
@@ -92,16 +91,12 @@ from pitcher_narratives.personas import (
 
 if TYPE_CHECKING:
     from pitcher_narratives.curator import CurationPick
-    from pitcher_narratives.engine.tto import TTODeviation
 from pitcher_narratives.prompt_builder import (
-    render_appearances_section,
     render_arsenal_section,
     render_fastball_section,
     render_hard_hit_section,
     render_release_point_section,
-    render_role_section,
     render_temporal_section,
-    render_tto_section,
     render_yoy_section,
 )
 from pitcher_narratives.shape import render_pitch_shape
@@ -177,7 +172,7 @@ def _record_usage(
 # ([NORMAL], [OUTLIER], [SMALL SAMPLE ...]) are computed in engine.baselines
 # and fed into specialist *inputs* as internal annotations. Specialists must
 # interpret them, never echo the literal token into prose. Centralized here so
-# the rule stays identical across all five specialists.
+# the rule stays identical across all four specialists.
 _NO_TAG_ECHO_RULE = """
 
 TAG HYGIENE (absolute): The bracketed tags in the data — [NORMAL], \
@@ -395,63 +390,7 @@ when a delta is within the "steady" threshold.
 more hard contact = likely related).
 - One focused paragraph covering the key trends. Skip what's steady.
 - No projection or prediction — just what changed and by how much.
-- Do NOT analyze TTO patterns, velocity arcs, or within-game \
-progression — a separate specialist handles that.
 - Plain prose, no bullet lists."""
-
-_GAME_SHAPE_SPECIALIST_PROMPT = """\
-You are a game shape analyst. You describe how the pitcher's effectiveness \
-changes WITHIN a game — but ONLY where it deviates from what a typical \
-starter does.
-
-CRITICAL — the fade is the baseline, not the story. Every starter loses \
-velocity and effectiveness late; that is league-universal and is NOT a \
-finding. The input's "Within-Game" section has already compared this \
-pitcher to the league fade curve:
-- If it says the shape is TYPICAL, write NOTHING about game shape. Do not \
-narrate a fade, a TTO penalty, or a velocity arc. Silence is correct.
-- If it lists residual deviations, those are the only within-game story. \
-Report them as residuals (how far off the typical curve), and frame by \
-direction: a FATIGUE residual (drops more than peers) vs. earned STAMINA \
-(holds/improves where peers fade). "Loses the fastball late but P+ holds" \
-is a real, valuable story — say it.
-
-Rules:
-- TEMPORAL GROUNDING: The data includes a "Temporal Context" section. \
-Respect the prior-year relevance level. Do not attribute within-game \
-patterns to cumulative seasonal fatigue in a young season. A pitcher \
-with 5 early-April appearances is not showing late-season wear.
-- Never restate the raw pass-by-pass numbers as if the fade itself were \
-the finding. Speak in deviations from the norm.
-- One focused paragraph, or nothing at all. Plain prose, no bullet lists.
-- Do NOT analyze window-vs-season trends — a separate specialist \
-handles that."""
-
-
-# Role-specific guidance injected into the Game Shape specialist's USER
-# message based on `ctx.role`. These blocks reinstate the SP/RP focus
-# that the old single-agent synthesizer had before v1.9 consolidation —
-# the multi-agent architecture implicitly covers these concerns, but
-# explicit role guidance keeps reliever reports from drifting into
-# starter-shaped analysis (and vice versa).
-
-_SP_GAME_SHAPE_GUIDANCE = """\
-## Role Focus: STARTER
-
-Additional focus for this starter:
-- TTO pass breakdown: which pitches gain or lose effectiveness by pass?
-- Pitch mix evolution across passes: is he leaning on something new late?
-- Platoon-specific TTO patterns (what does he throw vs LHB in pass 3?)
-- Stamina trajectory: does velocity, S+, or L+ hold, improve, or cliff?"""
-
-_RP_GAME_SHAPE_GUIDANCE = """\
-## Role Focus: RELIEVER
-
-Additional focus for this reliever:
-- Rest day impact on velocity, S+, and L+ (back-to-back vs rested — better or worse?)
-- Primary weapon identification: what is the put-away pitch? Cite its P+/S+/L+ triad
-- Platoon-specific strengths and vulnerabilities by handedness — only when the input includes TTO/platoon splits; if absent, skip this angle rather than inferring it"""
-
 
 # ═══════════════════════════════════════════════════════════════════════
 # DATA AUDITOR PROMPT
@@ -498,7 +437,7 @@ For each problem found, report:
 - What the data actually shows
 - A suggested correction
 
-Checks that reference [NORMAL]/[OUTLIER] tags or S-variant metrics (xRV100_S, xWhiff_S) apply ONLY when those artifacts appear in the ground truth data. When the ground truth has no such tags or metrics (e.g. trends or game-shape data), skip those checks — do not flag their absence.
+Checks that reference [NORMAL]/[OUTLIER] tags or S-variant metrics (xRV100_S, xWhiff_S) apply ONLY when those artifacts appear in the ground truth data. When the ground truth has no such tags or metrics (e.g. trends data), skip those checks — do not flag their absence.
 
 If everything checks out, return an empty list."""
 
@@ -541,7 +480,7 @@ If the capsule is faithful, return an empty list of flags."""
 def _build_capsule_ground_truth(
     ctx: PitcherContext, *, trend_frame_comparison: str | None = None
 ) -> str:
-    """Combined raw ground truth (all five specialists' input tables).
+    """Combined raw ground truth (all four specialists' input tables).
 
     ``trend_frame_comparison`` threads the CHANGES-mode recent-vs-prior block
     into the trends input exactly as the trends specialist saw it — the same
@@ -549,7 +488,7 @@ def _build_capsule_ground_truth(
     it the capsule auditor sees only recent-vs-season deltas and "corrects"
     correct prior-frame numbers into the season frame.
     """
-    names = ["stuff", "location", "runvalue", "trends", "game_shape"]
+    names = ["stuff", "location", "runvalue", "trends"]
     return "\n\n".join(
         _get_specialist_input_text(
             name, ctx, trend_frame_comparison=trend_frame_comparison
@@ -589,7 +528,6 @@ def _build_parity_union(
         "location": specialists.location,
         "runvalue": specialists.runvalue,
         "trends": specialists.trends,
-        "game_shape": specialists.game_shape,
     }
     parts.extend(
         text for name, text in specialist_prose.items() if name not in exclude
@@ -880,143 +818,12 @@ def _build_trend_input(ctx: PitcherContext, *, frame_comparison: str | None = No
     ]
 
 
-def _role_game_shape_guidance(role: str) -> str | None:
-    """Return role-specific game shape guidance, or None if role is unknown.
-
-    Starter and reliever reports need different emphasis — starters care
-    about TTO progression and stamina, relievers care about rest-day
-    impact and put-away pitches. This guidance is injected into the Game
-    Shape specialist's user message so it biases the analysis toward
-    role-appropriate signals without hard-coding role branches into the
-    system prompt.
-    """
-    normalized = role.upper() if role else ""
-    if normalized in ("SP", "STARTER"):
-        return _SP_GAME_SHAPE_GUIDANCE
-    if normalized in ("RP", "RELIEVER"):
-        return _RP_GAME_SHAPE_GUIDANCE
-    return None
-
-
-def _render_deviation_block(deviations: "list[TTODeviation]") -> str:
-    """Render the within-game deviation section for the game-shape input.
-
-    Empty -> an explicit 'typical, stay silent' instruction (success A). Non-empty
-    -> one residual line per material cell (the residual + z + direction, NOT the
-    raw within-game value).
-    """
-    if not deviations:
-        return (
-            "## Within-Game Shape\n"
-            "This pitcher's within-game shape is TYPICAL for a starter — no material "
-            "deviation from the league fade curve. Do not report game shape as a "
-            "finding; say nothing about TTO/velocity-arc unless another section "
-            "makes it relevant."
-        )
-    lines = ["## Within-Game Deviation (vs. league starters)"]
-    for d in deviations:
-        label = "VELOCITY" if d.metric == "velo" else "PITCHING+ (P+)"
-        framing = (
-            "excess fade / " + d.direction
-            if d.direction == "fatigue"
-            else "holds better than expected / " + d.direction
-        )
-        lines.append(
-            f"- Pass {d.pass_num} {label}: Δ{d.actual_delta:+.1f} vs. typical "
-            f"{d.median_exp_delta:+.1f} (robust z {d.robust_z:+.1f}) — {framing}"
-        )
-    lines.append(
-        "Report ONLY these residuals as the within-game story — frame fatigue vs. "
-        "earned stamina by direction. Do not restate the raw pass-by-pass values as "
-        "if the fade itself were the finding."
-    )
-    return "\n".join(lines)
-
-
-def _build_game_shape_input(ctx: PitcherContext) -> UserPrompt:
-    """Build input for the game shape specialist -- TTO, velocity arc, workload.
-
-    Returns a UserPrompt list with a CachePoint between the header+baselines
-    prefix and the game shape data sections. Role-specific guidance (SP or
-    RP) is injected into the prefix so it sits above the cache breakpoint
-    and biases the whole specialist analysis.
-
-    The within-game deviation gate (design 2026-07-08-game-shape-deviation-gate)
-    compares this pitcher's TTO shape to the league-SP baseline; a typical fade
-    renders a silence instruction instead of the raw TTO table, so a typical
-    starter's report no longer ships a fade table that re-invites the obvious
-    "he got worse late" narrative.
-    """
-    from pitcher_narratives.data import load_tto_baseline
-    from pitcher_narratives.engine.tto import evaluate_tto_deviations
-
-    baselines = render_league_baselines(_pitch_types(ctx))
-    prefix_sections: list[str] = [
-        f"## {ctx.pitcher_name} ({ctx.throws}HP, {ctx.role})\n",
-    ]
-    role_guidance = _role_game_shape_guidance(ctx.role)
-    if role_guidance is not None:
-        prefix_sections.append(role_guidance)
-    prefix_sections.append(baselines)
-
-    deviations = evaluate_tto_deviations(ctx.tto, load_tto_baseline()) if ctx.tto else []
-    data_sections = [
-        render_temporal_section(ctx),
-        _render_deviation_block(deviations),
-    ]
-    if deviations:
-        # Material deviations found -- still ship the raw TTO table so the
-        # specialist can see exactly which passes/pitches drove the residual.
-        data_sections.append(render_tto_section(ctx))
-    data_sections.extend([
-        render_fastball_section(ctx),
-        render_appearances_section(ctx),
-        render_role_section(ctx),
-    ])
-    # Cross-season context (when available) — game shape gets workload + usage shifts
-    css = ctx.cross_season_summary
-    at = ctx.arsenal_trend
-    if css is not None or at is not None:
-        yoy_lines = ["## Year-over-Year Context"]
-        if css is not None:
-            # Workload comes from TemporalContext (single source of truth)
-            t = ctx.temporal
-            yoy_lines.append(
-                f"- Workload: {t.current_season_appearances} app / {t.current_season_ip} IP "
-                f"(prior {t.prior_season}: {t.prior_season_appearances} app / {t.prior_season_ip} IP)"
-            )
-        if at is not None:
-            for pt in at.continued[:4]:
-                parts = []
-                if pt.usage_delta and "Steady" not in pt.usage_delta:
-                    parts.append(f"usage {pt.usage_delta}")
-                if pt.velo_delta and "Steady" not in pt.velo_delta:
-                    parts.append(f"velo {pt.velo_delta}")
-                if parts:
-                    yoy_lines.append(f"- {pt.pitch_name}: {', '.join(parts)}")
-            if at.added:
-                yoy_lines.append(
-                    f"- Added: {', '.join(p.pitch_name for p in at.added)}"
-                )
-            if at.dropped:
-                yoy_lines.append(
-                    f"- Dropped: {', '.join(p.pitch_name for p in at.dropped)}"
-                )
-        data_sections.append("\n".join(yoy_lines))
-    return [
-        "\n\n".join(s for s in prefix_sections if s),
-        CachePoint(),
-        "\n\n".join(s for s in data_sections if s),
-    ]
-
-
 def build_writer_input(
     ctx: PitcherContext,
     stuff: str,
     location: str,
     runvalue: str,
     trends: str,
-    game_shape: str,
     *,
     key_signals: KeySignals | None = None,
 ) -> str:
@@ -1037,8 +844,7 @@ def build_writer_input(
         f"## Specialist Analysis 1: Stuff\n{stuff}\n",
         f"## Specialist Analysis 2: Location\n{location}\n",
         f"## Specialist Analysis 3: Run Value\n{runvalue}\n",
-        f"## Specialist Analysis 4: Trends\n{trends}\n",
-        f"## Specialist Analysis 5: Game Shape\n{game_shape}",
+        f"## Specialist Analysis 4: Trends\n{trends}",
     ])
     return "\n\n".join(parts)
 
@@ -1109,7 +915,6 @@ def _get_specialist_input(
         "stuff": _build_stuff_input,
         "location": _build_location_input,
         "runvalue": _build_runvalue_input,
-        "game_shape": _build_game_shape_input,
     }
     return builders[name](ctx)
 
@@ -1175,7 +980,7 @@ async def audit_and_revise_specialists(
 ) -> tuple[SpecialistOutputs, list[AuditFlag], set[str]]:
     """Audit each specialist's output independently, revise any with flags.
 
-    Phase 1.5a: Run 5 per-specialist audits concurrently.
+    Phase 1.5a: Run 4 per-specialist audits concurrently.
     Phase 1.5b: For any flagged specialist, re-run with audit feedback.
     Phase 1.5c: Re-audit the revised specialists ONCE (bounded — no loop) and
     collect a ``residual`` set of specialists whose revision still flagged or
@@ -1184,8 +989,8 @@ async def audit_and_revise_specialists(
 
     Args:
         names: Optional subset of specialist names to audit/revise. When
-            omitted, all five specialists are audited (current behavior).
-            The returned SpecialistOutputs always carries all five fields;
+            omitted, all four specialists are audited (current behavior).
+            The returned SpecialistOutputs always carries all four fields;
             unlisted specialists pass through unchanged.
         trend_frame_comparison: CHANGES-mode frame-comparison block threaded
             into the trends specialist's audit ground truth so the auditor sees
@@ -1195,10 +1000,10 @@ async def audit_and_revise_specialists(
         Tuple of (clean SpecialistOutputs, all collected AuditFlags, residual
         specialist-name set).
     """
-    all_names = ["stuff", "location", "runvalue", "trends", "game_shape"]
+    all_names = ["stuff", "location", "runvalue", "trends"]
     audit_names = names if names is not None else all_names
 
-    # Full output map (all five) so the returned SpecialistOutputs is always
+    # Full output map (all four) so the returned SpecialistOutputs is always
     # complete; only the audit_names subset is actually audited/revised.
     outputs: dict[str, str] = {
         name: getattr(specialists, name) for name in all_names
@@ -1394,7 +1199,6 @@ def _render_pipeline_data_sections(
         ("SPECIALIST 2: LOCATION", _LOCATION_SPECIALIST_PROMPT, _render_user_prompt(_build_location_input(ctx))),
         ("SPECIALIST 3: RUN VALUE", _RUNVALUE_SPECIALIST_PROMPT, _render_user_prompt(_build_runvalue_input(ctx))),
         ("SPECIALIST 4: TRENDS", _TREND_SPECIALIST_PROMPT, _render_user_prompt(_build_trend_input(ctx, frame_comparison=trend_frame_comparison))),
-        ("SPECIALIST 5: GAME SHAPE", _GAME_SHAPE_SPECIALIST_PROMPT, _render_user_prompt(_build_game_shape_input(ctx))),
     ]
     for label, system, user in specialist_phases:
         sections.append(f"\n{sep}\n{label}\n{sep}\n")
@@ -1407,7 +1211,7 @@ def _render_pipeline_data_sections(
     sections.append(
         "## User Message\n\n"
         "[Receives: ground truth data (same as stuff specialist input) + "
-        "all 5 specialist outputs for validation]\n"
+        "all 4 specialist outputs for validation]\n"
     )
 
     # Signal extractor
@@ -1415,7 +1219,7 @@ def _render_pipeline_data_sections(
     sections.append(f"## System Prompt\n\n{SIGNAL_EXTRACTOR_PROMPT}\n")
     sections.append(
         "## User Message\n\n"
-        "[Receives: all 5 specialist outputs (without key signals)]\n"
+        "[Receives: all 4 specialist outputs (without key signals)]\n"
     )
 
     # Narrative pipeline: writer + anchor + executive summary
@@ -1423,7 +1227,7 @@ def _render_pipeline_data_sections(
     sections.append(f"## System Prompt\n\n{build_writer_system_prompt(DEFAULT_MODE)}\n")
     sections.append(
         "## User Message\n\n"
-        "[Receives: key signals + all 5 specialist outputs]\n"
+        "[Receives: key signals + all 4 specialist outputs]\n"
     )
 
     sections.append(f"\n{sep}\nEXECUTIVE SUMMARY (second step — summarizes the final report)\n{sep}\n")
@@ -1600,7 +1404,6 @@ class PipelineAgents(NamedTuple):
     location: Agent[None, str]
     runvalue: Agent[None, str]
     trends: Agent[None, str]
-    game_shape: Agent[None, str]
     writer: Agent[None, str]
     auditor: Agent[None, AuditResult]
     capsule_auditor: Agent[None, AuditResult]
@@ -1610,7 +1413,7 @@ class PipelineAgents(NamedTuple):
     mini_model_name: str = ""  # bare model name for UsageTracker calls in the spine
 
     def specialist_dict(self) -> dict[str, Agent[None, str]]:
-        """Return the five specialist agents keyed by name.
+        """Return the four specialist agents keyed by name.
 
         Used to pass specialists to audit_and_revise_specialists. Adding a
         new specialist only requires updating PipelineAgents — callers never
@@ -1621,7 +1424,6 @@ class PipelineAgents(NamedTuple):
             "location": self.location,
             "runvalue": self.runvalue,
             "trends": self.trends,
-            "game_shape": self.game_shape,
         }
 
 
@@ -1704,7 +1506,6 @@ def make_pipeline_agents(
         location=_mini_specialist(_LOCATION_SPECIALIST_PROMPT),
         runvalue=_mini_specialist(_RUNVALUE_SPECIALIST_PROMPT),
         trends=_mini_specialist_compact(_TREND_SPECIALIST_PROMPT),
-        game_shape=_mini_specialist_compact(_GAME_SHAPE_SPECIALIST_PROMPT),
         writer=_writer(build_writer_system_prompt(mode, explain_model=explain_model)),
         auditor=Agent(mini_model, output_type=AuditResult, system_prompt=_DATA_AUDITOR_PROMPT,
                       model_settings=checker_settings, retries=5, defer_model_check=True),
@@ -1733,7 +1534,6 @@ async def run_specialists(
     location_agent: Agent[None, str],
     runvalue_agent: Agent[None, str],
     trends_agent: Agent[None, str],
-    game_shape_agent: Agent[None, str],
     ctx: PitcherContext,
     _model_override: Any = None,
     *,
@@ -1744,7 +1544,7 @@ async def run_specialists(
 ) -> SpecialistOutputs:
     """Run the specialists concurrently.
 
-    By default all five run. Pass ``names`` to run only a subset (used by the
+    By default all four run. Pass ``names`` to run only a subset (used by the
     core/tail spine split); unlisted specialists default to an empty string in
     the returned SpecialistOutputs.
     """
@@ -1753,7 +1553,6 @@ async def run_specialists(
         "location": (location_agent, _build_location_input(ctx)),
         "runvalue": (runvalue_agent, _build_runvalue_input(ctx)),
         "trends": (trends_agent, _build_trend_input(ctx, frame_comparison=trend_frame_comparison)),
-        "game_shape": (game_shape_agent, _build_game_shape_input(ctx)),
     }
     selected = list(all_inputs) if names is None else names
 
@@ -1778,7 +1577,7 @@ async def run_specialists(
     return SpecialistOutputs(**outputs)
 
 
-_CORE_SPECIALISTS = ["stuff", "location", "runvalue", "game_shape"]
+_CORE_SPECIALISTS = ["stuff", "location", "runvalue"]
 _TAIL_SPECIALISTS = ["trends"]
 
 
@@ -1791,7 +1590,7 @@ async def run_spine_core(
 ) -> CoreContext:
     """Run the frame-agnostic core of the analysis spine.
 
-    Runs the stuff/location/run-value/game-shape specialists and audits them.
+    Runs the stuff/location/run-value specialists and audits them.
     Frame-agnostic: these specialists read a single window snapshot, so the
     core can be computed once and shared across narration modes. Trends,
     signal extraction, and the anchor check are frame-sensitive — see
@@ -1800,7 +1599,7 @@ async def run_spine_core(
     mini = agents.mini_model_name
     raw = await run_specialists(
         agents.stuff, agents.location, agents.runvalue,
-        agents.trends, agents.game_shape, ctx, _model_override,
+        agents.trends, ctx, _model_override,
         names=_CORE_SPECIALISTS, tracker=tracker, tracker_model=mini,
     )
     clean, flags, residual = await audit_and_revise_specialists(
@@ -1809,24 +1608,24 @@ async def run_spine_core(
     )
     return CoreContext(
         stuff=clean.stuff, location=clean.location,
-        runvalue=clean.runvalue, game_shape=clean.game_shape,
+        runvalue=clean.runvalue,
         audit_flags=flags,
         residual_specialists=sorted(residual),
     )
 
 
 _SPECIALIST_ORDER = {
-    "stuff": 0, "location": 1, "runvalue": 2, "trends": 3, "game_shape": 4,
+    "stuff": 0, "location": 1, "runvalue": 2, "trends": 3,
 }
 
 
 def _order_flags(flags: list[AuditFlag]) -> list[AuditFlag]:
     """Sort audit flags into the canonical specialist order.
 
-    The core/tail split collects core flags (stuff/location/run-value/
-    game-shape) then trends flags, so a naive concatenation would place trends
-    last. Sorting restores the legacy stuff→location→run-value→trends→
-    game-shape order, keeping run_analysis_spine output identical. Stable, so
+    The core/tail split collects core flags (stuff/location/run-value)
+    then trends flags, so a naive concatenation would place trends
+    last. Sorting restores the canonical stuff→location→run-value→trends
+    order, keeping run_analysis_spine output identical. Stable, so
     multiple flags from the same specialist keep their relative order.
     """
     return sorted(flags, key=lambda f: _SPECIALIST_ORDER.get(f.specialist, 99))
@@ -1844,7 +1643,7 @@ async def run_spine_tail(
     """Run the frame-sensitive tail of the analysis spine.
 
     Runs the trends specialist (+ its audit) and signal extraction over the
-    core's four specialists plus trends. Takes ``ctx`` explicitly so a later
+    core's three specialists plus trends. Takes ``ctx`` explicitly so a later
     phase can re-run the tail on a different temporal frame while reusing a
     single shared core. In this phase the tail runs on the same ctx as the
     core, so output is identical to the pre-split spine.
@@ -1857,13 +1656,13 @@ async def run_spine_tail(
     )
     raw = await run_specialists(
         agents.stuff, agents.location, agents.runvalue,
-        agents.trends, agents.game_shape, ctx, _model_override,
+        agents.trends, ctx, _model_override,
         names=_TAIL_SPECIALISTS, tracker=tracker, tracker_model=mini,
         trend_frame_comparison=trend_frame_comparison,
     )
     merged = SpecialistOutputs(
         stuff=core.stuff, location=core.location, runvalue=core.runvalue,
-        game_shape=core.game_shape, trends=raw.trends,
+        trends=raw.trends,
     )
     specialists, trends_flags, trends_residual = await audit_and_revise_specialists(
         merged, agents.specialist_dict(), agents.auditor, ctx, _model_override,
@@ -1873,7 +1672,7 @@ async def run_spine_tail(
 
     signal_input = build_writer_input(
         ctx, specialists.stuff, specialists.location,
-        specialists.runvalue, specialists.trends, specialists.game_shape,
+        specialists.runvalue, specialists.trends,
     )
     signals_failed = False
     try:
@@ -1919,8 +1718,8 @@ async def run_analysis_spine(
 
     Output-preserving but NOT latency-preserving on the single-frame path: the
     tail's trends specialist now starts only after the core's specialists and
-    their audit/revision finish, whereas the pre-split spine ran all five
-    specialists (and all five audits) concurrently. The added serial latency is
+    their audit/revision finish, whereas the pre-split spine ran all four
+    specialists (and all four audits) concurrently. The added serial latency is
     the deliberate cost of a reusable core — a later multi-frame mode (CHANGES)
     runs the core once and re-runs only the tail per frame.
 
@@ -2322,7 +2121,7 @@ async def _render_capsule(
     # runs after the anchor revision loop (see _run_summaries below).
     writer_input = build_writer_input(
         ctx, specialists.stuff, specialists.location,
-        specialists.runvalue, specialists.trends, specialists.game_shape,
+        specialists.runvalue, specialists.trends,
         key_signals=key_signals,
     )
     if overlay:
@@ -2352,8 +2151,7 @@ async def _render_capsule(
         f"STUFF:\n{specialists.stuff}\n\n"
         f"LOCATION:\n{specialists.location}\n\n"
         f"RUN VALUE:\n{specialists.runvalue}\n\n"
-        f"TRENDS:\n{specialists.trends}\n\n"
-        f"GAME SHAPE:\n{specialists.game_shape}"
+        f"TRENDS:\n{specialists.trends}"
     )
     synthesis = (
         f"{render_key_signals(key_signals)}\n\n{specialist_synthesis}"
@@ -2525,7 +2323,7 @@ async def _run_pipeline(
 ) -> PipelineResult:
     """Async core of the multi-agent pipeline.
 
-    Phase 1: 5 specialists run concurrently.
+    Phase 1: 4 specialists run concurrently.
     Phase 1.5: Data auditor validates specialist outputs against ground truth.
     Phase 1.75: Signal extractor identifies cross-specialist patterns.
     Phase 2: Writer composes capsule from specialist outputs + key signals.
@@ -2613,7 +2411,7 @@ def generate_pipeline_streaming(
 ) -> PipelineResult:
     """Generate a report using the specialist→auditor→writer multi-agent pipeline.
 
-    Phase 1: 5 specialists run concurrently (silent).
+    Phase 1: 4 specialists run concurrently (silent).
     Phase 1.5: Data auditor validates specialist outputs against ground truth.
     Phase 1.75: Signal extractor identifies cross-specialist patterns.
     Phase 2: Writer composes capsule from specialist outputs + key signals (streamed).

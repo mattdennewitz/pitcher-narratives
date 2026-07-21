@@ -89,8 +89,8 @@ def render_key_signals(signals: KeySignals) -> str:
 
 SIGNAL_EXTRACTOR_PROMPT = """\
 You are a cross-specialist pattern detector for a baseball analytics \
-pipeline. You receive five specialist analyses of a pitcher's recent \
-window (stuff, location, run value, trends, game shape). Your job is \
+pipeline. You receive four specialist analyses of a pitcher's recent \
+window (stuff, location, run value, trends). Your job is \
 to identify patterns that span multiple specialists.
 
 Extract these signals:

@@ -1,7 +1,7 @@
 """Shared internal helpers and constants for the engine subpackage.
 
 Private to the engine package. The concern modules (baselines, arsenal,
-execution, workload, mechanics, contact, tto, attribution) import the
+execution, workload, mechanics, contact, attribution) import the
 delta-string formatters, weighted-window helpers, name maps, and threshold
 constants from here. Not part of the public engine API except where
 __init__.py re-exports specific names for the test suite.
