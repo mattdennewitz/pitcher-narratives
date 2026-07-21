@@ -470,8 +470,8 @@ def test_cross_path_recap_and_report_share_grounding() -> None:
     is now structural: both paths' fact-check ground truth is the *same
     function call* over the *same* PitcherContext, and that ground truth
     deterministically embeds the pitcher's real numbers (fastball season
-    velocity, per-pitch recent usage) via the trends/game-shape specialist
-    input builders (render_fastball_section / render_arsenal_section) that
+    velocity, per-pitch recent usage) via the trends specialist
+    input builder (render_fastball_section / render_arsenal_section) that
     _build_parity_union projects from ctx — not from LLM output.
 
     This replaces the retired cue-string parity gate.
@@ -488,13 +488,13 @@ def test_cross_path_recap_and_report_share_grounding() -> None:
     # truth (_build_capsule_ground_truth) inside the union — the part both
     # morning and report build identically from the same ctx.
     specialists = SpecialistOutputs(
-        stuff="", location="", runvalue="", trends="", game_shape="",
+        stuff="", location="", runvalue="", trends="",
     )
 
     grounding = _build_parity_union(ctx, specialists, key_signals=None)
 
     # Fastball season velocity is embedded verbatim (render_fastball_section,
-    # included in both the trends and game-shape specialist inputs).
+    # included in the trends specialist input).
     if ctx.fastball is not None:
         assert f"{ctx.fastball.season_velo:.1f}" in grounding, (
             f"Expected season_velo={ctx.fastball.season_velo:.1f} in shared grounding"

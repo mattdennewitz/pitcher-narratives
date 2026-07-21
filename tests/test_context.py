@@ -274,7 +274,6 @@ def test_yoy_section_omitted_for_single_season():
             prior_year_relevance="LOW",
             prior_year_relevance_reason="No prior season data",
         ),
-        tto=None,
         cross_season_summary=None,
         arsenal_trend=None,
     )
@@ -344,7 +343,6 @@ def test_yoy_section_renders_cross_season_summary():
             prior_year_relevance="HIGH",
             prior_year_relevance_reason="Full prior season",
         ),
-        tto=None,
         cross_season_summary=css,
         arsenal_trend=None,
     )

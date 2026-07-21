@@ -29,7 +29,6 @@ from pitcher_narratives.pipeline import (
     PipelineAgents,
     PipelineResult,
     SpecialistOutputs,
-    _build_game_shape_input,
     _build_stuff_input,
     _build_trend_input,
     _flatten_prompt,
@@ -192,41 +191,35 @@ class TestRunSummaries:
             self.called = True
             raise RuntimeError("boom")
 
-    def test_empty_capsule_skips_both_agents(self):
+    def test_empty_capsule_skips_summary_agent(self):
         from pitcher_narratives.pipeline import _run_summaries
         boom = self._BoomAgent()
-        bullets, brief = asyncio.run(_run_summaries(
-            summary_agent=boom, brief_agent=boom,
+        bullets = asyncio.run(_run_summaries(
+            summary_agent=boom,
             capsule="   \n  ", writer_input="ignored",
         ))
         assert bullets == []
-        assert brief == ""
-        assert boom.called is False  # the guard must skip both agents, not just swallow their errors
+        assert boom.called is False  # the guard must skip the agent, not just swallow its error
 
-    def test_populated_capsule_runs_both(self):
+    def test_populated_capsule_runs_summary(self):
         from pitcher_narratives.pipeline import _run_summaries
         agents = make_pipeline_agents("gemini", "high")
         tm = TestModel(call_tools=[], custom_output_text="- one\n- two")
-        bullets, brief = asyncio.run(_run_summaries(
-            summary_agent=agents.summary, brief_agent=agents.brief,
+        bullets = asyncio.run(_run_summaries(
+            summary_agent=agents.summary,
             capsule="A real capsule.", writer_input="grounding",
             _model_override=tm,
         ))
         assert bullets == ["one", "two"]
-        assert brief == "- one\n- two"
 
-    def test_one_failure_degrades_without_cancelling_sibling(self):
+    def test_summary_failure_degrades_to_empty(self):
         from pitcher_narratives.pipeline import _run_summaries
-        agents = make_pipeline_agents("gemini", "high")
-        tm = TestModel(call_tools=[], custom_output_text="- kept")
-        # Summary agent booms; brief must still produce output.
-        bullets, brief = asyncio.run(_run_summaries(
-            summary_agent=self._BoomAgent(), brief_agent=agents.brief,
+        # Summary agent booms; the helper must degrade to [] rather than crash.
+        bullets = asyncio.run(_run_summaries(
+            summary_agent=self._BoomAgent(),
             capsule="A real capsule.", writer_input="grounding",
-            _model_override=tm,
         ))
         assert bullets == []
-        assert brief == "- kept"
 
 
 # ── Data builder tests ───────────────────────────────────────────────
@@ -289,12 +282,6 @@ class TestMakePipelineAgents:
         agents = make_pipeline_agents("gemini", "high")
         assert agents.signal_extractor is not None
 
-    def test_brief_uses_mini_model(self):
-        agents = make_pipeline_agents("gemini", "high")
-        # BRIEF distills an already-written report — a mini model suffices.
-        assert agents.brief.model == agents.summary.model
-        assert agents.brief.model != agents.writer.model
-
     def test_has_capsule_auditor_on_mini_model(self):
         agents = make_pipeline_agents("gemini", "high")
         assert agents.capsule_auditor is not None
@@ -314,7 +301,6 @@ class TestAuditAndReviseSpecialists:
             location="Location is average.",
             runvalue="Run value is neutral.",
             trends="No changes.",
-            game_shape="Steady across passes.",
         )
 
     @pytest.fixture
@@ -334,7 +320,6 @@ class TestAuditAndReviseSpecialists:
             specialist_agents = {
                 "stuff": agents.stuff, "location": agents.location,
                 "runvalue": agents.runvalue, "trends": agents.trends,
-                "game_shape": agents.game_shape,
             }
             # Use a context with minimal data
             data = load_pitcher_data(TEST_PITCHER, recent_appearances=10)
@@ -365,7 +350,6 @@ class TestAuditAndReviseSpecialists:
             specialist_agents = {
                 "stuff": agents.stuff, "location": agents.location,
                 "runvalue": agents.runvalue, "trends": agents.trends,
-                "game_shape": agents.game_shape,
             }
             data = load_pitcher_data(TEST_PITCHER, recent_appearances=10)
             ctx = assemble_pitcher_context(data)
@@ -395,7 +379,7 @@ class TestAuditAndReviseSpecialists:
         async def _run():
             # Track specialist agent .run calls — must stay zero (no revision).
             specialist_agents = {}
-            for name in ("stuff", "location", "runvalue", "trends", "game_shape"):
+            for name in ("stuff", "location", "runvalue", "trends"):
                 m = MagicMock()
                 m.run = AsyncMock(side_effect=AssertionError("revision must not run"))
                 specialist_agents[name] = m
@@ -477,7 +461,7 @@ class TestGeneratePipelineStreaming:
             calls.append(mode.id)
             return pl.PipelineResult(
                 narrative="x", specialists=SpecialistOutputs(
-                    stuff="", location="", runvalue="", trends="", game_shape=""
+                    stuff="", location="", runvalue="", trends=""
                 ),
             )
 
@@ -528,32 +512,31 @@ class TestGeneratePipelineStreaming:
         assert captured.get("report") is None
 
     def test_recap_mode_skips_distillation(self, ctx):
-        """RECAP mode must not run the exec-summary/brief agents: capsule IS the brief."""
+        """RECAP mode must not run the exec-summary agent: capsule IS the brief."""
         from pydantic_ai.models.test import TestModel
         from pitcher_narratives.personas import RECAP
         from pitcher_narratives.pipeline import run_narration_modes
 
+        assert RECAP.distill is False
         model = TestModel(call_tools=[])
         results = run_narration_modes(ctx, modes=[RECAP], _model_override=model)
         r = results["recap"]
+        # distill=False → the summary agent never runs, so no bullets.
         assert r.executive_summary == []
-        assert r.brief == ""
 
     def test_report_mode_still_distills(self, ctx):
-        """REPORT mode must still run the exec-summary/brief agents."""
+        """REPORT mode must still run the exec-summary agent (mode.distill)."""
         from pydantic_ai.models.test import TestModel
         from pitcher_narratives.personas import REPORT
         from pitcher_narratives.pipeline import run_narration_modes
 
+        assert REPORT.distill is True
         model = TestModel(call_tools=[])
         results = run_narration_modes(ctx, modes=[REPORT], _model_override=model)
         r = results["report"]
-        # The brief assertion below is the real distillation check: TestModel
-        # text doesn't parse into bullets, so the summary can only be checked
-        # for type. If summary/brief generation is ever split into separate
-        # conditionals, give the summary its own behavioral assertion.
+        # TestModel text doesn't parse into bullets, so the summary can only be
+        # checked for type here; mode.distill above is the behavioral gate.
         assert isinstance(r.executive_summary, list)
-        assert isinstance(r.brief, str) and len(r.brief) > 0
 
     def test_max_revisions_constant_is_nonzero(self):
         """MAX_REVISIONS must allow at least one revision pass."""
@@ -565,22 +548,6 @@ class TestGeneratePipelineStreaming:
         from pitcher_narratives.config import MAX_REVISIONS
         assert MAX_REVISIONS == 5
 
-    def test_pipeline_result_includes_brief(self, ctx):
-        """The terminal layer runs the BRIEF agent and returns its text.
-
-        BRIEF is wired as an additional agent alongside the writer and
-        executive summary — same input, non-critical — so a successful run
-        populates PipelineResult.brief with non-empty text. (custom_output_text
-        can't be used here: it would force the structured auditor/anchor/signal
-        agents into plain responses, which TestModel rejects.)
-        """
-        test_model = TestModel(call_tools=[])
-        result = generate_pipeline_streaming(
-            ctx, provider="gemini", thinking="high", _model_override=test_model,
-        )
-        assert isinstance(result.brief, str)
-        assert len(result.brief) > 0
-
     def test_pipeline_result_includes_executive_summary(self, ctx):
         """The terminal layer runs the executive summary against the final
         capsule and returns parsed bullets."""
@@ -589,18 +556,6 @@ class TestGeneratePipelineStreaming:
             ctx, provider="gemini", thinking="high", _model_override=test_model,
         )
         assert isinstance(result.executive_summary, list)
-
-    def test_brief_agent_has_no_skill_toolset(self):
-        """The brief agent stays tool-free (like the executive summary).
-
-        A 2-3 sentence synthesis of already-clean specialist text needs no
-        skills, and staying tool-free means a hallucinated skill call cannot
-        kill this non-critical concurrent agent.
-        """
-        from pitcher_narratives.agent_skills import skill_toolset
-        agents = make_pipeline_agents()
-        toolsets = list(getattr(agents.brief, "_user_toolsets", []))
-        assert skill_toolset() not in toolsets
 
     def test_pipeline_result_has_fact_check_fields(self, ctx):
         test_model = TestModel(call_tools=[])
@@ -1229,15 +1184,15 @@ class TestReconcileAnchorWarnings:
         sentinel = object()  # unused agent slots must never be touched
         agents = PipelineAgents(
             stuff=sentinel, location=sentinel, runvalue=sentinel,
-            trends=sentinel, game_shape=sentinel,
+            trends=sentinel,
             writer=writer, auditor=sentinel, capsule_auditor=auditor,
             anchor=anchor, summary=sentinel, signal_extractor=sentinel,
-            brief=sentinel, mini_model_name="test-mini",
+            mini_model_name="test-mini",
         )
         analyzed = AnalyzedContext(
             specialists=SpecialistOutputs(
                 stuff="s", location="l", runvalue="r",
-                trends="t", game_shape="g",
+                trends="t",
             ),
         )
 
@@ -1248,7 +1203,6 @@ class TestReconcileAnchorWarnings:
                 agents=agents,
                 anchor_depth=5,
                 fact_depth=1,
-                stream=False,
                 check_explainer=False,
             )
         )
@@ -1292,15 +1246,15 @@ class TestReconcileAnchorWarnings:
         sentinel = object()
         agents = PipelineAgents(
             stuff=sentinel, location=sentinel, runvalue=sentinel,
-            trends=sentinel, game_shape=sentinel,
+            trends=sentinel,
             writer=writer, auditor=sentinel, capsule_auditor=auditor,
             anchor=anchor, summary=sentinel, signal_extractor=sentinel,
-            brief=sentinel, mini_model_name="test-mini",
+            mini_model_name="test-mini",
         )
         analyzed = AnalyzedContext(
             specialists=SpecialistOutputs(
                 stuff="s", location="l", runvalue="r",
-                trends="t", game_shape="g",
+                trends="t",
             ),
             trend_frame_comparison="SENTINEL_FRAME",
         )
@@ -1312,12 +1266,20 @@ class TestReconcileAnchorWarnings:
                 agents=agents,
                 anchor_depth=5,
                 fact_depth=1,
-                stream=False,
                 check_explainer=False,
             )
         )
 
         assert recorded["trend_frame_comparison"] == "SENTINEL_FRAME"
+
+
+def test_render_capsule_has_no_stream_parameter():
+    """WS2: the report path buffers the writer output — no live streaming."""
+    import inspect
+
+    from pitcher_narratives.pipeline import _render_capsule
+
+    assert "stream" not in inspect.signature(_render_capsule).parameters
 
 
 class TestFrameAwareCapsuleAudit:
@@ -1343,7 +1305,7 @@ class TestFrameAwareCapsuleAudit:
         from pitcher_narratives.models import SpecialistOutputs
 
         specialists = SpecialistOutputs(
-            stuff="s", location="l", runvalue="r", trends="t", game_shape="g"
+            stuff="s", location="l", runvalue="r", trends="t"
         )
         union = _build_parity_union(
             ctx, specialists, None,
@@ -1480,11 +1442,11 @@ def _make_mock_ctx():
     mock.cross_season_summary = _make_cross_season_summary()
     mock.arsenal_trend = _make_arsenal_trends()
 
-    # The trend/game-shape builders render sections via the prompt_builder
+    # The trend builder renders sections via the prompt_builder
     # render_*_section(ctx) free functions; those are patched per-test by the
     # _patch_render_sections fixture, not on the mock ctx.
 
-    # TemporalContext for game shape workload rendering
+    # TemporalContext for workload rendering
     mock.temporal.current_season_appearances = 8
     mock.temporal.current_season_ip = 48.0
     mock.temporal.prior_season = 2025
@@ -1511,7 +1473,7 @@ def _patch_baselines(monkeypatch):
 def _patch_render_sections(monkeypatch):
     """Patch the prompt_builder render functions used by the pipeline builders.
 
-    The trend and game-shape builders call render_*_section(ctx) free functions
+    The trend builder calls render_*_section(ctx) free functions
     (imported into the pipeline namespace). Patch them to canned strings so
     these unit tests do not depend on full PitcherContext rendering. Each patch
     is a MagicMock so call assertions still work.
@@ -1530,9 +1492,6 @@ def _patch_render_sections(monkeypatch):
             "- Added pitches: Sweeper\n"
             "- Slider: usage Up 5.0 pp, velo Up 1.5 mph"
         ),
-        "render_tto_section": "## TTO\nSteady",
-        "render_appearances_section": "## Appearances\n3 in window",
-        "render_role_section": "## Role\nSP",
         "render_temporal_section": (
             "## Temporal Context\n"
             "- Analysis date: 2026-07-03\n"
@@ -1628,50 +1587,6 @@ class TestTrendSpecialistReceivesYoySection:
         assert "velo +2.0 mph" in joined
 
 
-@pytest.mark.usefixtures("_patch_baselines", "_patch_render_sections")
-class TestGameShapeSpecialistReceivesYoyData:
-    """Verify _build_game_shape_input includes cross-season data with correct attributes."""
-
-    def test_contains_yoy_header(self):
-        ctx = _make_mock_ctx()
-        output = _flatten_prompt(_build_game_shape_input(ctx))
-        assert "Year-over-Year" in output
-
-    def test_contains_added_pitch(self):
-        ctx = _make_mock_ctx()
-        output = _flatten_prompt(_build_game_shape_input(ctx))
-        assert "Sweeper" in output
-        assert "Added" in output
-
-    def test_contains_continued_pitch_with_usage(self):
-        ctx = _make_mock_ctx()
-        output = _flatten_prompt(_build_game_shape_input(ctx))
-        assert "Slider" in output
-        assert "usage Up 5.0 pp" in output
-
-    def test_no_pfx_references(self):
-        ctx = _make_mock_ctx()
-        output = _flatten_prompt(_build_game_shape_input(ctx))
-        assert "pfx_x_delta" not in output
-        assert "H-mov" not in output
-
-    def test_contains_workload_comparison(self):
-        ctx = _make_mock_ctx()
-        output = _flatten_prompt(_build_game_shape_input(ctx))
-        assert "Workload" in output
-        assert "48.0 IP" in output
-
-    def test_contains_temporal_section(self):
-        ctx = _make_mock_ctx()
-        output = _flatten_prompt(_build_game_shape_input(ctx))
-        assert "## Temporal Context" in output
-
-    def test_temporal_section_appears_first_among_data_sections(self):
-        ctx = _make_mock_ctx()
-        output = _flatten_prompt(_build_game_shape_input(ctx))
-        assert output.index("## Temporal Context") < output.index("## TTO")
-
-
 # ── check_explainer_present unit tests (Phase 08: PERSONA-11) ──
 
 
@@ -1761,7 +1676,6 @@ def test_run_pipeline_logs_warning_when_capsule_missing_explainer(caplog):
             ctx,
             provider="gemini",
             thinking="high",
-            persona="scout",
             _model_override=TestModel(call_tools=[]),
         )
 
@@ -1774,10 +1688,10 @@ def test_run_pipeline_logs_warning_when_capsule_missing_explainer(caplog):
         f"Expected at least one explainer-missing warning, "
         f"got records: {[r.getMessage() for r in caplog.records]}"
     )
-    # The warning's formatted message includes the persona id in brackets
+    # The warning's formatted message includes the mode id in brackets
     warning_msg = explainer_warnings[0].getMessage()
-    assert "[scout]" in warning_msg, (
-        f"Expected '[scout]' in warning message, got: {warning_msg!r}"
+    assert "[report]" in warning_msg, (
+        f"Expected '[report]' in warning message, got: {warning_msg!r}"
     )
 
 
@@ -1816,7 +1730,6 @@ def test_check_explainer_present_happy_path_is_silent(caplog, monkeypatch):
             ctx,
             provider="gemini",
             thinking="high",
-            persona="scout",
             _model_override=TestModel(call_tools=[]),
         )
 
@@ -1899,7 +1812,7 @@ def test_run_specialists_fan_out_concurrently(ctx):
     """Specialists fan out concurrently rather than running serially."""
     tracker = {"live": 0, "peak": 0}
     agent = _CountingAgent(tracker)
-    asyncio.run(run_specialists(agent, agent, agent, agent, agent, ctx))
+    asyncio.run(run_specialists(agent, agent, agent, agent, ctx))
     assert tracker["peak"] > 1
 
 
@@ -1924,22 +1837,19 @@ def test_run_specialists_names_runs_only_selected(ctx):
     location = _MarkAgent("LOC")
     runvalue = _MarkAgent("RV")
     trends = _MarkAgent("TRENDS")
-    game_shape = _MarkAgent("GS")
 
     out = asyncio.run(run_specialists(
-        stuff, location, runvalue, trends, game_shape, ctx,
+        stuff, location, runvalue, trends, ctx,
         names=["trends"],
     ))
     assert trends.calls == 1
     assert stuff.calls == 0
     assert location.calls == 0
     assert runvalue.calls == 0
-    assert game_shape.calls == 0
     assert out.trends == "TRENDS"
     assert out.stuff == ""
     assert out.location == ""
     assert out.runvalue == ""
-    assert out.game_shape == ""
 
 
 class _ExplodingAuditor:
@@ -1955,16 +1865,16 @@ def test_audit_failure_fails_closed(ctx):
     AUDIT_FAILED sentinel flag per audited specialist is surfaced (visible in
     audit_flags) rather than silently returning zero flags."""
     outputs = SpecialistOutputs(stuff="s", location="l", runvalue="r",
-                                trends="t", game_shape="g")
+                                trends="t")
     clean, flags, _residual = asyncio.run(audit_and_revise_specialists(
         outputs, {}, _ExplodingAuditor(), ctx,
     ))
     assert clean == outputs
-    # One sentinel per audited specialist (all five by default).
-    assert len(flags) == 5
+    # One sentinel per audited specialist (all four by default).
+    assert len(flags) == 4
     assert all(f.category == "AUDIT_FAILED" for f in flags)
     assert {f.specialist for f in flags} == {
-        "stuff", "location", "runvalue", "trends", "game_shape",
+        "stuff", "location", "runvalue", "trends",
     }
 
 
@@ -1976,7 +1886,7 @@ def test_audit_names_audits_only_selected(ctx):
     from pitcher_narratives.pipeline import audit_and_revise_specialists
 
     outputs = SpecialistOutputs(stuff="s", location="l", runvalue="r",
-                                trends="t", game_shape="g")
+                                trends="t")
 
     class _CountingAuditor:
         def __init__(self):
@@ -1992,7 +1902,7 @@ def test_audit_names_audits_only_selected(ctx):
         outputs, {}, auditor, ctx, names=["trends"],
     ))
     assert auditor.calls == 1          # only one specialist audited
-    assert clean == outputs            # all five fields preserved, unchanged
+    assert clean == outputs            # all four fields preserved, unchanged
     assert flags == []
 
 
@@ -2028,7 +1938,7 @@ def test_reaudit_flags_revision_marks_specialist_residual(ctx):
             return _R()
 
     outputs = SpecialistOutputs(stuff="s", location="l", runvalue="r",
-                                trends="t", game_shape="g")
+                                trends="t")
     specialist_agents = {"trends": _ReviseSpecialist()}
     auditor = _AlwaysFlags()
 
@@ -2061,7 +1971,7 @@ def test_reaudit_clean_revision_leaves_residual_empty(ctx):
             return _R()
 
     outputs = SpecialistOutputs(stuff="s", location="l", runvalue="r",
-                                trends="t", game_shape="g")
+                                trends="t")
     auditor = _FlagThenClean()
 
     clean, flags, residual = asyncio.run(audit_and_revise_specialists(
@@ -2101,7 +2011,7 @@ def test_tag_leak_folds_into_revision(ctx):
 
     outputs = SpecialistOutputs(
         stuff="velocity [OUTLIER] at 93.0 mph.", location="l", runvalue="r",
-        trends="t", game_shape="g",
+        trends="t",
     )
     clean, flags, residual = asyncio.run(audit_and_revise_specialists(
         outputs, {"stuff": _ReviseSpecialist("velocity is unusually high.")},
@@ -2131,7 +2041,7 @@ def test_reaudit_crash_marks_residual_and_surfaces_sentinel(ctx):
             return _R()
 
     outputs = SpecialistOutputs(stuff="s", location="l", runvalue="r",
-                                trends="t", game_shape="g")
+                                trends="t")
     clean, flags, residual = asyncio.run(audit_and_revise_specialists(
         outputs, {"trends": _ReviseSpecialist()}, _FlagThenBoom(), ctx,
         names=["trends"],
@@ -2148,14 +2058,13 @@ def test_build_parity_union_exclude_drops_specialist_prose(ctx):
 
     specialists = SpecialistOutputs(
         stuff="STUFF_PROSE", location="LOC_PROSE", runvalue="RV_PROSE",
-        trends="TRENDS_PROSE_UNVERIFIED", game_shape="GS_PROSE",
+        trends="TRENDS_PROSE_UNVERIFIED",
     )
     union = _build_parity_union(
         ctx, specialists, None, exclude=frozenset({"trends"}),
     )
     assert "TRENDS_PROSE_UNVERIFIED" not in union   # excluded prose dropped
     assert "STUFF_PROSE" in union                    # other specialists kept
-    assert "GS_PROSE" in union
     # Raw ground truth (independent of specialist prose) still present.
     from pitcher_narratives.pipeline import _build_capsule_ground_truth
     assert _build_capsule_ground_truth(ctx) in union
@@ -2179,7 +2088,7 @@ def test_trend_audit_ground_truth_includes_frame_comparison(ctx):
             return _R()
 
     outputs = SpecialistOutputs(stuff="s", location="l", runvalue="r",
-                                trends="t", game_shape="g")
+                                trends="t")
     asyncio.run(audit_and_revise_specialists(
         outputs, {}, _CapturingAuditor(), ctx, names=["trends"],
         trend_frame_comparison=marker,
@@ -2201,7 +2110,6 @@ def test_run_analysis_spine_returns_analyzed_context(ctx):
     assert result.specialists.location != ""
     assert result.specialists.runvalue != ""
     assert result.specialists.trends != ""
-    assert result.specialists.game_shape != ""
     assert isinstance(result.audit_flags, list)
 
 
@@ -2213,10 +2121,10 @@ def test_run_analysis_spine_composes_core_then_tail(ctx, monkeypatch):
     from pitcher_narratives.models import CoreContext, AnalyzedContext, SpecialistOutputs
     from unittest.mock import AsyncMock
 
-    sentinel_core = CoreContext(stuff="s", location="l", runvalue="r", game_shape="g")
+    sentinel_core = CoreContext(stuff="s", location="l", runvalue="r")
     sentinel_analyzed = AnalyzedContext(
         specialists=SpecialistOutputs(stuff="s", location="l", runvalue="r",
-                                      trends="t", game_shape="g"),
+                                      trends="t"),
     )
     core_mock = AsyncMock(return_value=sentinel_core)
     tail_mock = AsyncMock(return_value=sentinel_analyzed)
@@ -2252,7 +2160,6 @@ def test_run_spine_core_returns_four_clean_specialists(ctx):
     assert core.stuff != ""
     assert core.location != ""
     assert core.runvalue != ""
-    assert core.game_shape != ""
     assert isinstance(core.audit_flags, list)
 
 
@@ -2266,7 +2173,7 @@ def test_run_spine_tail_assembles_full_analyzed_context(ctx):
     agents = make_pipeline_agents("gemini", "high")
     model = TestModel(call_tools=[], custom_output_text="Tail analysis.")
     core = CoreContext(stuff="CORE_STUFF", location="CORE_LOC",
-                       runvalue="CORE_RV", game_shape="CORE_GS")
+                       runvalue="CORE_RV")
 
     analyzed = asyncio.run(
         run_spine_tail(core, ctx, agents=agents, _model_override=model)
@@ -2274,7 +2181,6 @@ def test_run_spine_tail_assembles_full_analyzed_context(ctx):
     assert isinstance(analyzed, AnalyzedContext)
     # Core specialist text is carried through verbatim.
     assert analyzed.specialists.stuff == "CORE_STUFF"
-    assert analyzed.specialists.game_shape == "CORE_GS"
     # Trends was produced by the tail.
     assert analyzed.specialists.trends != ""
 
@@ -2297,14 +2203,14 @@ def test_run_spine_tail_injects_frame_comparison_with_prior_ctx(ctx, monkeypatch
 
     async def _fake_run_specialists(*args, **kwargs):
         captured["trend_frame_comparison"] = kwargs.get("trend_frame_comparison")
-        return SpecialistOutputs(stuff="s", location="l", runvalue="r", trends="TRENDS_OUT", game_shape="g")
+        return SpecialistOutputs(stuff="s", location="l", runvalue="r", trends="TRENDS_OUT")
 
     monkeypatch.setattr(_pl, "run_specialists", _fake_run_specialists)
 
     agents = make_pipeline_agents("gemini", "high")
     model = TestModel(call_tools=[], custom_output_text="Tail analysis.")
     core = CoreContext(stuff="CORE_STUFF", location="CORE_LOC",
-                       runvalue="CORE_RV", game_shape="CORE_GS")
+                       runvalue="CORE_RV")
 
     asyncio.run(
         run_spine_tail(core, ctx, agents=agents, _model_override=model,
@@ -2329,7 +2235,7 @@ def test_spine_tail_stores_frame_comparison_with_prior_ctx(ctx):
     agents = make_pipeline_agents("gemini", "high")
     model = TestModel(call_tools=[], custom_output_text="Tail analysis.")
     core = CoreContext(stuff="CORE_STUFF", location="CORE_LOC",
-                       runvalue="CORE_RV", game_shape="CORE_GS")
+                       runvalue="CORE_RV")
 
     analyzed = asyncio.run(
         run_spine_tail(core, ctx, agents=agents, _model_override=model,
@@ -2351,7 +2257,7 @@ def test_spine_tail_frame_comparison_none_without_prior_ctx(ctx):
     agents = make_pipeline_agents("gemini", "high")
     model = TestModel(call_tools=[], custom_output_text="Tail analysis.")
     core = CoreContext(stuff="CORE_STUFF", location="CORE_LOC",
-                       runvalue="CORE_RV", game_shape="CORE_GS")
+                       runvalue="CORE_RV")
 
     analyzed = asyncio.run(
         run_spine_tail(core, ctx, agents=agents, _model_override=model)
@@ -2373,14 +2279,14 @@ def test_run_spine_tail_no_frame_comparison_without_prior_ctx(ctx, monkeypatch):
 
     async def _fake_run_specialists(*args, **kwargs):
         captured["trend_frame_comparison"] = kwargs.get("trend_frame_comparison")
-        return SpecialistOutputs(stuff="s", location="l", runvalue="r", trends="TRENDS_OUT", game_shape="g")
+        return SpecialistOutputs(stuff="s", location="l", runvalue="r", trends="TRENDS_OUT")
 
     monkeypatch.setattr(_pl, "run_specialists", _fake_run_specialists)
 
     agents = make_pipeline_agents("gemini", "high")
     model = TestModel(call_tools=[], custom_output_text="Tail analysis.")
     core = CoreContext(stuff="CORE_STUFF", location="CORE_LOC",
-                       runvalue="CORE_RV", game_shape="CORE_GS")
+                       runvalue="CORE_RV")
 
     asyncio.run(
         run_spine_tail(core, ctx, agents=agents, _model_override=model)
@@ -2398,9 +2304,9 @@ def test_order_flags_puts_specialists_in_canonical_order():
                          data_shows="d", suggested_fix="f")
 
     # Core-first + trends-last input (as run_spine_tail concatenates) must be
-    # reordered to the legacy stuff/location/runvalue/trends/game_shape order.
-    ordered = _order_flags([flag("game_shape"), flag("trends"), flag("stuff")])
-    assert [f.specialist for f in ordered] == ["stuff", "trends", "game_shape"]
+    # reordered to the canonical stuff/location/runvalue/trends order.
+    ordered = _order_flags([flag("runvalue"), flag("trends"), flag("stuff")])
+    assert [f.specialist for f in ordered] == ["stuff", "runvalue", "trends"]
 
 
 class TestBuildSummaryInput:
@@ -2724,7 +2630,7 @@ def test_flag_summary_counts_fields():
     result = PipelineResult(
         narrative="n",
         specialists=SpecialistOutputs(
-            stuff="s", location="l", runvalue="r", trends="t", game_shape="g"),
+            stuff="s", location="l", runvalue="r", trends="t"),
         revision_count=2,
         capsule_revised=True,
         anchor_warnings=[],
@@ -2750,7 +2656,7 @@ def test_pipeline_result_signals_failed_roundtrips_into_flag_summary():
     result = PipelineResult(
         narrative="n",
         specialists=SpecialistOutputs(
-            stuff="s", location="l", runvalue="r", trends="t", game_shape="g"),
+            stuff="s", location="l", runvalue="r", trends="t"),
         signals_failed=True,
     )
     assert result.signals_failed is True
@@ -2766,7 +2672,7 @@ def test_flag_record_stamps_mode_context_onto_summary():
     result = PipelineResult(
         narrative="n",
         specialists=SpecialistOutputs(
-            stuff="s", location="l", runvalue="r", trends="t", game_shape="g"),
+            stuff="s", location="l", runvalue="r", trends="t"),
         revision_count=1,
         capsule_revised=False,
         value_parity_warnings=["[capsule] 1.23"],
@@ -2895,7 +2801,6 @@ def test_pipeline_threads_report_validation_depths(monkeypatch):
         ctx,
         provider="gemini",
         thinking="high",
-        persona="scout",
         mode=REPORT,
         _model_override=TestModel(call_tools=[]),
     )
@@ -2994,8 +2899,8 @@ def test_residual_banner_matches_report_wording():
 
 
 def test_render_capsule_non_streaming_returns_capsule(ctx, capsys):
-    """_render_capsule(stream=False) captures the writer output without
-    printing to stdout, and runs the anchor + capsule-audit loops."""
+    """_render_capsule always buffers the writer output (no live streaming)
+    and runs the anchor + capsule-audit loops."""
     from pitcher_narratives import pipeline
 
     agents = pipeline.make_pipeline_agents("gemini", "high")
@@ -3008,13 +2913,13 @@ def test_render_capsule_non_streaming_returns_capsule(ctx, capsys):
         )
         return await pipeline._render_capsule(
             ctx, analyzed, agents=agents, anchor_depth=1, fact_depth=1,
-            stream=False, check_explainer=False, _model_override=tm,
+            check_explainer=False, _model_override=tm,
         )
 
     rc = asyncio.run(_go())
     assert isinstance(rc.capsule, str) and rc.capsule  # non-empty
     assert rc.writer_input and rc.fact_check_source
-    # stream=False must NOT print the capsule to stdout.
+    # Buffered writer output must NOT print the capsule to stdout.
     assert rc.capsule not in capsys.readouterr().out
 
 
@@ -3065,7 +2970,7 @@ def test_render_capsule_reanchors_after_fact_revision(ctx):
         )
         return await pipeline._render_capsule(
             ctx, analyzed, agents=agents, anchor_depth=0, fact_depth=1,
-            stream=False, check_explainer=False,
+            check_explainer=False,
         )
 
     rc = asyncio.run(_go())
@@ -3093,9 +2998,9 @@ def test_render_recap_produces_validated_pipeline_result(ctx):
     """render_recap renders a recap from a pre-computed AnalyzedContext and runs
     the validation stack (recap depths), returning a PipelineResult."""
     from pitcher_narratives import pipeline
-    from pitcher_narratives.personas import RECAP, get_persona
+    from pitcher_narratives.personas import RECAP
 
-    agents = pipeline.make_pipeline_agents("gemini", "medium", get_persona("scout"), RECAP)
+    agents = pipeline.make_pipeline_agents("gemini", "medium", RECAP)
     tm_spine = TestModel(call_tools=[], custom_output_text="Specialist analysis.")
     tm = TestModel(call_tools=[])
 
@@ -3108,7 +3013,6 @@ def test_render_recap_produces_validated_pipeline_result(ctx):
     assert isinstance(result, PipelineResult)
     assert result.narrative                              # recap text present
     assert result.executive_summary == []                # recap has no exec summary
-    assert result.brief == ""                             # recap has no # Brief
     # is_unverified applies to a recap result just like a report result.
     from pitcher_narratives.pipeline import is_unverified
     assert isinstance(is_unverified(result), bool)
@@ -3120,9 +3024,9 @@ def test_render_recap_records_validation_calls_with_model_name(ctx, monkeypatch)
     costs to None and silently undercounts the digest's true spend."""
     from pitcher_narratives import pipeline
     from pitcher_narratives.costs import UsageTracker
-    from pitcher_narratives.personas import RECAP, get_persona
+    from pitcher_narratives.personas import RECAP
 
-    agents = pipeline.make_pipeline_agents("gemini", "medium", get_persona("scout"), RECAP)
+    agents = pipeline.make_pipeline_agents("gemini", "medium", RECAP)
     tm_spine = TestModel(call_tools=[], custom_output_text="Specialist analysis.")
     tm = TestModel(call_tools=[])
     tracker = UsageTracker()

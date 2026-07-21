@@ -104,6 +104,20 @@ def _appearance(pid: int, score: float):
     )
 
 
+def test_render_curation_slate_groups_in_registry_order():
+    from pitcher_narratives.digest import render_curation_slate
+
+    slate = CurationSlate(picks=[
+        _pick2(2, "red_flag"),
+        _pick2(1, "clean_breakout"),
+    ])
+    out = render_curation_slate(slate, {1: "Ace", 2: "Setup"})
+    # clean_breakout (order 0) badge appears before red_flag (order 5) badge.
+    assert out.index("CLEAN BREAKOUT") < out.index("RED FLAG")
+    assert "Ace (medium): a" in out
+    assert "Setup (medium): a" in out
+
+
 def test_digest_groups_by_category_and_omits_empty():
     slate = CurationSlate(picks=[
         _pick2(1, "red_flag"),
@@ -163,3 +177,59 @@ def test_digest_renders_new_category_sections_in_order():
     )
     assert "[COMMAND BREAKOUT]" in out
     assert "[VELO DROP]" in out
+
+
+def test_digest_has_no_local_category_dicts():
+    """Category metadata lives only in curator; digest must not redefine it."""
+    import pitcher_narratives.digest as d
+
+    assert not hasattr(d, "_CATEGORY_BADGES")
+    assert not hasattr(d, "_CATEGORY_ORDER")
+    assert not hasattr(d, "_CATEGORY_SECTION_TITLES")
+
+
+def test_digest_badge_comes_from_registry():
+    from pitcher_narratives.curator import CATEGORY_BY_ID
+
+    slate = CurationSlate(picks=[_pick(1)])
+    out = assemble_digest(
+        slate=slate, summaries={1: "s."}, appearances={1: _app(1)},
+        board=[_app(1)], game_date=date(2026, 6, 10), cost_block="c",
+    )
+    cat = CATEGORY_BY_ID["clean_breakout"]
+    assert f"## {cat.section_title}" in out
+    assert f"[{cat.badge}]" in out
+
+
+def test_render_full_board_table_content_and_order():
+    from pitcher_narratives.digest import render_full_board_table
+
+    table = render_full_board_table([
+        _app(1, "SP", 3.0), _app(2, "RP", 9.0),
+    ])
+    assert "Score" in table and "Pitcher" in table and "Signals" in table
+    # Flat sort by score desc: Pitcher 2 (9.0) before Pitcher 1 (3.0).
+    assert table.index("Pitcher 2") < table.index("Pitcher 1")
+    assert "velo_delta" in table  # signal name column
+
+
+def test_render_full_board_table_verbose_adds_detail_rows():
+    from pitcher_narratives.digest import render_full_board_table
+
+    plain = render_full_board_table([_app(1, "SP", 5.0)])
+    verbose = render_full_board_table([_app(1, "SP", 5.0)], verbose=True)
+    assert "+2.1 mph vs season" not in plain
+    assert "+2.1 mph vs season" in verbose
+
+
+def test_group_picks_by_category_respects_only_ids():
+    """The shared grouping helper honors only_ids (digest's summary filter)."""
+    from pitcher_narratives.digest import _group_picks_by_category
+
+    picks = [_pick2(1, "lab_project"), _pick2(2, "red_flag")]
+    grouped = _group_picks_by_category(picks, only_ids={1})
+    assert [p.pitcher_id for p in grouped["lab_project"]] == [1]
+    assert grouped["red_flag"] == []  # pitcher 2 excluded by only_ids
+    # Without only_ids, all picks are kept.
+    grouped_all = _group_picks_by_category(picks)
+    assert [p.pitcher_id for p in grouped_all["red_flag"]] == [2]

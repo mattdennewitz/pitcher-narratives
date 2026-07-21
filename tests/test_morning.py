@@ -18,7 +18,6 @@ def _fake_analyzed() -> AnalyzedContext:
         specialists=SpecialistOutputs(
             stuff="Stuff analysis.", location="Location analysis.",
             runvalue="Run value analysis.", trends="Trends analysis.",
-            game_shape="Game shape analysis.",
         ),
     )
 
@@ -66,7 +65,7 @@ def _make_minimal_context():
             prior_season=2025, prior_season_appearances=0, prior_season_ip="0.0",
             prior_year_relevance="LOW", prior_year_relevance_reason="No data",
         ),
-        tto=None, cross_season_summary=None, arsenal_trend=None,
+        cross_season_summary=None, arsenal_trend=None,
     )
 
 
@@ -108,7 +107,7 @@ def test_run_morning_writes_all_artifacts(tmp_path, monkeypatch):
     _patch_data(monkeypatch)
     run_dir = morning.run_morning(
         window_days=1, top_n=25, min_pitches=20,
-        provider="gemini", persona_id="scout", out_root=tmp_path,
+        provider="gemini", out_root=tmp_path,
         _selector_override=_selector_model(),
         _writer_override=TestModel(call_tools=[]),
     )
@@ -148,7 +147,7 @@ def test_run_morning_starters_only_filters_board(tmp_path, monkeypatch):
     })
     run_dir = morning.run_morning(
         window_days=1, top_n=25, min_pitches=20,
-        provider="gemini", persona_id="scout", out_root=tmp_path,
+        provider="gemini", out_root=tmp_path,
         starters_only=True,
         _selector_override=starters_selector,
         _writer_override=TestModel(call_tools=[]),
@@ -167,7 +166,7 @@ def test_run_morning_starters_only_quiet_when_no_starters(tmp_path, monkeypatch)
     )
     run_dir = morning.run_morning(
         window_days=1, top_n=25, min_pitches=20,
-        provider="gemini", persona_id="scout", out_root=tmp_path,
+        provider="gemini", out_root=tmp_path,
         starters_only=True,
         _selector_override=_selector_model(),
         _writer_override=TestModel(call_tools=[]),
@@ -205,7 +204,7 @@ def test_run_morning_single_event_loop(tmp_path, monkeypatch):
     _patch_data(monkeypatch)
     morning.run_morning(
         window_days=1, top_n=25, min_pitches=20,
-        provider="gemini", persona_id="scout", out_root=tmp_path,
+        provider="gemini", out_root=tmp_path,
         _selector_override=selector, _writer_override=writer,
     )
     assert len(loops) >= 2
@@ -229,7 +228,7 @@ def test_run_morning_drops_picks_when_recap_render_fails(tmp_path, monkeypatch):
     _patch_data(monkeypatch)
     run_dir = morning.run_morning(
         window_days=1, top_n=25, min_pitches=20,
-        provider="gemini", persona_id="scout", out_root=tmp_path,
+        provider="gemini", out_root=tmp_path,
         _selector_override=_selector_model(),
         _writer_override=_ExplodingWriter(),
     )
@@ -243,7 +242,7 @@ def test_run_morning_quiet_day_returns_none(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(morning, "scout_appearances", lambda **kw: [])
     result = morning.run_morning(
         window_days=1, top_n=25, min_pitches=20,
-        provider="gemini", persona_id="scout", out_root=tmp_path,
+        provider="gemini", out_root=tmp_path,
     )
     assert result is None
     assert not list(tmp_path.iterdir())
@@ -275,7 +274,7 @@ def test_full_board_lists_beyond_candidate_cap(tmp_path, monkeypatch):
     })
     run_dir = morning.run_morning(
         window_days=1, top_n=1, min_pitches=20,
-        provider="gemini", persona_id="scout", out_root=tmp_path,
+        provider="gemini", out_root=tmp_path,
         _selector_override=selector,
         _writer_override=TestModel(call_tools=[]),
     )
@@ -306,7 +305,7 @@ def test_morning_renders_recap_from_real_spine(tmp_path, monkeypatch):
     model = TestModel(call_tools=[])
     morning.run_morning(
         window_days=1, top_n=25, min_pitches=20,
-        provider="gemini", persona_id="scout", out_root=tmp_path,
+        provider="gemini", out_root=tmp_path,
         _selector_override=_selector_model(),
         _writer_override=model,
     )
@@ -333,7 +332,7 @@ def test_run_morning_duplicate_pitcher_keeps_highest_scored(tmp_path, monkeypatc
     monkeypatch.setattr(morning, "run_analysis_spine", AsyncMock(return_value=_fake_analyzed()))
     run_dir = morning.run_morning(
         window_days=2, top_n=25, min_pitches=20,
-        provider="gemini", persona_id="scout", out_root=tmp_path,
+        provider="gemini", out_root=tmp_path,
         _selector_override=_selector_model(),
         _writer_override=TestModel(call_tools=[]),
     )
@@ -357,7 +356,7 @@ def test_spine_failure_drops_pick_and_discloses_in_footer(tmp_path, monkeypatch)
 
     run_dir = morning.run_morning(
         window_days=1, top_n=25, min_pitches=20,
-        provider="gemini", persona_id="scout", out_root=tmp_path,
+        provider="gemini", out_root=tmp_path,
         _selector_override=_selector_model(),
         _writer_override=TestModel(call_tools=[]),
     )
@@ -405,7 +404,7 @@ def test_semaphore_bounds_concurrency(tmp_path, monkeypatch):
 
     morning.run_morning(
         window_days=1, top_n=25, min_pitches=20,
-        provider="gemini", persona_id="scout", out_root=tmp_path,
+        provider="gemini", out_root=tmp_path,
         max_concurrency=max_concurrency,
         _selector_override=selector,
         _writer_override=TestModel(call_tools=[]),
@@ -427,7 +426,7 @@ def test_signals_failed_flag_set_on_extractor_failure(monkeypatch):
     from pitcher_narratives.models import SpecialistOutputs
 
     fake_specs = SpecialistOutputs(
-        stuff="S", location="L", runvalue="R", trends="T", game_shape="G"
+        stuff="S", location="L", runvalue="R", trends="T"
     )
     monkeypatch.setattr(_pl, "run_specialists", AsyncMock(return_value=fake_specs))
     monkeypatch.setattr(
@@ -443,7 +442,7 @@ def test_signals_failed_flag_set_on_extractor_failure(monkeypatch):
     class _FakeAgents:
         # Specialist/auditor attrs are passed as args to monkeypatched helpers;
         # they must exist but are never actually called.
-        stuff = location = runvalue = trends = game_shape = auditor = _noop
+        stuff = location = runvalue = trends = auditor = _noop
         signal_extractor = bad_extractor
         mini_model_name = ""
         def specialist_dict(self):
@@ -462,7 +461,7 @@ def test_morning_marks_unverified_recap_items(tmp_path, monkeypatch):
     _patch_data(monkeypatch)
     run_dir = morning.run_morning(
         window_days=1, top_n=2, min_pitches=1,
-        provider="gemini", persona_id="scout", out_root=tmp_path,
+        provider="gemini", out_root=tmp_path,
         _selector_override=_selector_model(),
         _writer_override=TestModel(call_tools=[]),
     )
@@ -477,9 +476,9 @@ def test_render_recap_threads_pick_angle_into_writer_input():
     editor's angle rather than the analyses' own default thread."""
     from pitcher_narratives import pipeline as _pl
     from pitcher_narratives.curator import CurationPick
-    from pitcher_narratives.personas import RECAP, get_persona
+    from pitcher_narratives.personas import RECAP
 
-    agents = _pl.make_pipeline_agents("gemini", "medium", get_persona("scout"), RECAP)
+    agents = _pl.make_pipeline_agents("gemini", "medium", RECAP)
     ctx = _make_minimal_context()
     analyzed = _fake_analyzed()
     pick = CurationPick(
@@ -506,6 +505,105 @@ def test_render_recap_threads_pick_angle_into_writer_input():
     assert "A very distinctive angle marker XYZ123" in captured["overlay"]
 
 
+def test_morning_emits_recap_capsule_per_selected_pitcher(tmp_path, monkeypatch):
+    """Morning runs the shared spine and yields a recap-shaped capsule per pick.
+
+    Regression guard for spec §4/§8 phase 4: morning already wires each
+    selected pitcher through render_recap (RECAP mode), whose capsule skips
+    distillation (no executive-summary bullets) and produces a non-empty
+    narrative. This test locks that shape in.
+    """
+    from pitcher_narratives import pipeline as _pl
+
+    captured: list = []
+    _real_render_recap = _pl.render_recap
+
+    async def _spy_render_recap(ctx, analyzed, *, agents, pick=None, **kw):
+        result = await _real_render_recap(ctx, analyzed, agents=agents, pick=pick, **kw)
+        captured.append(result)
+        return result
+
+    _patch_data(monkeypatch)
+    monkeypatch.setattr(morning, "render_recap", _spy_render_recap)
+    run_dir = morning.run_morning(
+        window_days=1, top_n=25, min_pitches=20,
+        provider="gemini", out_root=tmp_path,
+        _selector_override=_selector_model(),
+        _writer_override=TestModel(call_tools=[]),
+    )
+    assert run_dir is not None
+
+    # _selector_model() picks pitcher_id 1 and 2 -> one recap capsule each.
+    assert len(captured) == 2
+    for result in captured:
+        assert result.narrative  # non-empty narrative
+        assert result.executive_summary == []  # RECAP mode skips distill: no exec bullets
+
+
+def test_morning_fast_mode_skips_hallucination_and_stamps_footer(tmp_path, monkeypatch):
+    """Default morning: no check_hallucinated_metrics call; footer says 'validation: fast'."""
+    _patch_data(monkeypatch)
+    monkeypatch.setattr(
+        morning, "check_hallucinated_metrics",
+        lambda text: (_ for _ in ()).throw(AssertionError("must not be called in fast mode")),
+        raising=False,
+    )
+    run_dir = morning.run_morning(
+        window_days=1, top_n=25, min_pitches=20,
+        provider="gemini", out_root=tmp_path,
+        strict=False,
+        _selector_override=_selector_model(),
+        _writer_override=TestModel(call_tools=[]),
+    )
+    digest = (run_dir / "digest.md").read_text()
+    assert "validation: fast (hallucination check skipped)" in digest
+    assert "validation: strict" not in digest
+
+
+def test_morning_strict_runs_hallucination_check_and_records(tmp_path, monkeypatch):
+    """--strict: runs the check per entry, marks not-clean entries UNVERIFIED, records in validation.json.
+
+    Under TestModel(call_tools=[]) the capsule auditor emits synthetic
+    residual flags, so ``residual_banner(...)`` already returns a banner for
+    every entry before the strict fold ever runs -- that would make this
+    test pass for the wrong reason (see test_morning_marks_unverified_recap_items,
+    which relies on exactly that mechanism). Neutralize residual_banner here
+    so the hallucination fold (``if banner is None and not hr.is_clean`` in
+    morning.py) is the sole banner source, and assert its exact wording.
+    """
+    from pitcher_narratives.pipeline import HallucinationReport
+
+    _patch_data(monkeypatch)
+    monkeypatch.setattr(morning, "residual_banner", lambda *a, **k: None)
+    seen = []
+
+    def fake_check(text):
+        seen.append(text)
+        return HallucinationReport(unknown_metrics=["fabricated+"], outcome_stat_warnings=[])
+
+    monkeypatch.setattr(morning, "check_hallucinated_metrics", fake_check, raising=False)
+
+    run_dir = morning.run_morning(
+        window_days=1, top_n=25, min_pitches=20,
+        provider="gemini", out_root=tmp_path,
+        strict=True,
+        _selector_override=_selector_model(),
+        _writer_override=TestModel(call_tools=[]),
+    )
+    digest = (run_dir / "digest.md").read_text()
+    assert "validation: strict" in digest
+    assert seen, "check_hallucinated_metrics must run per entry in strict mode"
+    # The hallucination-fold-specific wording (not just generic "UNVERIFIED")
+    # proves the fold branch -- not residual_banner or value-parity -- fired.
+    assert "hallucinated-metric flags present" in digest
+
+    payload = json.loads((run_dir / "validation.json").read_text())
+    # every recorded pick carries its hallucination result under strict mode
+    for rec in payload["picks"].values():
+        assert rec["hallucination"]["unknown_metrics"] == ["fabricated+"]
+        assert rec["hallucination"]["is_clean"] is False
+
+
 def test_build_validation_payload_records_flags_per_pick():
     """The validation.json payload carries one flag_record per surviving pick."""
     from pitcher_narratives.models import SpecialistOutputs
@@ -515,7 +613,7 @@ def test_build_validation_payload_records_flags_per_pick():
     result = PipelineResult(
         narrative="n",
         specialists=SpecialistOutputs(
-            stuff="s", location="l", runvalue="r", trends="t", game_shape="g"),
+            stuff="s", location="l", runvalue="r", trends="t"),
         revision_count=1,
         capsule_revised=True,
     )

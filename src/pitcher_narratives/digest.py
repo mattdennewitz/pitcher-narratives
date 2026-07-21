@@ -8,45 +8,24 @@ by render_recap (see pipeline.py).
 from __future__ import annotations
 
 import json
-import logging
 from datetime import date
 
-from pitcher_narratives.curator import CurationPick, CurationSlate
+from pitcher_narratives.curator import CATEGORIES, CurationPick, CurationSlate
 from pitcher_narratives.scout import ScoredAppearance
 
 __all__ = [
     "assemble_digest",
+    "render_curation_slate",
     "render_full_board",
     "render_full_board_json",
+    "render_full_board_table",
 ]
 
-log = logging.getLogger("pitcher_narratives.digest")
 
 
 # ── Assembly ────────────────────────────────────────────────────────
 
 
-_CATEGORY_BADGES = {
-    "clean_breakout": "CLEAN BREAKOUT",
-    "command_breakout": "COMMAND BREAKOUT",
-    "lab_project": "LAB PROJECT",
-    "identity_crisis": "IDENTITY CRISIS",
-    "velo_drop": "VELO DROP",
-    "red_flag": "RED FLAG",
-}
-
-_CATEGORY_ORDER = [
-    "clean_breakout", "command_breakout", "lab_project",
-    "identity_crisis", "velo_drop", "red_flag",
-]
-_CATEGORY_SECTION_TITLES = {
-    "clean_breakout": "Clean Breakouts",
-    "command_breakout": "Command Breakouts",
-    "lab_project": "Lab Projects",
-    "identity_crisis": "Identity Crises",
-    "velo_drop": "Velocity Drops",
-    "red_flag": "Red Flags",
-}
 _CONVICTION_RANK = {"high": 0, "medium": 1, "low": 2}
 
 
@@ -103,6 +82,71 @@ def render_full_board_json(board: list[ScoredAppearance]) -> str:
     return json.dumps(payload, indent=2, default=str)
 
 
+
+def render_full_board_table(
+    board: list[ScoredAppearance], *, verbose: bool = False
+) -> str:
+    """Fixed-width table of scored appearances, flat-sorted by score descending.
+
+    ``verbose`` appends an indented detail row per signal (name, weight, detail).
+    """
+    ranked = sorted(board, key=lambda a: a.score, reverse=True)
+    lines = [
+        f"{'Score':>5}  {'Pitcher':<25} {'T':>1} {'Role':<4}  "
+        f"{'Date':<10}  {'#P':>3}  Signals",
+        f"{'─' * 5}  {'─' * 25} {'─':>1} {'─' * 4}  "
+        f"{'─' * 10}  {'─' * 3}  {'─' * 40}",
+    ]
+    for a in ranked:
+        signal_names = ", ".join(s.name for s in a.signals)
+        lines.append(
+            f"{a.score:5.1f}  {a.pitcher_name:<25} {a.throws:>1} {a.role:<4}  "
+            f"{a.game_date!s:<10}  {a.n_pitches:>3}  {signal_names}"
+        )
+        if verbose:
+            for s in a.signals:
+                lines.append(f"       └─ {s.name} ({s.weight:.1f}): {s.detail}")
+    return "\n".join(lines)
+
+
+def _group_picks_by_category(
+    picks: list[CurationPick], *, only_ids: set[int] | None = None
+) -> dict[str, list[CurationPick]]:
+    """Bucket picks by category id, one bucket per registry category, in order.
+
+    ``only_ids`` restricts to picks whose ``pitcher_id`` is in the set (the
+    digest includes only picks that have a written summary; the terminal slate
+    includes every pick). Sharing this skeleton keeps the digest and the slate
+    from drifting on category-membership rules.
+    """
+    by_cat: dict[str, list[CurationPick]] = {c.id: [] for c in CATEGORIES}
+    for pick in picks:
+        if only_ids is not None and pick.pitcher_id not in only_ids:
+            continue
+        by_cat[pick.category].append(pick)
+    return by_cat
+
+
+def render_curation_slate(slate: CurationSlate, names: dict[int, str]) -> str:
+    """Render a selected slate as category-grouped lines for terminal display.
+
+    Categories appear in registry order under their badge; each pick is one
+    line: ``<name> (<conviction>): <angle>``. Empty categories are skipped.
+    """
+    by_cat = _group_picks_by_category(slate.picks)
+    blocks: list[str] = []
+    for cat in CATEGORIES:
+        picks = by_cat[cat.id]
+        if not picks:
+            continue
+        lines = [cat.badge]
+        for pick in picks:
+            who = names.get(pick.pitcher_id, pick.pitcher_id)
+            lines.append(f"  {who} ({pick.conviction}): {pick.angle}")
+        blocks.append("\n".join(lines))
+    return "\n\n".join(blocks)
+
+
 def assemble_digest(
     *,
     slate: CurationSlate,
@@ -124,30 +168,24 @@ def assemble_digest(
             ),
         )
 
-    def _section(title: str, picks: list[CurationPick]) -> list[str]:
-        lines = [f"## {title}", ""]
+    def _section(cat, picks: list[CurationPick]) -> list[str]:
+        lines = [f"## {cat.section_title}", ""]
         for pick in _ordered(picks):
             name = appearances[pick.pitcher_id].pitcher_name
-            badge = _CATEGORY_BADGES.get(pick.category, pick.category.upper().replace("_", " "))
-            if pick.category not in _CATEGORY_BADGES:
-                log.warning("Unknown pick category %r for %s; using raw name as badge.", pick.category, name)
             lines += [
-                f"### {name} — `{pick.category}` [{badge}]",
+                f"### {name} — `{pick.category}` [{cat.badge}]",
                 "",
                 summaries[pick.pitcher_id],
                 "",
             ]
         return lines
 
-    by_cat: dict[str, list[CurationPick]] = {c: [] for c in _CATEGORY_ORDER}
-    for pick in slate.picks:
-        if pick.pitcher_id in summaries:
-            by_cat[pick.category].append(pick)
+    by_cat = _group_picks_by_category(slate.picks, only_ids=set(summaries))
 
     parts = [f"# Morning Digest — {game_date}", ""]
-    for cat in _CATEGORY_ORDER:
-        if by_cat[cat]:
-            parts += _section(_CATEGORY_SECTION_TITLES[cat], by_cat[cat])
+    for cat in CATEGORIES:
+        if by_cat[cat.id]:
+            parts += _section(cat, by_cat[cat.id])
     parts.append(render_full_board(board))
     footer = cost_block
     if dropped_picks:

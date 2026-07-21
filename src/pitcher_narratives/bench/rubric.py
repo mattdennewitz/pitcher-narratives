@@ -126,7 +126,7 @@ CAPSULE_RUBRIC: list[RubricDimension] = _CORE + [
         key="thread_coherence",
         label="Thread coherence",
         weight=2.0,
-        anchor_1="Reads as five stitched-together analyses with section seams and repeated facts.",
+        anchor_1="Reads as four stitched-together analyses with section seams and repeated facts.",
         anchor_3="One narrative but the thread wanders or restates.",
         anchor_5="One story in one voice; every paragraph serves the same thread.",
     ),

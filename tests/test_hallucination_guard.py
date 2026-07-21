@@ -9,6 +9,30 @@ import pytest
 from pitcher_narratives.pipeline import HallucinationReport, check_hallucinated_metrics
 
 
+def test_check_hallucinated_metrics_has_no_persona_param():
+    """Task 3: check_hallucinated_metrics no longer accepts a persona kwarg."""
+    import inspect
+
+    assert "persona" not in inspect.signature(check_hallucinated_metrics).parameters
+
+
+def test_teaching_terms_are_globally_allowlisted():
+    """Task 3: analyst teaching vocabulary is folded into the base allowlist.
+
+    These terms don't match _METRIC_PATTERN (plain English, not xMetric/
+    ACRONYM%/P+ shaped), so they were never actually reachable via the old
+    per-persona allowlist either -- but the guard as a whole must report
+    the text as clean regardless.
+    """
+    text = (
+        "The playability improved; the tunneling gap tightened, the pitch "
+        "tree deepened, and arsenal depth grew."
+    )
+    result = check_hallucinated_metrics(text)
+    assert result.is_clean
+    assert result.unknown_metrics == []
+
+
 def test_check_hallucinated_metrics_rejects_empty_string():
     """Empty narrative is a pipeline failure, not a clean report."""
     with pytest.raises(ValueError, match="empty"):
@@ -215,69 +239,34 @@ def test_hallucination_guard_other_traditional_stats_still_flagged():
     assert "W-L" in result.outcome_stat_warnings
 
 
-# -- Per-persona regression vectors (Phase 07: TEST-07, analyst portion) --
+# -- Teaching-vocabulary regression vectors (formerly per-persona; Task 3
+# folded these into the base _KNOWN_METRICS allowlist) --
 
 
-def test_analyst_vocab_not_flagged_with_persona():
-    """TEST-07: Analyst vocabulary terms are not flagged when persona='analyst'."""
+def test_analyst_vocab_globally_allowlisted():
+    """Analyst teaching vocabulary is clean with no persona argument at all."""
     text = (
         "The playability of this slider comes down to the tunneling gap "
         "created by his pitch tree. The arsenal depth gives him four "
         "viable options."
     )
-    result = check_hallucinated_metrics(text, persona="analyst")
+    result = check_hallucinated_metrics(text)
     assert result.is_clean, (
-        f"Analyst vocabulary flagged with persona='analyst': "
+        f"Analyst vocabulary flagged: "
         f"unknown={result.unknown_metrics}, warnings={result.outcome_stat_warnings}"
     )
 
 
-def test_analyst_vocab_without_persona_still_clean():
-    """TEST-07: Analyst vocabulary terms don't match _METRIC_PATTERN anyway.
-
-    This confirms the terms are plain English that the regex does not catch.
-    The per-persona allowlist is a safety net for forward compatibility.
-    """
-    text = (
-        "The playability and tunneling gap are key. "
-        "His pitch tree and arsenal depth look solid."
-    )
-    result = check_hallucinated_metrics(text)
-    assert result.is_clean, (
-        f"Analyst vocabulary flagged without persona: "
-        f"unknown={result.unknown_metrics}"
-    )
-
-
-def test_analyst_persona_does_not_suppress_real_unknowns():
-    """TEST-07: Per-persona allowlist only covers persona vocabulary, not fabricated metrics."""
+def test_teaching_vocab_does_not_suppress_real_unknowns():
+    """The teaching-vocab allowlist only covers its own terms, not fabricated metrics."""
     text = "His xDominance score and playability are both impressive."
-    result = check_hallucinated_metrics(text, persona="analyst")
+    result = check_hallucinated_metrics(text)
     assert "xDominance" in result.unknown_metrics
     assert not result.is_clean
 
 
-def test_no_persona_backward_compat():
-    """PERSONA-10: Calls without persona arg produce identical results to v1.9 behavior."""
-    text = "His P+ of 112 and xWhiff of 0.35 suggest elite stuff. ERA of 3.50."
-    result = check_hallucinated_metrics(text)
-    assert result.unknown_metrics == []
-    assert "ERA" in result.outcome_stat_warnings
-    assert not result.is_clean
-
-
-# ── Per-persona regression vectors (Phase 08: TEST-07, generic portion) ──
-
-
-def test_generic_persona_key_in_allowlist():
-    """PERSONA-10 (generic): _PERSONA_KNOWN_METRICS has a 'generic' frozenset entry."""
-    from pitcher_narratives.pipeline import _PERSONA_KNOWN_METRICS
-    assert "generic" in _PERSONA_KNOWN_METRICS
-    assert isinstance(_PERSONA_KNOWN_METRICS["generic"], frozenset)
-
-
 def test_generic_synthetic_capsule_clean():
-    """TEST-07 (generic): synthetic generic capsule (sections + table) passes clean."""
+    """Synthetic generic capsule (sections + table) passes clean."""
     text = (
         "## Stuff\nThe slider graded S+ 112; the model credited vertical break.\n\n"
         "## Location\nFastball L+ 94 below league average.\n\n"
@@ -290,7 +279,7 @@ def test_generic_synthetic_capsule_clean():
         "| Top Improvement | Slider vertical break gain | S+ 112 |\n"
         "| Top Concern | Fastball command slipped | L+ 94 |\n"
     )
-    result = check_hallucinated_metrics(text, persona="generic")
+    result = check_hallucinated_metrics(text)
     assert result.is_clean, (
         f"Generic synthetic capsule flagged: "
         f"unknown={result.unknown_metrics}, warnings={result.outcome_stat_warnings}"
@@ -298,65 +287,21 @@ def test_generic_synthetic_capsule_clean():
 
 
 def test_generic_table_row_invented_metric_flagged():
-    """TEST-07 (generic): invented metric inside a table row is still caught."""
+    """Invented metric inside a table row is still caught."""
     text = (
         "## Summary Table\n"
         "| Signal | Key Finding | Grade |\n"
         "|---|---|---|\n"
         "| Top Improvement | xDominance score up on slider | xDominance 128 |\n"
     )
-    result = check_hallucinated_metrics(text, persona="generic")
+    result = check_hallucinated_metrics(text)
     assert "xDominance" in result.unknown_metrics
     assert not result.is_clean
 
 
 def test_generic_fabricated_section_metric_flagged():
-    """TEST-07 (generic): invented metric inside a section (not table) is still caught."""
+    """Invented metric inside a section (not table) is still caught."""
     text = "## Stuff\nHis xFakeMetric of 95 is notable."
-    result = check_hallucinated_metrics(text, persona="generic")
+    result = check_hallucinated_metrics(text)
     assert "xFakeMetric" in result.unknown_metrics
     assert not result.is_clean
-
-
-def test_generic_persona_does_not_suppress_real_unknowns():
-    """TEST-07 (generic): per-persona allowlist only covers generic vocab, not fabricated metrics."""
-    text = "## Stuff\nHis xMadeUpMetric score is 95 and S+ is 110."
-    result = check_hallucinated_metrics(text, persona="generic")
-    assert "xMadeUpMetric" in result.unknown_metrics
-    assert not result.is_clean
-
-
-def test_persona_known_metrics_keys_are_registered_personas():
-    """Every key in _PERSONA_KNOWN_METRICS must be a valid persona id.
-
-    Catches typos like 'analsyt' vs 'analyst' that would silently disable
-    the per-persona allowlist for the real persona.
-    """
-    from pitcher_narratives.personas import PERSONAS
-    from pitcher_narratives.pipeline import _PERSONA_KNOWN_METRICS
-
-    unknown_keys = set(_PERSONA_KNOWN_METRICS.keys()) - set(PERSONAS.keys())
-    assert not unknown_keys, (
-        f"_PERSONA_KNOWN_METRICS has keys not in PERSONAS: {unknown_keys}"
-    )
-
-
-def test_unknown_persona_logs_debug_and_returns_empty_allowlist(caplog):
-    """Unknown persona id triggers a debug log and falls back to empty allowlist.
-
-    Tests the graceful-miss path for programmatic callers (CLI is guarded
-    by argparse choices). A typo should not crash — it should log and
-    treat the persona as having no allowlist.
-    """
-    import logging
-
-    with caplog.at_level(logging.DEBUG, logger="pitcher_narratives.pipeline"):
-        result = check_hallucinated_metrics(
-            "His P+ is 110.", persona="analsyt"
-        )
-    assert result.is_clean
-    assert any(
-        "no persona-specific metric allowlist" in rec.message
-        and "analsyt" in rec.message
-        for rec in caplog.records
-    )

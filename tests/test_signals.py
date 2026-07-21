@@ -132,7 +132,7 @@ class TestBuildWriterInputWithSignals:
 
         result = build_writer_input(
             ctx, "stuff output", "location output", "runvalue output",
-            "trends output", "game_shape output", key_signals=ks,
+            "trends output", key_signals=ks,
         )
         assert "## Key Signals" in result
         assert "- Top Improvement: Slider S+ jumped to 135" in result
@@ -150,7 +150,7 @@ class TestBuildWriterInputWithSignals:
 
         result = build_writer_input(
             ctx, "stuff output", "location output", "runvalue output",
-            "trends output", "game_shape output",
+            "trends output",
         )
         assert "## Key Signals" not in result
 
@@ -165,7 +165,7 @@ class TestBuildWriterInputWithSignals:
 
         result = build_writer_input(
             ctx, "stuff output", "location output", "runvalue output",
-            "trends output", "game_shape output",
+            "trends output",
         )
         assert "## Temporal Context" not in result
 
@@ -192,7 +192,7 @@ class TestBuildWriterInputWithSignals:
 
         result = build_writer_input(
             ctx, "stuff output", "location output", "runvalue output",
-            "trends output", "game_shape output",
+            "trends output",
         )
         assert "## Temporal Context" in result
         # Should appear before the specialist analyses.
@@ -203,13 +203,13 @@ class TestBuildWriterInputWithSignals:
 
 class TestWriterPromptKeySignals:
     def test_references_key_signals(self):
-        from pitcher_narratives.personas import SCOUT, build_writer_system_prompt
-        prompt = build_writer_system_prompt(SCOUT)
+        from pitcher_narratives.personas import REPORT, build_writer_system_prompt
+        prompt = build_writer_system_prompt(REPORT)
         assert "Key Signals" in prompt
 
     def test_distinguishes_primary_secondary(self):
-        from pitcher_narratives.personas import SCOUT, build_writer_system_prompt
-        prompt = build_writer_system_prompt(SCOUT)
+        from pitcher_narratives.personas import REPORT, build_writer_system_prompt
+        prompt = build_writer_system_prompt(REPORT)
         assert "Primary" in prompt or "primary" in prompt
         assert "Secondary" in prompt or "secondary" in prompt
 

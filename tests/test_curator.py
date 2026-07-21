@@ -143,3 +143,31 @@ def test_pick_rejects_unknown_category():
     """A category outside the six-item enum is rejected."""
     with pytest.raises(ValidationError):
         CurationPick(**_pick_cat(1, "not_a_category"))
+
+
+# ── Category registry ───────────────────────────────────────────────
+
+
+def test_category_registry_matches_literal():
+    """The Category registry must exactly cover CurationPick.category's Literal."""
+    from typing import get_args
+
+    from pitcher_narratives.curator import CATEGORY_BY_ID, CurationPick
+
+    declared = set(get_args(CurationPick.model_fields["category"].annotation))
+    assert set(CATEGORY_BY_ID) == declared
+
+
+def test_category_registry_order_and_labels():
+    from pitcher_narratives.curator import CATEGORIES
+
+    assert [c.id for c in CATEGORIES] == [
+        "clean_breakout", "command_breakout", "lab_project",
+        "identity_crisis", "velo_drop", "red_flag",
+    ]
+    assert [c.order for c in CATEGORIES] == [0, 1, 2, 3, 4, 5]
+    labels = {c.id: (c.section_title, c.badge) for c in CATEGORIES}
+    assert labels["clean_breakout"] == ("Clean Breakouts", "CLEAN BREAKOUT")
+    assert labels["velo_drop"] == ("Velocity Drops", "VELO DROP")
+    assert all(c.section_title and c.badge for c in CATEGORIES)
+

@@ -5,13 +5,12 @@ with artifacts written to <out_root>/<game-date>/: digest.md,
 slate.json, briefing.md, usage.json. See
 docs/superpowers/specs/2026-06-12-morning-run-design.md.
 
-Validation parity note: digest entries are intentionally less validated
-than single-pitcher reports. The anchor-revision loop and hallucination
-check (check_hallucinated_metrics, invoked in cli.py for the report path)
-are terminal-layer concerns that are omitted here to keep the morning run
-fast. Each entry is produced from clean specialist outputs (run through
-the audit/revision loop in run_analysis_spine), but is not anchor-checked
-for signal fidelity or cross-validated for metric accuracy.
+Validation: each digest entry runs the full RECAP validation core via
+render_recap -- the anchor-revision loop and capsule fact-audit loop at
+RECAP's ValidationPolicy depths (anchor_depth=1, fact_depth=2) plus
+value-parity. By default it omits only the terminal metric-hallucination
+cross-check (check_hallucinated_metrics) to keep the high-volume run fast;
+pass `morning --strict` to run it per entry (design: validation-parity spec).
 """
 
 from __future__ import annotations
@@ -29,9 +28,11 @@ from pitcher_narratives.costs import UsageTracker
 from pitcher_narratives.curator import build_selector_briefing, select_slate_async
 from pitcher_narratives.data import load_pitcher_data
 from pitcher_narratives.digest import assemble_digest
-from pitcher_narratives.personas import PERSONAS, RECAP
+from pitcher_narratives.personas import RECAP
 from pitcher_narratives.pipeline import (
+    HallucinationReport,
     PipelineResult,
+    check_hallucinated_metrics,
     flag_record,
     make_pipeline_agents,
     render_recap,
@@ -58,22 +59,32 @@ def _load_pitcher_context(pitcher_id: int) -> PitcherContext:
 
 
 def _build_validation_payload(
-    game_date: str, recap_results: dict[int, "PipelineResult"]
+    game_date: str,
+    recap_results: dict[int, "PipelineResult"],
+    hallucination: dict[int, "HallucinationReport"] | None = None,
 ) -> dict[str, object]:
     """Per-pick calibration records for validation.json.
 
     One ``flag_record`` per surviving pick, keyed by stringified pitcher id
-    (JSON object keys must be strings). Morning always runs RECAP on the
-    default recent-appearance span.
+    (JSON object keys must be strings). Under ``morning --strict`` each record
+    also carries the per-entry metric-hallucination result.
     """
+    hallucination = hallucination or {}
+
+    def _record(pid: int, result: "PipelineResult") -> dict[str, object]:
+        rec = flag_record(RECAP, pid, result, span=_DEFAULT_RECENT_APPEARANCES)
+        hr = hallucination.get(pid)
+        if hr is not None:
+            rec["hallucination"] = {
+                "unknown_metrics": hr.unknown_metrics,
+                "outcome_stat_warnings": hr.outcome_stat_warnings,
+                "is_clean": hr.is_clean,
+            }
+        return rec
+
     return {
         "game_date": game_date,
-        "picks": {
-            str(pid): flag_record(
-                RECAP, pid, result, span=_DEFAULT_RECENT_APPEARANCES
-            )
-            for pid, result in recap_results.items()
-        },
+        "picks": {str(pid): _record(pid, result) for pid, result in recap_results.items()},
     }
 
 
@@ -83,10 +94,10 @@ def run_morning(
     top_n: int,
     min_pitches: int,
     provider: str,
-    persona_id: str,
     out_root: Path,
     max_concurrency: int = 4,
     starters_only: bool = False,
+    strict: bool = False,
     _selector_override: object = None,
     _writer_override: object = None,
 ) -> Path | None:
@@ -98,7 +109,6 @@ def run_morning(
     """
     started = time.monotonic()
     tracker = UsageTracker()
-    persona = PERSONAS[persona_id]
 
     # ── Scout ─────────────────────────────────────────────────────
     log.info("Scouting appearances...")
@@ -131,7 +141,7 @@ def run_morning(
     briefing = build_selector_briefing(candidates)
 
     async def _llm_stages():
-        agents = make_pipeline_agents(provider, "medium", persona, RECAP)
+        agents = make_pipeline_agents(provider, "medium", RECAP)
         spine_sem = asyncio.Semaphore(min(max_concurrency, 2))
 
         slate = await select_slate_async(
@@ -168,6 +178,7 @@ def run_morning(
 
         summaries: dict[int, str] = {}
         recap_results: dict[int, PipelineResult] = {}
+        hallucination_by_pid: dict[int, "HallucinationReport"] = {}
         n_unverified = 0
         for result in build_results:
             if result is None:
@@ -181,6 +192,14 @@ def run_morning(
                     "⚠️  RECAP UNVERIFIED — value-parity flags present; "
                     "review before use."
                 )
+            if strict:
+                hr = check_hallucinated_metrics(recap_result.narrative)
+                hallucination_by_pid[pid] = hr
+                if banner is None and not hr.is_clean:
+                    banner = (
+                        "⚠️  RECAP UNVERIFIED — hallucinated-metric flags present; "
+                        "review before use."
+                    )
             if banner:
                 text = f"{banner}\n\n{text}"
                 n_unverified += 1
@@ -195,9 +214,9 @@ def run_morning(
         if n_unverified:
             log.warning("%d recap item(s) shipped UNVERIFIED (residual fact-check flags)", n_unverified)
 
-        return slate, picks, summaries, dropped_names, n_unverified, recap_results
+        return slate, picks, summaries, dropped_names, n_unverified, recap_results, hallucination_by_pid
 
-    slate, picks, summaries, dropped_names, n_unverified, recap_results = asyncio.run(_llm_stages())
+    slate, picks, summaries, dropped_names, n_unverified, recap_results, hallucination_by_pid = asyncio.run(_llm_stages())
 
     # ── Assemble + persist ────────────────────────────────────────
     wall_s = time.monotonic() - started
@@ -207,6 +226,11 @@ def run_morning(
             f"\nnote: {n_unverified} recap item(s) shipped UNVERIFIED "
             f"(residual validation flags)"
         )
+    cost_block += (
+        "\nvalidation: strict"
+        if strict
+        else "\nvalidation: fast (hallucination check skipped)"
+    )
     digest = assemble_digest(
         slate=slate, summaries=summaries, appearances=appearances,
         board=all_scored, game_date=game_date, cost_block=cost_block,
@@ -230,7 +254,7 @@ def run_morning(
     ))
     (run_dir / "usage.json").write_text(json.dumps(tracker.to_json(), indent=2))
     (run_dir / "validation.json").write_text(json.dumps(
-        _build_validation_payload(str(game_date), recap_results),
+        _build_validation_payload(str(game_date), recap_results, hallucination_by_pid),
         indent=2,
     ))
 

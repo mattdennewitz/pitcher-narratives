@@ -97,9 +97,8 @@ def test_provider_openai_rejected(monkeypatch):
 def test_pitcher_required(monkeypatch):
     """CLI-01: Missing -p flag under 'report' subcommand leaves pitcher as None.
 
-    Note: argparse allows -p to be absent (required=False) so that
-    --list-personas can run standalone. _run_report_command() re-asserts
-    the -p requirement for the normal pipeline path and exits 2.
+    Note: argparse allows -p to be absent (required=False); _run_report_command()
+    re-asserts the -p requirement for the normal pipeline path and exits 2.
     """
     monkeypatch.setattr(sys, "argv", ["main.py", "report"])
     args = parse_args()
@@ -109,56 +108,15 @@ def test_pitcher_required(monkeypatch):
     # test_cli_no_args_shows_help integration test).
 
 
-# ── Unit: --persona parsing ──
-
-
-def test_persona_default(monkeypatch):
-    """CLI-01/CLI-05: --persona defaults to 'scout' when omitted."""
-    monkeypatch.setattr(sys, "argv", ["main.py", "report", "-p", "592155"])
-    args = parse_args()
-    assert args.persona == "scout"
-
-
-def test_persona_flag_accepted(monkeypatch):
-    """CLI-01: --persona analyst parses into args.persona."""
+def test_persona_flag_no_longer_recognized(monkeypatch):
+    """--persona/--list-personas were removed (Task 4, single-voice refactor);
+    argparse now rejects both as unrecognized arguments."""
     monkeypatch.setattr(
-        sys, "argv", ["main.py", "report", "-p", "592155", "--persona", "analyst"]
-    )
-    args = parse_args()
-    assert args.persona == "analyst"
-
-
-def test_persona_case_normalization(monkeypatch):
-    """CLI-01: --persona SCOUT normalizes to 'scout' via type=str.lower."""
-    monkeypatch.setattr(
-        sys, "argv", ["main.py", "report", "-p", "592155", "--persona", "SCOUT"]
-    )
-    args = parse_args()
-    assert args.persona == "scout"
-
-
-def test_persona_invalid_exits_2(monkeypatch):
-    """CLI-01: --persona bogus is rejected by argparse with exit code 2."""
-    monkeypatch.setattr(
-        sys, "argv", ["main.py", "report", "-p", "592155", "--persona", "bogus"]
+        sys, "argv", ["main.py", "report", "-p", "592155", "--persona", "scout"]
     )
     with pytest.raises(SystemExit) as exc_info:
         parse_args()
     assert exc_info.value.code == 2
-
-
-def test_list_personas_flag_default(monkeypatch):
-    """CLI-02: --list-personas defaults to False when omitted."""
-    monkeypatch.setattr(sys, "argv", ["main.py", "report", "-p", "592155"])
-    args = parse_args()
-    assert args.list_personas is False
-
-
-def test_list_personas_flag_set(monkeypatch):
-    """CLI-02: --list-personas sets list_personas True (no -p required)."""
-    monkeypatch.setattr(sys, "argv", ["main.py", "report", "--list-personas"])
-    args = parse_args()
-    assert args.list_personas is True
 
 
 def _test_env(**extra: str) -> dict[str, str]:
@@ -188,6 +146,21 @@ def test_cli_valid_pitcher_exit_0():
     )
     assert result.returncode == 0
     assert result.stdout.strip()  # Non-empty output
+
+
+def test_cli_report_runs_with_no_persona_flag():
+    """Smoke test (Task 4): `report` has no --persona flag anymore; the
+    subcommand still runs to completion and produces output with just -p."""
+    result = subprocess.run(
+        [sys.executable, "-m", "pitcher_narratives.cli", "report", "-p", "592155"],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        env=_test_env(PITCHER_NARRATIVES_TEST_MODEL="1"),
+    )
+    assert result.returncode == 0, f"stderr: {result.stderr}"
+    assert result.stdout.strip()
+    assert "--persona" not in result.stderr
 
 
 def test_cli_invalid_pitcher_exit_1():
@@ -324,48 +297,48 @@ def test_cli_missing_api_key():
 
 
 def test_cli_anchor_check_in_output():
-    """Integration: Anchor check section appears in stdout output."""
+    """Integration: Anchor check section appears in stderr output under -v."""
     result = subprocess.run(
-        [sys.executable, "-m", "pitcher_narratives.cli", "report", "-p", "592155"],
+        [sys.executable, "-m", "pitcher_narratives.cli", "report", "-p", "592155", "-v"],
         capture_output=True,
         text=True,
         timeout=60,
         env=_test_env(PITCHER_NARRATIVES_TEST_MODEL="1"),
     )
     assert result.returncode == 0
-    assert "### Anchor Check" in result.stdout
+    assert "### Anchor Check" in result.stderr
+    assert "### Anchor Check" not in result.stdout
 
 
 def test_cli_narrative_output_has_required_sections():
     """Locks in the reader-first report format:
 
-      1. # Scouting Report        (mode title H1, streamed capsule)
+      1. # Scouting Report        (mode title H1, buffered capsule)
       2. **Verification:** line   (in-document verification stamp)
       3. ## Executive Summary     (distilled bullets)
-      4. ## Brief                 (2-3 sentence recent-vs-window summary)
-      5. ---  + ## Diagnostics    (demarcated QA appendix)
-      6. ### Stuff Analysis / ### Data Audit / ### Capsule Fact-Check /
+      4. ## Diagnostics (stderr, under -v)
+      5. ### Stuff Analysis / ### Data Audit / ### Capsule Fact-Check /
          ### Anchor Check         (demoted to appendix subsections)
     """
     result = subprocess.run(
-        [sys.executable, "-m", "pitcher_narratives.cli", "report", "-p", "592155"],
+        [sys.executable, "-m", "pitcher_narratives.cli", "report", "-p", "592155", "-v"],
         capture_output=True, text=True, timeout=60,
         env=_test_env(PITCHER_NARRATIVES_TEST_MODEL="1"),
     )
     assert result.returncode == 0, f"stderr: {result.stderr}"
     stdout = "\n" + result.stdout
+    stderr = "\n" + result.stderr
 
     assert "\n# Scouting Report\n" in stdout
     assert "\n**Verification:**" in stdout
     assert "\n## Executive Summary\n" in stdout
-    assert "\n## Brief\n" in stdout
-    assert "\n## Diagnostics\n" in stdout
-    assert "\n### Stuff Analysis\n" in stdout
-    assert "\n### Data Audit\n" in stdout
-    assert "\n### Capsule Fact-Check\n" in stdout
-    assert "\n### Anchor Check\n" in stdout
-    # Diagnostics must come after the reader-facing sections.
-    assert stdout.index("## Diagnostics") > stdout.index("## Executive Summary")
+    assert "\n## Brief\n" not in stdout             # the separate brief was removed
+    assert "\n## Diagnostics\n" not in stdout       # off the reader stream
+    assert "\n## Diagnostics\n" in stderr            # -v surfaces it
+    assert "\n### Stuff Analysis\n" in stderr
+    assert "\n### Data Audit\n" in stderr
+    assert "\n### Capsule Fact-Check\n" in stderr
+    assert "\n### Anchor Check\n" in stderr
 
 
 def test_cli_mode_blocks_are_labeled_and_contiguous():
@@ -373,7 +346,7 @@ def test_cli_mode_blocks_are_labeled_and_contiguous():
     H1 title is followed by ITS diagnostics before the next mode's H1."""
     result = subprocess.run(
         [sys.executable, "-m", "pitcher_narratives.cli", "report", "-p", "592155",
-         "--mode", "report,changes"],
+         "--mode", "report,changes", "-v"],
         capture_output=True, text=True, timeout=120,
         env=_test_env(PITCHER_NARRATIVES_TEST_MODEL="1"),
     )
@@ -382,9 +355,9 @@ def test_cli_mode_blocks_are_labeled_and_contiguous():
     i_report = stdout.index("# Scouting Report")
     i_changes = stdout.index("# Change Report")
     assert i_report < i_changes
-    # The report block's diagnostics appear before the changes H1.
-    assert i_report < stdout.index("## Diagnostics") < i_changes
-    assert stdout.count("## Diagnostics") == 2
+    assert "## Diagnostics" not in stdout
+    # Add -v to the argv above; both modes' diagnostics land on stderr.
+    assert result.stderr.count("## Diagnostics") == 2
 
 
 def test_cli_recap_mode_has_no_summary_or_brief_sections():
@@ -400,7 +373,7 @@ def test_cli_recap_mode_has_no_summary_or_brief_sections():
     assert "## Executive Summary" not in result.stdout
     assert "## Brief" not in result.stdout
     assert "**Verification:**" in result.stdout
-    assert "## Diagnostics" in result.stdout
+    assert "## Diagnostics" not in result.stdout
 
 
 # ── Integration: --print-prompts ──
@@ -490,57 +463,13 @@ def test_cli_print_prompts_report_mode_omits_trend_comparison(tmp_path):
     assert "Recent vs Prior Window" not in result.stderr
 
 
-# ── Integration: --list-personas ──
+# ── Integration: --print-prompts renders the single voice ──
 
 
-def test_cli_list_personas_exits_0_without_data():
-    """CLI-02: --list-personas exits 0, bypasses data loading and LLM.
-
-    Uses _test_env() with no API key and no PITCHER_NARRATIVES_TEST_MODEL —
-    proves the short-circuit is early enough that neither the preflight
-    API-key check nor the TestModel path are reached.
-    """
-    result = subprocess.run(
-        [sys.executable, "-m", "pitcher_narratives.cli", "report", "--list-personas"],
-        capture_output=True,
-        text=True,
-        timeout=30,
-        env=_test_env(),  # No API key, no TEST_MODEL — proves LLM bypass
-    )
-    assert result.returncode == 0, f"stderr: {result.stderr}"
-    assert "analyst" in result.stdout
-    assert "generic" in result.stdout
-    assert "scout" in result.stdout
-    # Alphabetical order
-    assert (
-        result.stdout.index("analyst")
-        < result.stdout.index("generic")
-        < result.stdout.index("scout")
-    )
-    # Data loader never ran — no pitcher summary lines landed on stderr.
-    assert "Booser" not in result.stderr
-
-
-def test_cli_list_personas_contains_display_names_and_descriptions():
-    """CLI-02: --list-personas output contains display_name and description."""
-    result = subprocess.run(
-        [sys.executable, "-m", "pitcher_narratives.cli", "report", "--list-personas"],
-        capture_output=True,
-        text=True,
-        timeout=30,
-        env=_test_env(),
-    )
-    assert result.returncode == 0
-    assert "Newsletter" in result.stdout  # analyst description substring
-    assert "Front-office" in result.stdout  # scout description substring
-    assert "Structured breakdown" in result.stdout  # generic description
-
-
-# ── Integration: --persona selection ──
-
-
-def test_cli_persona_analyst_exits_0():
-    """CLI-01: --persona analyst with TestModel completes successfully."""
+def test_cli_print_prompts_dump_is_single_voice(tmp_path):
+    """The prompt dump renders the single mode-composed writer voice: the old
+    persona-specific structures (e.g. the generic voice's "## Summary Table")
+    no longer appear. --persona is gone (Task 4); there is only one voice."""
     result = subprocess.run(
         [
             sys.executable,
@@ -549,203 +478,19 @@ def test_cli_persona_analyst_exits_0():
             "report",
             "-p",
             "592155",
-            "--persona",
-            "analyst",
-        ],
-        capture_output=True,
-        text=True,
-        timeout=60,
-        env=_test_env(PITCHER_NARRATIVES_TEST_MODEL="1"),
-    )
-    assert result.returncode == 0, f"stderr: {result.stderr}"
-    assert len(result.stdout.strip()) > 0
-
-
-def test_cli_persona_uppercase_normalizes():
-    """CLI-01: --persona SCOUT normalizes via type=str.lower and runs."""
-    result = subprocess.run(
-        [
-            sys.executable,
-            "-m",
-            "pitcher_narratives.cli",
-            "report",
-            "-p",
-            "592155",
-            "--persona",
-            "SCOUT",
-        ],
-        capture_output=True,
-        text=True,
-        timeout=60,
-        env=_test_env(PITCHER_NARRATIVES_TEST_MODEL="1"),
-    )
-    assert result.returncode == 0, f"stderr: {result.stderr}"
-
-
-def test_cli_invalid_persona_exits_2():
-    """CLI-01: --persona bogus exits 2 with choices listed in stderr."""
-    result = subprocess.run(
-        [
-            sys.executable,
-            "-m",
-            "pitcher_narratives.cli",
-            "report",
-            "-p",
-            "592155",
-            "--persona",
-            "bogus",
-        ],
-        capture_output=True,
-        text=True,
-        timeout=30,
-        env=_test_env(PITCHER_NARRATIVES_TEST_MODEL="1"),
-    )
-    assert result.returncode == 2
-    # argparse lists valid choices in its error message.
-    assert "scout" in result.stderr
-    assert "analyst" in result.stderr
-    assert "generic" in result.stderr
-
-
-def test_cli_persona_scout_and_no_flag_are_identical():
-    """CLI-05: --persona scout and no --persona flag both exit 0.
-
-    Observational equivalence: since TestModel output is canned,
-    deeper output equality is fragile. We assert both runs exit 0
-    and both stdouts are non-empty. Prompt-level equivalence is
-    locked by the unit tests (test_persona_default) and by
-    test_cli_print_prompts_uses_selected_persona.
-    """
-    run_args = {
-        "capture_output": True,
-        "text": True,
-        "timeout": 60,
-        "env": _test_env(PITCHER_NARRATIVES_TEST_MODEL="1"),
-    }
-    no_flag = subprocess.run(
-        [sys.executable, "-m", "pitcher_narratives.cli", "report", "-p", "592155"],
-        **run_args,
-    )
-    with_scout = subprocess.run(
-        [
-            sys.executable,
-            "-m",
-            "pitcher_narratives.cli",
-            "report",
-            "-p",
-            "592155",
-            "--persona",
-            "scout",
-        ],
-        **run_args,
-    )
-    assert no_flag.returncode == 0, f"stderr: {no_flag.stderr}"
-    assert with_scout.returncode == 0, f"stderr: {with_scout.stderr}"
-    assert no_flag.stdout.strip()
-    assert with_scout.stdout.strip()
-
-
-# ── Integration: verbose persona logging ──
-
-
-def test_cli_verbose_logs_persona():
-    """CLI-04: -v logs persona=<id> to stderr."""
-    result = subprocess.run(
-        [
-            sys.executable,
-            "-m",
-            "pitcher_narratives.cli",
-            "report",
-            "-p",
-            "592155",
-            "-v",
-            "--persona",
-            "analyst",
-        ],
-        capture_output=True,
-        text=True,
-        timeout=60,
-        env=_test_env(PITCHER_NARRATIVES_TEST_MODEL="1"),
-    )
-    assert result.returncode == 0, f"stderr: {result.stderr}"
-    assert "persona=analyst" in result.stderr
-
-
-def test_cli_no_verbose_no_persona_log():
-    """CLI-04: without -v, stderr does NOT contain the persona= log line."""
-    result = subprocess.run(
-        [
-            sys.executable,
-            "-m",
-            "pitcher_narratives.cli",
-            "report",
-            "-p",
-            "592155",
-            "--persona",
-            "analyst",
-        ],
-        capture_output=True,
-        text=True,
-        timeout=60,
-        env=_test_env(PITCHER_NARRATIVES_TEST_MODEL="1"),
-    )
-    assert result.returncode == 0, f"stderr: {result.stderr}"
-    assert "persona=analyst" not in result.stderr
-
-
-# ── Integration: --print-prompts renders the selected persona ──
-
-
-def test_cli_print_prompts_uses_selected_persona(tmp_path):
-    """CLI-03: --print-prompts renders the SELECTED persona's writer prompt."""
-    result = subprocess.run(
-        [
-            sys.executable,
-            "-m",
-            "pitcher_narratives.cli",
-            "report",
-            "-p",
-            "592155",
-            "--persona",
-            "analyst",
             "--print-prompts",
         ],
         capture_output=True,
         text=True,
         timeout=60,
         cwd=tmp_path,
-        env=_test_env(),  # --print-prompts bypasses API-key check
+        env=_test_env(),
     )
     assert result.returncode == 0, f"stderr: {result.stderr}"
-    # Analyst overlay uniquely mentions "newsletter" voice.
-    assert "newsletter" in result.stderr.lower()
-    # Sanity: generic-only structural marker must NOT appear.
+    # The single writer voice is dumped (shared analytical rules preamble)...
+    assert "ANALYTICAL RULES" in result.stderr
+    # ...and the removed generic-voice structure is gone.
     assert "## Summary Table" not in result.stderr
-
-
-def test_cli_print_prompts_uses_generic_persona(tmp_path):
-    """CLI-03: --print-prompts --persona generic renders the generic overlay."""
-    result = subprocess.run(
-        [
-            sys.executable,
-            "-m",
-            "pitcher_narratives.cli",
-            "report",
-            "-p",
-            "592155",
-            "--persona",
-            "generic",
-            "--print-prompts",
-        ],
-        capture_output=True,
-        text=True,
-        timeout=60,
-        cwd=tmp_path,
-        env=_test_env(),
-    )
-    assert result.returncode == 0, f"stderr: {result.stderr}"
-    # Generic overlay's unique structural marker.
-    assert "## Summary Table" in result.stderr
 
 
 # ── Subcommand routing ──────────────────────────────────────────────
@@ -832,7 +577,7 @@ def _pipe_result_with_flags(n: int):
     return PipelineResult(
         narrative="x",
         specialists=SpecialistOutputs(
-            stuff="", location="", runvalue="", trends="", game_shape=""
+            stuff="", location="", runvalue="", trends=""
         ),
         capsule_audit_flags=flags,
     )
@@ -846,9 +591,28 @@ def test_emit_mode_result_returns_unverified_status(capsys):
     clean = _pipe_result_with_flags(0)
     flagged = _pipe_result_with_flags(2)
 
-    assert _emit_mode_result(clean, persona="scout", mode=REPORT) is False
-    assert _emit_mode_result(flagged, persona="scout", mode=REPORT) is True
+    assert _emit_mode_result(clean, mode=REPORT)[0] is False
+    assert _emit_mode_result(flagged, mode=REPORT)[0] is True
     capsys.readouterr()  # absorb printed sections
+
+
+def test_emit_prints_capsule_once_and_no_corrected_section(capsys):
+    """The final narrative prints exactly once; no separate 'Corrected Capsule'."""
+    from pitcher_narratives.cli import _emit_mode_result
+    from pitcher_narratives.personas import REPORT
+    from pitcher_narratives.pipeline import PipelineResult, SpecialistOutputs
+
+    result = PipelineResult(
+        narrative="THE FINAL CAPSULE BODY",
+        specialists=SpecialistOutputs(
+            stuff="s", location="", runvalue="", trends=""
+        ),
+        capsule_revised=True,  # previously triggered a second '## Corrected Capsule'
+    )
+    _emit_mode_result(result, mode=REPORT)
+    out = capsys.readouterr().out
+    assert out.count("THE FINAL CAPSULE BODY") == 1
+    assert "Corrected Capsule" not in out
 
 
 def test_emit_mode_result_empty_narrative_is_not_unverified(capsys):
@@ -869,12 +633,12 @@ def test_emit_mode_result_empty_narrative_is_not_unverified(capsys):
     result = PipelineResult(
         narrative="",
         specialists=SpecialistOutputs.model_construct(
-            stuff="", location="", runvalue="", trends="", game_shape=""
+            stuff="", location="", runvalue="", trends=""
         ),
         capsule_audit_flags=flags,
     )
 
-    assert _emit_mode_result(result, persona="scout", mode=REPORT) is False
+    assert _emit_mode_result(result, mode=REPORT)[0] is False
     capsys.readouterr()
 
 
@@ -893,18 +657,106 @@ def test_emit_mode_result_runs_hallucination_guard_for_any_mode(capsys, monkeypa
     calls = []
     from pitcher_narratives import pipeline as pipeline_module
 
-    def _spy(text, *, persona=None):
-        calls.append((text, persona))
+    def _spy(text):
+        calls.append(text)
         return pipeline_module.HallucinationReport(unknown_metrics=[], outcome_stat_warnings=[])
 
     monkeypatch.setattr(pipeline_module, "check_hallucinated_metrics", _spy)
 
     clean = _pipe_result_with_flags(0)
-    cli_module._emit_mode_result(clean, persona="scout", mode=REPORT)
+    cli_module._emit_mode_result(clean, mode=REPORT)
     capsys.readouterr()
 
     assert len(calls) == 1
-    assert calls[0][0] == clean.narrative
+    assert calls[0] == clean.narrative
+
+
+def _diag_pipe_result(*, narrative="cap", revised=False, fact_flags=0):
+    from pitcher_narratives.pipeline import AuditFlag, PipelineResult, SpecialistOutputs
+
+    flags = [
+        AuditFlag(category="velocity", specialist="stuff", claim=f"c{i}",
+                  data_shows="d", suggested_fix="")
+        for i in range(fact_flags)
+    ]
+    return PipelineResult(
+        narrative=narrative,
+        specialists=SpecialistOutputs(
+            stuff="STUFF-TEXT", location="", runvalue="", trends=""
+        ),
+        capsule_revised=revised,
+        capsule_audit_flags=flags,
+    )
+
+
+def test_build_diagnostics_dict_shape():
+    from pitcher_narratives.cli import build_diagnostics_dict
+
+    diag = build_diagnostics_dict(_diag_pipe_result(fact_flags=2, revised=True))
+    assert diag["verified"] is False  # residual fact flags -> unverified
+    assert diag["capsule_revised"] is True
+    assert diag["stuff_analysis"] == "STUFF-TEXT"
+    assert len(diag["capsule_fact_check"]) == 2
+    assert diag["hallucination"] == {"unknown_metrics": [], "outcome_stat_warnings": []}
+
+
+def test_build_diagnostics_dict_skips_guard_on_empty_narrative(monkeypatch):
+    """No hallucination guard call when there's nothing to check."""
+    from pitcher_narratives import pipeline as pipeline_module
+    from pitcher_narratives.cli import build_diagnostics_dict
+
+    calls = []
+    monkeypatch.setattr(
+        pipeline_module, "check_hallucinated_metrics",
+        lambda text: calls.append(text)
+        or pipeline_module.HallucinationReport(unknown_metrics=[], outcome_stat_warnings=[]),
+    )
+    build_diagnostics_dict(_diag_pipe_result(narrative=""))
+    assert calls == []
+
+
+def test_render_diagnostics_text_has_sections():
+    from pitcher_narratives.cli import build_diagnostics_dict, render_diagnostics_text
+
+    text = render_diagnostics_text(build_diagnostics_dict(_diag_pipe_result()))
+    assert "## Diagnostics" in text
+    assert "### Stuff Analysis" in text
+    assert "### Data Audit" in text
+    assert "### Capsule Fact-Check" in text
+    assert "### Anchor Check" in text
+
+
+def test_emit_default_stdout_has_no_diagnostics(capsys):
+    from pitcher_narratives.cli import _emit_mode_result
+    from pitcher_narratives.personas import REPORT
+
+    _emit_mode_result(_diag_pipe_result(), mode=REPORT, verbose=False)
+    captured = capsys.readouterr()
+    assert "## Diagnostics" not in captured.out
+    assert "## Diagnostics" not in captured.err  # not verbose -> nowhere
+
+
+def test_emit_verbose_puts_diagnostics_on_stderr(capsys):
+    from pitcher_narratives.cli import _emit_mode_result
+    from pitcher_narratives.personas import REPORT
+
+    _emit_mode_result(_diag_pipe_result(), mode=REPORT, verbose=True)
+    captured = capsys.readouterr()
+    assert "## Diagnostics" not in captured.out
+    assert "## Diagnostics" in captured.err
+    assert "### Anchor Check" in captured.err
+
+
+def test_emit_returns_unverified_and_diag_dict(capsys):
+    from pitcher_narratives.cli import _emit_mode_result
+    from pitcher_narratives.personas import REPORT
+
+    unverified, diag = _emit_mode_result(
+        _diag_pipe_result(fact_flags=2), mode=REPORT
+    )
+    capsys.readouterr()
+    assert unverified is True
+    assert isinstance(diag, dict) and "verified" in diag
 
 
 def test_morning_subcommand_defaults(monkeypatch):
@@ -915,8 +767,14 @@ def test_morning_subcommand_defaults(monkeypatch):
     assert args.candidates == 25
     assert args.min_pitches == 20
     assert args.provider == "gemini"
-    assert args.persona == "scout"
     assert args.out == "morning-runs"
+    assert args.strict is False
+
+
+def test_morning_parser_accepts_strict_flag(monkeypatch):
+    monkeypatch.setattr(sys, "argv", ["cli", "morning", "--strict"])
+    args = parse_args()
+    assert args.strict is True
 
 
 def test_cli_recap_mode_runs_and_produces_output():
@@ -1004,11 +862,39 @@ def test_cli_report_changes_recap_all_run():
     assert result.stdout.count("## Executive Summary") == 2
 
 
+def test_report_writes_diagnostics_json_file(tmp_path):
+    out = tmp_path / "diag.json"
+    result = subprocess.run(
+        [sys.executable, "-m", "pitcher_narratives.cli", "report", "-p", "592155",
+         "--diagnostics-file", str(out)],
+        capture_output=True, text=True, timeout=60,
+        env=_test_env(PITCHER_NARRATIVES_TEST_MODEL="1"),
+    )
+    assert result.returncode == 0, f"stderr: {result.stderr}"
+    import json
+    payload = json.loads(out.read_text())
+    assert "report" in payload
+    assert "verified" in payload["report"]
+    assert "## Diagnostics" not in result.stdout  # sidecar, not stdout
+
+
 def test_report_parser_metrics_out_defaults_none(monkeypatch):
     """--metrics-out is off by default (no calibration output unless opted in)."""
     monkeypatch.setattr(sys, "argv", ["main.py", "report", "-p", "592155"])
     args = parse_args()
     assert args.metrics_out is None
+
+
+def test_report_parse_diagnostics_file(monkeypatch):
+    monkeypatch.setattr(sys, "argv", ["cli", "report", "-p", "1", "--diagnostics-file", "d.json"])
+    args = parse_args()
+    assert args.diagnostics_file == "d.json"
+
+
+def test_report_diagnostics_file_default_none(monkeypatch):
+    monkeypatch.setattr(sys, "argv", ["cli", "report", "-p", "1"])
+    args = parse_args()
+    assert args.diagnostics_file is None
 
 
 def test_append_metrics_records_writes_jsonl(tmp_path):
@@ -1024,7 +910,7 @@ def test_append_metrics_records_writes_jsonl(tmp_path):
         return PipelineResult(
             narrative="x",
             specialists=SpecialistOutputs(
-                stuff="", location="", runvalue="", trends="", game_shape=""
+                stuff="", location="", runvalue="", trends=""
             ),
             revision_count=rev,
         )
@@ -1070,6 +956,17 @@ def test_report_explain_model_defaults_true(monkeypatch):
 # ── scoreboard subcommand ──
 
 
+def _scoreboard_args(**over):
+    import argparse
+
+    base = dict(
+        window=1, min_pitches=20, starters_only=False, format="md",
+        top=0, min_score=0.0, verbose=False, curate=False, provider="gemini",
+    )
+    base.update(over)
+    return argparse.Namespace(**base)
+
+
 def test_scoreboard_parse_defaults(monkeypatch):
     monkeypatch.setattr(sys, "argv", ["main.py", "scoreboard"])
     args = parse_args()
@@ -1077,6 +974,12 @@ def test_scoreboard_parse_defaults(monkeypatch):
     assert args.window == 1
     assert args.min_pitches == 20
     assert args.starters_only is False
+    assert args.format == "md"
+    assert args.top == 0
+    assert args.min_score == 0.0
+    assert args.verbose is False
+    assert args.curate is False
+    assert args.provider == "gemini"
 
 
 def test_scoreboard_parse_flags(monkeypatch):
@@ -1090,16 +993,12 @@ def test_scoreboard_parse_flags(monkeypatch):
 
 def test_scoreboard_prints_full_board(monkeypatch, capsys):
     """scoreboard prints the render_full_board markdown, no LLM."""
-    import argparse
-
     from pitcher_narratives import scout as scout_mod
     from pitcher_narratives.cli import _run_scoreboard_command
 
     board = [_scored(1, "Ace SP", "SP", 12.0), _scored(2, "Setup RP", "RP", 6.0)]
     monkeypatch.setattr(scout_mod, "scout_appearances", lambda **kw: list(board))
-    _run_scoreboard_command(
-        argparse.Namespace(window=1, min_pitches=20, starters_only=False, json=False)
-    )
+    _run_scoreboard_command(_scoreboard_args())
     out = capsys.readouterr().out
     assert "# Scoreboard — 2026-07-04" in out
     assert "## The Full Board" in out
@@ -1107,39 +1006,30 @@ def test_scoreboard_prints_full_board(monkeypatch, capsys):
 
 
 def test_scoreboard_starters_only_drops_relievers(monkeypatch, capsys):
-    import argparse
-
     from pitcher_narratives import scout as scout_mod
     from pitcher_narratives.cli import _run_scoreboard_command
 
     board = [_scored(1, "Ace SP", "SP", 12.0), _scored(2, "Setup RP", "RP", 6.0)]
     monkeypatch.setattr(scout_mod, "scout_appearances", lambda **kw: list(board))
-    _run_scoreboard_command(
-        argparse.Namespace(window=1, min_pitches=20, starters_only=True, json=False)
-    )
+    _run_scoreboard_command(_scoreboard_args(starters_only=True))
     out = capsys.readouterr().out
     assert "Ace SP" in out
     assert "Setup RP" not in out
 
 
 def test_scoreboard_quiet_day(monkeypatch, capsys):
-    import argparse
-
     from pitcher_narratives import scout as scout_mod
     from pitcher_narratives.cli import _run_scoreboard_command
 
     monkeypatch.setattr(scout_mod, "scout_appearances", lambda **kw: [])
-    _run_scoreboard_command(
-        argparse.Namespace(window=1, min_pitches=20, starters_only=False, json=False)
-    )
+    _run_scoreboard_command(_scoreboard_args())
     captured = capsys.readouterr()
     assert captured.out == ""
     assert "quiet day" in captured.err
 
 
 def test_scoreboard_json_output(monkeypatch, capsys):
-    """--json emits parseable JSON with the scored appearances."""
-    import argparse
+    """--format json emits parseable JSON with the scored appearances."""
     import json
 
     from pitcher_narratives import scout as scout_mod
@@ -1147,26 +1037,155 @@ def test_scoreboard_json_output(monkeypatch, capsys):
 
     board = [_scored(1, "Ace SP", "SP", 12.0), _scored(2, "Setup RP", "RP", 6.0)]
     monkeypatch.setattr(scout_mod, "scout_appearances", lambda **kw: list(board))
-    _run_scoreboard_command(
-        argparse.Namespace(window=1, min_pitches=20, starters_only=False, json=True)
-    )
+    _run_scoreboard_command(_scoreboard_args(format="json"))
     payload = json.loads(capsys.readouterr().out)
     assert payload["game_date"] == "2026-07-04"
     assert [a["pitcher_name"] for a in payload["appearances"]] == ["Ace SP", "Setup RP"]
 
 
 def test_scoreboard_json_empty_is_valid(monkeypatch, capsys):
-    """--json on a quiet day still emits valid JSON to stdout (no stderr)."""
-    import argparse
+    """--format json on a quiet day still emits valid JSON to stdout (no stderr)."""
     import json
 
     from pitcher_narratives import scout as scout_mod
     from pitcher_narratives.cli import _run_scoreboard_command
 
     monkeypatch.setattr(scout_mod, "scout_appearances", lambda **kw: [])
-    _run_scoreboard_command(
-        argparse.Namespace(window=1, min_pitches=20, starters_only=False, json=True)
-    )
+    _run_scoreboard_command(_scoreboard_args(format="json"))
     captured = capsys.readouterr()
     assert json.loads(captured.out) == {"game_date": None, "appearances": []}
     assert captured.err == ""
+
+
+def test_scoreboard_parse_format_and_curate_flags(monkeypatch):
+    monkeypatch.setattr(
+        sys, "argv",
+        ["main.py", "scoreboard", "--format", "table", "-n", "5",
+         "--min-score", "4.0", "-v", "--curate", "--provider", "claude"],
+    )
+    args = parse_args()
+    assert args.format == "table"
+    assert args.top == 5
+    assert args.min_score == 4.0
+    assert args.verbose is True
+    assert args.curate is True
+    assert args.provider == "claude"
+
+
+def test_scoreboard_table_format(monkeypatch, capsys):
+    from pitcher_narratives import scout as scout_mod
+    from pitcher_narratives.cli import _run_scoreboard_command
+
+    board = [_scored(1, "Ace SP", "SP", 12.0), _scored(2, "Setup RP", "RP", 6.0)]
+    monkeypatch.setattr(scout_mod, "scout_appearances", lambda **kw: list(board))
+    _run_scoreboard_command(_scoreboard_args(format="table"))
+    out = capsys.readouterr().out
+    assert "Score" in out and "Signals" in out
+    assert "Ace SP" in out and "Setup RP" in out
+
+
+def test_scoreboard_min_score_filter(monkeypatch, capsys):
+    from pitcher_narratives import scout as scout_mod
+    from pitcher_narratives.cli import _run_scoreboard_command
+
+    board = [_scored(1, "Ace SP", "SP", 12.0), _scored(2, "Weak RP", "RP", 2.0)]
+    monkeypatch.setattr(scout_mod, "scout_appearances", lambda **kw: list(board))
+    _run_scoreboard_command(_scoreboard_args(min_score=5.0))
+    out = capsys.readouterr().out
+    assert "Ace SP" in out
+    assert "Weak RP" not in out
+
+
+def test_scoreboard_curate_prints_slate(monkeypatch, capsys):
+    from pitcher_narratives import curator as curator_mod
+    from pitcher_narratives import scout as scout_mod
+    from pitcher_narratives.cli import _run_scoreboard_command
+    from pitcher_narratives.curator import CurationPick, CurationSlate
+
+    board = [_scored(1, "Ace SP", "SP", 12.0)]
+    monkeypatch.setattr(scout_mod, "scout_appearances", lambda **kw: list(board))
+    slate = CurationSlate(picks=[CurationPick(
+        pitcher_id=1, category="clean_breakout", angle="velo up",
+        conviction="high", conviction_reason="shape agrees",
+    )])
+    monkeypatch.setattr(curator_mod, "select_slate", lambda *a, **k: slate)
+    monkeypatch.setenv("GEMINI_API_KEY", "x")
+    _run_scoreboard_command(_scoreboard_args(curate=True))
+    out = capsys.readouterr().out
+    assert "CLEAN BREAKOUT" in out
+    assert "Ace SP (high): velo up" in out
+
+
+# ── Code-review fixes (WS1/WS2 follow-up) ──
+
+
+def test_build_diagnostics_dict_empty_narrative_not_verified():
+    """An empty-narrative mode is not 'verified' and reports has_capsule=False."""
+    from pitcher_narratives.cli import build_diagnostics_dict
+
+    diag = build_diagnostics_dict(_diag_pipe_result(narrative=""))
+    assert diag["has_capsule"] is False
+    assert diag["verified"] is False
+
+
+def test_emit_empty_narrative_logs_warning(caplog):
+    """Empty-capsule failures are flagged loudly (repo convention)."""
+    import logging
+
+    from pitcher_narratives.cli import _emit_mode_result
+    from pitcher_narratives.personas import REPORT
+
+    with caplog.at_level(logging.WARNING):
+        _emit_mode_result(_diag_pipe_result(narrative=""), mode=REPORT)
+    assert any("empty narrative" in r.message.lower() for r in caplog.records)
+
+
+def test_emit_hallucination_pointer_on_stdout(capsys, monkeypatch):
+    """Hallucination flags surface a pointer on stdout even without -v."""
+    from pitcher_narratives import pipeline as pipeline_module
+    from pitcher_narratives.cli import _emit_mode_result
+    from pitcher_narratives.personas import REPORT
+
+    monkeypatch.setattr(
+        pipeline_module,
+        "check_hallucinated_metrics",
+        lambda text: pipeline_module.HallucinationReport(
+            unknown_metrics=["FIP"], outcome_stat_warnings=[]
+        ),
+    )
+    _emit_mode_result(_diag_pipe_result(narrative="cap"), mode=REPORT)
+    out = capsys.readouterr().out
+    assert "hallucinated-metric flag" in out
+
+
+def test_emit_no_hallucination_pointer_when_clean(capsys):
+    """No pointer when the guard is clean."""
+    from pitcher_narratives.cli import _emit_mode_result
+    from pitcher_narratives.personas import REPORT
+
+    _emit_mode_result(_diag_pipe_result(narrative="cap"), mode=REPORT)
+    out = capsys.readouterr().out
+    assert "hallucinated-metric flag" not in out
+
+
+def test_scoreboard_curate_json_conflict_exits_2():
+    """--curate + --format json is a fail-fast error, not a silent no-op."""
+    from pitcher_narratives.cli import _run_scoreboard_command
+
+    with pytest.raises(SystemExit) as exc:
+        _run_scoreboard_command(_scoreboard_args(curate=True, format="json"))
+    assert exc.value.code == 2
+
+
+def test_scoreboard_verbose_non_table_warns(monkeypatch, caplog):
+    """`-v` under a non-table format warns instead of silently doing nothing."""
+    import logging
+
+    from pitcher_narratives import scout as scout_mod
+    from pitcher_narratives.cli import _run_scoreboard_command
+
+    board = [_scored(1, "Ace SP", "SP", 12.0)]
+    monkeypatch.setattr(scout_mod, "scout_appearances", lambda **kw: list(board))
+    with caplog.at_level(logging.WARNING):
+        _run_scoreboard_command(_scoreboard_args(verbose=True, format="md"))
+    assert any("only affects --format table" in r.message for r in caplog.records)

@@ -7,6 +7,7 @@ filters to configurable lookback windows.
 
 from __future__ import annotations
 
+import logging
 import os
 from dataclasses import dataclass
 from pathlib import Path
@@ -14,6 +15,8 @@ from pathlib import Path
 import polars as pl
 
 from pitcher_narratives.temporal import _DEFAULT_RECENT_APPEARANCES
+
+log = logging.getLogger("pitcher_narratives.data")
 
 __all__ = [
     "AGGS_DIR",

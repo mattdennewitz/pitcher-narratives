@@ -2,10 +2,10 @@ run:
 	uv run pitcher-narratives report -p 657277 -n 10
 
 scout:
-	uv run pitcher-scout -n 25 --min-score 5.0 -v
+	uv run pitcher-narratives scoreboard -n 25 --min-score 5.0 --format table -v
 
 curate:
-	uv run pitcher-scout -n 25 --min-score 5.0 --curate
+	uv run pitcher-narratives scoreboard -n 25 --min-score 5.0 --curate
 
 # ── Data sync from Cloudflare R2 ──────────────────────────────────────
 # Pulls the season parquet and the latest aggregate snapshot from the

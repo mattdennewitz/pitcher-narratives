@@ -1,17 +1,16 @@
 """Multi-agent specialist→auditor→writer report pipeline (v1.7 prototype).
 
 Architecture:
-  Phase 1: 5 specialist agents run in parallel, each producing a focused
+  Phase 1: 4 specialist agents run in parallel, each producing a focused
   micro-analysis with league baselines (including stddev and S-variant
   benchmarks) injected for grounding:
     - Stuff Explainer: velocity/movement → S+ grades via S-variant predictions
     - Location Analyst: P vs S divergence, zone/chase rates, location impact
     - Run Value Decomposer: 13-outcome attribution, dominant value drivers
     - Trend Spotter: window vs season deltas in velocity, movement, usage, grades
-    - Game Shape Analyst: TTO degradation, velocity arc, within-game mix shifts
 
   Phase 1.5: Per-specialist audit + revision loop. Each specialist's output
-  is audited independently (5 audits run in parallel) against the raw data
+  is audited independently (4 audits run in parallel) against the raw data
   and league baselines. Flagged specialists are re-run with their original
   input + audit corrections to produce clean output. The writer never sees
   flawed prose — only corrected versions.
@@ -84,28 +83,20 @@ from pitcher_narratives.engine import (
     render_league_baselines,
 )
 from pitcher_narratives.personas import (
-    BRIEF,
     DEFAULT_MODE,
-    DEFAULT_PERSONA,
     NarrationMode,
-    Persona,
     RECAP,
-    build_system_prompt,
     build_writer_system_prompt,
-    get_persona,
 )
 
 if TYPE_CHECKING:
     from pitcher_narratives.curator import CurationPick
 from pitcher_narratives.prompt_builder import (
-    render_appearances_section,
     render_arsenal_section,
     render_fastball_section,
     render_hard_hit_section,
     render_release_point_section,
-    render_role_section,
     render_temporal_section,
-    render_tto_section,
     render_yoy_section,
 )
 from pitcher_narratives.shape import render_pitch_shape
@@ -130,12 +121,13 @@ __all__ = [
     "KeySignals", "PipelineAgents", "PipelineResult",
     "UserPrompt", "audit_and_revise_specialists", "build_capsule_audit_input",
     "build_fact_revision_message",
+    "build_grade_input",
     "build_summary_input",
     "build_writer_input", "build_recap_overlay", "check_explainer_present", "check_hallucinated_metrics",
     "flag_record", "flag_summary", "generate_pipeline_streaming", "is_unverified",
     "make_pipeline_agents", "render_recap", "residual_banner", "run_analysis_spine",
     "run_anchor_revision_loop",
-    "run_capsule_audit", "run_narration_modes", "run_spine_core", "run_spine_tail",
+    "run_capsule_audit", "run_data_audit", "run_narration_modes", "run_spine_core", "run_spine_tail",
     "run_specialists",
     "write_pipeline_data_file",
 ]
@@ -180,7 +172,7 @@ def _record_usage(
 # ([NORMAL], [OUTLIER], [SMALL SAMPLE ...]) are computed in engine.baselines
 # and fed into specialist *inputs* as internal annotations. Specialists must
 # interpret them, never echo the literal token into prose. Centralized here so
-# the rule stays identical across all five specialists.
+# the rule stays identical across all four specialists.
 _NO_TAG_ECHO_RULE = """
 
 TAG HYGIENE (absolute): The bracketed tags in the data — [NORMAL], \
@@ -398,63 +390,7 @@ when a delta is within the "steady" threshold.
 more hard contact = likely related).
 - One focused paragraph covering the key trends. Skip what's steady.
 - No projection or prediction — just what changed and by how much.
-- Do NOT analyze TTO patterns, velocity arcs, or within-game \
-progression — a separate specialist handles that.
 - Plain prose, no bullet lists."""
-
-_GAME_SHAPE_SPECIALIST_PROMPT = """\
-You are a game shape analyst. Your job is to describe how the pitcher's \
-effectiveness and approach change WITHIN a game — from first pitch to last.
-
-Look at:
-- TTO splits: how do velocity, P+, and pitch mix change by pass?
-- Velocity arc: does velocity hold, build, or drop within the outing?
-- Mix shifts by pass: does the pitcher abandon or introduce pitches \
-as the game progresses?
-- Platoon-specific TTO patterns: does the mix shift differently \
-against LHB vs RHB in later passes?
-- Workload context: pitch counts, rest days, consecutive days pitched.
-
-Rules:
-- TEMPORAL GROUNDING: The data includes a "Temporal Context" section. \
-Respect the prior-year relevance level. Do not attribute within-game \
-patterns to cumulative seasonal fatigue if the current season is young. \
-A pitcher with 5 early-April appearances is not showing late-season wear.
-- Lead with the most notable within-game pattern.
-- Connect mix shifts to effectiveness: if he ramps the sinker in \
-pass 2, does that help or hurt?
-- Flag stamina signals: velo cliff, S+ drop, command loss in later \
-passes.
-- One focused paragraph. Skip what's unremarkable.
-- Do NOT analyze window-vs-season trends — a separate specialist \
-handles that.
-- Plain prose, no bullet lists."""
-
-
-# Role-specific guidance injected into the Game Shape specialist's USER
-# message based on `ctx.role`. These blocks reinstate the SP/RP focus
-# that the old single-agent synthesizer had before v1.9 consolidation —
-# the multi-agent architecture implicitly covers these concerns, but
-# explicit role guidance keeps reliever reports from drifting into
-# starter-shaped analysis (and vice versa).
-
-_SP_GAME_SHAPE_GUIDANCE = """\
-## Role Focus: STARTER
-
-Additional focus for this starter:
-- TTO pass breakdown: which pitches gain or lose effectiveness by pass?
-- Pitch mix evolution across passes: is he leaning on something new late?
-- Platoon-specific TTO patterns (what does he throw vs LHB in pass 3?)
-- Stamina trajectory: does velocity, S+, or L+ hold, improve, or cliff?"""
-
-_RP_GAME_SHAPE_GUIDANCE = """\
-## Role Focus: RELIEVER
-
-Additional focus for this reliever:
-- Rest day impact on velocity, S+, and L+ (back-to-back vs rested — better or worse?)
-- Primary weapon identification: what is the put-away pitch? Cite its P+/S+/L+ triad
-- Platoon-specific strengths and vulnerabilities by handedness — only when the input includes TTO/platoon splits; if absent, skip this angle rather than inferring it"""
-
 
 # ═══════════════════════════════════════════════════════════════════════
 # DATA AUDITOR PROMPT
@@ -501,7 +437,7 @@ For each problem found, report:
 - What the data actually shows
 - A suggested correction
 
-Checks that reference [NORMAL]/[OUTLIER] tags or S-variant metrics (xRV100_S, xWhiff_S) apply ONLY when those artifacts appear in the ground truth data. When the ground truth has no such tags or metrics (e.g. trends or game-shape data), skip those checks — do not flag their absence.
+Checks that reference [NORMAL]/[OUTLIER] tags or S-variant metrics (xRV100_S, xWhiff_S) apply ONLY when those artifacts appear in the ground truth data. When the ground truth has no such tags or metrics (e.g. trends data), skip those checks — do not flag their absence.
 
 If everything checks out, return an empty list."""
 
@@ -544,7 +480,7 @@ If the capsule is faithful, return an empty list of flags."""
 def _build_capsule_ground_truth(
     ctx: PitcherContext, *, trend_frame_comparison: str | None = None
 ) -> str:
-    """Combined raw ground truth (all five specialists' input tables).
+    """Combined raw ground truth (all four specialists' input tables).
 
     ``trend_frame_comparison`` threads the CHANGES-mode recent-vs-prior block
     into the trends input exactly as the trends specialist saw it — the same
@@ -552,7 +488,7 @@ def _build_capsule_ground_truth(
     it the capsule auditor sees only recent-vs-season deltas and "corrects"
     correct prior-frame numbers into the season frame.
     """
-    names = ["stuff", "location", "runvalue", "trends", "game_shape"]
+    names = ["stuff", "location", "runvalue", "trends"]
     return "\n\n".join(
         _get_specialist_input_text(
             name, ctx, trend_frame_comparison=trend_frame_comparison
@@ -592,7 +528,6 @@ def _build_parity_union(
         "location": specialists.location,
         "runvalue": specialists.runvalue,
         "trends": specialists.trends,
-        "game_shape": specialists.game_shape,
     }
     parts.extend(
         text for name, text in specialist_prose.items() if name not in exclude
@@ -812,6 +747,23 @@ def _build_location_input(ctx: PitcherContext) -> UserPrompt:
     return ["\n".join(header_lines), CachePoint(), "\n".join(data_lines)]
 
 
+def build_grade_input(ctx: PitcherContext, family: str) -> UserPrompt:
+    """Public dispatcher: the grounded specialist input for a grade family.
+
+    S -> stuff input (S+ evidence); L -> location input (L+ evidence);
+    P -> stuff + location (P+ = stuff + location; P - S isolates location).
+    Reused verbatim from the analysis spine so the ask command and the
+    report share one grounded evidence surface.
+    """
+    if family == "S":
+        return _build_stuff_input(ctx)
+    if family == "L":
+        return _build_location_input(ctx)
+    if family == "P":
+        return [*_build_stuff_input(ctx), *_build_location_input(ctx)]
+    raise ValueError(f"Unknown grade family {family!r}; expected 'S', 'L', or 'P'")
+
+
 def _build_runvalue_input(ctx: PitcherContext) -> UserPrompt:
     """Build input for the run value specialist from attributions.
 
@@ -866,92 +818,12 @@ def _build_trend_input(ctx: PitcherContext, *, frame_comparison: str | None = No
     ]
 
 
-def _role_game_shape_guidance(role: str) -> str | None:
-    """Return role-specific game shape guidance, or None if role is unknown.
-
-    Starter and reliever reports need different emphasis — starters care
-    about TTO progression and stamina, relievers care about rest-day
-    impact and put-away pitches. This guidance is injected into the Game
-    Shape specialist's user message so it biases the analysis toward
-    role-appropriate signals without hard-coding role branches into the
-    system prompt.
-    """
-    normalized = role.upper() if role else ""
-    if normalized in ("SP", "STARTER"):
-        return _SP_GAME_SHAPE_GUIDANCE
-    if normalized in ("RP", "RELIEVER"):
-        return _RP_GAME_SHAPE_GUIDANCE
-    return None
-
-
-def _build_game_shape_input(ctx: PitcherContext) -> UserPrompt:
-    """Build input for the game shape specialist -- TTO, velocity arc, workload.
-
-    Returns a UserPrompt list with a CachePoint between the header+baselines
-    prefix and the game shape data sections. Role-specific guidance (SP or
-    RP) is injected into the prefix so it sits above the cache breakpoint
-    and biases the whole specialist analysis.
-    """
-    baselines = render_league_baselines(_pitch_types(ctx))
-    prefix_sections: list[str] = [
-        f"## {ctx.pitcher_name} ({ctx.throws}HP, {ctx.role})\n",
-    ]
-    role_guidance = _role_game_shape_guidance(ctx.role)
-    if role_guidance is not None:
-        prefix_sections.append(role_guidance)
-    prefix_sections.append(baselines)
-
-    data_sections = [
-        render_temporal_section(ctx),
-        render_tto_section(ctx),
-        render_fastball_section(ctx),
-        render_appearances_section(ctx),
-        render_role_section(ctx),
-    ]
-    # Cross-season context (when available) — game shape gets workload + usage shifts
-    css = ctx.cross_season_summary
-    at = ctx.arsenal_trend
-    if css is not None or at is not None:
-        yoy_lines = ["## Year-over-Year Context"]
-        if css is not None:
-            # Workload comes from TemporalContext (single source of truth)
-            t = ctx.temporal
-            yoy_lines.append(
-                f"- Workload: {t.current_season_appearances} app / {t.current_season_ip} IP "
-                f"(prior {t.prior_season}: {t.prior_season_appearances} app / {t.prior_season_ip} IP)"
-            )
-        if at is not None:
-            for pt in at.continued[:4]:
-                parts = []
-                if pt.usage_delta and "Steady" not in pt.usage_delta:
-                    parts.append(f"usage {pt.usage_delta}")
-                if pt.velo_delta and "Steady" not in pt.velo_delta:
-                    parts.append(f"velo {pt.velo_delta}")
-                if parts:
-                    yoy_lines.append(f"- {pt.pitch_name}: {', '.join(parts)}")
-            if at.added:
-                yoy_lines.append(
-                    f"- Added: {', '.join(p.pitch_name for p in at.added)}"
-                )
-            if at.dropped:
-                yoy_lines.append(
-                    f"- Dropped: {', '.join(p.pitch_name for p in at.dropped)}"
-                )
-        data_sections.append("\n".join(yoy_lines))
-    return [
-        "\n\n".join(s for s in prefix_sections if s),
-        CachePoint(),
-        "\n\n".join(s for s in data_sections if s),
-    ]
-
-
 def build_writer_input(
     ctx: PitcherContext,
     stuff: str,
     location: str,
     runvalue: str,
     trends: str,
-    game_shape: str,
     *,
     key_signals: KeySignals | None = None,
 ) -> str:
@@ -972,8 +844,7 @@ def build_writer_input(
         f"## Specialist Analysis 1: Stuff\n{stuff}\n",
         f"## Specialist Analysis 2: Location\n{location}\n",
         f"## Specialist Analysis 3: Run Value\n{runvalue}\n",
-        f"## Specialist Analysis 4: Trends\n{trends}\n",
-        f"## Specialist Analysis 5: Game Shape\n{game_shape}",
+        f"## Specialist Analysis 4: Trends\n{trends}",
     ])
     return "\n\n".join(parts)
 
@@ -1044,7 +915,6 @@ def _get_specialist_input(
         "stuff": _build_stuff_input,
         "location": _build_location_input,
         "runvalue": _build_runvalue_input,
-        "game_shape": _build_game_shape_input,
     }
     return builders[name](ctx)
 
@@ -1110,7 +980,7 @@ async def audit_and_revise_specialists(
 ) -> tuple[SpecialistOutputs, list[AuditFlag], set[str]]:
     """Audit each specialist's output independently, revise any with flags.
 
-    Phase 1.5a: Run 5 per-specialist audits concurrently.
+    Phase 1.5a: Run 4 per-specialist audits concurrently.
     Phase 1.5b: For any flagged specialist, re-run with audit feedback.
     Phase 1.5c: Re-audit the revised specialists ONCE (bounded — no loop) and
     collect a ``residual`` set of specialists whose revision still flagged or
@@ -1119,8 +989,8 @@ async def audit_and_revise_specialists(
 
     Args:
         names: Optional subset of specialist names to audit/revise. When
-            omitted, all five specialists are audited (current behavior).
-            The returned SpecialistOutputs always carries all five fields;
+            omitted, all four specialists are audited (current behavior).
+            The returned SpecialistOutputs always carries all four fields;
             unlisted specialists pass through unchanged.
         trend_frame_comparison: CHANGES-mode frame-comparison block threaded
             into the trends specialist's audit ground truth so the auditor sees
@@ -1130,10 +1000,10 @@ async def audit_and_revise_specialists(
         Tuple of (clean SpecialistOutputs, all collected AuditFlags, residual
         specialist-name set).
     """
-    all_names = ["stuff", "location", "runvalue", "trends", "game_shape"]
+    all_names = ["stuff", "location", "runvalue", "trends"]
     audit_names = names if names is not None else all_names
 
-    # Full output map (all five) so the returned SpecialistOutputs is always
+    # Full output map (all four) so the returned SpecialistOutputs is always
     # complete; only the audit_names subset is actually audited/revised.
     outputs: dict[str, str] = {
         name: getattr(specialists, name) for name in all_names
@@ -1276,6 +1146,24 @@ async def audit_and_revise_specialists(
     )
 
 
+async def run_data_audit(
+    ground_truth: str,
+    answer: str,
+    *,
+    provider: str = "gemini",
+    model_override: Any = None,
+) -> AuditResult:
+    """Fact-check a single free-form answer against its ground-truth input.
+
+    Reuses the spine's data-auditor agent so a Q&A answer gets the same
+    anti-fabrication guard as a report specialist.
+    """
+    agents = make_pipeline_agents(provider)
+    audit_input = _build_specialist_audit_input(ground_truth, answer)
+    result = await agents.auditor.run(**agent_kwargs(audit_input, model_override))
+    return result.output
+
+
 # ═══════════════════════════════════════════════════════════════════════
 # PROMPT DATA FILE (for traceability)
 # ═══════════════════════════════════════════════════════════════════════
@@ -1283,7 +1171,6 @@ async def audit_and_revise_specialists(
 def _render_pipeline_data_sections(
     ctx: PitcherContext,
     *,
-    persona: str = "scout",
     prior_ctx: PitcherContext | None = None,
 ) -> list[str]:
     """Render all pipeline prompt sections as a list of strings.
@@ -1292,12 +1179,11 @@ def _render_pipeline_data_sections(
     by callers that want the rendered text without a disk roundtrip
     (e.g. cli.py --print-prompts).
 
-    The persona arg controls which composed writer prompt is rendered in
-    the WRITER section. When prior_ctx is provided, the TRENDS specialist
-    input includes the RECENT-vs-PRIOR comparison block; when None (the
-    default), output is unchanged from before this parameter existed.
+    The WRITER section renders the single mode-composed writer prompt.
+    When prior_ctx is provided, the TRENDS specialist input includes the
+    RECENT-vs-PRIOR comparison block; when None (the default), output is
+    unchanged from before this parameter existed.
     """
-    persona_obj = get_persona(persona)
     sep = "═" * 72
     sections: list[str] = []
 
@@ -1313,7 +1199,6 @@ def _render_pipeline_data_sections(
         ("SPECIALIST 2: LOCATION", _LOCATION_SPECIALIST_PROMPT, _render_user_prompt(_build_location_input(ctx))),
         ("SPECIALIST 3: RUN VALUE", _RUNVALUE_SPECIALIST_PROMPT, _render_user_prompt(_build_runvalue_input(ctx))),
         ("SPECIALIST 4: TRENDS", _TREND_SPECIALIST_PROMPT, _render_user_prompt(_build_trend_input(ctx, frame_comparison=trend_frame_comparison))),
-        ("SPECIALIST 5: GAME SHAPE", _GAME_SHAPE_SPECIALIST_PROMPT, _render_user_prompt(_build_game_shape_input(ctx))),
     ]
     for label, system, user in specialist_phases:
         sections.append(f"\n{sep}\n{label}\n{sep}\n")
@@ -1326,7 +1211,7 @@ def _render_pipeline_data_sections(
     sections.append(
         "## User Message\n\n"
         "[Receives: ground truth data (same as stuff specialist input) + "
-        "all 5 specialist outputs for validation]\n"
+        "all 4 specialist outputs for validation]\n"
     )
 
     # Signal extractor
@@ -1334,30 +1219,19 @@ def _render_pipeline_data_sections(
     sections.append(f"## System Prompt\n\n{SIGNAL_EXTRACTOR_PROMPT}\n")
     sections.append(
         "## User Message\n\n"
-        "[Receives: all 5 specialist outputs (without key signals)]\n"
+        "[Receives: all 4 specialist outputs (without key signals)]\n"
     )
 
     # Narrative pipeline: writer + anchor + executive summary
     sections.append(f"\n{sep}\nWRITER\n{sep}\n")
-    sections.append(f"## System Prompt\n\n{build_writer_system_prompt(persona_obj)}\n")
+    sections.append(f"## System Prompt\n\n{build_writer_system_prompt(DEFAULT_MODE)}\n")
     sections.append(
         "## User Message\n\n"
-        "[Receives: key signals + all 5 specialist outputs]\n"
+        "[Receives: key signals + all 4 specialist outputs]\n"
     )
 
     sections.append(f"\n{sep}\nEXECUTIVE SUMMARY (second step — summarizes the final report)\n{sep}\n")
     sections.append(f"## System Prompt\n\n{_EXECUTIVE_SUMMARY_PROMPT}\n")
-    sections.append(
-        "## User Message\n\n"
-        + build_summary_input(
-            "[final report capsule, post anchor-revision]",
-            "[writer input: key signals + clean specialist analyses]",
-        )
-        + "\n"
-    )
-
-    sections.append(f"\n{sep}\nBRIEF (second step — summarizes the final report)\n{sep}\n")
-    sections.append(f"## System Prompt\n\n{build_system_prompt(persona_obj, BRIEF)}\n")
     sections.append(
         "## User Message\n\n"
         + build_summary_input(
@@ -1382,7 +1256,6 @@ def write_pipeline_data_file(
     pitcher_id: int,
     provider: str,
     *,
-    persona: str = "scout",
     prior_ctx: PitcherContext | None = None,
 ) -> tuple[str, str]:
     """Write all pipeline prompts to a data file for end-to-end tracing.
@@ -1394,8 +1267,6 @@ def write_pipeline_data_file(
         ctx: Assembled pitcher context.
         pitcher_id: MLB pitcher ID for the filename.
         provider: LLM provider key for the filename.
-        persona: Persona id string (default "scout"); controls which
-            composed writer prompt is rendered in the WRITER section.
         prior_ctx: Optional prior-window context; when provided, the
             TRENDS specialist section includes the RECENT-vs-PRIOR
             comparison block. None (default) leaves output unchanged.
@@ -1411,7 +1282,7 @@ def write_pipeline_data_file(
     """
     from pathlib import Path
 
-    sections = _render_pipeline_data_sections(ctx, persona=persona, prior_ctx=prior_ctx)
+    sections = _render_pipeline_data_sections(ctx, prior_ctx=prior_ctx)
     text = "\n".join(sections)
 
     filename = f"data-{pitcher_id}-{provider}-pipeline.md"
@@ -1430,7 +1301,6 @@ class PipelineResult(BaseModel):
     """Result from the multi-agent pipeline."""
     narrative: str
     executive_summary: list[str] = []
-    brief: str = ""
     specialists: SpecialistOutputs
     key_signals: KeySignals | None = None
     audit_flags: list[AuditFlag] = []
@@ -1534,18 +1404,16 @@ class PipelineAgents(NamedTuple):
     location: Agent[None, str]
     runvalue: Agent[None, str]
     trends: Agent[None, str]
-    game_shape: Agent[None, str]
     writer: Agent[None, str]
     auditor: Agent[None, AuditResult]
     capsule_auditor: Agent[None, AuditResult]
     anchor: Agent[None, AnchorResult]
     summary: Agent[None, str]
     signal_extractor: Agent[None, KeySignals]
-    brief: Agent[None, str]
     mini_model_name: str = ""  # bare model name for UsageTracker calls in the spine
 
     def specialist_dict(self) -> dict[str, Agent[None, str]]:
-        """Return the five specialist agents keyed by name.
+        """Return the four specialist agents keyed by name.
 
         Used to pass specialists to audit_and_revise_specialists. Adding a
         new specialist only requires updating PipelineAgents — callers never
@@ -1556,14 +1424,12 @@ class PipelineAgents(NamedTuple):
             "location": self.location,
             "runvalue": self.runvalue,
             "trends": self.trends,
-            "game_shape": self.game_shape,
         }
 
 
 def make_pipeline_agents(
     provider: str = "gemini",
     thinking: ThinkingEffort = "high",
-    persona: Persona = DEFAULT_PERSONA,
     mode: NarrationMode = DEFAULT_MODE,
     explain_model: bool = True,
 ) -> PipelineAgents:
@@ -1599,17 +1465,16 @@ def make_pipeline_agents(
     # output; on Claude mini=True already disables thinking, leaving the full
     # MEDIUM budget for output.
     signal_settings = make_model_settings(provider, cap_thinking(thinking, "medium"), 0.3, max_tokens=TOKEN_BUDGET_MEDIUM, mini=True)
-    # Second-step summarizers (executive summary + brief) distill the finished
-    # report from a large grounded input. Thinking is disabled so its tokens
-    # don't consume the output budget (which truncated the response); the cap is
-    # MEDIUM for headroom. They differ only in temperature.
+    # Second-step summarizer (executive summary) distills the finished report
+    # from a large grounded input. Thinking is disabled so its tokens don't
+    # consume the output budget (which truncated the response); the cap is
+    # MEDIUM for headroom.
     def _distillation_settings(temperature: float) -> ModelSettings:
         return make_model_settings(
             provider, cap_thinking(thinking, "low"), temperature,
             max_tokens=TOKEN_BUDGET_MEDIUM, mini=True, disable_thinking=True,
         )
     report_summary_settings = _distillation_settings(0.3)
-    brief_settings = _distillation_settings(0.6)
 
     # Prose agents carry the shared skills toolset so they can consult
     # project skills (e.g. statcast-data-conventions) on demand. The
@@ -1636,23 +1501,12 @@ def make_pipeline_agents(
                      model_settings=writer_settings, toolsets=skills, retries=3,
                      defer_model_check=True)
 
-    def _brief(prompt: str) -> Agent[None, str]:
-        # Mini model: BRIEF distills an already-written, anchored report —
-        # cheaper than composing it. Persona voice instructions still apply
-        # via build_system_prompt(persona, BRIEF). Tool-free (a hallucinated
-        # skill call must not kill this non-critical extra); retries=3 mirrors
-        # the writer's resilience.
-        return Agent(mini_model, output_type=str, system_prompt=prompt,
-                     model_settings=brief_settings, retries=3,
-                     defer_model_check=True)
-
     return PipelineAgents(
         stuff=_specialist(_STUFF_SPECIALIST_PROMPT),
         location=_mini_specialist(_LOCATION_SPECIALIST_PROMPT),
         runvalue=_mini_specialist(_RUNVALUE_SPECIALIST_PROMPT),
         trends=_mini_specialist_compact(_TREND_SPECIALIST_PROMPT),
-        game_shape=_mini_specialist_compact(_GAME_SHAPE_SPECIALIST_PROMPT),
-        writer=_writer(build_writer_system_prompt(persona, mode, explain_model=explain_model)),
+        writer=_writer(build_writer_system_prompt(mode, explain_model=explain_model)),
         auditor=Agent(mini_model, output_type=AuditResult, system_prompt=_DATA_AUDITOR_PROMPT,
                       model_settings=checker_settings, retries=5, defer_model_check=True),
         capsule_auditor=Agent(mini_model, output_type=AuditResult, system_prompt=_CAPSULE_AUDITOR_PROMPT,
@@ -1667,7 +1521,6 @@ def make_pipeline_agents(
                       model_settings=report_summary_settings, retries=3, defer_model_check=True),
         signal_extractor=Agent(mini_model, output_type=KeySignals, system_prompt=SIGNAL_EXTRACTOR_PROMPT,
                                model_settings=signal_settings, retries=3, defer_model_check=True),
-        brief=_brief(build_system_prompt(persona, BRIEF)),
         mini_model_name=model_label(mini_model),
     )
 
@@ -1681,7 +1534,6 @@ async def run_specialists(
     location_agent: Agent[None, str],
     runvalue_agent: Agent[None, str],
     trends_agent: Agent[None, str],
-    game_shape_agent: Agent[None, str],
     ctx: PitcherContext,
     _model_override: Any = None,
     *,
@@ -1692,7 +1544,7 @@ async def run_specialists(
 ) -> SpecialistOutputs:
     """Run the specialists concurrently.
 
-    By default all five run. Pass ``names`` to run only a subset (used by the
+    By default all four run. Pass ``names`` to run only a subset (used by the
     core/tail spine split); unlisted specialists default to an empty string in
     the returned SpecialistOutputs.
     """
@@ -1701,7 +1553,6 @@ async def run_specialists(
         "location": (location_agent, _build_location_input(ctx)),
         "runvalue": (runvalue_agent, _build_runvalue_input(ctx)),
         "trends": (trends_agent, _build_trend_input(ctx, frame_comparison=trend_frame_comparison)),
-        "game_shape": (game_shape_agent, _build_game_shape_input(ctx)),
     }
     selected = list(all_inputs) if names is None else names
 
@@ -1726,7 +1577,7 @@ async def run_specialists(
     return SpecialistOutputs(**outputs)
 
 
-_CORE_SPECIALISTS = ["stuff", "location", "runvalue", "game_shape"]
+_CORE_SPECIALISTS = ["stuff", "location", "runvalue"]
 _TAIL_SPECIALISTS = ["trends"]
 
 
@@ -1739,7 +1590,7 @@ async def run_spine_core(
 ) -> CoreContext:
     """Run the frame-agnostic core of the analysis spine.
 
-    Runs the stuff/location/run-value/game-shape specialists and audits them.
+    Runs the stuff/location/run-value specialists and audits them.
     Frame-agnostic: these specialists read a single window snapshot, so the
     core can be computed once and shared across narration modes. Trends,
     signal extraction, and the anchor check are frame-sensitive — see
@@ -1748,7 +1599,7 @@ async def run_spine_core(
     mini = agents.mini_model_name
     raw = await run_specialists(
         agents.stuff, agents.location, agents.runvalue,
-        agents.trends, agents.game_shape, ctx, _model_override,
+        agents.trends, ctx, _model_override,
         names=_CORE_SPECIALISTS, tracker=tracker, tracker_model=mini,
     )
     clean, flags, residual = await audit_and_revise_specialists(
@@ -1757,24 +1608,24 @@ async def run_spine_core(
     )
     return CoreContext(
         stuff=clean.stuff, location=clean.location,
-        runvalue=clean.runvalue, game_shape=clean.game_shape,
+        runvalue=clean.runvalue,
         audit_flags=flags,
         residual_specialists=sorted(residual),
     )
 
 
 _SPECIALIST_ORDER = {
-    "stuff": 0, "location": 1, "runvalue": 2, "trends": 3, "game_shape": 4,
+    "stuff": 0, "location": 1, "runvalue": 2, "trends": 3,
 }
 
 
 def _order_flags(flags: list[AuditFlag]) -> list[AuditFlag]:
     """Sort audit flags into the canonical specialist order.
 
-    The core/tail split collects core flags (stuff/location/run-value/
-    game-shape) then trends flags, so a naive concatenation would place trends
-    last. Sorting restores the legacy stuff→location→run-value→trends→
-    game-shape order, keeping run_analysis_spine output identical. Stable, so
+    The core/tail split collects core flags (stuff/location/run-value)
+    then trends flags, so a naive concatenation would place trends
+    last. Sorting restores the canonical stuff→location→run-value→trends
+    order, keeping run_analysis_spine output identical. Stable, so
     multiple flags from the same specialist keep their relative order.
     """
     return sorted(flags, key=lambda f: _SPECIALIST_ORDER.get(f.specialist, 99))
@@ -1792,7 +1643,7 @@ async def run_spine_tail(
     """Run the frame-sensitive tail of the analysis spine.
 
     Runs the trends specialist (+ its audit) and signal extraction over the
-    core's four specialists plus trends. Takes ``ctx`` explicitly so a later
+    core's three specialists plus trends. Takes ``ctx`` explicitly so a later
     phase can re-run the tail on a different temporal frame while reusing a
     single shared core. In this phase the tail runs on the same ctx as the
     core, so output is identical to the pre-split spine.
@@ -1805,13 +1656,13 @@ async def run_spine_tail(
     )
     raw = await run_specialists(
         agents.stuff, agents.location, agents.runvalue,
-        agents.trends, agents.game_shape, ctx, _model_override,
+        agents.trends, ctx, _model_override,
         names=_TAIL_SPECIALISTS, tracker=tracker, tracker_model=mini,
         trend_frame_comparison=trend_frame_comparison,
     )
     merged = SpecialistOutputs(
         stuff=core.stuff, location=core.location, runvalue=core.runvalue,
-        game_shape=core.game_shape, trends=raw.trends,
+        trends=raw.trends,
     )
     specialists, trends_flags, trends_residual = await audit_and_revise_specialists(
         merged, agents.specialist_dict(), agents.auditor, ctx, _model_override,
@@ -1821,7 +1672,7 @@ async def run_spine_tail(
 
     signal_input = build_writer_input(
         ctx, specialists.stuff, specialists.location,
-        specialists.runvalue, specialists.trends, specialists.game_shape,
+        specialists.runvalue, specialists.trends,
     )
     signals_failed = False
     try:
@@ -1867,8 +1718,8 @@ async def run_analysis_spine(
 
     Output-preserving but NOT latency-preserving on the single-frame path: the
     tail's trends specialist now starts only after the core's specialists and
-    their audit/revision finish, whereas the pre-split spine ran all five
-    specialists (and all five audits) concurrently. The added serial latency is
+    their audit/revision finish, whereas the pre-split spine ran all four
+    specialists (and all four audits) concurrently. The added serial latency is
     the deliberate cost of a reusable core — a later multi-frame mode (CHANGES)
     runs the core once and re-runs only the tail per frame.
 
@@ -1996,43 +1847,29 @@ def _parse_summary_bullets(raw: str) -> list[str]:
 async def _run_summaries(
     *,
     summary_agent: Agent[None, str],
-    brief_agent: Agent[None, str],
     capsule: str,
     writer_input: str,
     _model_override: Any = None,
-) -> tuple[list[str], str]:
+) -> list[str]:
     """Second-step summarization of the FINISHED capsule.
 
-    Runs the executive summary and BRIEF concurrently, each fed the final
-    capsule plus recover-only grounding (see build_summary_input). Returns
-    ([], "") without calling either agent when the capsule is empty/
-    whitespace. Each summarizer catches its own failure and degrades to an
-    empty value, so one failing agent never cancels the other.
+    Runs the executive summary against the final capsule plus recover-only
+    grounding (see build_summary_input). Returns [] without calling the agent
+    when the capsule is empty/whitespace. The summarizer catches its own
+    failure and degrades to an empty list rather than killing the run.
     """
     if not capsule.strip():
         log.warning("Final capsule is empty; skipping summarization.")
-        return [], ""
+        return []
 
     summary_input = build_summary_input(capsule, writer_input)
 
-    async def _run_summary() -> list[str]:
-        try:
-            result = await summary_agent.run(**agent_kwargs(summary_input, _model_override))
-            return _parse_summary_bullets(result.output)
-        except Exception:
-            log.warning("Executive summary agent failed, skipping.", exc_info=True)
-            return []
-
-    async def _run_brief() -> str:
-        try:
-            result = await brief_agent.run(**agent_kwargs(summary_input, _model_override))
-            return result.output.strip()
-        except Exception:
-            log.warning("Brief agent failed, skipping.", exc_info=True)
-            return ""
-
-    bullets, brief = await asyncio.gather(_run_summary(), _run_brief())
-    return bullets, brief
+    try:
+        result = await summary_agent.run(**agent_kwargs(summary_input, _model_override))
+        return _parse_summary_bullets(result.output)
+    except Exception:
+        log.warning("Executive summary agent failed, skipping.", exc_info=True)
+        return []
 
 
 async def run_capsule_audit(
@@ -2266,15 +2103,14 @@ async def _render_capsule(
     agents: PipelineAgents,
     anchor_depth: int,
     fact_depth: int,
-    stream: bool,
     check_explainer: bool = True,
     overlay: str | None = None,
-    persona_label: str = "",
+    label: str = "",
     _model_override: Any = None,
     tracker: UsageTracker | None = None,
 ) -> _RenderedCapsule:
     """Writer + anchor + capsule-audit core, shared by the report pipeline and
-    the recap render. Report streams (stream=True); recap does not. ``overlay``
+    the recap render. Both buffer the writer output (no live streaming). ``overlay``
     prepends editorial direction to the writer input; ``check_explainer`` gates
     the Pitching+ explainer warnings (off for the short recap brief)."""
     specialists = analyzed.specialists
@@ -2285,27 +2121,18 @@ async def _render_capsule(
     # runs after the anchor revision loop (see _run_summaries below).
     writer_input = build_writer_input(
         ctx, specialists.stuff, specialists.location,
-        specialists.runvalue, specialists.trends, specialists.game_shape,
+        specialists.runvalue, specialists.trends,
         key_signals=key_signals,
     )
     if overlay:
         writer_input = f"{overlay}\n\n{writer_input}"
     writer_kwargs = agent_kwargs(writer_input, _model_override)
 
-    if stream:
-        async with agents.writer.run_stream(**writer_kwargs) as stream_ctx:
-            chunks: list[str] = []
-            async for delta in stream_ctx.stream_text(delta=True):
-                print(delta, end="", flush=True)
-                chunks.append(delta)
-        print()
-        capsule = "".join(chunks)
-    else:
-        _res = await agents.writer.run(**writer_kwargs)
-        capsule = _res.output
+    _res = await agents.writer.run(**writer_kwargs)
+    capsule = _res.output
 
     # EXPLAIN THE MODEL post-processor (non-fatal quality gate).
-    # Runs for all personas — a persona that silently drops Pitching+
+    # Runs for every mode — a capsule that silently drops Pitching+
     # context produces a warning but does not fail the pipeline.
     # capsule.strip() guards check_explainer_present, which raises on an empty
     # capsule (writer stream yielded no text). An empty capsule degrades
@@ -2316,7 +2143,7 @@ async def _render_capsule(
     if check_explainer and not pre_revision_explainer_ok:
         log.warning(
             "[%s] capsule is missing model explanation content",
-            persona_label,
+            label,
         )
 
     # Anchor check + revision loop
@@ -2324,8 +2151,7 @@ async def _render_capsule(
         f"STUFF:\n{specialists.stuff}\n\n"
         f"LOCATION:\n{specialists.location}\n\n"
         f"RUN VALUE:\n{specialists.runvalue}\n\n"
-        f"TRENDS:\n{specialists.trends}\n\n"
-        f"GAME SHAPE:\n{specialists.game_shape}"
+        f"TRENDS:\n{specialists.trends}"
     )
     synthesis = (
         f"{render_key_signals(key_signals)}\n\n{specialist_synthesis}"
@@ -2351,7 +2177,7 @@ async def _render_capsule(
     if check_explainer and revision_count > 0 and pre_revision_explainer_ok and _explainer_dropped(capsule):
         log.warning(
             "[%s] anchor revision removed model explanation content from capsule",
-            persona_label,
+            label,
         )
 
     # Fact-checking layer (B then A) on the final capsule. Both check against the
@@ -2381,7 +2207,7 @@ async def _render_capsule(
     if check_explainer and capsule_revised and pre_revision_explainer_ok and _explainer_dropped(capsule):
         log.warning(
             "[%s] capsule fact-revision removed model explanation content from capsule",
-            persona_label,
+            label,
         )
 
     # A fact-revision can rewrite the capsule out from under the anchor result
@@ -2465,8 +2291,10 @@ async def render_recap(
         ctx, analyzed, agents=agents,
         anchor_depth=RECAP.validation.anchor_depth,
         fact_depth=RECAP.validation.fact_depth,
-        stream=False, check_explainer=False, overlay=overlay,
-        persona_label="recap", _model_override=_model_override, tracker=tracker,
+        # RECAP.explains_model is False; mode isn't in scope here, so this
+        # stays an explicit literal (kept consistent with NarrationMode.explains_model).
+        check_explainer=False, overlay=overlay,
+        label="recap", _model_override=_model_override, tracker=tracker,
     )
     value_parity = check_value_parity(rc.capsule, rc.fact_check_source)
     return PipelineResult(
@@ -2488,7 +2316,6 @@ async def _run_pipeline(
     *,
     provider: str = "gemini",
     thinking: ThinkingEffort = "high",
-    persona: str = "scout",
     mode: NarrationMode = DEFAULT_MODE,
     explain_model: bool = True,
     _model_override: Any = None,
@@ -2496,14 +2323,13 @@ async def _run_pipeline(
 ) -> PipelineResult:
     """Async core of the multi-agent pipeline.
 
-    Phase 1: 5 specialists run concurrently.
+    Phase 1: 4 specialists run concurrently.
     Phase 1.5: Data auditor validates specialist outputs against ground truth.
     Phase 1.75: Signal extractor identifies cross-specialist patterns.
     Phase 2: Writer composes capsule from specialist outputs + key signals.
     Phase 2.5: Anchor check + revision loop.
     """
-    persona_obj = get_persona(persona)
-    agents = make_pipeline_agents(provider, thinking, persona_obj, mode, explain_model=explain_model)
+    agents = make_pipeline_agents(provider, thinking, mode, explain_model=explain_model)
 
     # Phases 1 → 1.75: specialist → audit → signal extraction
     log.info("Running analysis spine...")
@@ -2519,8 +2345,8 @@ async def _run_pipeline(
         ctx, analyzed, agents=agents,
         anchor_depth=mode.validation.anchor_depth,
         fact_depth=mode.validation.fact_depth,
-        stream=True, check_explainer=explain_model, overlay=None,
-        persona_label=persona, _model_override=_model_override,
+        check_explainer=explain_model and mode.explains_model, overlay=None,
+        label=mode.id, _model_override=_model_override,
     )
     capsule = rc.capsule
     writer_input = rc.writer_input
@@ -2535,36 +2361,32 @@ async def _run_pipeline(
     # Second step: summarize the FINISHED, anchored report (not the
     # pre-revision specialist data). writer_input is attached as recover-only
     # grounding inside _run_summaries. RECAP is already a brief-length capsule,
-    # so distilling it further would duplicate (and cost two agent calls).
+    # so distilling it further would duplicate (and cost an extra agent call).
     if mode.distill:
-        log.info("Writing summary and brief from the final report...")
-        summary_bullets, brief_text = await _run_summaries(
+        log.info("Writing executive summary from the final report...")
+        summary_bullets = await _run_summaries(
             summary_agent=agents.summary,
-            brief_agent=agents.brief,
             capsule=capsule,
             writer_input=writer_input,
             _model_override=_model_override,
         )
 
-        # The brief and executive summary are the reader-facing outputs and may
-        # recover figures the capsule fact-check never saw, so value-parity them too
-        # against the same source. Warnings are labeled by surface so an operator can
-        # tell where an ungrounded number entered.
+        # The executive summary is a reader-facing output and may recover figures
+        # the capsule fact-check never saw, so value-parity it too against the same
+        # source. Warnings are labeled by surface so an operator can tell where an
+        # ungrounded number entered.
         summary_parity = check_value_parity("\n".join(summary_bullets), fact_check_source)
-        brief_parity = check_value_parity(brief_text, fact_check_source)
         value_parity_warnings = (
             [f"[capsule] {w}" for w in value_parity.unmatched]
             + [f"[summary] {w}" for w in summary_parity.unmatched]
-            + [f"[brief] {w}" for w in brief_parity.unmatched]
         )
     else:
-        summary_bullets, brief_text = [], ""
+        summary_bullets = []
         value_parity_warnings = [f"[capsule] {w}" for w in value_parity.unmatched]
 
     return PipelineResult(
         narrative=capsule,
         executive_summary=summary_bullets,
-        brief=brief_text,
         specialists=specialists,
         key_signals=key_signals,
         audit_flags=audit_flags,
@@ -2582,7 +2404,6 @@ def generate_pipeline_streaming(
     *,
     provider: str = "gemini",
     thinking: ThinkingEffort = "high",
-    persona: str = "scout",
     mode: NarrationMode = DEFAULT_MODE,
     explain_model: bool = True,
     _model_override: Any = None,
@@ -2590,7 +2411,7 @@ def generate_pipeline_streaming(
 ) -> PipelineResult:
     """Generate a report using the specialist→auditor→writer multi-agent pipeline.
 
-    Phase 1: 5 specialists run concurrently (silent).
+    Phase 1: 4 specialists run concurrently (silent).
     Phase 1.5: Data auditor validates specialist outputs against ground truth.
     Phase 1.75: Signal extractor identifies cross-specialist patterns.
     Phase 2: Writer composes capsule from specialist outputs + key signals (streamed).
@@ -2600,7 +2421,6 @@ def generate_pipeline_streaming(
         ctx: Assembled pitcher context.
         provider: LLM provider key.
         thinking: Thinking effort level.
-        persona: Persona id string (resolved to Persona object internally).
         mode: Narration mode controlling writer prompt selection.
         _model_override: Optional model override for testing.
 
@@ -2609,7 +2429,7 @@ def generate_pipeline_streaming(
     """
     return asyncio.run(
         _run_pipeline(ctx, provider=provider, thinking=thinking,
-                      persona=persona, mode=mode, explain_model=explain_model,
+                      mode=mode, explain_model=explain_model,
                       _model_override=_model_override, prior_ctx=prior_ctx)
     )
 
@@ -2620,7 +2440,6 @@ def run_narration_modes(
     modes: list[NarrationMode] | None = None,
     provider: str = "gemini",
     thinking: ThinkingEffort = "high",
-    persona: str = "scout",
     explain_model: bool = True,
     _model_override: Any = None,
     prior_ctx: PitcherContext | None = None,
@@ -2638,7 +2457,6 @@ def run_narration_modes(
         modes: Narration modes to render; defaults to [DEFAULT_MODE].
         provider: LLM provider key.
         thinking: Thinking effort level.
-        persona: Persona id string.
         _model_override: Optional model override for testing.
         prior_ctx: Optional prior-window context; forwarded only to modes
             whose temporal_frame includes PRIOR (CHANGES). None for
@@ -2657,7 +2475,7 @@ def run_narration_modes(
         mode_prior = prior_ctx if TemporalFrame.PRIOR in mode.temporal_frame else None
         results[mode.id] = generate_pipeline_streaming(
             ctx, provider=provider, thinking=thinking,
-            persona=persona, mode=mode, explain_model=explain_model,
+            mode=mode, explain_model=explain_model,
             _model_override=_model_override, prior_ctx=mode_prior,
         )
     return results
@@ -2732,6 +2550,12 @@ _KNOWN_METRICS = frozenset(
         "SwStr%",
         "K-BB%",
         "xFIP",
+        # Teaching vocabulary the single field-analyst voice may use (formerly
+        # the per-persona analyst allowlist).
+        "playability",
+        "tunneling gap",
+        "pitch tree",
+        "arsenal depth",
     }
 )
 
@@ -2758,19 +2582,6 @@ _TRADITIONAL_STATS = frozenset(
         "IP",
     }
 )
-
-# Per-persona teaching vocabulary that should not be flagged as unknown.
-# Each persona adds domain-specific terms that are safe in that persona's
-# voice but not part of the standard _KNOWN_METRICS set.
-_PERSONA_KNOWN_METRICS: dict[str, frozenset[str]] = {
-    "analyst": frozenset({
-        "playability",
-        "tunneling gap",
-        "pitch tree",
-        "arsenal depth",
-    }),
-    "generic": frozenset(),
-}
 
 _METRIC_PATTERN = re.compile(
     r"\b("
@@ -2817,10 +2628,7 @@ _TRADITIONAL_PATTERN = re.compile(
 _VARIANT_SUFFIX = re.compile(r"_[SP]$")
 
 
-def check_hallucinated_metrics(
-    report_text: str,
-    persona: str | None = None,
-) -> HallucinationReport:
+def check_hallucinated_metrics(report_text: str) -> HallucinationReport:
     """Find metric-like and traditional stat terms in report text.
 
     Scans the LLM output for patterns that look like advanced baseball
@@ -2832,9 +2640,6 @@ def check_hallucinated_metrics(
         report_text: The LLM-generated report text. Must be a non-empty
             string — an empty narrative is a pipeline failure, not a
             "clean" report, so the caller should check before invoking.
-        persona: Optional persona id. When set, per-persona vocabulary from
-            _PERSONA_KNOWN_METRICS is added to the allowlist for this check.
-            When None, only _KNOWN_METRICS and _TRADITIONAL_STATS are consulted.
 
     Returns:
         HallucinationReport with unknown_metrics and outcome_stat_warnings.
@@ -2856,18 +2661,9 @@ def check_hallucinated_metrics(
         )
 
     found = set(_METRIC_PATTERN.findall(report_text))
-    if persona:
-        if persona not in _PERSONA_KNOWN_METRICS:
-            log.debug(
-                "no persona-specific metric allowlist for %r (typo or unregistered persona?)",
-                persona,
-            )
-        persona_known = _PERSONA_KNOWN_METRICS.get(persona, frozenset())
-    else:
-        persona_known = frozenset()
 
     def _is_known(metric: str) -> bool:
-        if metric in _KNOWN_METRICS or metric in _TRADITIONAL_STATS or metric in persona_known:
+        if metric in _KNOWN_METRICS or metric in _TRADITIONAL_STATS:
             return True
         # Tolerate Stuff/Pitch-side variant suffixes (xRV100_S, xWhiff_P) when
         # the base metric is known. The original token is still reported if the
@@ -2897,9 +2693,10 @@ def check_explainer_present(capsule: str) -> bool:
     the Pitching+ family tokens appears in the capsule — a proxy for
     "the writer referenced the grading framework." A False return
     triggers a non-fatal stderr warning in the pipeline so operators
-    can see when a persona silently dropped the EXPLAIN THE MODEL
-    content. Called both before and after the anchor revision loop so
-    explainer drift introduced during revision is also surfaced.
+    can see when the writer silently dropped the EXPLAIN THE MODEL
+    content for a mode that requires it. Called both before and after
+    the anchor revision loop so explainer drift introduced during
+    revision is also surfaced.
 
     Args:
         capsule: The writer agent's narrative output.
