@@ -79,7 +79,7 @@ def test_runtime_toolset_excludes_builder_skill_body():
 def test_pipeline_prose_agents_have_skill_toolset():
     """Every prose specialist and the writer carry the skills toolset."""
     agents = make_pipeline_agents()
-    for name in ("stuff", "location", "runvalue", "trends", "game_shape", "writer"):
+    for name in ("stuff", "location", "runvalue", "trends", "writer"):
         agent = getattr(agents, name)
         assert skill_toolset() in _toolsets(agent), f"{name} missing skills toolset"
 

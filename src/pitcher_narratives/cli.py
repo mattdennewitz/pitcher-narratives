@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING
 
 from dotenv import load_dotenv
 
-from pitcher_narratives.config import API_KEYS, setup_logging
+from pitcher_narratives.config import API_KEYS, PROVIDERS, setup_logging
 from pitcher_narratives.personas import REPORT, get_narration_mode
 from pitcher_narratives.temporal import _DEFAULT_PRIOR_APPEARANCES, _DEFAULT_RECENT_APPEARANCES
 
@@ -218,6 +218,11 @@ def parse_args() -> argparse.Namespace:
         help="LLM provider for --curate (default: gemini)",
     )
 
+    ask = sub.add_parser("ask", help="Explain why a pitcher's pitch earns its P+/S+/L+ grade")
+    ask.add_argument("question", help='e.g. "why does Jared Jones\'s fastball grade 92 stuff+"')
+    ask.add_argument("--provider", default="gemini", choices=sorted(PROVIDERS),
+                     help="LLM provider (default: gemini)")
+
     return parser.parse_args()
 
 
@@ -267,6 +272,8 @@ def main() -> None:
         _run_morning_command(args)
     elif args.command == "scoreboard":
         _run_scoreboard_command(args)
+    elif args.command == "ask":
+        _run_ask_command(args)
     else:
         _run_report_command(args)
 
@@ -483,6 +490,24 @@ def _append_metrics_records(
     with Path(path).open("a") as f:
         for line in lines:
             f.write(line + "\n")
+
+
+def _run_ask_command(args: argparse.Namespace) -> None:
+    """Answer a single grade-explanation question and print the prose."""
+    import asyncio
+
+    from pitcher_narratives.qa import QuestionError, answer_question
+
+    setup_logging()
+    try:
+        answer = asyncio.run(answer_question(args.question, provider=args.provider))
+    except QuestionError as e:
+        print(f"pitcher-narratives: {e}", file=sys.stderr)
+        sys.exit(1)
+    except ValueError as e:  # pitcher id not present in Statcast data
+        print(f"pitcher-narratives: {e}", file=sys.stderr)
+        sys.exit(1)
+    print(answer)
 
 
 def _run_report_command(args: argparse.Namespace) -> None:

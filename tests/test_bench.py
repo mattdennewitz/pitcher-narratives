@@ -215,7 +215,7 @@ def test_render_report_contains_providers_and_dimensions():
     reason="statcast parquet files not present (set STATCAST_PATH)",
 )
 def test_run_provider_captures_all_tiers():
-    """A provider run captures 5 specialists + exec summary + capsule and
+    """A provider run captures 4 specialists + exec summary + capsule and
     the ground-truth context document."""
     captured = run_provider(
         TEST_PITCHER, provider="gemini", thinking="low",
@@ -225,7 +225,7 @@ def test_run_provider_captures_all_tiers():
     assert captured.error is None
     assert captured.wall_s >= 0
     for key in ("specialist:stuff", "specialist:location", "specialist:runvalue",
-                "specialist:trends:report", "specialist:game_shape", "capsule:report"):
+                "specialist:trends:report", "capsule:report"):
         assert key in captured.outputs, f"missing {key}"
         assert captured.outputs[key]
         assert captured.ground_truths.get(key), f"missing ground truth for {key}"
@@ -253,8 +253,7 @@ def test_run_provider_captures_per_mode_capsules():
     )
     assert captured.ok
     # Four specialists captured once, mode-agnostic.
-    for spec in ("specialist:stuff", "specialist:location", "specialist:runvalue",
-                 "specialist:game_shape"):
+    for spec in ("specialist:stuff", "specialist:location", "specialist:runvalue"):
         assert captured.outputs[spec]
         assert captured.ground_truths.get(spec), f"missing ground truth for {spec}"
     # No bare, un-namespaced trends tier survives.
