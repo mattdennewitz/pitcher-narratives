@@ -7,12 +7,16 @@ filters to configurable lookback windows.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
 import polars as pl
+from plus_schemas import ArtifactSemantics, MetricSemanticsManifest
+from pydantic import ValidationError
 
 from pitcher_narratives.temporal import _DEFAULT_RECENT_APPEARANCES
 
@@ -21,7 +25,9 @@ log = logging.getLogger("pitcher_narratives.data")
 __all__ = [
     "AGGS_DIR",
     "RV_DF_PATH",
+    "IncompatiblePitchingPlusExport",
     "PitcherData",
+    "PitchingPlusBundle",
     "classify_appearances",
     "classify_game_roles",
     "compute_pitch_type_baseline",
@@ -33,6 +39,7 @@ __all__ = [
     "load_csv",
     "load_full_agg",
     "load_pitcher_data",
+    "load_pitchingplus_bundle",
     "load_run_values",
     "load_statcast",
     "statcast_dir",
@@ -45,6 +52,107 @@ DATA_DIR = Path(_data_dir_override) if _data_dir_override else _DEFAULT_DATA_DIR
 _YEARS: list[int] = [2025, 2026]
 AGGS_DIR = DATA_DIR / "var" / "aggs"
 RV_DF_PATH = AGGS_DIR / "RV_df.csv"
+
+
+class IncompatiblePitchingPlusExport(ValueError):
+    """The producer bundle is missing, stale, or semantically incompatible."""
+
+
+@dataclass(frozen=True)
+class PitchingPlusBundle:
+    """Validated PitchingPlus manifests and manifest-covered artifact rows."""
+
+    root: Path
+    manifests: Mapping[int, MetricSemanticsManifest]
+    frames: Mapping[tuple[int, str], pl.DataFrame]
+
+    def frame(self, grain: str, seasons: Iterable[int] | None = None) -> pl.DataFrame:
+        selected = sorted(self.manifests if seasons is None else set(seasons))
+        frames = [self.frames[(season, grain)] for season in selected if (season, grain) in self.frames]
+        if not frames:
+            return pl.DataFrame()
+        if len(frames) == 1:
+            return frames[0]
+        return pl.concat(frames, how="diagonal_relaxed")
+
+
+def _validate_exported_s_semantics(artifact: ArtifactSemantics) -> None:
+    exported_s = artifact.metrics.get("xRV_S")
+    if exported_s is None:
+        return
+    if exported_s.variant != "S" or exported_s.s_product != "count_marginalized":
+        raise IncompatiblePitchingPlusExport(
+            f"{artifact.filename} xRV_S must be labeled count_marginalized S"
+        )
+
+
+def load_pitchingplus_bundle(
+    root: str | Path = AGGS_DIR, *, seasons: Iterable[int] = _YEARS
+) -> PitchingPlusBundle:
+    """Validate every manifest before loading any producer artifact."""
+    bundle_root = Path(root)
+    requested_seasons = tuple(sorted(set(seasons)))
+    manifests: dict[int, MetricSemanticsManifest] = {}
+
+    for season in requested_seasons:
+        manifest_path = bundle_root / f"{season}-metric-semantics.json"
+        if not manifest_path.is_file():
+            raise IncompatiblePitchingPlusExport(
+                f"PitchingPlus semantic manifest is missing for season {season}"
+            )
+        try:
+            manifest = MetricSemanticsManifest.model_validate_json(manifest_path.read_text())
+        except (OSError, ValidationError, ValueError) as exc:
+            raise IncompatiblePitchingPlusExport(
+                f"Incompatible PitchingPlus manifest for season {season}: {exc}"
+            ) from exc
+        if manifest.season != season:
+            raise IncompatiblePitchingPlusExport(
+                f"Manifest season {manifest.season} does not match requested season {season}"
+            )
+        for artifact in manifest.artifacts:
+            _validate_exported_s_semantics(artifact)
+        manifests[season] = manifest
+
+    # Validate the complete bundle before parsing any CSV. A substituted file
+    # cannot influence schemas, context, or agent input.
+    artifact_paths: dict[tuple[int, str], tuple[Path, ArtifactSemantics]] = {}
+    for season, manifest in manifests.items():
+        for artifact in manifest.artifacts:
+            key = (season, artifact.grain)
+            if key in artifact_paths:
+                raise IncompatiblePitchingPlusExport(
+                    f"Duplicate artifact grain {artifact.grain!r} for season {season}"
+                )
+            path = bundle_root / artifact.filename
+            if not path.is_file():
+                raise IncompatiblePitchingPlusExport(
+                    f"Manifest-covered artifact is missing: {artifact.filename}"
+                )
+            checksum = hashlib.sha256(path.read_bytes()).hexdigest()
+            if checksum != artifact.sha256:
+                raise IncompatiblePitchingPlusExport(f"Artifact checksum mismatch: {artifact.filename}")
+            artifact_paths[key] = (path, artifact)
+
+    frames: dict[tuple[int, str], pl.DataFrame] = {}
+    for key, (path, artifact) in artifact_paths.items():
+        frame = pl.read_csv(path)
+        actual_columns = set(frame.columns)
+        required_columns = set(artifact.required_columns)
+        if actual_columns != required_columns:
+            raise IncompatiblePitchingPlusExport(
+                f"{artifact.filename} columns differ from its semantic manifest"
+            )
+        if "game_date" in frame.columns and frame.schema["game_date"] == pl.String:
+            frame = frame.with_columns(pl.col("game_date").str.to_date("%Y-%m-%d"))
+        natural_key = list(artifact.natural_key)
+        if frame.select(pl.any_horizontal(pl.col(natural_key).is_null())).item():
+            raise IncompatiblePitchingPlusExport(f"{artifact.filename} contains null natural-key values")
+        if frame.unique(subset=natural_key).height != frame.height:
+            raise IncompatiblePitchingPlusExport(f"{artifact.filename} contains duplicate natural-key rows")
+        frames[key] = frame
+
+    return PitchingPlusBundle(root=bundle_root, manifests=manifests, frames=frames)
 
 
 def statcast_dir() -> Path:
@@ -60,6 +168,7 @@ def statcast_dir() -> Path:
 def statcast_parquet_path(year: int) -> Path:
     """Path to one season's Statcast parquet: <statcast_dir>/<year>.parquet."""
     return statcast_dir() / f"{year}.parquet"
+
 
 # CSV grain names -- filenames derived as f"{year}-{grain}.csv"
 _SEASON_GRAINS = ("pitcher", "pitcher_type", "pitcher_type_platoon", "team")
@@ -345,9 +454,7 @@ def classify_game_roles(statcast: pl.DataFrame) -> pl.DataFrame:
         One row per (game_pk, pitcher) with a 'role' column ('SP'/'RP').
     """
     if statcast.is_empty():
-        return pl.DataFrame(
-            schema={"game_pk": pl.Int64, "pitcher": pl.Int64, "role": pl.String}
-        )
+        return pl.DataFrame(schema={"game_pk": pl.Int64, "pitcher": pl.Int64, "role": pl.String})
     starters = (
         statcast.group_by(["game_pk", "inning_topbot"])
         .agg(pl.col("pitcher").sort_by("at_bat_number", maintain_order=True, nulls_last=True).first())
@@ -428,9 +535,13 @@ def compute_pitch_type_baseline(pitcher_type_df: pl.DataFrame) -> pl.DataFrame:
     pitcher_totals = df.group_by(["pitcher", "season"]).agg(
         pl.col("n_pitches").sum().alias("total_pitches"),
     )
-    return result.join(pitcher_totals, on=["pitcher", "season"]).with_columns(
-        (pl.col("n_pitches") / pl.col("total_pitches") * 100).alias("usage_pct"),
-    ).drop("total_pitches")
+    return (
+        result.join(pitcher_totals, on=["pitcher", "season"])
+        .with_columns(
+            (pl.col("n_pitches") / pl.col("total_pitches") * 100).alias("usage_pct"),
+        )
+        .drop("total_pitches")
+    )
 
 
 def filter_to_recent_appearances(df: pl.DataFrame, n: int) -> pl.DataFrame:
@@ -462,9 +573,7 @@ def filter_to_recent_appearances(df: pl.DataFrame, n: int) -> pl.DataFrame:
     return df.join(recent_keys, on=["game_date", "game_pk"], how="inner")
 
 
-def filter_to_prior_appearances(
-    df: pl.DataFrame, recent_n: int, prior_m: int
-) -> pl.DataFrame:
+def filter_to_prior_appearances(df: pl.DataFrame, recent_n: int, prior_m: int) -> pl.DataFrame:
     """Filter rows to the ``prior_m`` appearances immediately older than the
     ``recent_n`` most-recent ones.
 
@@ -486,9 +595,7 @@ def filter_to_prior_appearances(
     return df.join(prior_keys, on=["game_date", "game_pk"], how="inner")
 
 
-def load_pitcher_data(
-    pitcher_id: int, recent_appearances: int = _DEFAULT_RECENT_APPEARANCES
-) -> PitcherData:
+def load_pitcher_data(pitcher_id: int, recent_appearances: int = _DEFAULT_RECENT_APPEARANCES) -> PitcherData:
     """Load and process all data for a pitcher.
 
     Orchestrates all loaders: reads Statcast parquet, loads CSV aggregations,
@@ -519,7 +626,9 @@ def load_pitcher_data(
         season_baseline = season_baseline_all.filter(pl.col("season") == max_season)
         # Prior season: strictly N-1 per D-01/D-02
         prior_season_rows = season_baseline_all.filter(pl.col("season") == max_season - 1)
-        prior_season_baseline = prior_season_rows if not prior_season_rows.is_empty() else season_baseline_all.clear()
+        prior_season_baseline = (
+            prior_season_rows if not prior_season_rows.is_empty() else season_baseline_all.clear()
+        )
     else:
         season_baseline = season_baseline_all
         prior_season_baseline = season_baseline_all.clear()
@@ -529,7 +638,9 @@ def load_pitcher_data(
         pitch_type_baseline = pitch_type_baseline_all.filter(pl.col("season") == max_season)
         # Prior pitch-type baseline: strictly N-1 per D-01/D-02
         prior_pt_rows = pitch_type_baseline_all.filter(pl.col("season") == max_season - 1)
-        prior_pitch_type_baseline = prior_pt_rows if not prior_pt_rows.is_empty() else pitch_type_baseline_all.clear()
+        prior_pitch_type_baseline = (
+            prior_pt_rows if not prior_pt_rows.is_empty() else pitch_type_baseline_all.clear()
+        )
     else:
         pitch_type_baseline = pitch_type_baseline_all
         prior_pitch_type_baseline = pitch_type_baseline_all.clear()

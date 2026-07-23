@@ -1,3 +1,5 @@
+import hashlib
+import json
 from datetime import date
 
 import polars as pl
@@ -8,6 +10,7 @@ from pitcher_narratives.data import (
     _ID_COLS,
     _SEASON_GRAINS,
     _YEARS,
+    IncompatiblePitchingPlusExport,
     classify_appearances,
     classify_game_roles,
     compute_pitch_type_baseline,
@@ -20,6 +23,7 @@ from pitcher_narratives.data import (
     load_csv,
     load_full_agg,
     load_pitcher_data,
+    load_pitchingplus_bundle,
     load_statcast,
     statcast_dir,
     statcast_parquet_path,
@@ -147,28 +151,23 @@ def test_filter_to_recent_appearances_distinguishes_doubleheader_by_game_pk():
 
 
 def test_filter_to_recent_appearances_returns_all_when_fewer_than_n():
-    df = pl.DataFrame(
-        {"game_date": [date(2024, 4, 1)], "game_pk": [1], "pitch_type": ["FF"]}
-    )
+    df = pl.DataFrame({"game_date": [date(2024, 4, 1)], "game_pk": [1], "pitch_type": ["FF"]})
     assert len(filter_to_recent_appearances(df, 10)) == 1
 
 
 def test_filter_to_recent_appearances_empty_input_returns_empty():
-    df = pl.DataFrame(
-        schema={"game_date": pl.Date, "game_pk": pl.Int64, "pitch_type": pl.Utf8}
-    )
+    df = pl.DataFrame(schema={"game_date": pl.Date, "game_pk": pl.Int64, "pitch_type": pl.Utf8})
     assert filter_to_recent_appearances(df, 5).is_empty()
 
 
 def _appearances(dates_pks):
-    return pl.DataFrame(
-        {"game_date": [d for d, _ in dates_pks], "game_pk": [p for _, p in dates_pks]}
-    )
+    return pl.DataFrame({"game_date": [d for d, _ in dates_pks], "game_pk": [p for _, p in dates_pks]})
 
 
 def test_filter_to_prior_appearances_selects_offset_window():
-    df = _appearances([("2024-04-01", 1), ("2024-04-05", 2), ("2024-04-10", 3),
-                       ("2024-04-15", 4), ("2024-04-20", 5)])
+    df = _appearances(
+        [("2024-04-01", 1), ("2024-04-05", 2), ("2024-04-10", 3), ("2024-04-15", 4), ("2024-04-20", 5)]
+    )
     out = filter_to_prior_appearances(df, recent_n=2, prior_m=2)
     # recent 2 = pks 5,4; prior 2 = pks 3,2
     assert sorted(out["game_pk"].to_list()) == [2, 3]
@@ -605,9 +604,7 @@ def test_load_full_agg_parses_dates():
     """CSMR-01: load_full_agg parses game_date to pl.Date when present."""
     df = load_full_agg("pitcher_type_appearance")
     if not df.is_empty() and "game_date" in df.columns:
-        assert df["game_date"].dtype == pl.Date, (
-            f"game_date is {df['game_date'].dtype}, expected Date"
-        )
+        assert df["game_date"].dtype == pl.Date, f"game_date is {df['game_date'].dtype}, expected Date"
 
 
 def test_load_full_agg_multi_year(tmp_path, monkeypatch):
@@ -795,18 +792,17 @@ def _statcast_rows(rows: list[tuple[int, int, str, int]]) -> pl.DataFrame:
 
 def test_classify_game_roles_starter_and_reliever():
     """First pitcher per side is SP; later pitchers are RP."""
-    df = _statcast_rows([
-        (1, 100, "Top", 1),   # home starter (pitches in Top)
-        (1, 100, "Top", 2),
-        (1, 101, "Top", 30),  # home reliever
-        (1, 200, "Bot", 4),   # away starter
-        (1, 201, "Bot", 35),  # away reliever
-    ])
+    df = _statcast_rows(
+        [
+            (1, 100, "Top", 1),  # home starter (pitches in Top)
+            (1, 100, "Top", 2),
+            (1, 101, "Top", 30),  # home reliever
+            (1, 200, "Bot", 4),  # away starter
+            (1, 201, "Bot", 35),  # away reliever
+        ]
+    )
     roles = classify_game_roles(df)
-    lookup = {
-        (r["game_pk"], r["pitcher"]): r["role"]
-        for r in roles.iter_rows(named=True)
-    }
+    lookup = {(r["game_pk"], r["pitcher"]): r["role"] for r in roles.iter_rows(named=True)}
     assert lookup[(1, 100)] == "SP"
     assert lookup[(1, 101)] == "RP"
     assert lookup[(1, 200)] == "SP"
@@ -816,16 +812,15 @@ def test_classify_game_roles_starter_and_reliever():
 def test_classify_game_roles_opener_edge():
     """A reliever entering mid-first inning is RP (min at_bat_number rule),
     even though their first_inning is 1."""
-    df = _statcast_rows([
-        (2, 300, "Top", 1),  # opener: faces 2 batters in the 1st
-        (2, 300, "Top", 2),
-        (2, 301, "Top", 3),  # bulk guy, also enters in the 1st inning
-    ])
+    df = _statcast_rows(
+        [
+            (2, 300, "Top", 1),  # opener: faces 2 batters in the 1st
+            (2, 300, "Top", 2),
+            (2, 301, "Top", 3),  # bulk guy, also enters in the 1st inning
+        ]
+    )
     roles = classify_game_roles(df)
-    lookup = {
-        (r["game_pk"], r["pitcher"]): r["role"]
-        for r in roles.iter_rows(named=True)
-    }
+    lookup = {(r["game_pk"], r["pitcher"]): r["role"] for r in roles.iter_rows(named=True)}
     assert lookup[(2, 300)] == "SP"  # opener started the game: SP
     assert lookup[(2, 301)] == "RP"  # mid-inning entrant: RP
 
@@ -833,16 +828,15 @@ def test_classify_game_roles_opener_edge():
 def test_classify_game_roles_multiple_games():
     """Roles are computed per game: the same pitcher can be SP in one
     game and RP in another."""
-    df = _statcast_rows([
-        (3, 400, "Top", 1),
-        (4, 400, "Top", 20),
-        (4, 401, "Top", 1),
-    ])
+    df = _statcast_rows(
+        [
+            (3, 400, "Top", 1),
+            (4, 400, "Top", 20),
+            (4, 401, "Top", 1),
+        ]
+    )
     roles = classify_game_roles(df)
-    lookup = {
-        (r["game_pk"], r["pitcher"]): r["role"]
-        for r in roles.iter_rows(named=True)
-    }
+    lookup = {(r["game_pk"], r["pitcher"]): r["role"] for r in roles.iter_rows(named=True)}
     assert lookup[(3, 400)] == "SP"
     assert lookup[(4, 400)] == "RP"
     assert lookup[(4, 401)] == "SP"
@@ -866,9 +860,124 @@ def test_classify_game_roles_tied_at_bat_number():
     ]
     df = _statcast_rows(rows)
     roles = classify_game_roles(df)
-    lookup = {
-        (r["game_pk"], r["pitcher"]): r["role"]
-        for r in roles.iter_rows(named=True)
-    }
+    lookup = {(r["game_pk"], r["pitcher"]): r["role"] for r in roles.iter_rows(named=True)}
     assert lookup[(5, 500)] == "SP"
     assert lookup[(5, 501)] == "RP"
+
+
+def _write_semantic_bundle(
+    root,
+    *,
+    schema_version: str = "1.0.0",
+    s_product: str = "count_marginalized",
+    scoring_season: int = 2026,
+):
+    frame = pl.DataFrame(
+        {
+            "season": [2026],
+            "level": ["MLB"],
+            "game_type": ["R"],
+            "game_pk": [10],
+            "game_date": ["2026-04-01"],
+            "pitcher": [1],
+            "at_bat_number": [2],
+            "pitch_number": [3],
+            "xRV_S": [-0.1],
+            "xRV_L": [0.2],
+        }
+    )
+    artifact_path = root / "2026-all_pitches.csv"
+    frame.write_csv(artifact_path)
+
+    def metric(variant, domain, count_treatment, **extra):
+        return {
+            "variant": variant,
+            "s_product": extra.get("s_product"),
+            "domain": domain,
+            "unit": "runs_per_pitch",
+            "precision": "full",
+            "benchmark": 0.0,
+            "higher_is_better": False,
+            "aggregation": "emitted_value",
+            "statistical_unit": "pitch",
+            "count_treatment": count_treatment,
+            "scoring_season": scoring_season,
+            "reference_population": "2026 MLB regular season pitches",
+        }
+
+    manifest = {
+        "schema_version": schema_version,
+        "producer": "pitchingplus",
+        "season": 2026,
+        "artifacts": [
+            {
+                "filename": artifact_path.name,
+                "sha256": hashlib.sha256(artifact_path.read_bytes()).hexdigest(),
+                "season": 2026,
+                "grain": "all_pitches",
+                "natural_key": ["game_pk", "at_bat_number", "pitch_number"],
+                "required_columns": frame.columns,
+                "metrics": {
+                    "xRV_S": metric(
+                        "S",
+                        "centered",
+                        "count_marginalized_prediction_actual_count_run_value",
+                        s_product=s_product,
+                    ),
+                    "xRV_L": metric("L", "centered", "P_minus_count_matched_S"),
+                },
+            }
+        ],
+    }
+    (root / "2026-metric-semantics.json").write_text(json.dumps(manifest))
+    return artifact_path
+
+
+def test_loader_accepts_manifest_covered_pitchingplus_bundle(tmp_path):
+    _write_semantic_bundle(tmp_path)
+
+    bundle = load_pitchingplus_bundle(tmp_path, seasons=(2026,))
+
+    assert bundle.frame("all_pitches")["game_pk"].to_list() == [10]
+    assert bundle.manifests[2026].producer == "pitchingplus"
+
+
+def test_loader_rejects_incompatible_plus_semantic_manifest(tmp_path):
+    _write_semantic_bundle(tmp_path, schema_version="2.0.0")
+
+    with pytest.raises(IncompatiblePitchingPlusExport, match="schema_version"):
+        load_pitchingplus_bundle(tmp_path, seasons=(2026,))
+
+
+def test_loader_rejects_mislabeled_exported_s_product(tmp_path):
+    _write_semantic_bundle(tmp_path, s_product="count_matched")
+
+    with pytest.raises(IncompatiblePitchingPlusExport, match="count_marginalized"):
+        load_pitchingplus_bundle(tmp_path, seasons=(2026,))
+
+
+def test_loader_rejects_mixed_scoring_seasons(tmp_path):
+    _write_semantic_bundle(tmp_path, scoring_season=2025)
+
+    with pytest.raises(IncompatiblePitchingPlusExport, match="scoring season"):
+        load_pitchingplus_bundle(tmp_path, seasons=(2026,))
+
+
+def test_loader_rejects_checksum_mismatch(tmp_path):
+    artifact_path = _write_semantic_bundle(tmp_path)
+    artifact_path.write_text("substituted,unmanifested,data\n")
+
+    with pytest.raises(IncompatiblePitchingPlusExport, match="checksum"):
+        load_pitchingplus_bundle(tmp_path, seasons=(2026,))
+
+
+def test_loader_rejects_missing_manifest_before_reading_csv(tmp_path, monkeypatch):
+    (tmp_path / "2026-all_pitches.csv").write_text("not,a,valid,csv\\n")
+
+    def fail_if_read(*args, **kwargs):
+        raise AssertionError("CSV read occurred before manifest validation")
+
+    monkeypatch.setattr(pl, "read_csv", fail_if_read)
+
+    with pytest.raises(IncompatiblePitchingPlusExport, match="manifest"):
+        load_pitchingplus_bundle(tmp_path, seasons=(2026,))
