@@ -59,7 +59,7 @@ def test_skill_toolset_excludes_script_and_resource_tools():
 def test_runtime_skills_include_only_runtime_audience():
     """Runtime-tagged skills load into agents; builder-tagged ones do not."""
     names = set(runtime_skill_names())
-    assert "statcast-data-conventions" in names
+    assert "statcast-data-conventions" not in names
     assert "pitching-plus-conventions" in names
     # builder-facing skills must NOT reach runtime narrative agents
     assert "derived-signal-feature" not in names
@@ -69,8 +69,43 @@ def test_runtime_skills_include_only_runtime_audience():
 def test_runtime_toolset_excludes_builder_skill_body():
     """load_skill on the runtime toolset cannot return a builder skill."""
     from pydantic_ai_skills import discover_skills as _discover
+
     loaded = {s.name for s in _discover(SKILLS_DIR) if s.name in runtime_skill_names()}
     assert "derived-signal-feature" not in loaded
+
+
+def test_pitching_plus_skill_exposes_complete_model_boundary_contract():
+    skill = next(
+        skill for skill in discover_skills(str(SKILLS_DIR)) if skill.name == "pitching-plus-conventions"
+    )
+    content = " ".join(skill.content.split())
+    for required in (
+        "13 outcome probabilities",
+        "P includes realized plate location",
+        "derived acceleration/spin coordinates",
+        "P(count | broad pitch class, same_side)",
+        "actual count",
+        "hidden same-count S",
+        "independently centered",
+        "pitch-weighted mean",
+        "uncapped plus grade minus 50",
+        "means of per-pitch ratios",
+        "no model-level minimum sample or shrinkage",
+        "explicit pitch or player identity",
+        "Raw Statcast enters PitchingPlus",
+        "Pitcher Narratives reads only that bundle",
+        "Agents may interpret only cited facts",
+    ):
+        assert required in content
+
+
+def test_grade_explanation_skill_defers_model_definitions_to_ask_surface():
+    skill = next(
+        skill for skill in discover_skills(str(SKILLS_DIR)) if skill.name == "explaining-pitch-grades"
+    )
+    content = " ".join(skill.content.split())
+    assert "Do not generate model definitions" in content
+    assert "ask surface appends the validated, versioned deterministic" in content
 
 
 # ── Narrative engine wiring ───────────────────────────────────────────

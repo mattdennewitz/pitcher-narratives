@@ -40,10 +40,7 @@ class CallRecord:
         p = PRICING.get(self.model)
         if p is None:
             return None
-        return (
-            self.input_tokens / 1_000_000 * p["input"]
-            + self.output_tokens / 1_000_000 * p["output"]
-        )
+        return self.input_tokens / 1_000_000 * p["input"] + self.output_tokens / 1_000_000 * p["output"]
 
 
 @dataclass
@@ -52,13 +49,16 @@ class UsageTracker:
 
     records: list[CallRecord] = field(default_factory=list)
 
-    def record(self, model: str, input_tokens: int, output_tokens: int,
-               *, stage: str = "") -> None:
+    def record(self, model: str, input_tokens: int, output_tokens: int, *, stage: str = "") -> None:
         """Add one call's usage. `model` may carry a provider prefix."""
-        self.records.append(CallRecord(
-            stage=stage, model=model_label(model),
-            input_tokens=input_tokens, output_tokens=output_tokens,
-        ))
+        self.records.append(
+            CallRecord(
+                stage=stage,
+                model=model_label(model),
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+            )
+        )
 
     def total_input(self) -> int:
         """Sum of input tokens across all recorded calls."""
@@ -120,14 +120,12 @@ class UsageTracker:
             tout = sum(r.output_tokens for r in recs)
             costs = [c for r in recs if (c := r.cost()) is not None]
             cost = sum(costs) if costs else None
-            count = f" ×{len(recs)}" if len(recs) > 1 else ""
+            count = f" x{len(recs)}" if len(recs) > 1 else ""
             lines.append(
                 f"{stage:<10} {model}{count}  "
                 f"{_fmt_tokens(tin)} in / {_fmt_tokens(tout)} out  {_fmt_cost(cost)}"
             )
-        lines.append(
-            f"{'total':<10} {_fmt_cost(self.total_cost()):>40}   ({wall_s:.0f}s)"
-        )
+        lines.append(f"{'total':<10} {_fmt_cost(self.total_cost()):>40}   ({wall_s:.0f}s)")
         return "\n".join(lines)
 
     def format_table(self) -> str:
@@ -150,14 +148,10 @@ class UsageTracker:
             ic = t["input"] / 1_000_000 * p["input"]
             oc = t["output"] / 1_000_000 * p["output"]
             rows.append(
-                f"| {model} | {t['input']:,} | {t['output']:,} "
-                f"| ${ic:.4f} | ${oc:.4f} | ${ic + oc:.4f} |"
+                f"| {model} | {t['input']:,} | {t['output']:,} | ${ic:.4f} | ${oc:.4f} | ${ic + oc:.4f} |"
             )
             grand_in += t["input"]
             grand_out += t["output"]
             grand_cost += ic + oc
-        rows.append(
-            f"| **Total** | **{grand_in:,}** | **{grand_out:,}** "
-            f"| | | **${grand_cost:.4f}** |"
-        )
+        rows.append(f"| **Total** | **{grand_in:,}** | **{grand_out:,}** | | | **${grand_cost:.4f}** |")
         return "\n".join(rows)

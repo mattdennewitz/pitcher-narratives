@@ -18,6 +18,11 @@ def test_grade_family_location_and_pitching():
     assert parse_grade_question("Jared Jones curveball pitching+").grade_family == "P"
 
 
+def test_command_is_not_a_location_grade_alias():
+    with pytest.raises(QuestionError, match="target"):
+        parse_grade_question("why is Jared Jones slider command poor")
+
+
 def test_grade_family_defaults_to_stuff():
     assert parse_grade_question("Jared Jones changeup").grade_family == "S"
 

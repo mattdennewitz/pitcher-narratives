@@ -14,6 +14,7 @@ from pitcher_narratives.data import PitcherData
 from pitcher_narratives.engine._common import (
     _DOUBLE_OUT_EVENTS,
     _OUT_EVENTS,
+    _get_frame_rows,
     _per_season_velo,
     _pplus_delta_string,
     _safe_metric,
@@ -49,28 +50,25 @@ class WorkloadContext:
     """Maximum consecutive calendar days pitched."""
 
     workload_concern: bool
+
+    frame_id: str
+    """Canonical frame identity for the listed appearances."""
     """True when max_consecutive_days >= 3."""
 
 
 @dataclass
 class TemporalContext:
-    """Temporal grounding for LLM narratives -- prevents cross-season hallucination."""
+    """Exact temporal grounding for the canonical recent frame."""
 
     analysis_date: date
-    current_season: int
-    current_season_appearances: int
-    current_season_first_date: str
-    """ISO date of first appearance this season."""
-    current_season_ip: str
-    """Baseball-notation IP total for current season."""
-    prior_season: int
-    prior_season_appearances: int
-    prior_season_ip: str
-    """Baseball-notation IP total for prior season."""
-    prior_year_relevance: str
-    """'HIGH', 'MODERATE', or 'LOW'."""
-    prior_year_relevance_reason: str
-    """Human-readable explanation for the LLM."""
+    scoring_season: int
+    recent_frame_appearances: int
+    recent_frame_first_date: str
+    """ISO date of the first appearance in the canonical frame."""
+    recent_frame_ip: str
+    """Baseball-notation IP total for the canonical frame."""
+    frame_id: str
+    """Canonical frame identity for every temporal value."""
 
 
 @dataclass
@@ -104,7 +102,6 @@ class CrossSeasonSummary:
     l_plus_delta: str
 
 
-
 def _compute_ip_all_games(statcast: pl.DataFrame) -> dict[int, str]:
     """Compute innings pitched for every game in one pass.
 
@@ -127,12 +124,8 @@ def _compute_ip_all_games(statcast: pl.DataFrame) -> dict[int, str]:
 
         n_full_innings = max(0, len(innings) - 1)
         final_inning = game.filter(pl.col("inning") == innings[-1])
-        outs_in_final = final_inning.filter(
-            pl.col("events").is_in(out_list)
-        ).height
-        outs_in_final += final_inning.filter(
-            pl.col("events").is_in(double_out_list)
-        ).height
+        outs_in_final = final_inning.filter(pl.col("events").is_in(out_list)).height
+        outs_in_final += final_inning.filter(pl.col("events").is_in(double_out_list)).height
 
         total_thirds = n_full_innings * 3 + outs_in_final
         result[gpk] = f"{total_thirds // 3}.{total_thirds % 3}"
@@ -146,9 +139,7 @@ def _compute_ip(statcast: pl.DataFrame, game_pk: int) -> str:
     Prefer _compute_ip_all_games() for batch use. This wrapper exists
     for call sites that need IP for one game only.
     """
-    return _compute_ip_all_games(statcast.filter(pl.col("game_pk") == game_pk)).get(
-        game_pk, "0.0"
-    )
+    return _compute_ip_all_games(statcast.filter(pl.col("game_pk") == game_pk)).get(game_pk, "0.0")
 
 
 def _compute_rest_days(appearance_dates: list[Any]) -> list[int | None]:
@@ -195,8 +186,6 @@ def _max_consecutive_days(appearance_dates: list[Any]) -> int:
     return max_run
 
 
-
-
 def compute_workload_context(data: PitcherData) -> WorkloadContext:
     """Compute workload and rest context for the pitcher.
 
@@ -210,7 +199,7 @@ def compute_workload_context(data: PitcherData) -> WorkloadContext:
         WorkloadContext dataclass with appearance list and flags.
     """
     # Sort appearances by game_date ascending
-    appearances = data.appearances.sort("game_date")
+    appearances = _get_frame_rows(data, data.appearances).sort(["game_date", "game_pk"])
 
     # Extract appearance dates for rest days and consecutive days
     appearance_dates = appearances["game_date"].to_list()
@@ -218,16 +207,16 @@ def compute_workload_context(data: PitcherData) -> WorkloadContext:
     max_consec = _max_consecutive_days(appearance_dates)
 
     # Batch compute IP and pitch counts in one pass each
-    ip_by_game = _compute_ip_all_games(data.statcast)
-    pitch_counts = (
-        data.statcast.group_by("game_pk")
-        .agg(pl.len().alias("n"))
+    frame_statcast = _get_frame_rows(data)
+    ip_by_game = _compute_ip_all_games(frame_statcast)
+    pitch_counts = frame_statcast.group_by("game_pk").agg(pl.len().alias("n"))
+    pc_map = dict(
+        zip(
+            pitch_counts["game_pk"].to_list(),
+            pitch_counts["n"].to_list(),
+            strict=False,
+        )
     )
-    pc_map = dict(zip(
-        pitch_counts["game_pk"].to_list(),
-        pitch_counts["n"].to_list(),
-        strict=False,
-    ))
 
     workload_entries: list[AppearanceWorkload] = []
 
@@ -248,6 +237,7 @@ def compute_workload_context(data: PitcherData) -> WorkloadContext:
         appearances=workload_entries,
         max_consecutive_days=max_consec,
         workload_concern=max_consec >= 3,
+        frame_id=data.frame.id,
     )
 
 
@@ -277,97 +267,20 @@ def compute_temporal_context(
     data: PitcherData,
     workload: WorkloadContext,
 ) -> TemporalContext:
-    """Compute temporal grounding for LLM narratives.
-
-    Splits appearances by season year, counts per-season appearances and
-    IP totals, and assigns a prior-year relevance tier that gates how
-    much weight the LLM gives to last season's workload.
-
-    Reuses IP values already computed by compute_workload_context() to
-    avoid redundant statcast scans.
-
-    Args:
-        data: PitcherData bundle from data.load_pitcher_data.
-        workload: Pre-computed workload context (provides per-game IP).
-
-    Returns:
-        TemporalContext with per-season stats and relevance tier.
-    """
-    appearances = data.appearances.with_columns(
-        pl.col("game_date").dt.year().alias("season_year")
-    )
-
-    current_season = int(appearances["season_year"].max())
-    prior_season = current_season - 1
-
-    # Build game_pk → IP lookup from workload (already computed)
-    ip_by_game = {a.game_pk: a.ip for a in workload.appearances}
-
-    # Current season appearances
-    current_apps = appearances.filter(pl.col("season_year") == current_season)
-    current_season_appearances = current_apps.height
-
-    # Current season first date
-    current_first_date = str(current_apps["game_date"].min())
-
-    # Current season IP from workload lookup
-    current_game_pks = current_apps["game_pk"].to_list()
-    current_ip_strings = [ip_by_game.get(int(gpk), "0.0") for gpk in current_game_pks]
-    current_season_ip = _sum_baseball_ip(current_ip_strings) if current_ip_strings else "0.0"
-
-    # Prior season appearances
-    prior_apps = appearances.filter(pl.col("season_year") == prior_season)
-    prior_season_appearances = prior_apps.height
-
-    # Prior season IP from workload lookup
-    if prior_season_appearances > 0:
-        prior_game_pks = prior_apps["game_pk"].to_list()
-        prior_ip_strings = [ip_by_game.get(int(gpk), "0.0") for gpk in prior_game_pks]
-        prior_season_ip = _sum_baseball_ip(prior_ip_strings)
-    else:
-        prior_season_ip = "0.0"
-
-    # Prior-year relevance tier
-    if prior_season_appearances == 0:
-        relevance = "N/A"
-        relevance_reason = (
-            f"No {prior_season} data available. Current season sample "
-            f"({current_season_appearances} appearances) stands alone -- "
-            f"prior-year workload is not a factor."
-        )
-    elif current_season_appearances < 10:
-        relevance = "HIGH"
-        relevance_reason = (
-            f"Current season sample is too small to establish its own workload "
-            f"narrative. {prior_season} workload ({prior_season_appearances} G / "
-            f"{prior_season_ip} IP) is plausible residual context, but do not "
-            f"treat the two seasons as a continuous timeline."
-        )
-    elif current_season_appearances <= 30:
-        relevance = "MODERATE"
-        relevance_reason = (
-            "Patterns are emerging but sample is still growing. Prior year "
-            "adds context for year-over-year comparison."
-        )
-    else:
-        relevance = "LOW"
-        relevance_reason = (
-            "Current season has enough volume to carry its own workload "
-            "narrative. Use prior year for trend comparison only, not "
-            "workload narrative."
-        )
-
+    """Describe only the exact canonical frame represented by ``workload``."""
+    if data.frame is None or data.frame.scoring_season is None:
+        raise ValueError("temporal context requires an authoritative scoring season")
+    appearances = _get_frame_rows(data, data.appearances).sort(["game_date", "game_pk"])
+    first_date = appearances["game_date"].min()
     return TemporalContext(
-        analysis_date=date.today(),
-        current_season=current_season,
-        current_season_appearances=current_season_appearances,
-        current_season_first_date=current_first_date,
-        current_season_ip=current_season_ip,
-        prior_season=prior_season,
-        prior_season_appearances=prior_season_appearances,
-        prior_season_ip=prior_season_ip,
-        prior_year_relevance=relevance,
-        prior_year_relevance_reason=relevance_reason,
+        analysis_date=data.frame.as_of,
+        scoring_season=data.frame.scoring_season,
+        recent_frame_appearances=appearances.height,
+        recent_frame_first_date="" if first_date is None else str(first_date),
+        recent_frame_ip=_sum_baseball_ip([appearance.ip for appearance in workload.appearances])
+        if workload.appearances
+        else "0.0",
+        frame_id=data.frame.id,
     )
 
 
@@ -406,7 +319,7 @@ def compute_cross_season_summary(data: PitcherData) -> CrossSeasonSummary | None
     prior_l_plus = _safe_metric(data.prior_season_baseline, "L+")
 
     # Velocity from statcast release_speed per season (SDLT-01)
-    velo_by_season = _per_season_velo(data.statcast)
+    velo_by_season = _per_season_velo(data.pitches)
     current_velo = velo_by_season.get(current_season)
     prior_velo = velo_by_season.get(prior_season)
 
@@ -436,5 +349,3 @@ def compute_cross_season_summary(data: PitcherData) -> CrossSeasonSummary | None
         prior_l_plus=prior_l_plus,
         l_plus_delta=l_plus_delta,
     )
-
-

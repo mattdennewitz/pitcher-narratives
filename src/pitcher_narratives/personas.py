@@ -4,11 +4,10 @@ A single field-facing analyst voice writes every deliverable; the narration
 mode selects the output shape. The pieces compose at build time:
 
 - ``WRITER_VOICE`` is the one writer voice — tone/register and how deep to go
-  when explaining the grading model.
+  when shaping the analysis.
 - ``NarrationMode`` carries the per-deliverable output target — length,
-  structure, and the input-framing that tells the writer what material it is
-  synthesizing (a bundle of specialist analyses, with or without a model-
-  teaching mandate).
+  structure, input framing, and whether a deterministic model explanation is
+  rendered after the validated narrative.
 - ``SHARED_WRITER_BASE`` holds the universal analytical rules every composed
   writer prompt must obey, exactly once.
 - ``_SYNTHESIS_FRAMING`` holds the framing shared by the specialist-synthesis
@@ -48,20 +47,15 @@ __all__ = [
 SHARED_WRITER_BASE = """\
 ANALYTICAL RULES (these apply no matter what you are writing):
 - Use ONLY the data provided to you. Do not invent metrics.
-- DIRECTIONAL CONSISTENCY: If the analysis says a pitch is effective \
-(negative xRV100, S+ above 100, strong whiff rate), do not flip the \
-narrative to negative. If the analysis says a pitch is weak, do not \
-spin it as a strength. Preserve the direction of each assessment.
-- Surface arm slot shape insight. When a pitch's movement is tied to its \
-arm slot (a DEAD ZONE fastball, ride above slot expectation), that is \
-high-value mechanism evidence -- work it into the narrative rather than \
-dropping it.
-- Scale confidence to sample size. Small windows get tentative language.
-- TEMPORAL GROUNDING: The data includes a "Temporal Context" section \
-with a prior-year relevance level. Follow it. When relevance is LOW, \
-prior-season workload does not drive narrative. When relevance is HIGH, \
-prior year is residual context but two seasons are NOT a continuous \
-timeline. Do not hallucinate cumulative fatigue across an offseason.
+- DIRECTIONAL CONSISTENCY: Preserve the sign and comparison stated by each \
+verified claim. Do not convert a negative run value, above-100 grade, or \
+supplied class-relative strength into a negative assessment, or reverse a \
+verified weakness.
+- Arm-slot shape labels describe rarity against the emitted reference only. \
+They are not mechanism, feature-importance, hitter-behavior, or change evidence.
+- Scale language to the cited sample and sufficiency.
+- TEMPORAL GROUNDING: Respect each cited frame. Prior-season context cannot \
+establish a current cause, and two seasons are not a continuous timeline.
 - Never use: "degradation," "binary," "profiles as," "dominant," \
 "elite," "massive spike."\
 """
@@ -74,16 +68,16 @@ timeline. Do not hallucinate cumulative fatigue across an offseason.
 _SYNTHESIS_RULES = """\
 INPUT: Four specialist analyses of a pitcher's recent window:
 1. Pitch quality analysis — physical pitch characteristics and S+ grades
-2. Location analysis — P vs S location impact per pitch
-3. Run value decomposition — which outcomes drive each pitch's value
+2. Location analysis — formal L+ and emitted pitcher-relative region shares
+3. Run value decomposition — which modeled outcomes contribute to each pitch's value
 4. Trend analysis — what has changed vs season baseline
 
 CRITICAL: These are INGREDIENTS, not sections to preserve. The specialists \
 did the analysis; you do the writing. You must:
-- Find the thread. What is the single most important story across \
-all four analyses? Maybe the pitch characteristics are fine but \
-location is killing a pitch. Maybe a velocity trend is changing the \
-entire arsenal picture. Maybe one pitch is carrying the whole profile.
+- Find the strongest supported thread across the verified claims. Maybe the \
+physical aggregates do not identify the S+ model driver while Location+ is \
+weak. Maybe velocity and grade changes moved together. Maybe one pitch has the \
+strongest cited profile.
 - Write as one voice. The reader should not be able to tell that four \
 separate analysts contributed. No section breaks, no "meanwhile," no \
 "turning to the location data."
@@ -102,17 +96,6 @@ signal.
 - If specialists contradict each other on a pitch, acknowledge the \
 tension rather than silently picking one side.\
 """
-
-_EXPLAIN_THE_MODEL = """\
-EXPLAIN THE MODEL: Every capsule must contextualize the grading system \
-when first referenced. S+ measures pitch physical quality, L+ measures \
-location, P+ is the combined Pitching+ grade. Explain what decisions \
-the model made — which pitches were weighted, what baselines were \
-used — so the reader understands the analytical foundation, not just \
-the conclusions.\
-"""
-
-_SYNTHESIS_FRAMING = _SYNTHESIS_RULES + "\n\n" + _EXPLAIN_THE_MODEL
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -134,13 +117,11 @@ slider's new shape stand out).
 slider has good drop." If a metric did not change, it does not earn a sentence.
 - A quiet window is itself the finding. If little moved, say so plainly and \
 tentatively rather than manufacturing movement out of noise.
-- Distinguish mechanism from mix. When the trend analysis shows a \
-release-point or extension shift alongside a velo or shape change, that pairing \
-is a mechanical-adjustment signal — name it as such (e.g. "a lower slot is \
-driving the added run"). A usage shift with no release-point movement is a \
-pitch-mix or game-plan change instead. Never claim a mechanical cause the data \
-doesn't support, and hedge explicitly when the trend analysis itself says not to \
-over-read a release-point move.\
+- Treat release/shape co-movement as association, not mechanism. It may be \
+described as "consistent with a possible adjustment" only when the cited facts \
+move together. Never identify a mechanical cause, intent, or game plan from \
+aggregate deltas; the supplied evidence cannot establish those explanations. \
+A usage shift may be described only as a pitch-mix change.\
 """
 
 _CHANGES_ANCHOR_GUIDANCE = """\
@@ -167,11 +148,8 @@ into language a front office and a pitching coach both trust.
 VOICE:
 - Direct and specific. Analyst-to-analyst, not fan-facing. Vary sentence \
 length; short sentences land points.
-- Use scouting language: stuff, feel, finding a groove, getting tagged.
-- Explain the model as you go. When you name S+, L+, or P+, take a clause or \
-a sentence to say what it measures and what the model decided — enough that \
-the read stands on the model, not on assertion. Explain to illuminate the \
-pitcher, never to admire the model.
+- Use baseball vocabulary only when it preserves the cited evidence. Do not \
+translate Location+ into command, feel, target, or execution.
 - No cheerleading, no clichés, no formulaic transitions, no "the data shows," \
 no newsletter framing ("what we're seeing here"). Start immediately with the \
 analysis.\
@@ -186,12 +164,14 @@ Compose a flowing prose narrative — 350-600 words, 3-5 paragraphs — that \
 explains this pitcher through the lens of the model.
 
 STRUCTURE:
-- Lead with what the model sees: the single most important read on this \
-pitcher right now, grounded in the grade that drives it.
+- Lead with the single most important supported read on this pitcher right now. \
+Ground it in cited facts; do not invent the model driver behind a grade.
 - Develop the read across the arsenal — how the stuff plays, where location \
 helps or hurts, what the run-value and trend picture add. Thread the \
 specialist findings into one story; do not section them.
-- Weave platoon splits where they matter. Close on a clear-eyed verdict.
+- Use platoon evidence only from adequate, split-specific cited facts with an \
+available platoon capability. Otherwise omit a platoon read. Close on a \
+clear-eyed verdict.
 - Prose only. No headings, no bullet lists, no tables.
 - At most three primary metrics carry any single paragraph; you may cite a \
 metric twice if the second citation explains the first.
@@ -204,12 +184,12 @@ Compose a medium-length change report — 250-450 words — framed as what MOVED
 in the recent window versus the longer historical period.
 
 STRUCTURE:
-- Lead with the single biggest shift, stated concretely, with the one grade \
-or metric that proves it — and what the model reads into it.
+- Lead with the single biggest supported shift, stated concretely with cited \
+comparison facts.
 - Walk the connected changes in order of consequence. Report only what moved; \
 a stable trait earns a sentence only when it frames a change.
-- Prefer deltas to states. Distinguish a mechanical adjustment (a release or \
-extension shift alongside a velo or shape change) from a pitch-mix change.
+- Prefer deltas to states. Release/shape co-movement may be consistent with a \
+possible adjustment, but it does not identify a mechanical cause.
 - Prose only. No headings, no bullet lists, no tables.
 - Three-metric maximum per change.
 
@@ -220,23 +200,19 @@ _RECAP_CAPSULE_STRUCTURE = """\
 Write a tight capsule on the pitcher's most recent appearance — 3 to 5 \
 sentences, one continuous thread, no headings or bullets.
 
-- Lead with the single most important thing the model saw in the most recent \
-appearance (the biggest change, adaptation, or execution read).
-- Support it with one or two grounding metrics drawn straight from the \
-analyses.
-- Close on what it means going forward. Keep it scannable and quotable.
+- Lead with the single most important cited finding from the most recent \
+appearance.
+- Support it with one or two cited facts from the verified analyses.
+- Close with a bounded forward-looking question, not an invented adjustment, \
+intent, execution, or causal forecast. Keep it scannable and quotable.
 
 Target 60-120 words; never exceed 5 sentences.\
 """
 
-# Per-mode input framing (design §4.1). report/changes carry EXPLAIN THE MODEL
-# (model-focused); recap is bare synthesis. The changes mandate rides in the
-# framing now. EXPLAIN THE MODEL stays appended last so the explain_model=False
-# strip in build_writer_system_prompt removes it cleanly.
-_REPORT_FRAMING = _SYNTHESIS_FRAMING  # _SYNTHESIS_RULES + "\n\n" + _EXPLAIN_THE_MODEL
-_CHANGES_FRAMING = (
-    _SYNTHESIS_RULES + "\n\n" + _CHANGES_MANDATE + "\n\n" + _EXPLAIN_THE_MODEL
-)
+# Per-mode input framing. The writer receives only verified analytical claims;
+# model semantics are rendered later by the deterministic explainer.
+_REPORT_FRAMING = _SYNTHESIS_RULES
+_CHANGES_FRAMING = _SYNTHESIS_RULES + "\n\n" + _CHANGES_MANDATE
 _RECAP_FRAMING = _SYNTHESIS_RULES
 
 
@@ -262,10 +238,9 @@ class NarrationMode:
     """A top-level narration selector: one deliverable (report/recap/changes).
 
     A mode owns the output shape the single writer voice renders in — its
-    ``structure`` (length + format rules), its ``input_framing`` (what material
-    the writer is synthesizing, with or without the EXPLAIN THE MODEL mandate),
-    and its ``length_target`` (the (min, max) word window). Voice is fixed
-    (``WRITER_VOICE``); the mode only picks the shape.
+    ``structure`` (length + format rules), its ``input_framing`` (what verified
+    material the writer synthesizes), and its ``length_target`` (the (min, max)
+    word window). Voice is fixed (``WRITER_VOICE``); the mode only picks the shape.
 
     ``validation`` carries the per-mode revision-depth knobs threaded into the
     shared validation stack. ``temporal_frame`` declares which windows the mode
@@ -281,15 +256,13 @@ class NarrationMode:
     reweights signals (CHANGES) use it to keep the anchor's emphasis rules
     consistent with the writer's mandate.
 
-    ``explains_model`` declares whether this mode's writer prompt carries the
-    EXPLAIN THE MODEL mandate — the pipeline uses it (not a substring sniff
-    of ``input_framing``) to gate the capsule explainer-presence check.
+    ``explains_model`` declares whether the pipeline appends the versioned
+    deterministic model-and-data-boundary explanation after the validated agent
+    artifact. It never changes the writer prompt.
     """
 
     id: str
-    validation: ValidationPolicy = ValidationPolicy(
-        anchor_depth=MAX_REVISIONS, fact_depth=MAX_FACT_REVISIONS
-    )
+    validation: ValidationPolicy = ValidationPolicy(anchor_depth=MAX_REVISIONS, fact_depth=MAX_FACT_REVISIONS)
     temporal_frame: frozenset[TemporalFrame] = frozenset({TemporalFrame.RECENT})
     title: str = ""
     distill: bool = True
@@ -313,9 +286,7 @@ class NarrationMode:
 # REPORT is the full scouting narrative — the default deliverable.
 REPORT = NarrationMode(
     id="report",
-    validation=ValidationPolicy(
-        anchor_depth=MAX_REVISIONS, fact_depth=MAX_FACT_REVISIONS
-    ),
+    validation=ValidationPolicy(anchor_depth=MAX_REVISIONS, fact_depth=MAX_FACT_REVISIONS),
     title="Scouting Report",
     explains_model=True,
     structure=_REPORT_STRUCTURE,
@@ -343,9 +314,7 @@ RECAP = NarrationMode(
 # synthesis, so it keeps REPORT's 5/2 revision depths (calibrated in Phase 11).
 CHANGES = NarrationMode(
     id="changes",
-    validation=ValidationPolicy(
-        anchor_depth=MAX_REVISIONS, fact_depth=MAX_FACT_REVISIONS
-    ),
+    validation=ValidationPolicy(anchor_depth=MAX_REVISIONS, fact_depth=MAX_FACT_REVISIONS),
     temporal_frame=frozenset({TemporalFrame.RECENT, TemporalFrame.PRIOR}),
     title="Change Report",
     anchor_guidance=_CHANGES_ANCHOR_GUIDANCE,
@@ -364,14 +333,10 @@ _NARRATION_MODES_INTERNAL: dict[str, NarrationMode] = {
 # Import-time invariant: registry key must match mode.id.
 for _mid, _mode in _NARRATION_MODES_INTERNAL.items():
     if _mode.id != _mid:
-        raise ValueError(
-            f"Registry key {_mid!r} does not match mode.id {_mode.id!r}"
-        )
+        raise ValueError(f"Registry key {_mid!r} does not match mode.id {_mode.id!r}")
 del _mid, _mode
 
-NARRATION_MODES: MappingProxyType[str, NarrationMode] = MappingProxyType(
-    _NARRATION_MODES_INTERNAL
-)
+NARRATION_MODES: MappingProxyType[str, NarrationMode] = MappingProxyType(_NARRATION_MODES_INTERNAL)
 
 DEFAULT_MODE: NarrationMode = NARRATION_MODES["report"]
 
@@ -388,19 +353,6 @@ def get_narration_mode(mode_id: str) -> NarrationMode:
         raise ValueError(f"Unknown narration mode {mode_id!r}; valid: {valid}") from None
 
 
-def build_writer_system_prompt(
-    mode: NarrationMode, *, explain_model: bool = True
-) -> str:
-    """Compose the writer system prompt for a deliverable (mode).
-
-    Order: universal analytical rules + mode input framing + the single
-    writer voice + mode structure. ``explain_model=False`` strips the
-    EXPLAIN THE MODEL mandate from the framing (report/changes only; recap
-    never carries it).
-    """
-    framing = mode.input_framing
-    if not explain_model:
-        framing = framing.replace("\n\n" + _EXPLAIN_THE_MODEL, "").replace(
-            _EXPLAIN_THE_MODEL, ""
-        )
-    return "\n\n".join([SHARED_WRITER_BASE, framing, WRITER_VOICE, mode.structure])
+def build_writer_system_prompt(mode: NarrationMode) -> str:
+    """Compose the writer prompt without asking the model to explain itself."""
+    return "\n\n".join([SHARED_WRITER_BASE, mode.input_framing, WRITER_VOICE, mode.structure])

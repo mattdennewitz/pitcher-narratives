@@ -19,7 +19,6 @@ from pitcher_narratives.personas import (
 )
 from pitcher_narratives.temporal import TemporalFrame
 
-
 # ── Mode registry / resolution ──────────────────────────────────────────
 
 
@@ -78,10 +77,8 @@ def test_mode_distill_flags():
     assert RECAP.distill is False
 
 
-def test_mode_explains_model_flags():
-    """explains_model is the first-class fact the pipeline gates the capsule
-    explainer-check on -- REPORT/CHANGES carry the EXPLAIN THE MODEL mandate,
-    RECAP does not."""
+def test_mode_model_explanation_flags():
+    """Only full report surfaces append the deterministic model explanation."""
     assert REPORT.explains_model is True
     assert CHANGES.explains_model is True
     assert RECAP.explains_model is False
@@ -94,9 +91,7 @@ def test_report_validation_policy_matches_config_depths():
     """REPORT keeps today's depths; config is the single source of truth."""
     from pitcher_narratives.config import MAX_FACT_REVISIONS, MAX_REVISIONS
 
-    assert REPORT.validation == ValidationPolicy(
-        anchor_depth=MAX_REVISIONS, fact_depth=MAX_FACT_REVISIONS
-    )
+    assert REPORT.validation == ValidationPolicy(anchor_depth=MAX_REVISIONS, fact_depth=MAX_FACT_REVISIONS)
     assert (REPORT.validation.anchor_depth, REPORT.validation.fact_depth) == (5, 2)
 
 
@@ -128,9 +123,7 @@ def test_report_and_recap_are_single_frame():
 
 
 def test_changes_declares_recent_and_prior_frames():
-    assert CHANGES.temporal_frame == frozenset(
-        {TemporalFrame.RECENT, TemporalFrame.PRIOR}
-    )
+    assert CHANGES.temporal_frame == frozenset({TemporalFrame.RECENT, TemporalFrame.PRIOR})
 
 
 # ── CHANGES anchor guidance ──────────────────────────────────────────────
@@ -144,39 +137,29 @@ def test_changes_mode_has_anchor_guidance():
     assert "UNDERWEIGHTED" in g
 
 
-def test_changes_mandate_references_trend_analysis_not_specialist_block():
-    """The writer only sees specialist prose, never the Recent vs Prior
-    Window block itself (that's trends-specialist-internal) — so the
-    mandate must reference 'the trend analysis' instead."""
+def test_changes_mandate_keeps_comovement_correlational():
     from pitcher_narratives.personas import _CHANGES_MANDATE
 
-    assert "Recent vs Prior Window block" not in _CHANGES_MANDATE
-    assert "the trend analysis" in _CHANGES_MANDATE
-    # Hedging guidance must survive the reword.
-    assert "hedge explicitly" in _CHANGES_MANDATE
-    assert "over-read a release-point move" in _CHANGES_MANDATE
+    mandate = _CHANGES_MANDATE.lower()
+    assert "consistent with a possible adjustment" in mandate
+    assert "cannot establish" in mandate
+    assert "mechanical-adjustment signal" not in mandate
+    assert "driving the added run" not in mandate
+    assert "game-plan change" not in mandate
 
 
-# ── Input-framing split invariants (drive the explain_model strip) ──────
+# ── Writer framing excludes model-semantic improvisation ───────────────
 
 
-def test_synthesis_framing_recomposes_from_rules_and_explain_the_model():
-    """_SYNTHESIS_FRAMING splits into _SYNTHESIS_RULES + _EXPLAIN_THE_MODEL, and
-    REPORT's framing ends with the mandate so the explain_model=False strip in
-    build_writer_system_prompt removes it cleanly."""
-    from pitcher_narratives.personas import (
-        _EXPLAIN_THE_MODEL,
-        _SYNTHESIS_FRAMING,
-        _SYNTHESIS_RULES,
-    )
+def test_writer_framing_never_delegates_model_explanation():
+    from pitcher_narratives.personas import _CHANGES_MANDATE, _SYNTHESIS_RULES
 
-    assert _SYNTHESIS_FRAMING == _SYNTHESIS_RULES + "\n\n" + _EXPLAIN_THE_MODEL
-    assert REPORT.input_framing.endswith(_EXPLAIN_THE_MODEL)
+    assert REPORT.input_framing == _SYNTHESIS_RULES
+    assert CHANGES.input_framing == _SYNTHESIS_RULES + "\n\n" + _CHANGES_MANDATE
+    for mode in (REPORT, CHANGES, RECAP):
+        assert "EXPLAIN THE MODEL" not in mode.input_framing
+        assert "what the model decided" not in mode.input_framing.lower()
 
 
-def test_recap_framing_lacks_explain_the_model_but_keeps_key_signals_rule():
-    """RECAP's framing must not carry the EXPLAIN THE MODEL exposition directive
-    (incompatible with the 60-120 word cap), but must still carry the Key
-    Signals synthesis rule."""
-    assert "EXPLAIN THE MODEL" not in RECAP.input_framing
+def test_recap_framing_keeps_key_signals_rule():
     assert "Use the Key Signals" in RECAP.input_framing

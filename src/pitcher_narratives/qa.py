@@ -21,6 +21,11 @@ from pitcher_narratives.config import (
 )
 from pitcher_narratives.context import assemble_pitcher_context
 from pitcher_narratives.data import load_pitcher_data
+from pitcher_narratives.model_explainer import (
+    ProducerModelSemantics,
+    compose_model_explanation,
+    render_model_explanation,
+)
 from pitcher_narratives.pipeline import (
     build_fact_revision_message,
     build_grade_input,
@@ -47,27 +52,55 @@ class QuestionError(Exception):
 # Pitch nouns -> Statcast pitch-type codes. "fastball"/"heater" are ambiguous
 # (FF or SI) and get reconciled against the pitcher's actual arsenal later.
 PITCH_SYNONYMS: dict[str, list[str]] = {
-    "four-seam": ["FF"], "four seam": ["FF"], "4-seam": ["FF"], "4 seam": ["FF"],
-    "fastball": ["FF", "SI"], "heater": ["FF", "SI"], "fourseam": ["FF"],
-    "sinker": ["SI"], "two-seam": ["SI"], "two seam": ["SI"], "twoseam": ["SI"],
-    "cutter": ["FC"], "cut fastball": ["FC"],
-    "sweeper": ["ST"], "slider": ["SL"],
-    "knuckle curve": ["KC"], "knuckle-curve": ["KC"],
-    "curveball": ["CU"], "curve": ["CU"],
-    "changeup": ["CH"], "change-up": ["CH"], "change up": ["CH"], "change": ["CH"],
-    "splitter": ["FS"], "split-finger": ["FS"], "split": ["FS"],
+    "four-seam": ["FF"],
+    "four seam": ["FF"],
+    "4-seam": ["FF"],
+    "4 seam": ["FF"],
+    "fastball": ["FF", "SI"],
+    "heater": ["FF", "SI"],
+    "fourseam": ["FF"],
+    "sinker": ["SI"],
+    "two-seam": ["SI"],
+    "two seam": ["SI"],
+    "twoseam": ["SI"],
+    "cutter": ["FC"],
+    "cut fastball": ["FC"],
+    "sweeper": ["ST"],
+    "slider": ["SL"],
+    "knuckle curve": ["KC"],
+    "knuckle-curve": ["KC"],
+    "curveball": ["CU"],
+    "curve": ["CU"],
+    "changeup": ["CH"],
+    "change-up": ["CH"],
+    "change up": ["CH"],
+    "change": ["CH"],
+    "splitter": ["FS"],
+    "split-finger": ["FS"],
+    "split": ["FS"],
 }
 
 # Grade family detection. Order within each family is longest-first so
 # "stuff+" is preferred over a bare "stuff".
 GRADE_SYNONYMS: list[tuple[str, str]] = [
-    ("location+", "L"), ("location plus", "L"), ("command", "L"), ("location", "L"), ("l+", "L"),
-    ("pitching+", "P"), ("pitching plus", "P"), ("pitching", "P"), ("p+", "P"),
-    ("stuff+", "S"), ("stuff plus", "S"), ("stuff", "S"), ("s+", "S"),
+    ("location+", "L"),
+    ("location plus", "L"),
+    ("location", "L"),
+    ("l+", "L"),
+    ("pitching+", "P"),
+    ("pitching plus", "P"),
+    ("pitching", "P"),
+    ("p+", "P"),
+    ("stuff+", "S"),
+    ("stuff plus", "S"),
+    ("stuff", "S"),
+    ("s+", "S"),
 ]
 
 GRADE_LABELS: dict[str, str] = {
-    "S": "Stuff+ (S+)", "L": "Location+ (L+)", "P": "Pitching+ (P+)",
+    "S": "Stuff+ (S+)",
+    "L": "Location+ (L+)",
+    "P": "Pitching+ (P+)",
 }
 
 
@@ -117,11 +150,14 @@ def parse_grade_question(question: str) -> GradeQuestion:
         raise QuestionError("Couldn't find a pitcher in that question.")
 
     lowered = question.lower()
+    if re.search(r"\bcommand\b", lowered):
+        raise QuestionError(
+            "Command requires target and intent evidence; it is not a Location+ grade alias. "
+            "Ask about the pitch's Location+ instead."
+        )
     pitch_noun, candidates = _detect_pitch(lowered)
     if not candidates:
-        raise QuestionError(
-            "Couldn't tell which pitch — name one, e.g. 'fastball' or 'slider'."
-        )
+        raise QuestionError("Couldn't tell which pitch — name one, e.g. 'fastball' or 'slider'.")
     return GradeQuestion(
         pitcher_id=res.pitcher_id,
         pitcher_name=res.pitcher_name or "",
@@ -136,19 +172,21 @@ QA_SYSTEM_PROMPT = """\
 You explain why a single pitch earns its Pitching+ grade (P+/S+/L+), for a \
 front-office reader.
 
-You are given pre-computed data for the pitcher's full arsenal: per-pitch \
-grades, each physical trait tagged NORMAL or OUTLIER versus league, the \
-S-variant league average for each pitch type, stuff-model predictions \
-(xWhiff/xSwing/xRV100), and arm-slot shape. A leading instruction names the \
-ONE pitch and grade to explain.
+You are given typed, pre-computed facts for the pitcher's arsenal, a closed \
+Analysis Capabilities block, physical-rarity labels, pitch-class references, \
+model probabilities, grades, and model semantics. A leading instruction names \
+the one pitch and grade to explain.
 
-Consult the `explaining-pitch-grades` skill for the method before answering.
+Consult the `explaining-pitch-grades` skill before answering.
 
 Rules:
-- Explain ONLY the named pitch and grade; use the rest of the arsenal as contrast.
-- Every number comes from the provided data — never compute or invent a statistic.
-- If the data needed is missing, say so plainly.
-- Answer in 1-3 tight paragraphs of scout prose. No preamble."""
+- Explain only the named pitch and grade. Preserve exact inline fact citations.
+- Use only claims supported by same-frame, sufficient facts and an AVAILABLE \
+matching capability. Do not infer model drivers, intent, command, tunneling, \
+deception, biomechanics, target execution, or observed hitter behavior.
+- NORMAL and OUTLIER describe rarity, not importance.
+- If the required fact or capability is unavailable, state the limitation.
+- Answer in 1-3 tight paragraphs. No preamble."""
 
 
 def build_qa_agent(provider: str = "gemini") -> Agent[None, str]:
@@ -189,6 +227,19 @@ async def answer_question(
     data = load_pitcher_data(q.pitcher_id)
     ctx = assemble_pitcher_context(data)
     pitch_type, pitch_name = resolve_pitch_against_arsenal(q.pitch_candidates, ctx.arsenal)
+    producer_semantics = (
+        ProducerModelSemantics.from_identity(
+            ctx.producer_identity,
+            artifact_grains=ctx.producer_artifact_grains,
+        )
+        if ctx.producer_identity is not None
+        else None
+    )
+    model_explanation = render_model_explanation(
+        "ask",
+        producer_semantics=producer_semantics,
+        calibration=ctx.calibration,
+    )
 
     grade_input = build_grade_input(ctx, q.grade_family)
     ground_truth = "\n".join(p for p in grade_input if isinstance(p, str))
@@ -216,15 +267,13 @@ async def answer_question(
     # grounded result. Once that audit identifies an error, however, never
     # return either draft without a clean verification pass.
     try:
-        audit = await run_data_audit(
-            ground_truth, answer, provider=provider, model_override=model_override
-        )
+        audit = await run_data_audit(ground_truth, answer, provider=provider, model_override=model_override)
     except Exception:
         log.warning("initial audit failed; returning the first answer", exc_info=True)
-        return answer
+        return compose_model_explanation(answer, model_explanation)
 
     if audit.is_clean:
-        return answer
+        return compose_model_explanation(answer, model_explanation)
 
     try:
         revision = build_fact_revision_message(ground_truth, answer, audit.flags)
@@ -244,4 +293,4 @@ async def answer_question(
         )
         raise QuestionError("Couldn't safely verify the answer; please try again.")
 
-    return revised_answer
+    return compose_model_explanation(revised_answer, model_explanation)

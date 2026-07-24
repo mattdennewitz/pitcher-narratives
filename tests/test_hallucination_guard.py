@@ -6,6 +6,7 @@ imported from pipeline.py where the hallucination guard lives.
 
 import pytest
 
+from pitcher_narratives.claims import AnalysisCapabilities
 from pitcher_narratives.pipeline import HallucinationReport, check_hallucinated_metrics
 
 
@@ -16,21 +17,29 @@ def test_check_hallucinated_metrics_has_no_persona_param():
     assert "persona" not in inspect.signature(check_hallucinated_metrics).parameters
 
 
-def test_teaching_terms_are_globally_allowlisted():
-    """Task 3: analyst teaching vocabulary is folded into the base allowlist.
+def test_tunneling_language_requires_capability_and_citation():
+    text = "The tunneling gap tightened."
 
-    These terms don't match _METRIC_PATTERN (plain English, not xMetric/
-    ACRONYM%/P+ shaped), so they were never actually reachable via the old
-    per-persona allowlist either -- but the guard as a whole must report
-    the text as clean regardless.
-    """
-    text = (
-        "The playability improved; the tunneling gap tightened, the pitch "
-        "tree deepened, and arsenal depth grew."
+    unavailable = check_hallucinated_metrics(text)
+    available_but_uncited = check_hallucinated_metrics(
+        text,
+        capabilities=AnalysisCapabilities(
+            has_tunneling_measurement=True,
+            evidence_fact_ids=(("tunneling_measurement", "fact:tunnel"),),
+        ),
     )
-    result = check_hallucinated_metrics(text)
-    assert result.is_clean
-    assert result.unknown_metrics == []
+    cited = check_hallucinated_metrics(
+        text,
+        capabilities=AnalysisCapabilities(
+            has_tunneling_measurement=True,
+            evidence_fact_ids=(("tunneling_measurement", "fact:tunnel"),),
+        ),
+        cited_fact_ids=("fact:tunnel",),
+    )
+
+    assert unavailable.unsupported_claim_warnings
+    assert available_but_uncited.unsupported_claim_warnings
+    assert cited.unsupported_claim_warnings == []
 
 
 def test_check_hallucinated_metrics_rejects_empty_string():
@@ -239,22 +248,15 @@ def test_hallucination_guard_other_traditional_stats_still_flagged():
     assert "W-L" in result.outcome_stat_warnings
 
 
-# -- Teaching-vocabulary regression vectors (formerly per-persona; Task 3
-# folded these into the base _KNOWN_METRICS allowlist) --
+# -- Capability-gated causal-language regressions --
 
 
-def test_analyst_vocab_globally_allowlisted():
-    """Analyst teaching vocabulary is clean with no persona argument at all."""
-    text = (
-        "The playability of this slider comes down to the tunneling gap "
-        "created by his pitch tree. The arsenal depth gives him four "
-        "viable options."
-    )
+def test_causal_teaching_vocabulary_is_not_globally_allowlisted():
+    text = "The slider's tunneling gap deceived hitters, and that mechanism drove the result."
     result = check_hallucinated_metrics(text)
-    assert result.is_clean, (
-        f"Analyst vocabulary flagged: "
-        f"unknown={result.unknown_metrics}, warnings={result.outcome_stat_warnings}"
-    )
+
+    assert result.unsupported_claim_warnings
+    assert not result.is_clean
 
 
 def test_teaching_vocab_does_not_suppress_real_unknowns():
@@ -265,25 +267,28 @@ def test_teaching_vocab_does_not_suppress_real_unknowns():
     assert not result.is_clean
 
 
-def test_generic_synthetic_capsule_clean():
-    """Synthetic generic capsule (sections + table) passes clean."""
+def test_generic_capsule_rejects_driver_and_command_inference():
     text = (
-        "## Stuff\nThe slider graded S+ 112; the model credited vertical break.\n\n"
-        "## Location\nFastball L+ 94 below league average.\n\n"
-        "## Run Value & Execution\nxRV100 of -0.5 shows the arsenal saves runs.\n\n"
-        "## Trend\nVelocity stable; Pitching+ up 4 points.\n\n"
-        "## Game Shape\nThird-time-through gap manageable.\n\n"
-        "## Summary Table\n"
-        "| Signal | Key Finding | Grade |\n"
-        "|---|---|---|\n"
-        "| Top Improvement | Slider vertical break gain | S+ 112 |\n"
-        "| Top Concern | Fastball command slipped | L+ 94 |\n"
+        "## Stuff\nThe model credited vertical break for S+ 112.\n\n"
+        "## Location\nFastball L+ 94 shows that command slipped.\n"
     )
     result = check_hallucinated_metrics(text)
-    assert result.is_clean, (
-        f"Generic synthetic capsule flagged: "
-        f"unknown={result.unknown_metrics}, warnings={result.outcome_stat_warnings}"
-    )
+
+    assert result.unsupported_claim_warnings
+    assert not result.is_clean
+
+
+def test_rarity_tag_cannot_supply_importance():
+    result = check_hallucinated_metrics("Velocity was OUTLIER, so it was the important model driver.")
+
+    assert result.unsupported_claim_warnings
+    assert not result.is_clean
+
+
+def test_explicit_model_driver_limitation_is_not_a_claim():
+    result = check_hallucinated_metrics("The supplied aggregate profile does not identify the model driver.")
+
+    assert result.unsupported_claim_warnings == []
 
 
 def test_generic_table_row_invented_metric_flagged():

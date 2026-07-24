@@ -12,7 +12,8 @@ from pitcher_narratives.data import PitcherData
 from pitcher_narratives.engine._common import (
     _MIN_PITCHES,
     _build_name_map,
-    _get_window_game_dates,
+    _get_frame_rows,
+    _get_season_rows,
     _sufficiency_delta_string,
     frame_sufficiency,
 )
@@ -113,7 +114,6 @@ class ReleasePointMetrics:
     """True when window covers full season."""
 
 
-
 def compute_release_point_metrics(data: PitcherData) -> ReleasePointMetrics:
     """Compute per-pitch-type release point analysis with window vs season deltas.
 
@@ -130,13 +130,12 @@ def compute_release_point_metrics(data: PitcherData) -> ReleasePointMetrics:
     """
     sufficiency = frame_sufficiency(data)
     cold_start = sufficiency != "sufficient"
-    window_dates = _get_window_game_dates(data)
-    name_map = _build_name_map(data.statcast)
+    name_map = _build_name_map(_get_season_rows(data))
 
     _release_cols = ["release_pos_x", "release_pos_z", "release_extension"]
 
     # Filter to rows with non-null release data
-    valid = data.statcast.filter(
+    valid = _get_season_rows(data).filter(
         pl.col("release_pos_x").is_not_null()
         & pl.col("release_pos_z").is_not_null()
         & pl.col("release_extension").is_not_null()
@@ -151,7 +150,11 @@ def compute_release_point_metrics(data: PitcherData) -> ReleasePointMetrics:
     )
 
     # Window aggregates by pitch_type
-    window_valid = valid.filter(pl.col("game_date").is_in(window_dates))
+    window_valid = _get_frame_rows(data).filter(
+        pl.col("release_pos_x").is_not_null()
+        & pl.col("release_pos_z").is_not_null()
+        & pl.col("release_extension").is_not_null()
+    )
     window_agg = window_valid.group_by("pitch_type").agg(
         pl.col("release_pos_x").mean().alias("window_x"),
         pl.col("release_pos_z").mean().alias("window_z"),
@@ -204,5 +207,3 @@ def compute_release_point_metrics(data: PitcherData) -> ReleasePointMetrics:
         pitch_types=pitch_types,
         cold_start=cold_start,
     )
-
-

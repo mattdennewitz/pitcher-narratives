@@ -60,17 +60,22 @@ _CORE = [
         key="grounding",
         label="Grounding / faithfulness",
         weight=3.0,
-        anchor_1="Invents metrics or values absent from the ground truth, or misquotes provided numbers.",
-        anchor_3="All numbers check out, but some claims stretch beyond what the data supports.",
-        anchor_5="Every claim traceable to the ground truth; numbers exact; no embellishment.",
+        anchor_1=(
+            "Invents values or model semantics, uses unmanifested evidence, or misquotes provided facts."
+        ),
+        anchor_3="Facts check out, but some interpretations exceed cited capabilities.",
+        anchor_5="Every claim is traceable to cited producer-backed ground truth; no embellishment.",
     ),
     RubricDimension(
         key="directional_consistency",
         label="Directional consistency",
         weight=2.0,
-        anchor_1="Sign errors: treats positive xRV100 as good, flips P-vs-S location logic, or contradicts a grade's direction.",
-        anchor_3="Directions correct but hedged or muddled in places.",
-        anchor_5="All metric directions handled correctly and confidently (xRV100 negative = good; P>S meaning; S+ vs xRV100_S alignment).",
+        anchor_1=(
+            "Flips metric signs, treats formal L as ordinary P minus exported S, "
+            "or contradicts a supplied grade."
+        ),
+        anchor_3="Directions are correct but hedged or muddled in places.",
+        anchor_5="All supplied signs and formal P/S/L semantics are preserved exactly.",
     ),
     RubricDimension(
         key="sample_size_calibration",
@@ -84,14 +89,16 @@ _CORE = [
 
 # ── Specialist (individual agent) rubric ──────────────────────────────
 
-AGENT_RUBRIC: list[RubricDimension] = _CORE + [
+AGENT_RUBRIC: list[RubricDimension] = [
+    *_CORE,
     RubricDimension(
-        key="analytical_mechanism",
-        label="Analytical mechanism",
+        key="supported_interpretation",
+        label="Supported interpretation",
         weight=2.0,
-        anchor_1="Recites numbers without connecting physical inputs to model predictions to grades.",
-        anchor_3="Some mechanism, but key links asserted rather than traced.",
-        anchor_5="Traces the chain physical pitch -> model prediction -> grade for the pitches that matter.",
+        anchor_1="Turns correlated aggregates, physical rarity, or outcome components "
+        "into model drivers or causal mechanisms.",
+        anchor_3="Separates observations from interpretation, with occasional unsupported linkage.",
+        anchor_5="Interprets only cited facts under AVAILABLE capabilities; limitations stay explicit.",
     ),
     RubricDimension(
         key="citation_discipline",
@@ -105,9 +112,12 @@ AGENT_RUBRIC: list[RubricDimension] = _CORE + [
         key="no_hallucinated_causation",
         label="No hallucinated causation",
         weight=2.0,
-        anchor_1="Invents causes from data not provided (release height, grip, mechanics).",
-        anchor_3="Causes stay within the data but are occasionally overstated.",
-        anchor_5="Causal claims strictly within the provided data; honest when the model sees something the averages don't show.",
+        anchor_1="Invents command, intent, mechanics, hitter behavior, feature "
+        "importance, or another causal/model-driver claim.",
+        anchor_3="Avoids explicit causation but occasionally implies an unsupported driver.",
+        anchor_5=(
+            "Makes no causal or model-driver claim without its specific AVAILABLE capability and cited facts."
+        ),
     ),
     RubricDimension(
         key="focus",
@@ -121,7 +131,8 @@ AGENT_RUBRIC: list[RubricDimension] = _CORE + [
 
 # ── Final capsule rubric ──────────────────────────────────────────────
 
-CAPSULE_RUBRIC: list[RubricDimension] = _CORE + [
+CAPSULE_RUBRIC: list[RubricDimension] = [
+    *_CORE,
     RubricDimension(
         key="thread_coherence",
         label="Thread coherence",
@@ -136,7 +147,10 @@ CAPSULE_RUBRIC: list[RubricDimension] = _CORE + [
         weight=2.0,
         anchor_1="Recites specialist findings without connecting them.",
         anchor_3="Some cross-signal connection, mostly summary.",
-        anchor_5="Surfaces the cross-specialist pattern as the lead; the reader learns something no single section said.",
+        anchor_5=(
+            "Surfaces the cross-specialist pattern as the lead; the reader "
+            "learns something no single section said."
+        ),
     ),
     RubricDimension(
         key="scout_voice",
@@ -147,12 +161,15 @@ CAPSULE_RUBRIC: list[RubricDimension] = _CORE + [
         anchor_5="Conversational scouting register; varied cadence; numbers woven into prose naturally.",
     ),
     RubricDimension(
-        key="model_explanation",
-        label="Model explanation",
-        weight=1.0,
-        anchor_1="Uses S+/P+/L+ with no explanation of what they measure.",
-        anchor_3="Defines the grades but mechanically.",
-        anchor_5="Contextualizes the grading system on first use so an unfamiliar reader can follow.",
+        key="model_semantic_restraint",
+        label="Model-semantic restraint",
+        weight=1.5,
+        anchor_1="Improvises model decisions or weights; calls Location+ ordinary "
+        "P-minus-S, command, target execution, or a causal effect.",
+        anchor_3="Avoids direct contradictions but mechanically restates model "
+        "definitions or implies that aggregates identify model drivers.",
+        anchor_5="Leaves the canonical model definition to the deterministic section "
+        "and limits prose to cited predictive evidence, not causal attribution.",
     ),
     RubricDimension(
         key="readability",

@@ -1,55 +1,51 @@
-"""Component attribution: decomposes xRV100 into 13 outcome-level
-contributions per pitch type using the run-values lookup.
-"""
+"""Frame-scoped consumer of producer-emitted outcome attribution."""
 
 from __future__ import annotations
 
-import logging
+import math
 from dataclasses import dataclass
 
 import polars as pl
 
-from pitcher_narratives.data import PitcherData, load_run_values
+from pitcher_narratives.data import (
+    IncompatiblePitchingPlusExport,
+    PitcherData,
+    filter_to_frame,
+    validated_join,
+)
 from pitcher_narratives.engine._common import _OUTCOME_COLS_P, _build_name_map
+from pitcher_narratives.facts import DERIVED_FACT_SOURCE, Fact, FactKind
 
-_log = logging.getLogger(__name__)
+_THREE_DECIMAL_RECONCILIATION_TOLERANCE = 0.000500000001
 
 
-@dataclass
+@dataclass(frozen=True)
 class OutcomeContribution:
-    """A single outcome's contribution to xRV100."""
+    """One producer-emitted raw outcome contribution."""
 
     outcome: str
-    """Outcome name, e.g., 'whiff', 'home_run', 'called_strike'."""
-
     contribution: float
-    """mean(p_i * rv_i) * 100, same scale as xRV100."""
+    fact_id: str
 
 
-@dataclass
+@dataclass(frozen=True)
 class ComponentAttribution:
-    """Per-pitch-type decomposition of xRV into 13 outcome contributions.
-
-    Each pitch type's xRV100 is broken into 13 additive outcome-level
-    contributions: contribution_i = mean(probability_i * delta_run_exp_i) * 100.
-    The 13 contributions sum to the raw xRV100 total (pre-mean-subtraction).
-    """
+    """Frame-scoped P-model decomposition with explicit centering semantics."""
 
     pitch_type: str
-    """Pitch type code, e.g., 'FC'."""
-
     pitch_name: str
-    """Human-readable name, e.g., 'Cutter'."""
-
-    contributions: list[OutcomeContribution]
-    """13 items, sorted by |contribution| descending."""
-
-    total_xrv100: float
-    """Sum of all 13 contribution values."""
-
+    contributions: tuple[OutcomeContribution, ...]
+    raw_total_xrv100: float
+    league_centering_offset_xrv100: float
+    centered_xrv100_p: float
     n_pitches: int
-    """Number of pitches used in the computation."""
-
+    frame_id: str
+    manifest_id: str
+    run_value_table_version: str
+    reference_population: str
+    raw_total_fact_id: str
+    league_centering_offset_fact_id: str
+    centered_xrv100_p_fact_id: str
 
 
 # ── Component attribution ────────────────────────────────────────────
@@ -57,117 +53,313 @@ class ComponentAttribution:
 
 def compute_component_attribution(
     data: PitcherData,
-    game_pk: int | None = None,
 ) -> list[ComponentAttribution]:
-    """Decompose xRV into 13 outcome-level contributions per pitch type.
+    """Pitch-count-combine producer-emitted appearance attribution rows.
 
-    For each pitch: contribution_i = p_i * delta_run_exp(outcome_i, balls, strikes).
-    Per pitch type: mean(contribution_i) * 100 for each of 13 outcomes.
-
-    The contributions sum to the RAW xRV100 (pre-mean-subtraction). This will
-    differ from the mean-subtracted xRV100_P in the CSVs by a constant
-    league-average offset.
-
-    Args:
-        data: PitcherData bundle from data.load_pitcher_data.
-        game_pk: If provided, compute for a single appearance only.
-            If None, compute season-level (all pitches for this pitcher).
-
-    Returns:
-        List of ComponentAttribution, one per pitch type, sorted by
-        n_pitches descending. Empty list if all_pitches CSV lacks
-        required outcome columns.
+    This consumer never rebuilds outcome contributions from pitch probabilities
+    or a run-value lookup. Missing producer rows therefore remain unavailable.
     """
-    all_pitches = data.agg_csvs["all_pitches"]
-
-    # Check that all 13 outcome columns exist
-    if not all(col in all_pitches.columns for col in _OUTCOME_COLS_P):
+    if data.frame is None:
+        raise ValueError("PitcherData has no canonical frame")
+    artifact = data.artifact_semantics.get("pitcher_type_outcome_appearance")
+    if data.artifact_semantics and artifact is None:
         return []
-
-    # Load run values lookup table
-    try:
-        rv_df = load_run_values()
-    except FileNotFoundError as exc:
-        _log.warning("Skipping component attribution: %s", exc)
+    emitted = data.aggregates.get("pitcher_type_outcome_appearance")
+    if emitted is None:
+        if artifact is not None:
+            raise IncompatiblePitchingPlusExport("registered attribution artifact was not loaded")
         return []
-
-    # Filter to specific appearance if requested
-    if game_pk is not None:
-        all_pitches = all_pitches.filter(pl.col("game_pk") == game_pk)
-        if all_pitches.is_empty():
-            return []
-
-    name_map = _build_name_map(data.statcast)
-
-    # Get pitch types sorted by count descending
-    type_counts = (
-        all_pitches.group_by("pitch_type")
-        .agg(pl.len().alias("count"))
-        .sort("count", descending=True)
+    if emitted.is_empty() and not data.artifact_semantics:
+        return []
+    selected = filter_to_frame(emitted, data.frame)
+    appearance_keys = [
+        "season",
+        "pitcher",
+        "pitch_type",
+        "game_date",
+        "game_pk",
+    ]
+    missing_pitch_columns = set(appearance_keys) - set(data.pitches.columns)
+    if missing_pitch_columns:
+        raise IncompatiblePitchingPlusExport(
+            f"all_pitches cannot validate attribution coverage; missing {sorted(missing_pitch_columns)}"
+        )
+    expected_appearances = (
+        filter_to_frame(data.pitches, data.frame)
+        .filter(pl.col("pitcher") == data.pitcher_id)
+        .group_by(appearance_keys)
+        .len(name="_expected_n_pitches")
     )
-    pitch_types = type_counts["pitch_type"].to_list()
-
-    results: list[ComponentAttribution] = []
-
-    for pt in pitch_types:
-        pitches = all_pitches.filter(pl.col("pitch_type") == pt)
-        n_pitches = pitches.height
-        if n_pitches == 0:
-            continue
-
-        # Unpivot the 13 probability columns to long format
-        long = pitches.unpivot(
-            on=list(_OUTCOME_COLS_P),
-            index=["game_pk", "at_bat_number", "pitch_number", "balls", "strikes"],
-            variable_name="outcome_col",
-            value_name="probability",
-        ).with_columns(
-            pl.col("outcome_col").str.replace("_P$", "").alias("model_classes"),
+    emitted_appearances = selected.select(
+        *appearance_keys,
+        "n_pitches",
+    ).unique()
+    coverage = validated_join(
+        expected_appearances,
+        emitted_appearances,
+        on=appearance_keys,
+        cardinality="1:1",
+        required=True,
+        left_name="frame all_pitches appearances",
+        right_name="outcome attribution appearances",
+    )
+    if coverage.height != emitted_appearances.height:
+        extras = emitted_appearances.join(
+            expected_appearances,
+            on=appearance_keys,
+            how="anti",
+        ).select(appearance_keys)
+        raise IncompatiblePitchingPlusExport(
+            f"outcome attribution has appearances outside the frame: {extras.to_dicts()}"
         )
-
-        # Join with run values on [balls, strikes, model_classes]
-        joined = long.join(
-            rv_df.select(["balls", "strikes", "model_classes", "delta_run_exp"]),
-            on=["balls", "strikes", "model_classes"],
-            how="inner",
+    if coverage.filter(pl.col("_expected_n_pitches") != pl.col("n_pitches")).height:
+        raise IncompatiblePitchingPlusExport("outcome attribution pitch counts do not match all_pitches")
+    canonical_frame = data.aggregates.get("pitcher_type_appearance")
+    required_canonical_columns = {*appearance_keys, "n_pitches", "xRV100_P"}
+    if canonical_frame is None:
+        raise IncompatiblePitchingPlusExport(
+            "canonical pitcher_type_appearance was not loaded for attribution reconciliation"
         )
-
-        # Compute per-pitch contribution = probability * delta_run_exp
-        joined = joined.with_columns(
-            (pl.col("probability") * pl.col("delta_run_exp")).alias("contribution"),
+    missing_canonical_columns = required_canonical_columns - set(canonical_frame.columns)
+    if missing_canonical_columns:
+        raise IncompatiblePitchingPlusExport(
+            "canonical pitcher_type_appearance cannot validate attribution; "
+            f"missing {sorted(missing_canonical_columns)}"
         )
-
-        # Group by outcome and compute mean(contribution) * 100
-        outcome_means = (
-            joined.group_by("model_classes")
-            .agg(pl.col("contribution").mean().alias("mean_contribution"))
-            .with_columns(
-                (pl.col("mean_contribution") * 100).alias("contribution_xrv100"),
+    canonical_appearances = (
+        filter_to_frame(canonical_frame, data.frame)
+        .filter(pl.col("pitcher") == data.pitcher_id)
+        .select(
+            *appearance_keys,
+            pl.col("n_pitches").alias("_canonical_n_pitches"),
+            pl.col("xRV100_P").alias("_canonical_xrv100_p"),
+        )
+    )
+    attribution_appearances = selected.select(
+        *appearance_keys,
+        pl.col("n_pitches").alias("_attribution_n_pitches"),
+        pl.col("centered_xrv100_p").alias("_attribution_centered_xrv100_p"),
+    ).unique()
+    canonical_reconciliation = validated_join(
+        canonical_appearances,
+        attribution_appearances,
+        on=appearance_keys,
+        cardinality="1:1",
+        required=True,
+        left_name="canonical pitcher_type_appearance",
+        right_name="outcome attribution appearances",
+    )
+    if canonical_reconciliation.height != attribution_appearances.height:
+        extras = attribution_appearances.join(
+            canonical_appearances,
+            on=appearance_keys,
+            how="anti",
+        ).select(appearance_keys)
+        raise IncompatiblePitchingPlusExport(
+            "outcome attribution has appearances outside canonical pitcher_type_appearance: "
+            f"{extras.to_dicts()}"
+        )
+    aggregate_reconciliation = canonical_reconciliation.group_by("pitch_type").agg(
+        pl.col("_canonical_n_pitches").sum().alias("_canonical_total_n_pitches"),
+        pl.col("_attribution_n_pitches").sum().alias("_attribution_total_n_pitches"),
+        (
+            (pl.col("_canonical_xrv100_p") * pl.col("_canonical_n_pitches")).sum()
+            / pl.col("_canonical_n_pitches").sum()
+        ).alias("_canonical_centered_xrv100_p"),
+        (
+            (pl.col("_attribution_centered_xrv100_p") * pl.col("_attribution_n_pitches")).sum()
+            / pl.col("_attribution_n_pitches").sum()
+        ).alias("_attribution_centered_xrv100_p"),
+    )
+    if aggregate_reconciliation.filter(
+        pl.col("_canonical_total_n_pitches") != pl.col("_attribution_total_n_pitches")
+    ).height:
+        raise IncompatiblePitchingPlusExport(
+            "outcome attribution pitch counts do not match canonical pitcher_type_appearance"
+        )
+    for row in aggregate_reconciliation.iter_rows(named=True):
+        if not math.isclose(
+            row["_canonical_centered_xrv100_p"],
+            row["_attribution_centered_xrv100_p"],
+            rel_tol=0.0,
+            abs_tol=_THREE_DECIMAL_RECONCILIATION_TOLERANCE,
+        ):
+            raise IncompatiblePitchingPlusExport(
+                "outcome attribution centered xRV100_P does not match canonical "
+                f"pitcher_type_appearance for {row['pitch_type']}"
             )
-        )
+    if selected.is_empty():
+        return []
 
-        # Build list of OutcomeContribution, sorted by |contribution| descending
+    fact_registry = data.fact_registry
+    if fact_registry is None:
+        raise ValueError("attribution requires PitcherData's manifest-bound fact registry")
+    name_map = _build_name_map(data.pitches)
+    expected_outcomes = frozenset(column.removesuffix("_P") for column in _OUTCOME_COLS_P)
+    results: list[ComponentAttribution] = []
+    reference_population = data.frame.source_population
+    if artifact is not None:
+        centered_semantics = artifact.metrics.get("centered_xrv100_p")
+        if centered_semantics is not None:
+            reference_population = centered_semantics.reference_population
+
+    for pitch_type in selected["pitch_type"].unique(maintain_order=True):
+        pitch_rows = selected.filter(pl.col("pitch_type") == pitch_type)
+        manifest_ids = pitch_rows["manifest_id"].unique().to_list()
+        run_value_versions = pitch_rows["run_value_table_version"].unique().to_list()
+        if len(manifest_ids) != 1 or len(run_value_versions) != 1:
+            raise ValueError(f"{pitch_type} attribution spans multiple producer contracts")
+        manifest_id = str(manifest_ids[0])
+        run_value_version = str(run_value_versions[0])
+
+        pitch_appearance_keys = appearance_keys
+        appearances = pitch_rows.unique(subset=pitch_appearance_keys)
+        n_pitches = int(appearances["n_pitches"].sum())
+        if n_pitches <= 0:
+            raise ValueError(f"{pitch_type} attribution has no pitches")
+
         contributions: list[OutcomeContribution] = []
-        for row in outcome_means.iter_rows(named=True):
+        for outcome in sorted(expected_outcomes):
+            outcome_rows = pitch_rows.filter(pl.col("outcome") == outcome)
+            if outcome_rows.height != appearances.height:
+                raise ValueError(
+                    f"{pitch_type} attribution does not cover outcome {outcome!r} once per appearance"
+                )
+            contribution = float(
+                (outcome_rows["raw_component_xrv100"] * outcome_rows["n_pitches"]).sum() / n_pitches
+            )
+            fact = _attribution_fact(
+                data,
+                pitch_type=str(pitch_type),
+                metric="raw_component_xrv100",
+                entity=(f"pitcher:{data.pitcher_id}|pitch_type:{pitch_type}|outcome:{outcome}"),
+                value=contribution,
+                n_pitches=n_pitches,
+                manifest_id=manifest_id,
+                run_value_version=run_value_version,
+                reference_population=reference_population,
+                source_fact_ids=data.base_fact_ids(
+                    "pitcher_type_outcome_appearance",
+                    outcome_rows,
+                    ("raw_component_xrv100", "n_pitches"),
+                ),
+            )
+            fact_registry.add(fact)
             contributions.append(
                 OutcomeContribution(
-                    outcome=row["model_classes"],
-                    contribution=row["contribution_xrv100"],
+                    outcome=outcome,
+                    contribution=contribution,
+                    fact_id=fact.id,
                 )
             )
-        contributions.sort(key=lambda c: abs(c.contribution), reverse=True)
 
-        total_xrv100 = sum(c.contribution for c in contributions)
+        weighted_values: dict[str, float] = {}
+        for column in (
+            "raw_total_xrv100",
+            "league_centering_offset_xrv100",
+            "centered_xrv100_p",
+        ):
+            weighted_values[column] = float(
+                (appearances[column] * appearances["n_pitches"]).sum() / n_pitches
+            )
 
+        raw_total = weighted_values["raw_total_xrv100"]
+        offset = weighted_values["league_centering_offset_xrv100"]
+        centered = weighted_values["centered_xrv100_p"]
+        component_sum = sum(row.contribution for row in contributions)
+        if not math.isclose(
+            component_sum,
+            raw_total,
+            rel_tol=1e-9,
+            abs_tol=1e-12,
+        ):
+            raise ValueError(f"{pitch_type} raw attribution components do not sum to raw total")
+        if not math.isclose(
+            raw_total + offset,
+            centered,
+            rel_tol=1e-9,
+            abs_tol=1e-12,
+        ):
+            raise ValueError(f"{pitch_type} raw attribution does not reconcile to centered P")
+
+        scalar_facts = {
+            metric: _attribution_fact(
+                data,
+                pitch_type=str(pitch_type),
+                metric=metric,
+                entity=f"pitcher:{data.pitcher_id}|pitch_type:{pitch_type}",
+                value=value,
+                n_pitches=n_pitches,
+                manifest_id=manifest_id,
+                run_value_version=run_value_version,
+                reference_population=reference_population,
+                source_fact_ids=data.base_fact_ids(
+                    "pitcher_type_outcome_appearance",
+                    pitch_rows,
+                    (metric, "n_pitches"),
+                ),
+            )
+            for metric, value in weighted_values.items()
+        }
+        for fact in scalar_facts.values():
+            fact_registry.add(fact)
+
+        contributions.sort(key=lambda row: abs(row.contribution), reverse=True)
         results.append(
             ComponentAttribution(
-                pitch_type=pt,
-                pitch_name=name_map.get(pt, pt),
-                contributions=contributions,
-                total_xrv100=total_xrv100,
+                pitch_type=str(pitch_type),
+                pitch_name=name_map.get(str(pitch_type), str(pitch_type)),
+                contributions=tuple(contributions),
+                raw_total_xrv100=raw_total,
+                league_centering_offset_xrv100=offset,
+                centered_xrv100_p=centered,
                 n_pitches=n_pitches,
+                frame_id=data.frame.id,
+                manifest_id=manifest_id,
+                run_value_table_version=run_value_version,
+                reference_population=reference_population,
+                raw_total_fact_id=scalar_facts["raw_total_xrv100"].id,
+                league_centering_offset_fact_id=scalar_facts["league_centering_offset_xrv100"].id,
+                centered_xrv100_p_fact_id=scalar_facts["centered_xrv100_p"].id,
             )
         )
 
-    results.sort(key=lambda x: x.n_pitches, reverse=True)
+    results.sort(key=lambda row: row.n_pitches, reverse=True)
     return results
+
+
+def _attribution_fact(
+    data: PitcherData,
+    *,
+    pitch_type: str,
+    metric: str,
+    entity: str,
+    value: float,
+    n_pitches: int,
+    manifest_id: str,
+    run_value_version: str,
+    reference_population: str,
+    source_fact_ids: tuple[str, ...],
+) -> Fact:
+    if data.frame is None:
+        raise ValueError("PitcherData has no canonical frame")
+    return Fact.create(
+        kind=FactKind.COMPUTED,
+        metric=metric,
+        variant=("derived" if metric == "league_centering_offset_xrv100" else "P"),
+        entity=entity,
+        value=value,
+        unit="runs_per_100_pitches",
+        frame_id=data.frame.id,
+        population=reference_population,
+        sample_size=n_pitches,
+        sufficiency="available",
+        source=DERIVED_FACT_SOURCE,
+        semantic_key=(
+            f"pitcher:{data.pitcher_id}|{pitch_type}|{entity}|{metric}|"
+            f"producer_manifest={manifest_id}|run_values={run_value_version}"
+        ),
+        source_fact_ids=source_fact_ids,
+        transform="pitch_count_weighted_mean(emitted_appearance_rows)",
+        manifest_version=data.frame.source_population,
+    )

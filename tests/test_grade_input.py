@@ -20,14 +20,15 @@ def _text(parts):
 def test_stuff_input_contains_ff_grade_and_class_baseline(jones_ctx):
     text = _text(build_grade_input(jones_ctx, "S"))
     assert "FF" in text
-    assert "S+" in text                 # per-pitch grade present
+    assert "S+" in text  # per-pitch grade present
+    assert "Population: manifest `" in text
     assert "S-variant league avg" in text  # class baseline (avg_s_plus) present
 
 
 def test_pitching_input_includes_both_stuff_and_location(jones_ctx):
     text = _text(build_grade_input(jones_ctx, "P"))
-    assert "Arsenal Physical Profile" in text          # from stuff input
-    assert "Location" in text or "location" in text     # from location input
+    assert "Arsenal Physical Profile" in text  # from stuff input
+    assert "Location" in text or "location" in text  # from location input
 
 
 def test_unknown_family_raises(jones_ctx):

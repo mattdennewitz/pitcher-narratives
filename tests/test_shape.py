@@ -6,9 +6,12 @@ table (handedness-mirrored, inch units, slot-vs-ride physics), and the
 per-pitcher shape profile computed from real Statcast data.
 """
 
+from datetime import date
+
+import polars as pl
 import pytest
 
-from pitcher_narratives.data import load_pitcher_data
+from pitcher_narratives.data import PitcherData, load_pitcher_data
 from pitcher_narratives.shape import (
     PitchShapeEntry,
     PitchShapeProfile,
@@ -18,7 +21,9 @@ from pitcher_narratives.shape import (
     _interpolate_expectation,
     compute_pitch_shape,
     compute_slot_expectations,
+    render_pitch_shape,
 )
+from pitcher_narratives.temporal import FrameSelection, GameKey, TemporalFrame
 
 TEST_PITCHER = 592155  # Booser, Cam -- LHP, FF/FC/ST/CH arsenal
 
@@ -48,6 +53,9 @@ def test_classify_dead_zone_fastball():
     """Fastball within 0.5 SD on both axes is DEAD ZONE."""
     tag = _classify_shape(0.5, -0.8, run_z=0.2, ride_z=-0.3, is_fastball=True)
     assert tag.startswith("DEAD ZONE")
+    assert "hitter" not in tag.lower()
+    assert "decept" not in tag.lower()
+    assert "important" not in tag.lower()
 
 
 def test_classify_ride_above_slot():
@@ -100,9 +108,124 @@ def test_classify_dead_zone_requires_both_axes_within_half_sd():
 # ── League slot expectations ──────────────────────────────────────────
 
 
+def _slot_reference_rows() -> pl.DataFrame:
+    rows = []
+    for bucket, run, ride in (
+        (10, 10.0, 12.0),
+        (30, 8.0, 15.0),
+        (40, 6.0, 17.0),
+        (50, 4.0, 19.0),
+    ):
+        for metric, mean, std in (
+            ("arm_side_pfx_x", run, 3.0),
+            ("pfx_z", ride, 2.0),
+        ):
+            rows.append(
+                {
+                    "manifest_id": "test:physical-reference:v1",
+                    "seasons": "2026",
+                    "level": "MLB",
+                    "game_types": "R",
+                    "season": 2026,
+                    "pitch_type": "FF",
+                    "arm_angle_bucket": bucket,
+                    "metric": metric,
+                    "mean": mean,
+                    "std": std,
+                    "n_pitches": 300,
+                    "unit": "inches",
+                    "pitcher_handling": "handedness_normalized",
+                    "statistical_unit": "pitch",
+                    "weighting": "pitch_weighted",
+                }
+            )
+    return pl.DataFrame(rows)
+
+
 @pytest.fixture(scope="module")
 def expectations() -> dict[tuple[str, int], SlotExpectation]:
-    return compute_slot_expectations()
+    return compute_slot_expectations(_slot_reference_rows())
+
+
+def _mirrored_shape_data(
+    hand: str,
+    raw_pfx_x: float,
+    game_pk: int,
+    reference: pl.DataFrame | None = None,
+) -> PitcherData:
+    game_date = date(2026, 6, 1)
+    pitches = pl.DataFrame(
+        {
+            "season": [2026] * 12,
+            "game_date": [game_date] * 12,
+            "game_pk": [game_pk] * 12,
+            "pitcher": [game_pk] * 12,
+            "pitch_type": ["FF"] * 12,
+            "pitch_name": ["Four-Seam Fastball"] * 12,
+            "p_throws": [hand] * 12,
+            "pfx_x": [raw_pfx_x] * 12,
+            "arm_side_pfx_x": [abs(raw_pfx_x)] * 12,
+            "pfx_z": [17.0 / 12.0] * 12,
+            "arm_angle": [40.0] * 12,
+        }
+    )
+    frame = FrameSelection.create(
+        temporal_frame=TemporalFrame.RECENT,
+        games=frozenset({GameKey(2026, game_date, game_pk)}),
+        as_of=game_date,
+        source_population="test:mirrored",
+        scoring_season=2026,
+    )
+    empty = pl.DataFrame()
+    return PitcherData(
+        pitches=pitches,
+        appearances=empty,
+        window_appearances=empty,
+        season_baseline=empty,
+        pitch_type_baseline=empty,
+        prior_season_baseline=empty,
+        prior_pitch_type_baseline=empty,
+        aggregates={
+            "pitch_type_slot_reference": (reference if reference is not None else _slot_reference_rows())
+        },
+        pitcher_id=game_pk,
+        pitcher_name=f"Test {hand}",
+        throws=hand,
+        frame=frame,
+    )
+
+
+def test_mirrored_pitch_shapes_have_same_arm_side_z_score():
+    left = compute_pitch_shape(_mirrored_shape_data("L", 0.5, 1))
+    right = compute_pitch_shape(_mirrored_shape_data("R", -0.5, 2))
+
+    assert left is not None and right is not None
+    left_ff = left.entries[0]
+    right_ff = right.entries[0]
+    assert left_ff.arm_side_run_in == right_ff.arm_side_run_in
+    assert left_ff.run_z == right_ff.run_z
+    assert left_ff.shape_tag == right_ff.shape_tag
+
+
+def test_zero_variance_slot_reference_is_explicitly_unavailable():
+    zero_variance = _slot_reference_rows().with_columns(pl.lit(0.0).alias("std"))
+    profile = compute_pitch_shape(_mirrored_shape_data("L", 0.5, 3, reference=zero_variance))
+
+    assert profile is not None
+    assert profile.entries == []
+    assert "unavailable" in render_pitch_shape(profile).lower()
+
+
+def test_shape_population_label_is_exact():
+    profile = compute_pitch_shape(_mirrored_shape_data("L", 0.5, 4))
+
+    assert profile is not None
+    rendered = render_pitch_shape(profile)
+    assert "test:physical-reference:v1" in rendered
+    assert "seasons 2026" in rendered
+    assert "MLB regular season" in rendered
+    assert "pitch-weighted pitches" in rendered
+    assert "statistical unit `pitch`" in rendered
 
 
 def test_slot_expectations_has_ff_buckets(expectations):
@@ -185,21 +308,29 @@ def _synthetic_table() -> dict[tuple[str, int], SlotExpectation]:
     """Two adjacent FF buckets with a known linear gradient in mean and SD."""
     return {
         ("FF", 30): SlotExpectation(
-            pitch_type="FF", bucket=30, n_pitches=1000,
-            exp_arm_side_run_in=8.0, exp_ride_in=15.0,
-            std_arm_side_run_in=3.0, std_ride_in=2.0,
+            pitch_type="FF",
+            bucket=30,
+            n_pitches=1000,
+            exp_arm_side_run_in=8.0,
+            exp_ride_in=15.0,
+            std_arm_side_run_in=3.0,
+            std_ride_in=2.0,
         ),
         ("FF", 40): SlotExpectation(
-            pitch_type="FF", bucket=40, n_pitches=1000,
-            exp_arm_side_run_in=6.0, exp_ride_in=17.0,
-            std_arm_side_run_in=3.0, std_ride_in=4.0,
+            pitch_type="FF",
+            bucket=40,
+            n_pitches=1000,
+            exp_arm_side_run_in=6.0,
+            exp_ride_in=17.0,
+            std_arm_side_run_in=3.0,
+            std_ride_in=4.0,
         ),
     }
 
 
 def test_interpolate_midpoint_between_centers():
     """Angle midway between bucket centers (40.0) blends mean and SD equally."""
-    run, ride, sd_run, sd_ride = _interpolate_expectation(_synthetic_table(), "FF", 40.0)
+    run, ride, _sd_run, sd_ride = _interpolate_expectation(_synthetic_table(), "FF", 40.0)
     assert run == pytest.approx(7.0)
     assert ride == pytest.approx(16.0)
     assert sd_ride == pytest.approx(3.0)  # between 2.0 and 4.0
@@ -207,7 +338,7 @@ def test_interpolate_midpoint_between_centers():
 
 def test_interpolate_at_center_returns_bucket_mean():
     """Angle at a bucket center (35.0) returns that bucket's means and SD."""
-    run, ride, sd_run, sd_ride = _interpolate_expectation(_synthetic_table(), "FF", 35.0)
+    run, ride, _sd_run, sd_ride = _interpolate_expectation(_synthetic_table(), "FF", 35.0)
     assert run == pytest.approx(8.0)
     assert ride == pytest.approx(15.0)
     assert sd_ride == pytest.approx(2.0)
@@ -225,7 +356,7 @@ def test_interpolate_missing_neighbor_falls_back_to_nearest():
     """With only one bucket in the table, its means and SD are used as-is."""
     table = _synthetic_table()
     del table[("FF", 40)]
-    run, ride, sd_run, sd_ride = _interpolate_expectation(table, "FF", 39.9)
+    run, ride, _sd_run, sd_ride = _interpolate_expectation(table, "FF", 39.9)
     assert run == pytest.approx(8.0)
     assert ride == pytest.approx(15.0)
     assert sd_ride == pytest.approx(2.0)
@@ -236,11 +367,11 @@ def test_interpolate_no_data_returns_none():
     assert _interpolate_expectation({}, "FF", 35.0) is None
 
 
-# ── Between-pitcher SD and z-scores ───────────────────────────────────
+# ── Emitted pitch-level SD and z-scores ───────────────────────────────
 
 
-def test_slot_expectations_std_is_between_pitcher(expectations):
-    """FF SD is the between-pitcher spread (~2 in ride), not pitch-level (~2.6)."""
+def test_slot_expectations_use_emitted_pitch_spread(expectations):
+    """The consumer preserves the emitted pitch-level reference spreads."""
     e = expectations[("FF", 40)]
     assert 1.0 < e.std_ride_in < 3.0
     assert 2.0 < e.std_arm_side_run_in < 4.0

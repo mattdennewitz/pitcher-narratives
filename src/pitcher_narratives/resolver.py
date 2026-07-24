@@ -1,10 +1,4 @@
-"""Fuzzy pitcher name resolution from Statcast parquet data.
-
-Translates human-typed pitcher names into numeric MLB pitcher IDs using
-a tiered pipeline: normalize, exact match, last-name match, then rapidfuzz
-fallback with WRatio scorer. Builds a dual-index lookup table (full-name
-and last-name) lazily on first call, cached at module level.
-"""
+"""Fuzzy pitcher name resolution from manifest-covered PitchingPlus data."""
 
 from __future__ import annotations
 
@@ -15,7 +9,7 @@ from dataclasses import dataclass, field
 from nameparser import HumanName
 from rapidfuzz import fuzz, process
 
-from pitcher_narratives.data import load_all_statcast
+from pitcher_narratives.data import load_emitted_grain
 
 __all__ = ["ResolveResult", "extract_pitcher_from_question", "resolve"]
 
@@ -84,30 +78,25 @@ def _normalize(raw: str) -> str:
         Lowercase, accent-stripped, suffix-stripped "first last" form.
     """
     parsed = HumanName(raw)
-    if parsed.last:
-        name = f"{parsed.first} {parsed.last}".strip()
-    else:
-        # Single word -- nameparser puts it in .first
-        name = parsed.first
+    name = f"{parsed.first} {parsed.last}".strip() if parsed.last else parsed.first
     return _strip_diacritics(name).lower().strip()
 
 
 def _build_name_table() -> _NameTable:
     """Build or return the cached dual-index lookup table.
 
-    Reads unique pitcher/player_name pairs from the Statcast parquet file
-    and builds two indexes:
+    Reads unique pitcher/player_name pairs from the emitted all-pitches grain
     - full_index: normalized "first last" -> (pitcher_id, original_name)
     - last_index: normalized last name -> [(pitcher_id, original_name), ...]
 
     Returns:
         Cached _NameTable instance.
     """
-    global _name_table  # noqa: PLW0603
+    global _name_table
     if _name_table is not None:
         return _name_table
 
-    df = load_all_statcast(columns=["pitcher", "player_name"])
+    df = load_emitted_grain("all_pitches").select("pitcher", "player_name")
     unique = df.unique(subset=["pitcher"])
 
     full_index: dict[str, tuple[int, str]] = {}
@@ -119,9 +108,7 @@ def _build_name_table() -> _NameTable:
         parsed = HumanName(original)
 
         # Build full-name key: "first last" without suffix
-        full_norm = _strip_diacritics(
-            f"{parsed.first} {parsed.last}".strip()
-        ).lower().strip()
+        full_norm = _strip_diacritics(f"{parsed.first} {parsed.last}".strip()).lower().strip()
 
         # Build last-name key: last name only, without suffix
         last_norm = _strip_diacritics(parsed.last).lower().strip()
@@ -164,18 +151,14 @@ def _fuzzy_ranked(
 
     if len(ranked) == 1:
         pid, (_, name) = ranked[0]
-        return ResolveResult(
-            pitcher_id=pid, pitcher_name=name, candidates=[], match_type="fuzzy"
-        )
+        return ResolveResult(pitcher_id=pid, pitcher_name=name, candidates=[], match_type="fuzzy")
 
     # Check if top result is significantly ahead (>=5 points gap)
     top_score = ranked[0][1][0]
     second_score = ranked[1][1][0]
     if top_score - second_score >= 5:
         pid, (_, name) = ranked[0]
-        return ResolveResult(
-            pitcher_id=pid, pitcher_name=name, candidates=[], match_type="fuzzy"
-        )
+        return ResolveResult(pitcher_id=pid, pitcher_name=name, candidates=[], match_type="fuzzy")
 
     # Multiple close results -> ambiguous
     candidates = [(pid, info[1]) for pid, info in ranked[:_MAX_CANDIDATES]]
@@ -254,9 +237,7 @@ def resolve(query: str) -> ResolveResult:
     # --- Tier 1: Exact full-name match ---
     if normalized in table.full_index:
         pid, name = table.full_index[normalized]
-        return ResolveResult(
-            pitcher_id=pid, pitcher_name=name, candidates=[], match_type="exact"
-        )
+        return ResolveResult(pitcher_id=pid, pitcher_name=name, candidates=[], match_type="exact")
 
     # --- Tier 2: Exact last-name match ---
     # For single-word queries, use the normalized form as a last-name key.
@@ -321,9 +302,7 @@ def resolve(query: str) -> ResolveResult:
             return result
 
     # --- Tier 6: Not found ---
-    return ResolveResult(
-        pitcher_id=None, pitcher_name=None, candidates=[], match_type="not_found"
-    )
+    return ResolveResult(pitcher_id=None, pitcher_name=None, candidates=[], match_type="not_found")
 
 
 def extract_pitcher_from_question(

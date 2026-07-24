@@ -16,6 +16,7 @@ def test_ask_subparser_parses(monkeypatch):
 def test_ask_command_prints_answer(monkeypatch, capsys):
     async def _fake(question, *, provider="gemini", model_override=None):
         return "ANSWER TEXT"
+
     monkeypatch.setattr(qa, "answer_question", _fake)
     ns = type("NS", (), {"command": "ask", "question": "Jared Jones fastball stuff+", "provider": "gemini"})()
     cli._run_ask_command(ns)
@@ -25,6 +26,7 @@ def test_ask_command_prints_answer(monkeypatch, capsys):
 def test_ask_command_reports_question_error(monkeypatch, capsys):
     async def _boom(question, *, provider="gemini", model_override=None):
         raise qa.QuestionError("Couldn't find a pitcher in that question.")
+
     monkeypatch.setattr(qa, "answer_question", _boom)
     ns = type("NS", (), {"command": "ask", "question": "nonsense", "provider": "gemini"})()
     with pytest.raises(SystemExit):

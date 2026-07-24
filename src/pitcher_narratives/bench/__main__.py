@@ -16,6 +16,7 @@ import argparse
 import json
 import sys
 from datetime import UTC, datetime
+from functools import partial
 from pathlib import Path
 
 from pitcher_narratives.bench.judge import JUDGE_MODELS, judge_text, judges_for, with_retry
@@ -46,8 +47,8 @@ def parse_args() -> argparse.Namespace:
         "--judges",
         default="deepseek",
         help="Judge: a non-contestant model key (default: deepseek = DeepSeek v4 Pro "
-             "via OpenRouter, high effort), a contestant provider name, or 'panel' "
-             "(each output judged by every other contestant)",
+        "via OpenRouter, high effort), a contestant provider name, or 'panel' "
+        "(each output judged by every other contestant)",
     )
     parser.add_argument("--thinking", default="medium", help="Thinking effort for contestants")
     parser.add_argument(
@@ -164,20 +165,30 @@ def main() -> None:
             for judge in judges_for(run.provider, providers, args.judges):
                 print(f"Judging {run.provider}/{tier} with {judge}...", file=sys.stderr)
                 try:
-                    judged = with_retry(lambda: judge_text(
-                        ground_truth=run.ground_truths[tier],
-                        output_text=text,
-                        tier_label=tier,
-                        rubric=rubric,
-                        judge_provider=judge,
-                    ))
+                    judged = with_retry(
+                        partial(
+                            judge_text,
+                            ground_truth=run.ground_truths[tier],
+                            output_text=text,
+                            tier_label=tier,
+                            rubric=rubric,
+                            judge_provider=judge,
+                        )
+                    )
                 except Exception as exc:
-                    print(f"  judge failed after retries ({type(exc).__name__}: {str(exc)[:120]}); dropped",
-                          file=sys.stderr)
+                    print(
+                        f"  judge failed after retries ({type(exc).__name__}: {str(exc)[:120]}); dropped",
+                        file=sys.stderr,
+                    )
                     continue
-                records.append(JudgedRecord(
-                    provider=run.provider, tier=tier, judge=judge, judged=judged,
-                ))
+                records.append(
+                    JudgedRecord(
+                        provider=run.provider,
+                        tier=tier,
+                        judge=judge,
+                        judged=judged,
+                    )
+                )
 
     # ── Aggregate + report ────────────────────────────────────────
     agg = aggregate(records)
@@ -193,17 +204,21 @@ def main() -> None:
     report = render_report(agg, meta=meta)
 
     (run_dir / "report.md").write_text(report)
-    (run_dir / "scores.json").write_text(json.dumps(
-        [
-            {
-                "provider": r.provider, "tier": r.tier, "judge": r.judge,
-                "scores": [s.model_dump() for s in r.judged.scores],
-                "overall_comment": r.judged.overall_comment,
-            }
-            for r in records
-        ],
-        indent=2,
-    ))
+    (run_dir / "scores.json").write_text(
+        json.dumps(
+            [
+                {
+                    "provider": r.provider,
+                    "tier": r.tier,
+                    "judge": r.judge,
+                    "scores": [s.model_dump() for s in r.judged.scores],
+                    "overall_comment": r.judged.overall_comment,
+                }
+                for r in records
+            ],
+            indent=2,
+        )
+    )
 
     print(f"\n{report}")
     print(f"\nRun artifacts: {run_dir}", file=sys.stderr)

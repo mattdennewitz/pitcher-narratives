@@ -1,9 +1,10 @@
 # Pitcher Narratives
 
-Pitcher Narratives turns Statcast and Pitching+ data into LLM-written scouting
-reports for MLB pitchers. Every metric arrives at the model pre-computed and
-pre-tagged — window-vs-season direction, z-score outlier flags, small-sample
-caveats — so the model spends its effort on insight, not arithmetic.
+Pitcher Narratives turns versioned PitchingPlus output bundles into
+LLM-written scouting reports for MLB pitchers. Raw Statcast enters
+PitchingPlus, not this application. Every metric reaches an agent as a typed,
+manifest-covered fact with pre-computed frames, baselines, and sample context,
+so models interpret evidence rather than reconstructing arithmetic.
 
 It works at two scales:
 
@@ -27,15 +28,12 @@ write-up, or a short `recap` capsule. Pick one (or several at once) with
   `.env` file at the project root (loaded automatically via `python-dotenv`):
   - `GEMINI_API_KEY` for `--provider gemini` (the default)
   - `ANTHROPIC_API_KEY` for `--provider claude`
-- Local data files (no Baseball Savant calls happen at runtime — everything is
-  served from disk):
-  - `var/statcast/<year>.parquet` — pitch-level Statcast data (e.g.
-    `var/statcast/2025.parquet`, `var/statcast/2026.parquet`)
-  - `var/aggs/<year>-<grain>.csv` — pre-computed Pitching+ CSVs per pitcher, pitch
-    type, appearance, and platoon split, plus `var/aggs/RV_df.csv` (the run-values
-    lookup)
-  - See [Syncing the data](#syncing-the-data) to pull these from R2, and
-    `METHODOLOGY.md` for the full source breakdown.
+- A local, versioned PitchingPlus output bundle under `var/aggs/`. Its manifests
+  cover `all_pitches`, aggregate tables, reference populations, and any emitted
+  spatial, component-attribution, or registered model-evaluation artifacts.
+  Pitcher Narratives does not read raw Statcast, run-value lookup files, model
+  files, or unmanifested auxiliary data. See
+  [Syncing the data](#syncing-the-data) and `METHODOLOGY.md`.
 
 Baselines and league norms are restricted to **MLB regular-season + postseason**
 data; minor-league and WBC rows are filtered out so they never skew the norms.
@@ -58,7 +56,7 @@ The package installs one entry point via `[project.scripts]`:
 
 | Script | Source | Purpose |
 |---|---|---|
-| `pitcher-narratives` | `pitcher_narratives.cli:main` | `report` (one pitcher), `morning` (daily digest), and `scoreboard` (no-LLM triage) subcommands |
+| `pitcher-narratives` | `pitcher_narratives.cli:main` | `report`, `ask`, `morning`, and `scoreboard` subcommands |
 
 ### `pitcher-narratives report`
 
@@ -76,7 +74,7 @@ window of recent appearances, in one or more [narration modes](#narration-modes)
 | `--print-prompts` | flag | off | Renders the pipeline prompts to stderr and exits without calling the LLM |
 | `--provider` | enum | `gemini` | `gemini` \| `claude` |
 | `--thinking` | enum | `medium` | `minimal` \| `low` \| `medium` \| `high` \| `xhigh` |
-| `--no-explain-model` | flag | off | Skip S+/L+/P+ model explanations in the capsule (repeat readers) |
+| `--no-explain-model` | flag | off | Omit the deterministic model-and-data-boundary section for repeat readers |
 | `--diagnostics-file` | path | *none* | Write the QA/diagnostics appendix as JSON (one object per mode); stdout stays the reader report |
 
 ```bash
@@ -92,37 +90,38 @@ uv run pitcher-narratives report -p 657277 --mode report,changes,recap --metrics
 
 Stdout emits one labeled block per requested mode, in `--mode` order — the
 **reader document only**: `# <Mode Title>` (`Scouting Report` / `Change Report`
-/ `Recap`), the final capsule (printed once — the pipeline buffers the writer
-output rather than streaming it), a `**Verification:**` stamp (✅ verified / ⚠️
-UNVERIFIED with counts), and — for `report`/`changes` only — a distilled
-`## Executive Summary` (recap's capsule is already the short-form deliverable,
-so it skips distillation).
+/ `Recap`), the final provenance-bound capsule, the separate deterministic
+model-and-data-boundary section for `report`/`changes` unless disabled, a
+`**Verification:**` stamp, and — for `report`/`changes` only — a distilled
+`## Executive Summary`. The writer is buffered; generated prose is printed
+once only after validation. Recap is already the short-form deliverable.
 
 The QA/diagnostics appendix (`### Stuff Analysis`, `### Data Audit`,
 `### Capsule Fact-Check`, `### Value Parity`, `### Anchor Check`,
 `### Hallucination Check`) is **off the reader stream**: pass `-v` to print it to
 stderr, or `--diagnostics-file PATH` to write it as JSON (one object per mode).
 
-If any mode ships an **unverified** capsule (residual anchor/fact warnings after
-the revision budget is spent), an `UNVERIFIED` banner is printed to stderr for
-that mode and the process exits non-zero — so CI catches a bad report instead of
-treating it as clean. Each run also writes
-`data-{pitcher}-{provider}-pipeline.md` with the rendered prompts;
+If a mode has no validated capsule, or any fact, value-parity, reader-claim,
+or gating anchor check remains unresolved, the mode is stamped `UNVERIFIED`,
+the process exits non-zero outside explicit test mode, and stderr names the
+failure. Provider/audit failure never upgrades missing generated prose to a
+verified report.
+Every run also writes `data-{pitcher}-{provider}-pipeline.md` with the rendered prompts;
 `--print-prompts` dumps that content to stderr and exits without calling the
 model — useful when iterating on prompt wording.
 
 ### Narration modes
 
 A **narration mode** selects the output shape and temporal frame the single
-writer voice (`WRITER_VOICE`) renders in. The voice — tone, scouting register,
-how deep to explain the grading model — never changes; the mode picks
-structure, length, and what temporal frame the writer sees.
+writer voice (`WRITER_VOICE`) renders in. The voice and evidence rules never
+change; the mode picks structure, length, temporal frame, validation depth, and
+whether the validated deterministic model explanation is appended.
 
 | Mode | Temporal frame | Deliverable | Notes |
 |---|---|---|---|
-| `report` (default) | recent vs season | `## Executive Summary` bullets + 350–600 word flowing prose capsule (3–5 paragraphs) | Today's full report path; deepest validation budget |
-| `changes` | recent vs **prior** window | `## Executive Summary` bullets + 250–450 word change-focused write-up | Two-frame engine: code-computes recent-`-n`-vs-prior-`--prior` deltas and hands the writer a "Recent vs Prior Window" comparison block |
-| `recap` | recent vs season | 60–120 word (3–5 sentence) capsule only — no bullets | Shallower anchor loop (less prose to drift); the mode `pitcher-narratives morning` uses per pick |
+| `report` (default) | recent vs season | 350–600 word flowing prose capsule (3–5 paragraphs) + verification stamp + `## Executive Summary` bullets | Today's full report path; deepest validation budget |
+| `changes` | recent vs **prior** window | 250–450 word change-focused write-up + verification stamp + `## Executive Summary` bullets | Code computes recent-`-n`-vs-prior-`--prior` deltas and hands the writer a "Recent vs Prior Window" comparison block |
+| `recap` | recent vs season | 60–120 word (3–5 sentence) capsule + verification stamp; no summary bullets | Shallower anchor loop; the morning digest uses this mode per pick |
 
 Pass one mode, or several comma-separated (`--mode report,changes`); each mode
 renders its own capsule and section block, and the run exits non-zero if *any*
@@ -130,28 +129,58 @@ of them is unverified. A duplicated mode id is de-duplicated, not double-run.
 
 #### The three deliverables
 
-Every deliverable is written in the same single voice — a field-facing
-analyst voice that explains the model as it goes, never cheerleads, and
-never admires the grading system for its own sake. Only the mode changes:
+Every deliverable uses the same field-facing analyst voice. Agents synthesize
+only cited pitcher evidence; they do not improvise model definitions, feature
+weights, decision traces, or causal explanations. Only the mode changes:
 
-- **`report`** — the full scouting read: an `## Executive Summary` of bullets
-  distilled from the capsule, followed by a 350–600 word, 3–5 paragraph prose
-  narrative. Prose only (no headings, no bullet lists, no tables inside the
-  capsule itself). Leads with the model's single most important read on the
-  pitcher; explains S+/L+/P+ on first use (unless `--no-explain-model`).
-- **`changes`** — the same executive-summary bullets, then a 250–450 word
-  change log framed against the **prior** window: leads with the single
-  biggest shift, reports only what moved, and omits stable traits unless they
-  frame a change.
-- **`recap`** — a short 60–120 word (3–5 sentence) capsule and nothing else.
-  No executive summary, no bullets, no headings — the capsule *is* the whole
-  deliverable, which is why distillation is skipped. This is the shape
-  `pitcher-narratives morning` writes for every digest pick.
+- **`report`** — the full scouting read: a 350–600 word, 3–5 paragraph
+  provenance-bound narrative, the verification stamp, then an
+  `## Executive Summary` distilled only from the final validated capsule.
+  The deterministic model explanation is appended outside the generated
+  artifact unless `--no-explain-model` is set.
+- **`changes`** — a 250–450 word change log framed against the **prior**
+  window, followed by its verification stamp and summary bullets. It leads
+  with the single biggest shift, reports only what moved, and omits stable
+  traits unless they frame a change.
+- **`recap`** — a short 60–120 word (3–5 sentence) capsule plus verification
+  stamp. No executive summary or generated headings; the capsule is already
+  the brief. This is the shape `pitcher-narratives morning` writes for each
+  digest pick.
 
 Every mode also produces the same QA/diagnostics appendix (`### Stuff
 Analysis`, `### Data Audit`, `### Capsule Fact-Check`, `### Value Parity`,
 `### Anchor Check`, and — when triggered — `### Hallucination Check`),
 available off the reader stream via `-v` or `--diagnostics-file`.
+
+### Deterministic Pitching+ explanation
+
+`report`, `changes`, and `ask` append a versioned deterministic explanation
+outside generated prose. `recap` and `morning` intentionally omit it. The
+canonical contract is:
+
+- PitchingPlus converts probabilities for 13 pitch outcomes to expected run
+  value using count-specific run values.
+- P includes realized plate location. S omits realized `plate_x`/`plate_z` but
+  retains release position/extension, arm angle, derived acceleration/spin
+  coordinates, handedness/platoon, fastball-velocity context, coarse repertoire
+  shares, and count processing. Exported S marginalizes outcomes with
+  training-sample `P(count | broad pitch class, same_side)`, then applies
+  actual-count run-value scoring. Formal L uses hidden same-count S.
+- Location+ is the P expected-run-value contrast with count-matched S:
+  associative realized-location evidence, not command, control, intent, target
+  execution, or causal intervention.
+- P, S, and L each center on their own same-scoring-season MLB regular-season
+  pitch-weighted mean. 100 is average and higher is better. The displayed
+  20–80 value is uncapped `plus - 50`, not SD-scaled.
+- Conditional expected rates are means of per-pitch ratios. Group grades have
+  no model-level minimum sample or shrinkage.
+- Direct predictor inputs exclude explicit pitch/player identity,
+  sequence/tunnel geometry, target, park/weather, game state, observed
+  batted-ball result, raw spin rate, and raw pfx fields. These grades are
+  predictive outputs, not causal feature attributions.
+- Raw Statcast enters PitchingPlus. PitchingPlus emits a manifest-covered
+  bundle; deterministic Narrative code may select, aggregate, compare, and
+  label emitted facts, and agents may interpret only cited facts.
 
 ### `pitcher-narratives morning`
 
@@ -193,12 +222,25 @@ LLM), and prints the board. Optionally pipes the board to a curator LLM.
 uv run pitcher-narratives scoreboard -w 1 --format table -n 25 --min-score 5.0 -v
 ```
 
-The heuristic looks for velocity swings, P+/S+/L+ divergences, new or dropped
-pitches, usage shifts, development candidates, and reliever workload flags.
-Per-pitch-type grade signals (the S+/L+ divergence and "stuff without feel"
-checks) require at least a handful of pitches of that type, so a one-off pitch
-can't manufacture a phantom signal. See `METHODOLOGY.md` for the full signal
-table and weights.
+The heuristic looks for velocity and grade changes, new or absent pitches,
+usage shifts, grade gaps, and reliever workload states. Per-pitch-type grade
+signals require at least a handful of pitches of that type, so a one-off pitch
+cannot manufacture an editorial signal. See `METHODOLOGY.md` for the full
+signal registry and weights.
+
+### `pitcher-narratives ask`
+
+Answers a focused grade question for one named pitch, then appends the same
+versioned deterministic explanation used by full reports:
+
+```bash
+uv run pitcher-narratives ask "why does Jared Jones's fastball grade 92 Stuff+?"
+```
+
+The agent answer is built from typed same-frame facts, capability states, and
+PitchingPlus bundle evidence, then fact-checked before composition. It cannot
+infer model drivers, command, intent, tunneling, target execution, or causal
+mechanisms from aggregates.
 
 ## The morning digest
 
@@ -206,16 +248,17 @@ table and weights.
 
 1. **Scout** — score every appearance in the window (`scout.py`).
 2. **Select** — the curator LLM (`curator.py`) picks a slate, assigning each
-   pick one of four editorial **categories** and capping it at **5 picks per
-   category** (no minimum), with a prompt nudge toward variety so the slate
-   isn't a block of look-alikes:
+   pick one of six editorial **categories** and capping it at **5 picks per
+   category** (no minimum):
 
    | Category | Meaning |
    |---|---|
-   | `clean_breakout` | Velocity gain + a real stuff jump, backed by data |
-   | `lab_project` | Top-tier raw stuff, command not there yet |
-   | `identity_crisis` | A radically altered pitch mix — plan or problem? |
-   | `red_flag` | An anomaly that may be a tracking artifact or a warning sign |
+   | `clean_breakout` | Velocity gain co-moving with higher P+ or S+ |
+   | `location_breakout` | Location+ rose versus the supplied season norm |
+   | `lab_project` | Well-sampled S+ above 130 with L+ below 80 |
+   | `identity_crisis` | A materially altered pitch mix |
+   | `velo_drop` | Fastball velocity loss co-moving with lower P+ or S+ |
+   | `red_flag` | A supplied measurement conflict or explicit anomaly-policy hit |
 
 3. **Write** — concurrent writer agents produce one capsule per pick
    (`digest.py`), each run through the `recap` narration mode so the digest
@@ -228,50 +271,45 @@ appearances, no digest is written.
 
 ## Syncing the data
 
-The Statcast parquet and the aggregate CSVs live in Cloudflare R2 (bucket
-`pitchingplus`). The Makefile pulls them via `wrangler` (requires
-`wrangler login`):
+Pitcher Narratives downloads PitchingPlus-produced bundles from Cloudflare R2.
+`make pull-data` validates the latest dated snapshot, replaces only the seasons
+included in that snapshot, preserves other installed seasons, validates the
+complete supported-season set, and then atomically installs it under `var/aggs/`:
 
 ```bash
-make pull-data        # both of the below
-make pull-statcast    # var/statcast/<year>.parquet
-make pull-aggs        # latest dated aggregate snapshot -> var/aggs/
+make pull-data
 ```
 
-`pull-aggs` walks back from today to the most recent daily snapshot, downloads
-its zip, and unzips the CSVs into `var/aggs/`. **Keep the two in sync** — run
-`make pull-data` rather than one half. If the parquet lags the aggregates, the
-role map can't classify recent starts and the scout will warn that appearances
-are defaulting to RP (run `make pull-statcast`).
+The loader validates manifest versions, checksums, declared seasons, artifact
+schemas, calibration provenance, and frame compatibility before exposing any
+rows. There is no consumer-side raw-Statcast sync path.
 
 ## Report pipeline at a glance
 
-`pitcher-narratives report` runs the pipeline in `pipeline.py`, in five phases:
+`pitcher-narratives report` runs the buffered pipeline in `pipeline.py`:
 
-- **Phase 1** — five specialist agents run in parallel: `stuff`, `location`,
-  `runvalue`, `trends`, `game_shape`.
-- **Phase 1.5** — a per-specialist auditor runs in parallel; flagged
-  specialists are re-run with corrections, so the writer never sees flawed
-  prose.
-- **Phase 1.75** — a signal extractor reads the clean specialist outputs into a
-  `KeySignals` object.
-- **Phase 2** — the writer (streamed) and the executive-summary agent run in
-  parallel from the same synthesis.
-- **Phase 2.5** — the anchor check and fact-check validate the capsule; unclean
-  drafts are revised, fact revisions carrying ground truth back to the writer,
-  up to a per-mode budget before any remaining warnings ship. Each mode sets its
-  own `anchor_depth`/`fact_depth` (a `ValidationPolicy`): `report` and `changes`
-  use the full budget, `recap` a shallower one. These caps are provisional and
-  calibrated from the `--metrics-out` records — see
-  [`docs/calibration.md`](./docs/calibration.md). When a fact revision rewrites
-  the capsule, the pipeline re-anchors the new text and spends any remaining
-  anchor budget on *reconciling* revisions that may not change numeric values
-  (ground truth outranks the synthesis); a detection-only re-audit guards the
-  result, reverting to the fact-revised capsule if reconciliation regressed a
-  number.
+- **Phase 1 / 1.5** — four specialists (`stuff`, `location`, `runvalue`,
+  `trends`) produce typed cited analyses. The frame-agnostic first three form a
+  reusable core; trends is the frame-sensitive tail. Each output is audited
+  against its exact producer-backed input, revised when flagged, and rejected
+  when no clean verdict is available.
+- **Phase 1.75** — the signal extractor runs only over the complete verified
+  specialist handoff and returns typed, provenance-checked `KeySignals`.
+- **Phase 2 / 2.5** — the writer returns a typed narrative artifact. The
+  buffered draft passes anchor revision, ground-truth capsule audit, post-fact
+  re-anchoring, and a detection-only regression audit. Failures close to an
+  unavailable narrative rather than publishing generated prose as verified.
+- **Final assembly** — only the final validated capsule is summarized. Value
+  parity and hallucination diagnostics inspect generated artifacts. The
+  versioned deterministic model explanation is composed afterward, outside the
+  generated artifact and its claim bindings.
 
-For `changes` mode, a code-computed recent-vs-prior comparison (`frame_delta.py`)
-is threaded into the trends specialist and the writer before Phase 2.
+`report` and `changes` use the full validation budget; `recap` uses its shorter
+mode-specific budget. Revision caps are measured by `--metrics-out`; they are
+not claims of statistical confidence. For `changes`, a code-computed
+recent-vs-prior comparison (`frame_delta.py`) is supplied to trends and the
+writer.
+
 
 `METHODOLOGY.md` has the deep version: agent tiers, model settings, prompt
 structure, cache breakpoints, and the anchor-check taxonomy.
@@ -281,34 +319,34 @@ structure, cache breakpoints, and the anchor-check taxonomy.
 ```
 pitcher-narratives/
 ├── src/pitcher_narratives/
-│   ├── cli.py            # pitcher-narratives entry (report + morning + scoreboard)
-│   ├── data.py           # Statcast + Pitching+ loading pipeline
-│   ├── engine/           # computation subpackage (baselines, arsenal,
-│   │                     #   execution, workload, mechanics, contact, tto,
-│   │                     #   attribution) behind a re-export facade
+│   ├── cli.py            # report + ask + morning + scoreboard entry point
+│   ├── data.py           # validated PitchingPlus bundle loader
+│   ├── bundle_contract.py# producer manifest and artifact validation
+│   ├── model_explainer.py# deterministic model/data-boundary templates
+│   ├── engine/           # deterministic selection, aggregation, comparison
+│   │                     #   and labeling over emitted facts
 │   ├── context.py        # PitcherContext data model + assembly
-│   ├── prompt_builder.py # renders a PitcherContext into prompt markdown
-│   ├── pipeline.py       # multi-specialist report pipeline (phases 1–2.5)
+│   ├── prompt_builder.py # renders typed context into prompt markdown
+│   ├── pipeline.py       # four-specialist buffered validation pipeline
+│   ├── qa.py             # focused, audited grade-question path
 │   ├── anchor.py         # anchor-check prompt + result models
 │   ├── signals.py        # KeySignals model + extractor prompt
 │   ├── resolver.py       # fuzzy pitcher name resolution
 │   ├── shape.py          # arm-slot / pitch-shape analysis
 │   ├── scout.py          # appearance interest scoring (no LLM)
-│   ├── curator.py        # LLM slate selection (category-bucketed)
+│   ├── curator.py        # LLM slate selection
 │   ├── digest.py         # story cues + concurrent writers + assembly
 │   ├── morning.py        # morning-run orchestration
-│   ├── personas.py       # single writer voice + narration modes (report/changes/recap)
+│   ├── personas.py       # one writer voice + report/changes/recap modes
 │   ├── costs.py          # token + dollar usage tracking
 │   ├── config.py         # providers, model settings, thinking caps
-│   ├── agent_skills.py   # pydantic-ai skills toolset wiring
+│   ├── agent_skills.py   # runtime skills toolset wiring
 │   ├── bench/            # LLM benchmark harness
 │   └── skills/           # agent skill definitions
-├── var/                  # gitignored local data
-│   ├── aggs/             # Pitching+ CSVs + RV_df.csv
-│   └── statcast/         # per-year Statcast parquet
+├── var/aggs/             # validated PitchingPlus output bundle
 ├── morning-runs/         # digest artifacts (gitignored output)
 ├── tests/                # pytest suite
-├── Makefile              # run / scout / curate / pull-* shortcuts
+├── Makefile              # run / scout / curate / pull-data shortcuts
 └── pyproject.toml
 ```
 
@@ -327,12 +365,12 @@ Makefile shortcuts:
 make run            # uv run pitcher-narratives report -p 657277 -n 10
 make scout          # uv run pitcher-narratives scoreboard -n 25 --min-score 5.0 --format table -v
 make curate         # uv run pitcher-narratives scoreboard -n 25 --min-score 5.0 --curate
-make pull-data      # refresh var/statcast/ and var/aggs/ from R2
+make pull-data      # validate and merge the latest PitchingPlus bundle from R2
+make release-acceptance  # run deterministic consumer/producer boundary contracts
 ```
 
 ## See also
 
-- [METHODOLOGY.md](./METHODOLOGY.md) — deep technical walkthrough of the data
-  sources, the computation engine, the context renderer, the report pipeline
-  phases, the anchor check, the hallucination guard, the model tier table, and
-  the Q&A analyst.
+- [METHODOLOGY.md](./METHODOLOGY.md) — data boundary, deterministic
+  transformations, prompt grounding, report validation, model contract,
+  provider settings, and audited grade Q&A.

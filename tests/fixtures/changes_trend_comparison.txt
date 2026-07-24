@@ -7,4 +7,4 @@ Deltas are recent minus prior; positive = higher in the recent window.
 - Sweeper: velo +1.1 mph, S+ +22, L+ +37, usage -5.0 pts, release x +0.08 ft, release z -0.05 ft, extension +0.06 ft
 - Changeup: insufficient sample for a recent-vs-prior delta
 
-Release-point/extension shifts alongside a velo or shape change are a mechanism signal — a deliberate mechanical adjustment, not just a pitch-mix change. A shift with no accompanying velo/shape movement is more likely mound rhythm or measurement noise; do not over-read it.
+Release-point or extension and velocity changed in the same comparison. That association is consistent with a possible adjustment, but these aggregates do not identify a mechanism or establish a cause-and-effect relationship between the changes.

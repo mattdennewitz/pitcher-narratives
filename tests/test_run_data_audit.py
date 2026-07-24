@@ -14,14 +14,22 @@ def test_run_data_audit_uses_auditor(monkeypatch):
         async def run(self, **kwargs):
             captured["user_prompt"] = kwargs.get("user_prompt")
             return types.SimpleNamespace(
-                output=AuditResult(flags=[
-                    AuditFlag(category="FABRICATED_DATA", specialist="qa",
-                              claim="c", data_shows="d", suggested_fix="f"),
-                ])
+                output=AuditResult(
+                    flags=[
+                        AuditFlag(
+                            category="FABRICATED_DATA",
+                            specialist="qa",
+                            claim="c",
+                            data_shows="d",
+                            suggested_fix="f",
+                        ),
+                    ]
+                )
             )
 
     monkeypatch.setattr(
-        pipeline, "make_pipeline_agents",
+        pipeline,
+        "make_pipeline_agents",
         lambda *a, **k: types.SimpleNamespace(auditor=StubAuditor()),
     )
 

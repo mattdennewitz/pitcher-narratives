@@ -7,6 +7,7 @@ import types
 import pytest
 
 from pitcher_narratives import qa
+from pitcher_narratives.bundle_contract import ProducerIdentity
 from pitcher_narratives.models import AuditFlag, AuditResult
 
 
@@ -32,9 +33,43 @@ def _stub_llm(monkeypatch):
     monkeypatch.setattr(qa, "run_data_audit", _clean)
 
 
-def test_answer_returns_agent_output():
-    out = asyncio.run(qa.answer_question("why does Jared Jones's fastball grade 92 stuff+"))
-    assert out == "STUB ANSWER"
+def test_answer_appends_hash_bound_canonical_explanation_outside_agent_output(
+    monkeypatch,
+):
+    identity = ProducerIdentity(
+        feature_schema_sha256="a" * 64,
+        model_bundle_sha256="b" * 64,
+    )
+    context = types.SimpleNamespace(
+        arsenal=[
+            types.SimpleNamespace(
+                pitch_type="FF",
+                pitch_name="Four-Seam",
+                n_pitches_window=20,
+            )
+        ],
+        producer_identity=identity,
+        producer_artifact_grains=frozenset({"all_pitches"}),
+        calibration=None,
+    )
+    parsed = types.SimpleNamespace(
+        pitcher_id=1,
+        pitch_candidates=["FF"],
+        pitch_noun="fastball",
+        grade_family="S",
+        cited_value=92.0,
+    )
+    monkeypatch.setattr(qa, "parse_grade_question", lambda _question: parsed)
+    monkeypatch.setattr(qa, "load_pitcher_data", lambda _pitcher_id: object())
+    monkeypatch.setattr(qa, "assemble_pitcher_context", lambda _data: context)
+    monkeypatch.setattr(qa, "build_grade_input", lambda *_args: ["ground truth"])
+
+    out = asyncio.run(qa.answer_question("synthetic grounded question"))
+
+    assert out.startswith("STUB ANSWER\n\n## How Pitching+ Works")
+    assert "Pitcher Narratives reads only that bundle" in out
+    assert f"feature schema {identity.feature_schema_sha256}" in out
+    assert f"model bundle {identity.model_bundle_sha256}" in out
 
 
 def test_pitch_not_in_arsenal_raises():
@@ -99,20 +134,20 @@ def test_revises_and_reaudits_when_audit_flags(monkeypatch):
         return audit_results.pop(0)
 
     monkeypatch.setattr(qa, "run_data_audit", _audited)
-    out = asyncio.run(
-        qa.answer_question("why does Jared Jones's fastball grade 92 stuff+")
-    )
-    assert out == "REVISED"
+    out = asyncio.run(qa.answer_question("why does Jared Jones's fastball grade 92 stuff+"))
+    assert out.startswith("REVISED\n\n## How Pitching+ Works")
     assert not audit_results
 
 
 def test_degrades_to_first_answer_when_audit_raises(monkeypatch):
     monkeypatch.setattr(qa, "build_qa_agent", lambda provider="gemini": SeqAgent(["FIRST", "REVISED"]))
+
     async def _boom(*a, **k):
         raise RuntimeError("auditor down")
+
     monkeypatch.setattr(qa, "run_data_audit", _boom)
     out = asyncio.run(qa.answer_question("why does Jared Jones's fastball grade 92 stuff+"))
-    assert out == "FIRST"
+    assert out.startswith("FIRST\n\n## How Pitching+ Works")
 
 
 def test_rejects_answer_when_revised_answer_remains_flagged(monkeypatch):
@@ -138,9 +173,7 @@ def test_rejects_answer_when_revised_answer_remains_flagged(monkeypatch):
 
     monkeypatch.setattr(qa, "run_data_audit", _still_flagged)
     with pytest.raises(qa.QuestionError, match="safely verify"):
-        asyncio.run(
-            qa.answer_question("why does Jared Jones's fastball grade 92 stuff+")
-        )
+        asyncio.run(qa.answer_question("why does Jared Jones's fastball grade 92 stuff+"))
 
 
 def test_rejects_answer_when_revision_call_fails(monkeypatch):
@@ -166,16 +199,18 @@ def test_rejects_answer_when_revision_call_fails(monkeypatch):
 
     monkeypatch.setattr(qa, "run_data_audit", _flagged)
     with pytest.raises(qa.QuestionError, match="safely verify"):
-        asyncio.run(
-            qa.answer_question("why does Jared Jones's fastball grade 92 stuff+")
-        )
+        asyncio.run(qa.answer_question("why does Jared Jones's fastball grade 92 stuff+"))
 
 
 def test_cited_value_reaches_prompt(monkeypatch):
     from pitcher_narratives.models import AuditResult
+
     agent = CapturingAgent("ANSWER")
     monkeypatch.setattr(qa, "build_qa_agent", lambda provider="gemini": agent)
-    async def _clean(*a, **k): return AuditResult(flags=[])
+
+    async def _clean(*a, **k):
+        return AuditResult(flags=[])
+
     monkeypatch.setattr(qa, "run_data_audit", _clean)
     asyncio.run(qa.answer_question("why does Jared Jones's fastball grade 92 stuff+"))
     prompt = agent.prompts[0]

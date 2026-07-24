@@ -20,6 +20,7 @@ from pitcher_narratives.frame_delta import (
     build_trend_frame_comparison,
     render_trend_frame_comparison,
 )
+from pitcher_narratives.models import render_specialist_analysis
 from pitcher_narratives.personas import REPORT, NarrationMode
 from pitcher_narratives.pipeline import (
     _build_location_input,
@@ -61,6 +62,12 @@ class CapturedRun:
     grounding against anything else marks provided data as 'invented'."""
 
     pitcher_name: str = ""
+
+
+def _capsule_for_judging(result: object) -> str:
+    """Return generated prose only; fixed deterministic sections are not writer quality."""
+    artifact = getattr(result, "narrative_artifact", None)
+    return artifact.content if artifact is not None else ""
 
 
 def run_provider(
@@ -111,7 +118,7 @@ def run_provider(
             _model_override=_model_override,
             prior_ctx=prior_ctx,
         )
-    except Exception as exc:  # noqa: BLE001 -- a provider failure must not kill the bench
+    except Exception as exc:
         log.error("bench: %s run failed: %s", provider, exc)
         return CapturedRun(
             provider=provider,
@@ -129,9 +136,9 @@ def run_provider(
     # truths are deterministic functions of ctx.
     first = next(iter(results.values()))
     outputs = {
-        "specialist:stuff": first.specialists.stuff,
-        "specialist:location": first.specialists.location,
-        "specialist:runvalue": first.specialists.runvalue,
+        "specialist:stuff": render_specialist_analysis(first.specialists.stuff),
+        "specialist:location": render_specialist_analysis(first.specialists.location),
+        "specialist:runvalue": render_specialist_analysis(first.specialists.runvalue),
     }
     ground_truths = {
         "specialist:stuff": _flatten_prompt(_build_stuff_input(ctx)),
@@ -144,17 +151,13 @@ def run_provider(
     # ground truth (mirroring run_narration_modes' PRIOR gating and the
     # spine's frame-comparison derivation).
     for mode_id, result in results.items():
-        mode_prior = (
-            prior_ctx
-            if TemporalFrame.PRIOR in mode_by_id[mode_id].temporal_frame
-            else None
-        )
+        mode_prior = prior_ctx if TemporalFrame.PRIOR in mode_by_id[mode_id].temporal_frame else None
         frame_comparison = (
             render_trend_frame_comparison(build_trend_frame_comparison(ctx, mode_prior))
             if mode_prior is not None
             else None
         )
-        outputs[f"specialist:trends:{mode_id}"] = result.specialists.trends
+        outputs[f"specialist:trends:{mode_id}"] = render_specialist_analysis(result.specialists.trends)
         ground_truths[f"specialist:trends:{mode_id}"] = _flatten_prompt(
             _build_trend_input(ctx, frame_comparison=frame_comparison)
         )
@@ -164,18 +167,13 @@ def run_provider(
     for mode_id, result in results.items():
         writer_input = build_writer_input(
             ctx,
-            result.specialists.stuff,
-            result.specialists.location,
-            result.specialists.runvalue,
-            result.specialists.trends,
+            result.specialists,
             key_signals=result.key_signals,
         )
-        outputs[f"capsule:{mode_id}"] = result.narrative
+        outputs[f"capsule:{mode_id}"] = _capsule_for_judging(result)
         ground_truths[f"capsule:{mode_id}"] = writer_input
         if result.executive_summary:
-            outputs[f"exec_summary:{mode_id}"] = "\n".join(
-                f"- {b}" for b in result.executive_summary
-            )
+            outputs[f"exec_summary:{mode_id}"] = "\n".join(f"- {b}" for b in result.executive_summary)
             ground_truths[f"exec_summary:{mode_id}"] = writer_input
 
     return CapturedRun(

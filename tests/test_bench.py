@@ -21,6 +21,9 @@ from pitcher_narratives.bench.rubric import (
 )
 from pitcher_narratives.bench.runner import run_provider
 from pitcher_narratives.bench.scorecard import JudgedRecord, _rubric_for, aggregate, render_report
+from pitcher_narratives.data import AGGS_DIR
+
+_BUNDLE_AVAILABLE = (AGGS_DIR / "2026-metric-semantics.json").is_file()
 
 TEST_PITCHER = 592155
 
@@ -45,7 +48,7 @@ def test_rubrics_have_weighted_dimensions():
         assert "sample_size_calibration" in keys
         top = max(rubric, key=lambda d: d.weight)
         assert top.key == "grounding"
-    assert any(d.key == "analytical_mechanism" for d in AGENT_RUBRIC)
+    assert any(d.key == "supported_interpretation" for d in AGENT_RUBRIC)
     assert any(d.key == "thread_coherence" for d in CAPSULE_RUBRIC)
 
 
@@ -60,11 +63,43 @@ def test_judge_prompt_contains_anchors_and_evidence_rule():
     assert "ground truth" in prompt.lower()
 
 
+def test_capsule_rubric_penalizes_false_model_explanations():
+    dimension = next(d for d in CAPSULE_RUBRIC if d.key == "model_semantic_restraint")
+    assert "ordinary P-minus-S" in dimension.anchor_1
+    assert "command" in dimension.anchor_1
+    assert "causal" in dimension.anchor_1
+    assert "deterministic section" in dimension.anchor_5
+
+    false_scores = [
+        DimensionScore(
+            dimension=d.key,
+            score=1 if d is dimension else 3,
+            justification="False P-minus-S and causal explanation.",
+            evidence="Location+ measures command because P minus S isolates it.",
+        )
+        for d in CAPSULE_RUBRIC
+    ]
+    corrected_scores = [
+        DimensionScore(
+            dimension=d.key,
+            score=5 if d is dimension else 3,
+            justification="Canonical semantics are left to deterministic output.",
+            evidence="The supplied aggregate profile does not identify the model driver.",
+        )
+        for d in CAPSULE_RUBRIC
+    ]
+    assert weighted_overall(corrected_scores, CAPSULE_RUBRIC) > weighted_overall(
+        false_scores,
+        CAPSULE_RUBRIC,
+    )
+
+
 def test_weighted_overall_math():
     """Weighted overall = sum(score*weight)/sum(weight) over the rubric."""
     scores = [
-        DimensionScore(dimension=d.key, score=5 if d.key == "grounding" else 3,
-                       justification="j", evidence="e")
+        DimensionScore(
+            dimension=d.key, score=5 if d.key == "grounding" else 3, justification="j", evidence="e"
+        )
         for d in AGENT_RUBRIC
     ]
     overall = weighted_overall(scores, AGENT_RUBRIC)
@@ -164,8 +199,9 @@ def test_judge_retry_raises_after_exhaustion():
 
 def _judged(score: int, rubric) -> JudgedOutput:
     return JudgedOutput(
-        scores=[DimensionScore(dimension=d.key, score=score, justification="j",
-                               evidence="e") for d in rubric],
+        scores=[
+            DimensionScore(dimension=d.key, score=score, justification="j", evidence="e") for d in rubric
+        ],
         overall_comment="c",
     )
 
@@ -183,10 +219,8 @@ def test_rubric_for_namespaced_capsule_tiers():
 def test_aggregate_means_across_judges():
     """Two judges' scores for one output average per dimension."""
     records = [
-        JudgedRecord(provider="gemini", tier="capsule", judge="claude",
-                     judged=_judged(4, CAPSULE_RUBRIC)),
-        JudgedRecord(provider="gemini", tier="capsule", judge="gemini",
-                     judged=_judged(2, CAPSULE_RUBRIC)),
+        JudgedRecord(provider="gemini", tier="capsule", judge="claude", judged=_judged(4, CAPSULE_RUBRIC)),
+        JudgedRecord(provider="gemini", tier="capsule", judge="gemini", judged=_judged(2, CAPSULE_RUBRIC)),
     ]
     agg = aggregate(records)
     assert agg["gemini"]["capsule"]["dimensions"]["grounding"] == pytest.approx(3.0)
@@ -196,10 +230,12 @@ def test_aggregate_means_across_judges():
 def test_render_report_contains_providers_and_dimensions():
     """Markdown report names providers, tiers, and dimension scores."""
     records = [
-        JudgedRecord(provider="gemini", tier="specialist:stuff", judge="claude",
-                     judged=_judged(4, AGENT_RUBRIC)),
-        JudgedRecord(provider="claude", tier="specialist:stuff", judge="gemini",
-                     judged=_judged(3, AGENT_RUBRIC)),
+        JudgedRecord(
+            provider="gemini", tier="specialist:stuff", judge="claude", judged=_judged(4, AGENT_RUBRIC)
+        ),
+        JudgedRecord(
+            provider="claude", tier="specialist:stuff", judge="gemini", judged=_judged(3, AGENT_RUBRIC)
+        ),
     ]
     report = render_report(aggregate(records), meta={"pitcher": "Test, Guy"})
     assert "gemini" in report and "claude" in report
@@ -210,25 +246,43 @@ def test_render_report_contains_providers_and_dimensions():
 # ── Runner ────────────────────────────────────────────────────────────
 
 
+def test_capsule_benchmark_excludes_deterministic_explainer():
+    from types import SimpleNamespace
+
+    from pitcher_narratives.bench.runner import _capsule_for_judging
+
+    result = SimpleNamespace(
+        narrative="GENERATED\n\n## How Pitching+ Works\nfixed",
+        narrative_artifact=SimpleNamespace(content="GENERATED"),
+    )
+    assert _capsule_for_judging(result) == "GENERATED"
+
+
 @pytest.mark.skipif(
-    not __import__("pitcher_narratives.data", fromlist=["statcast_parquet_path"]).statcast_parquet_path(2026).exists(),
-    reason="statcast parquet files not present (set STATCAST_PATH)",
+    not _BUNDLE_AVAILABLE,
+    reason="manifest-covered PitchingPlus bundle is not installed",
 )
 def test_run_provider_captures_all_tiers():
-    """A provider run captures 4 specialists + exec summary + capsule and
-    the ground-truth context document."""
+    """Capture every tier while rejecting TestModel's ungrounded reader prose."""
     captured = run_provider(
-        TEST_PITCHER, provider="gemini", thinking="low",
+        TEST_PITCHER,
+        provider="gemini",
+        thinking="low",
         _model_override=TestModel(call_tools=[]),
     )
     assert captured.ok
     assert captured.error is None
     assert captured.wall_s >= 0
-    for key in ("specialist:stuff", "specialist:location", "specialist:runvalue",
-                "specialist:trends:report", "capsule:report"):
-        assert key in captured.outputs, f"missing {key}"
+    for key in (
+        "specialist:stuff",
+        "specialist:location",
+        "specialist:runvalue",
+        "specialist:trends:report",
+    ):
         assert captured.outputs[key]
         assert captured.ground_truths.get(key), f"missing ground truth for {key}"
+    assert captured.outputs["capsule:report"] == ""
+    assert captured.ground_truths["capsule:report"]
     # Each tier is judged against ITS author's actual input, not the
     # generic context doc -- otherwise the judge calls provided data
     # 'invented' and grounding scores are artifacts.
@@ -237,19 +291,20 @@ def test_run_provider_captures_all_tiers():
 
 
 @pytest.mark.skipif(
-    not __import__("pitcher_narratives.data", fromlist=["statcast_parquet_path"]).statcast_parquet_path(2026).exists(),
-    reason="statcast parquet files not present (set STATCAST_PATH)",
+    not _BUNDLE_AVAILABLE,
+    reason="manifest-covered PitchingPlus bundle is not installed",
 )
 def test_run_provider_captures_per_mode_capsules():
-    """A multi-mode run captures a namespaced capsule + exec summary per mode,
-    the four mode-agnostic specialists once, and a per-mode TRENDS specialist
-    whose ground truth carries the CHANGES frame comparison."""
+    """Capture mode-specific inputs and fail closed on ungrounded capsules."""
     from pitcher_narratives.personas import get_narration_mode
 
     modes = [get_narration_mode("report"), get_narration_mode("changes")]
     captured = run_provider(
-        TEST_PITCHER, provider="gemini", thinking="low",
-        modes=modes, _model_override=TestModel(call_tools=[]),
+        TEST_PITCHER,
+        provider="gemini",
+        thinking="low",
+        modes=modes,
+        _model_override=TestModel(call_tools=[]),
     )
     assert captured.ok
     # Four specialists captured once, mode-agnostic.
@@ -272,7 +327,8 @@ def test_run_provider_captures_per_mode_capsules():
     assert changes_gt != report_gt
     for mode_id in ("report", "changes"):
         cap = f"capsule:{mode_id}"
-        assert captured.outputs.get(cap), f"missing {cap}"
+        assert cap in captured.outputs
+        assert captured.outputs[cap] == ""
         assert "Specialist Analysis" in captured.ground_truths[cap]
     # No bare "capsule" key survives the namespacing.
     assert "capsule" not in captured.outputs

@@ -26,10 +26,98 @@ if TYPE_CHECKING:
 log = logging.getLogger("pitcher_narratives")
 
 
+def _make_grounded_test_model():
+    """Return a deterministic model whose synthetic prose obeys provenance."""
+    import hashlib
+    import re
+
+    from pydantic_ai.messages import ModelResponse, ToolCallPart
+    from pydantic_ai.models.function import FunctionModel
+
+    def collect_text(messages) -> str:
+        chunks: list[str] = []
+
+        def visit(value) -> None:
+            if isinstance(value, str):
+                chunks.append(value)
+            elif isinstance(value, (list, tuple)):
+                for item in value:
+                    visit(item)
+
+        for message in messages:
+            for part in message.parts:
+                if getattr(part, "part_kind", None) == "user-prompt":
+                    visit(getattr(part, "content", None))
+        return "\n".join(chunks)
+
+    def respond(messages, info):
+        output_tool = info.output_tools[0]
+        properties = output_tool.parameters_json_schema.get("properties", {})
+        prompt = collect_text(messages)
+        fact_ids = re.findall(r"\[(fact:[A-Za-z0-9_-]+)\]", prompt)
+
+        if {"observations", "supported_interpretations", "limitations"}.issubset(properties):
+            claims = []
+            if fact_ids:
+                claims.append(
+                    {
+                        "text": (
+                            "The cited producer fact is available "
+                            f"for prompt {hashlib.sha256(prompt.encode()).hexdigest()[:8]}."
+                        ),
+                        "claim_type": "observation",
+                        "confidence": "high",
+                        "fact_ids": [fact_ids[0]],
+                    }
+                )
+            args = {
+                "observations": claims,
+                "supported_interpretations": [],
+                "limitations": [],
+            }
+        elif "flags" in properties:
+            args = {"flags": []}
+        elif "warnings" in properties:
+            args = {"warnings": []}
+        elif {"state", "top_improvement", "top_concern", "secondary"}.issubset(properties):
+            args = {
+                "state": "no_material_signal",
+                "top_improvement": None,
+                "top_concern": None,
+                "secondary": [],
+            }
+        elif {"content", "claims"}.issubset(properties):
+            source = re.search(
+                r"\[claim:([a-z-]+:[A-Za-z0-9_-]+)\][^\n]*\[(fact:[A-Za-z0-9_-]+)\]",
+                prompt,
+            )
+            text = "Synthetic grounded output."
+            args = {
+                "content": f"- {text}" if source else "",
+                "claims": (
+                    [
+                        {
+                            "text": text,
+                            "fact_ids": [source.group(2)],
+                            "source_claim_ids": [source.group(1)],
+                            "claim_type": "observation",
+                        }
+                    ]
+                    if source
+                    else []
+                ),
+            }
+        else:
+            args = {}
+        return ModelResponse(parts=[ToolCallPart(tool_name=output_tool.name, args=args)])
+
+    return FunctionModel(respond)
+
+
 def parse_args() -> argparse.Namespace:
     """Parse command-line arguments (subcommands: report, morning)."""
     parser = argparse.ArgumentParser(
-        description="Pitcher scouting reports and morning digests from Statcast data",
+        description="Pitcher scouting reports and morning digests from PitchingPlus outputs",
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
@@ -64,10 +152,7 @@ def parse_args() -> argparse.Namespace:
         help="Print the pipeline prompts that would be sent to the LLM, then exit without calling the model",
     )
     report.add_argument(
-        "--provider",
-        choices=["gemini", "claude"],
-        default="gemini",
-        help="LLM provider (default: gemini)"
+        "--provider", choices=["gemini", "claude"], default="gemini", help="LLM provider (default: gemini)"
     )
     report.add_argument(
         "--thinking",
@@ -78,10 +163,7 @@ def parse_args() -> argparse.Namespace:
     report.add_argument(
         "--mode",
         default=None,
-        help=(
-            "Comma-separated narration modes: report, recap, changes "
-            "(default: report)."
-        ),
+        help=("Comma-separated narration modes: report, recap, changes (default: report)."),
     )
     report.add_argument(
         "--metrics-out",
@@ -106,9 +188,8 @@ def parse_args() -> argparse.Namespace:
         dest="explain_model",
         default=True,
         help=(
-            "Strip the EXPLAIN THE MODEL mandate from the writer prompt so the "
-            "capsule doesn't re-teach S+/L+/P+ (for readers who already know the "
-            "grading system). On by default."
+            "Omit the deterministic Pitching+ model-and-data-boundary section "
+            "for readers who already know the grading system. Included by default."
         ),
     )
 
@@ -220,13 +301,14 @@ def parse_args() -> argparse.Namespace:
 
     ask = sub.add_parser("ask", help="Explain why a pitcher's pitch earns its P+/S+/L+ grade")
     ask.add_argument("question", help='e.g. "why does Jared Jones\'s fastball grade 92 stuff+"')
-    ask.add_argument("--provider", default="gemini", choices=sorted(PROVIDERS),
-                     help="LLM provider (default: gemini)")
+    ask.add_argument(
+        "--provider", default="gemini", choices=sorted(PROVIDERS), help="LLM provider (default: gemini)"
+    )
 
     return parser.parse_args()
 
 
-def _resolve_modes(raw: str | None) -> list["NarrationMode"]:
+def _resolve_modes(raw: str | None) -> list[NarrationMode]:
     """Parse the ``--mode`` flag into a list of NarrationMode instances.
 
     None (flag omitted) resolves to [REPORT]. Comma-separated ids are looked
@@ -284,6 +366,7 @@ def build_diagnostics_dict(pipe_result) -> dict:
     Runs the hallucination guard (only when the narrative is non-empty, matching
     the historical behavior). Pure apart from that read-only guard call.
     """
+    from pitcher_narratives.models import render_specialist_analysis
     from pitcher_narratives.pipeline import check_hallucinated_metrics, is_unverified
 
     diag = {
@@ -294,10 +377,9 @@ def build_diagnostics_dict(pipe_result) -> dict:
         "verified": bool(pipe_result.narrative) and not is_unverified(pipe_result),
         "capsule_revised": pipe_result.capsule_revised,
         "revision_count": pipe_result.revision_count,
-        "stuff_analysis": pipe_result.specialists.stuff,
+        "stuff_analysis": render_specialist_analysis(pipe_result.specialists.stuff),
         "data_audit": [
-            {"category": f.category, "specialist": f.specialist,
-             "claim": f.claim, "data_shows": f.data_shows}
+            {"category": f.category, "specialist": f.specialist, "claim": f.claim, "data_shows": f.data_shows}
             for f in pipe_result.audit_flags
         ],
         "capsule_fact_check": [
@@ -305,18 +387,41 @@ def build_diagnostics_dict(pipe_result) -> dict:
             for f in pipe_result.capsule_audit_flags
         ],
         "anchor_warnings": [
-            {"category": w.category, "description": w.description}
-            for w in pipe_result.anchor_warnings
+            {"category": w.category, "description": w.description} for w in pipe_result.anchor_warnings
         ],
         "value_parity_warnings": list(pipe_result.value_parity_warnings),
-        "hallucination": {"unknown_metrics": [], "outcome_stat_warnings": []},
+        "reader_claim_warnings": list(pipe_result.reader_claim_warnings),
+        "hallucination": {
+            "unknown_metrics": [],
+            "outcome_stat_warnings": [],
+            "unsupported_claim_warnings": [],
+        },
     }
-    if pipe_result.narrative:
-        hr = check_hallucinated_metrics(pipe_result.narrative)
+    generated_narrative = (
+        pipe_result.narrative_artifact.content
+        if pipe_result.narrative_artifact is not None
+        else pipe_result.narrative
+    )
+    if generated_narrative:
+        hr = check_hallucinated_metrics(
+            generated_narrative,
+            capabilities=pipe_result.analysis_capabilities,
+            cited_fact_ids=pipe_result.narrative_fact_ids,
+        )
         diag["hallucination"] = {
             "unknown_metrics": list(hr.unknown_metrics),
             "outcome_stat_warnings": list(hr.outcome_stat_warnings),
+            "unsupported_claim_warnings": list(hr.unsupported_claim_warnings),
         }
+        recomputed_warnings = [
+            *(f"Unknown metric: {metric}" for metric in hr.unknown_metrics),
+            *(f"Unsupported outcome statistic: {metric}" for metric in hr.outcome_stat_warnings),
+            *hr.unsupported_claim_warnings,
+        ]
+        diag["reader_claim_warnings"] = list(
+            dict.fromkeys([*diag["reader_claim_warnings"], *recomputed_warnings])
+        )
+    diag["verified"] = diag["verified"] and not diag["reader_claim_warnings"]
     return diag
 
 
@@ -334,16 +439,11 @@ def render_diagnostics_text(diag: dict) -> str:
 
     lines += ["", "### Capsule Fact-Check", ""]
     if diag["capsule_revised"] and not diag["capsule_fact_check"]:
-        lines.append(
-            "Auditor flagged issue(s); the fact-revision corrected them and the "
-            "re-audit is clean."
-        )
+        lines.append("Auditor flagged issue(s); the fact-revision corrected them and the re-audit is clean.")
     elif diag["capsule_fact_check"]:
         n = len(diag["capsule_fact_check"])
         if diag["capsule_revised"]:
-            lines.append(
-                f"Auditor revised the report, but {n} issue(s) remain after re-audit:"
-            )
+            lines.append(f"Auditor revised the report, but {n} issue(s) remain after re-audit:")
         else:
             lines.append(f"Auditor flagged {n} issue(s) (not auto-corrected):")
         for f in diag["capsule_fact_check"]:
@@ -353,8 +453,7 @@ def render_diagnostics_text(diag: dict) -> str:
         lines.append("Clean — no factual issues found.")
 
     if diag["value_parity_warnings"]:
-        lines += ["", "### Value Parity (advisory)", "",
-                  "Report numbers with no match in the source data:"]
+        lines += ["", "### Value Parity (advisory)", "", "Report numbers with no match in the source data:"]
         for w in diag["value_parity_warnings"]:
             lines.append(f"- {w}")
 
@@ -368,18 +467,9 @@ def render_diagnostics_text(diag: dict) -> str:
     else:
         lines.append(f"Revised {diag['revision_count']} time(s) — passed.")
 
-    hall = diag["hallucination"]
-    if hall["unknown_metrics"] or hall["outcome_stat_warnings"]:
-        lines += ["", "### Hallucination Check", ""]
-        if hall["unknown_metrics"]:
-            lines.append(
-                f"Unknown metrics referenced: {', '.join(hall['unknown_metrics'])}"
-            )
-        if hall["outcome_stat_warnings"]:
-            lines.append(
-                "Traditional outcome stats referenced (prompt warns against these): "
-                f"{', '.join(hall['outcome_stat_warnings'])}"
-            )
+    if diag["reader_claim_warnings"]:
+        lines += ["", "### Reader Claim Guard", ""]
+        lines.extend(f"- {warning}" for warning in diag["reader_claim_warnings"])
 
     return "\n".join(lines)
 
@@ -403,42 +493,39 @@ def _emit_mode_result(pipe_result, *, mode, verbose: bool = False) -> tuple[bool
     if pipe_result.narrative:
         print(pipe_result.narrative)
     else:
-        # Flag empty-capsule failures loudly (repo convention). The report still
-        # ships (exit 0, not soft-blocked) but operators/CI get a warning signal.
-        log.warning("Pipeline produced an empty narrative — report shipped without a capsule.")
+        # No generated capsule is a failed mode result, never a successful
+        # no-op. Keep stdout explicit and let the caller return non-zero.
+        log.warning("Pipeline produced an empty narrative — no capsule is publishable.")
         print("_No capsule was produced._")
 
-    # Verification stamp — travels with the document (the UNVERIFIED banner
-    # on stderr and the exit code remain the CI-facing signals).
-    unverified = is_unverified(pipe_result)
+    n_reader_claim_flags = len(diag["reader_claim_warnings"])
+    unverified = is_unverified(pipe_result) or bool(n_reader_claim_flags)
     if unverified:
         n_fact = len(pipe_result.capsule_audit_flags)
         n_anchor = len(pipe_result.anchor_warnings)
         print(
             f"\n\n**Verification:** ⚠️ UNVERIFIED — {n_fact} residual "
-            f"fact-check flag(s), {n_anchor} anchor warning(s). "
+            f"fact-check flag(s), {n_anchor} anchor warning(s), "
+            f"{n_reader_claim_flags} reader claim/metric warning(s). "
             "See diagnostics (-v or --diagnostics-file)."
         )
     else:
-        print("\n\n**Verification:** ✅ Verified — fact-check and anchor gates clean.")
+        print("\n\n**Verification:** ✅ Verified — all gating checks clean.")
 
-    # Hallucination pointer — the hallucination guard is advisory (it does NOT
-    # gate the exit code, unlike the fact-check/anchor stamp above), but its
-    # flags must not be silently hidden now that diagnostics are off stdout.
-    n_hallucination = len(diag["hallucination"]["unknown_metrics"]) + len(
-        diag["hallucination"]["outcome_stat_warnings"]
-    )
-    if n_hallucination:
+    # Reader-claim failures gate verification and remain visible without -v.
+    if n_reader_claim_flags:
         print(
-            f"\n\n**Note:** ⚠️ {n_hallucination} possible hallucinated-metric "
-            "flag(s) — see diagnostics (-v or --diagnostics-file)."
+            f"\n\n**Note:** {n_reader_claim_flags} reader claim/metric flag(s) "
+            "present — see diagnostics (-v or --diagnostics-file)."
         )
 
     # Distilled section — only for modes that ran the distillation agent.
     # RECAP's capsule is already a brief; a summary of a summary is noise.
     if mode.distill:
         print("\n\n## Executive Summary\n")
-        if pipe_result.executive_summary:
+        if unverified:
+            print("_Summary withheld — reader or validation checks are unverified._")
+        elif pipe_result.executive_summary:
             for bullet in pipe_result.executive_summary:
                 print(f"- {bullet}")
         else:
@@ -450,8 +537,7 @@ def _emit_mode_result(pipe_result, *, mode, verbose: bool = False) -> tuple[bool
         print("\n\n---\n", file=sys.stderr)
         print(render_diagnostics_text(diag), file=sys.stderr)
 
-    # Empty narrative → nothing to verify; never soft-block (pre-WS2 contract).
-    return (unverified if pipe_result.narrative else False), diag
+    return unverified, diag
 
 
 def _write_diagnostics_file(path, diagnostics_by_mode: dict) -> None:
@@ -525,6 +611,7 @@ def _run_report_command(args: argparse.Namespace) -> None:
     # except clause below. Keep module-level imports minimal so
     # `pitcher-narratives --help` stays fast.
     import polars as pl
+
     from pitcher_narratives.data import load_pitcher_data
 
     try:
@@ -546,24 +633,16 @@ def _run_report_command(args: argparse.Namespace) -> None:
     if args.verbose:
         _print_verbose_summary(pitcher_data)
 
-    # Support test mode: use TestModel when env var is set
+    # Test mode still exercises every typed boundary. Its deterministic model
+    # emits real prompt citations rather than bypassing provenance validation.
     model_override = None
     if os.environ.get("PITCHER_NARRATIVES_TEST_MODEL"):
-        from pydantic_ai.models.test import TestModel
-
-        # call_tools=[] so the deterministic test model does not blindly
-        # invoke agents' reference tools (e.g. the skills toolset's
-        # load_skill), which would fail on placeholder arguments.
-        model_override = TestModel(call_tools=[])
+        model_override = _make_grounded_test_model()
 
     # Pre-flight API key check — fail fast before writing files or hitting
     # the LLM. --print-prompts intentionally bypasses this check because it
     # never calls the model (it only renders the prompts that would be sent).
-    if (
-        not args.print_prompts
-        and model_override is None
-        and not os.environ.get(API_KEYS[args.provider])
-    ):
+    if not args.print_prompts and model_override is None and not os.environ.get(API_KEYS[args.provider]):
         env_var = API_KEYS[args.provider]
         log.error("%s not set.", env_var)
         sys.exit(1)
@@ -580,16 +659,10 @@ def _run_report_command(args: argparse.Namespace) -> None:
     selected_modes = _resolve_modes(getattr(args, "mode", None))
 
     needs_prior = any(TemporalFrame.PRIOR in m.temporal_frame for m in selected_modes)
-    prior_ctx = (
-        assemble_prior_context(pitcher_data, args.recent, args.prior)
-        if needs_prior
-        else None
-    )
+    prior_ctx = assemble_prior_context(pitcher_data, args.recent, args.prior) if needs_prior else None
 
     try:
-        data_file, data_text = write_pipeline_data_file(
-            ctx, args.pitcher, args.provider, prior_ctx=prior_ctx
-        )
+        data_file, data_text = write_pipeline_data_file(ctx, args.pitcher, args.provider, prior_ctx=prior_ctx)
     except OSError as e:
         log.error("Failed to write prompt data file: %s", e)
         sys.exit(1)
@@ -633,12 +706,19 @@ def _run_report_command(args: argparse.Namespace) -> None:
         pipe_result = mode_results[mode.id]
         results[mode.id] = pipe_result
         unverified, diag = _emit_mode_result(
-            pipe_result, mode=mode, verbose=args.verbose,
+            pipe_result,
+            mode=mode,
+            verbose=args.verbose,
         )
         diagnostics_by_mode[mode.id] = diag
         if unverified:
             any_unverified = True
             banner = residual_banner(pipe_result, label=mode.id.upper())
+            if banner is None:
+                banner = (
+                    f"⚠️  {mode.id.upper()} UNVERIFIED — deterministic reader "
+                    "claim/metric guard failed. Review diagnostics before use."
+                )
             print(f"\n{banner}", file=sys.stderr)
 
     if args.diagnostics_file:
@@ -718,8 +798,7 @@ def _run_scoreboard_command(args: argparse.Namespace) -> None:
     # silently ignoring the flag.
     if args.curate and args.format == "json":
         print(
-            "Error: --curate is not supported with --format json "
-            "(curation prints a human-readable slate).",
+            "Error: --curate is not supported with --format json (curation prints a human-readable slate).",
             file=sys.stderr,
         )
         sys.exit(2)

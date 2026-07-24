@@ -47,7 +47,7 @@ _JUDGE_BACKOFFS = (10.0, 30.0, 60.0)
 trip provider rate limits, which clear on their own."""
 
 
-def with_retry(
+def with_retry[T](
     fn: Callable[[], _T],
     *,
     attempts: int = 4,
@@ -63,7 +63,9 @@ def with_retry(
             last = exc
             if i < attempts - 1:
                 delay = backoffs[min(i, len(backoffs) - 1)]
-                log.warning("judge attempt %d failed (%s); retrying in %.0fs", i + 1, type(exc).__name__, delay)
+                log.warning(
+                    "judge attempt %d failed (%s); retrying in %.0fs", i + 1, type(exc).__name__, delay
+                )
                 _sleep(delay)
     assert last is not None
     raise last

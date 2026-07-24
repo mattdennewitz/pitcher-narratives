@@ -13,8 +13,13 @@ from pitcher_narratives.scout import ScoredAppearance, Signal
 
 def _app(pid: int, role: str = "SP", score: float = 5.0) -> ScoredAppearance:
     return ScoredAppearance(
-        pitcher_id=pid, pitcher_name=f"Pitcher {pid}", throws="R",
-        game_date=date(2026, 6, 10), game_pk=1, n_pitches=80, score=score,
+        pitcher_id=pid,
+        pitcher_name=f"Pitcher {pid}",
+        throws="R",
+        game_date=date(2026, 6, 10),
+        game_pk=1,
+        n_pitches=80,
+        score=score,
         role=role,
         signals=[Signal("velo_delta", 3.0, "+2.1 mph vs season")],
     )
@@ -22,8 +27,10 @@ def _app(pid: int, role: str = "SP", score: float = 5.0) -> ScoredAppearance:
 
 def _pick(pid: int) -> CurationPick:
     return CurationPick(
-        pitcher_id=pid, category="clean_breakout",
-        angle="Velocity spike with stuff gain", conviction="medium",
+        pitcher_id=pid,
+        category="clean_breakout",
+        angle="Velocity spike with stuff gain",
+        conviction="medium",
         conviction_reason="One game, but shape agrees.",
     )
 
@@ -32,9 +39,13 @@ def _pick(pid: int) -> CurationPick:
 
 
 def test_render_full_board_groups_and_sorts():
-    board = render_full_board([
-        _app(1, "SP", 9.0), _app(2, "RP", 7.0), _app(3, "SP", 3.0),
-    ])
+    board = render_full_board(
+        [
+            _app(1, "SP", 9.0),
+            _app(2, "RP", 7.0),
+            _app(3, "SP", 3.0),
+        ]
+    )
     assert board.index("Starters") < board.index("Pitcher 1") < board.index("Pitcher 3")
     assert board.index("Relievers") < board.index("Pitcher 2")
     assert "velo_delta" in board and "+2.1 mph vs season" in board
@@ -44,16 +55,28 @@ def test_render_full_board_groups_and_sorts():
 def test_render_full_board_json_shape_and_order():
     import json
 
-    payload = json.loads(render_full_board_json([
-        _app(1, "SP", 9.0), _app(2, "RP", 7.0), _app(3, "SP", 3.0),
-    ]))
+    payload = json.loads(
+        render_full_board_json(
+            [
+                _app(1, "SP", 9.0),
+                _app(2, "RP", 7.0),
+                _app(3, "SP", 3.0),
+            ]
+        )
+    )
     assert payload["game_date"] == "2026-06-10"
     # Flat list sorted by score descending, regardless of role.
     assert [a["pitcher_id"] for a in payload["appearances"]] == [1, 2, 3]
     first = payload["appearances"][0]
     assert first == {
-        "pitcher_id": 1, "pitcher_name": "Pitcher 1", "throws": "R", "role": "SP",
-        "game_date": "2026-06-10", "game_pk": 1, "n_pitches": 80, "score": 9.0,
+        "pitcher_id": 1,
+        "pitcher_name": "Pitcher 1",
+        "throws": "R",
+        "role": "SP",
+        "game_date": "2026-06-10",
+        "game_pk": 1,
+        "n_pitches": 80,
+        "score": 9.0,
         "signals": [{"name": "velo_delta", "weight": 3.0, "detail": "+2.1 mph vs season"}],
     }
 
@@ -89,7 +112,10 @@ def test_assemble_digest_layout():
 
 def _pick2(pid: int, category: str, conviction: str = "medium") -> CurationPick:
     return CurationPick(
-        pitcher_id=pid, category=category, angle="a", conviction=conviction,
+        pitcher_id=pid,
+        category=category,
+        angle="a",
+        conviction=conviction,
         conviction_reason="r",
     )
 
@@ -98,19 +124,28 @@ def _appearance(pid: int, score: float):
     from datetime import date as _date
 
     from pitcher_narratives.scout import ScoredAppearance
+
     return ScoredAppearance(
-        pitcher_id=pid, pitcher_name=f"P{pid}", throws="R",
-        game_date=_date(2026, 6, 13), game_pk=1, n_pitches=80, score=score, role="RP",
+        pitcher_id=pid,
+        pitcher_name=f"P{pid}",
+        throws="R",
+        game_date=_date(2026, 6, 13),
+        game_pk=1,
+        n_pitches=80,
+        score=score,
+        role="RP",
     )
 
 
 def test_render_curation_slate_groups_in_registry_order():
     from pitcher_narratives.digest import render_curation_slate
 
-    slate = CurationSlate(picks=[
-        _pick2(2, "red_flag"),
-        _pick2(1, "clean_breakout"),
-    ])
+    slate = CurationSlate(
+        picks=[
+            _pick2(2, "red_flag"),
+            _pick2(1, "clean_breakout"),
+        ]
+    )
     out = render_curation_slate(slate, {1: "Ace", 2: "Setup"})
     # clean_breakout (order 0) badge appears before red_flag (order 5) badge.
     assert out.index("CLEAN BREAKOUT") < out.index("RED FLAG")
@@ -119,16 +154,22 @@ def test_render_curation_slate_groups_in_registry_order():
 
 
 def test_digest_groups_by_category_and_omits_empty():
-    slate = CurationSlate(picks=[
-        _pick2(1, "red_flag"),
-        _pick2(2, "lab_project"),
-        _pick2(3, "lab_project"),
-    ])
+    slate = CurationSlate(
+        picks=[
+            _pick2(1, "red_flag"),
+            _pick2(2, "lab_project"),
+            _pick2(3, "lab_project"),
+        ]
+    )
     appearances = {1: _appearance(1, 9.0), 2: _appearance(2, 5.0), 3: _appearance(3, 8.0)}
     summaries = {1: "s1", 2: "s2", 3: "s3"}
     out = assemble_digest(
-        slate=slate, summaries=summaries, appearances=appearances,
-        board=list(appearances.values()), game_date=date(2026, 6, 13), cost_block="cost",
+        slate=slate,
+        summaries=summaries,
+        appearances=appearances,
+        board=list(appearances.values()),
+        game_date=date(2026, 6, 13),
+        cost_block="cost",
     )
     assert "## Lab Projects" in out
     assert "## Red Flags" in out
@@ -138,44 +179,54 @@ def test_digest_groups_by_category_and_omits_empty():
 
 
 def test_digest_orders_within_category_by_conviction_then_score():
-    slate = CurationSlate(picks=[
-        _pick2(1, "lab_project", "low"),
-        _pick2(2, "lab_project", "high"),
-        _pick2(3, "lab_project", "high"),
-    ])
+    slate = CurationSlate(
+        picks=[
+            _pick2(1, "lab_project", "low"),
+            _pick2(2, "lab_project", "high"),
+            _pick2(3, "lab_project", "high"),
+        ]
+    )
     appearances = {1: _appearance(1, 9.0), 2: _appearance(2, 5.0), 3: _appearance(3, 8.0)}
     summaries = {1: "s1", 2: "s2", 3: "s3"}
     out = assemble_digest(
-        slate=slate, summaries=summaries, appearances=appearances,
-        board=list(appearances.values()), game_date=date(2026, 6, 13), cost_block="cost",
+        slate=slate,
+        summaries=summaries,
+        appearances=appearances,
+        board=list(appearances.values()),
+        game_date=date(2026, 6, 13),
+        cost_block="cost",
     )
     assert out.index("### P3") < out.index("### P2") < out.index("### P1")
 
 
 def test_digest_renders_new_category_sections_in_order():
-    """command_breakout and velo_drop render as sections, in hierarchy order."""
-    slate = CurationSlate(picks=[
-        _pick2(1, "command_breakout"),
-        _pick2(2, "velo_drop"),
-        _pick2(3, "red_flag"),
-    ])
+    """Location+ breakout and velocity-drop sections follow registry order."""
+    slate = CurationSlate(
+        picks=[
+            _pick2(1, "location_breakout"),
+            _pick2(2, "velo_drop"),
+            _pick2(3, "red_flag"),
+        ]
+    )
     appearances = {
-        1: _appearance(1, 9.0), 2: _appearance(2, 7.0), 3: _appearance(3, 8.0),
+        1: _appearance(1, 9.0),
+        2: _appearance(2, 7.0),
+        3: _appearance(3, 8.0),
     }
     summaries = {1: "s1", 2: "s2", 3: "s3"}
     out = assemble_digest(
-        slate=slate, summaries=summaries, appearances=appearances,
-        board=list(appearances.values()), game_date=date(2026, 6, 13), cost_block="cost",
+        slate=slate,
+        summaries=summaries,
+        appearances=appearances,
+        board=list(appearances.values()),
+        game_date=date(2026, 6, 13),
+        cost_block="cost",
     )
-    assert "## Command Breakouts" in out
+    assert "## Location+ Breakouts" in out
     assert "## Velocity Drops" in out
-    # hierarchy order: command_breakout before velo_drop before red_flag
-    assert (
-        out.index("## Command Breakouts")
-        < out.index("## Velocity Drops")
-        < out.index("## Red Flags")
-    )
-    assert "[COMMAND BREAKOUT]" in out
+    # hierarchy order: location_breakout before velo_drop before red_flag
+    assert out.index("## Location+ Breakouts") < out.index("## Velocity Drops") < out.index("## Red Flags")
+    assert "[LOCATION+ BREAKOUT]" in out
     assert "[VELO DROP]" in out
 
 
@@ -193,8 +244,12 @@ def test_digest_badge_comes_from_registry():
 
     slate = CurationSlate(picks=[_pick(1)])
     out = assemble_digest(
-        slate=slate, summaries={1: "s."}, appearances={1: _app(1)},
-        board=[_app(1)], game_date=date(2026, 6, 10), cost_block="c",
+        slate=slate,
+        summaries={1: "s."},
+        appearances={1: _app(1)},
+        board=[_app(1)],
+        game_date=date(2026, 6, 10),
+        cost_block="c",
     )
     cat = CATEGORY_BY_ID["clean_breakout"]
     assert f"## {cat.section_title}" in out
@@ -204,9 +259,12 @@ def test_digest_badge_comes_from_registry():
 def test_render_full_board_table_content_and_order():
     from pitcher_narratives.digest import render_full_board_table
 
-    table = render_full_board_table([
-        _app(1, "SP", 3.0), _app(2, "RP", 9.0),
-    ])
+    table = render_full_board_table(
+        [
+            _app(1, "SP", 3.0),
+            _app(2, "RP", 9.0),
+        ]
+    )
     assert "Score" in table and "Pitcher" in table and "Signals" in table
     # Flat sort by score desc: Pitcher 2 (9.0) before Pitcher 1 (3.0).
     assert table.index("Pitcher 2") < table.index("Pitcher 1")

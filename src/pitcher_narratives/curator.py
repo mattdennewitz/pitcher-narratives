@@ -50,8 +50,12 @@ class CurationPick(BaseModel):
 
     pitcher_id: int
     category: Literal[
-        "clean_breakout", "command_breakout", "lab_project",
-        "identity_crisis", "velo_drop", "red_flag",
+        "clean_breakout",
+        "location_breakout",
+        "lab_project",
+        "identity_crisis",
+        "velo_drop",
+        "red_flag",
     ]
     angle: str = Field(min_length=1)
     conviction: Literal["low", "medium", "high"]
@@ -74,8 +78,7 @@ class CurationSlate(BaseModel):
         }
         if over:
             raise ValueError(
-                f"Too many picks in categories {over}; "
-                f"cap is {_MAX_PICKS_PER_CATEGORY} per category."
+                f"Too many picks in categories {over}; cap is {_MAX_PICKS_PER_CATEGORY} per category."
             )
         return self
 
@@ -93,7 +96,7 @@ class Category:
 
 CATEGORIES: tuple[Category, ...] = (
     Category("clean_breakout", 0, "Clean Breakouts", "CLEAN BREAKOUT"),
-    Category("command_breakout", 1, "Command Breakouts", "COMMAND BREAKOUT"),
+    Category("location_breakout", 1, "Location+ Breakouts", "LOCATION+ BREAKOUT"),
     Category("lab_project", 2, "Lab Projects", "LAB PROJECT"),
     Category("identity_crisis", 3, "Identity Crises", "IDENTITY CRISIS"),
     Category("velo_drop", 4, "Velocity Drops", "VELO DROP"),
@@ -120,28 +123,26 @@ and select up to 5 picks PER CATEGORY across the six categories below.
 
 Use this hierarchy of signal when choosing:
 
-1. clean_breakout: A significant velocity gain (1.5+ mph) coupled with
-a jump in overall stuff (P+ or S+). A physical change backed by data.
+1. clean_breakout: A significant velocity gain (1.5+ mph) observed with
+a higher overall P+ or S+. Describe only the co-movement.
 
-2. command_breakout: A jump in command — a pitch's Location+ surged
-versus its season norm and now locates well. The inverse of a lab
-project: the feel has arrived, even if the stuff was already there.
+2. location_breakout: A pitch's Location+ rose versus its season norm.
+Location+ is a realized-location model contrast, not evidence of target,
+intent, command, feel, or execution.
 
-3. lab_project: Top-tier raw stuff (S+ 130+) with poor command
-(L+ < 80). High-upside development stories — the pitch has the shape,
-the feel hasn't arrived.
+3. lab_project: A well-sampled S+ above 130 with L+ below 80. This is a
+grade divergence, not proof of shape quality, command, feel, or development.
 
-4. identity_crisis: A radically altered pitch mix — shelving a primary,
-doubling a secondary, or introducing something new. Plan or problem?
+4. identity_crisis: A materially altered pitch mix — shelving a primary,
+increasing a secondary, or introducing something new. Do not infer intent.
 
-5. velo_drop: A fastball velocity loss (1.5+ mph) where the stuff
-eroded with it (P+ or S+ down) — a durability concern, distinct from a
-tracking artifact. If the velo dipped but the stuff held, it is NOT a
-velo_drop.
+5. velo_drop: A fastball velocity loss (1.5+ mph) observed with lower P+
+or S+. Report the paired decline without inferring health, fatigue, or a
+physical cause. If velocity dipped but the grades held, it is not velo_drop.
 
-6. red_flag: Statistical anomalies that look like gains but might be
-tracking errors. A single-game velocity spike of 3+ mph, or a P+ jump
-the underlying stuff metrics don't support. Flag honestly.
+6. red_flag: A supplied measurement conflict or a value that meets an
+explicit anomaly policy. Do not invent a tracking error from disagreement
+between aggregates and a model grade.
 
 RULES:
 - Pick ONLY from the listed candidates, using their exact pitcher_id.
@@ -150,7 +151,7 @@ RULES:
 - Ignore "good" outings where the data matches the season average.
 - Favor variety. Prefer a spread across categories and distinct stories
   over many look-alikes. When several candidates tell the same story
-  (e.g. multiple "elite breaking ball, no command" lab projects), keep
+  (e.g. multiple similar S+/L+ grade-divergence candidates), keep
   only the most distinctive or highest-conviction few rather than
   filling the cap with duplicates. A shorter, varied slate beats a
   long, repetitive one.
@@ -179,9 +180,7 @@ def build_selector_briefing(candidates: list[ScoredAppearance]) -> str:
     return "\n".join(lines)
 
 
-def make_selector_agent(
-    provider: str, candidates: list[ScoredAppearance]
-) -> Agent[None, CurationSlate]:
+def make_selector_agent(provider: str, candidates: list[ScoredAppearance]) -> Agent[None, CurationSlate]:
     """Build the selector agent with candidate-membership validation."""
     if provider not in PROVIDERS:
         raise ValueError(f"Unknown provider {provider!r}, expected: {', '.join(PROVIDERS)}")
@@ -208,14 +207,11 @@ def make_selector_agent(
         bad = [p.pitcher_id for p in output.picks if p.pitcher_id not in candidate_ids]
         if bad:
             raise ModelRetry(
-                f"Invalid picks — not listed candidates: {bad}. "
-                f"Use only the listed pitcher_id values."
+                f"Invalid picks — not listed candidates: {bad}. Use only the listed pitcher_id values."
             )
         ids = [p.pitcher_id for p in output.picks]
         if len(ids) != len(set(ids)):
-            raise ModelRetry(
-                "Duplicate pitcher_id picks; select each pitcher at most once."
-            )
+            raise ModelRetry("Duplicate pitcher_id picks; select each pitcher at most once.")
         return output
 
     return agent
@@ -270,10 +266,12 @@ def select_slate(
             selector sees exactly what was persisted.
         _model_override: Test-only model override.
     """
-    return asyncio.run(select_slate_async(
-        candidates,
-        provider=provider,
-        tracker=tracker,
-        briefing=briefing,
-        _model_override=_model_override,
-    ))
+    return asyncio.run(
+        select_slate_async(
+            candidates,
+            provider=provider,
+            tracker=tracker,
+            briefing=briefing,
+            _model_override=_model_override,
+        )
+    )

@@ -1,0 +1,59 @@
+{
+  "pitcher": 592155,
+  "as_of": "2026-06-20",
+  "source_population": "pitchingplus:592155:2026:MLB:R",
+  "frames": {
+    "recent": {
+      "games": [
+        {"season": 2026, "game_date": "2026-06-11", "game_pk": 1001, "pitcher": 592155},
+        {"season": 2026, "game_date": "2026-06-12", "game_pk": 1002, "pitcher": 592155},
+        {"season": 2026, "game_date": "2026-06-13", "game_pk": 1003, "pitcher": 592155},
+        {"season": 2026, "game_date": "2026-06-14", "game_pk": 1004, "pitcher": 592155},
+        {"season": 2026, "game_date": "2026-06-15", "game_pk": 1005, "pitcher": 592155},
+        {"season": 2026, "game_date": "2026-06-16", "game_pk": 1006, "pitcher": 592155},
+        {"season": 2026, "game_date": "2026-06-17", "game_pk": 1007, "pitcher": 592155},
+        {"season": 2026, "game_date": "2026-06-18", "game_pk": 1008, "pitcher": 592155},
+        {"season": 2026, "game_date": "2026-06-19", "game_pk": 1009, "pitcher": 592155},
+        {"season": 2026, "game_date": "2026-06-20", "game_pk": 1010, "pitcher": 592155}
+      ],
+      "frame_row_count": 337,
+      "pitch_types": [
+        {"pitch_name": "4-Seam Fastball", "window_velo": 96.1, "window_s_plus": 112.0, "window_l_plus": 108.0, "window_usage_pct": 48.4, "n_pitches_window": 180},
+        {"pitch_name": "Cutter", "window_velo": 90.8, "window_s_plus": 110.0, "window_l_plus": 98.0, "window_usage_pct": 21.0, "n_pitches_window": 70},
+        {"pitch_name": "Sweeper", "window_velo": 83.0, "window_s_plus": 114.0, "window_l_plus": 130.0, "window_usage_pct": 25.0, "n_pitches_window": 80},
+        {"pitch_name": "Changeup", "window_velo": 88.0, "window_s_plus": 101.0, "window_l_plus": 96.0, "window_usage_pct": 5.6, "n_pitches_window": 7}
+      ],
+      "release_points": [
+        {"pitch_name": "4-Seam Fastball", "window_release_x": 1.75, "window_release_z": 5.85, "window_extension": 6.40},
+        {"pitch_name": "Cutter", "window_release_x": 1.64, "window_release_z": 5.78, "window_extension": 6.21},
+        {"pitch_name": "Sweeper", "window_release_x": 1.50, "window_release_z": 5.71, "window_extension": 6.12}
+      ]
+    },
+    "prior": {
+      "games": [
+        {"season": 2026, "game_date": "2026-06-01", "game_pk": 991, "pitcher": 592155},
+        {"season": 2026, "game_date": "2026-06-02", "game_pk": 992, "pitcher": 592155},
+        {"season": 2026, "game_date": "2026-06-03", "game_pk": 993, "pitcher": 592155},
+        {"season": 2026, "game_date": "2026-06-04", "game_pk": 994, "pitcher": 592155},
+        {"season": 2026, "game_date": "2026-06-05", "game_pk": 995, "pitcher": 592155},
+        {"season": 2026, "game_date": "2026-06-06", "game_pk": 996, "pitcher": 592155},
+        {"season": 2026, "game_date": "2026-06-07", "game_pk": 997, "pitcher": 592155},
+        {"season": 2026, "game_date": "2026-06-08", "game_pk": 998, "pitcher": 592155},
+        {"season": 2026, "game_date": "2026-06-09", "game_pk": 999, "pitcher": 592155},
+        {"season": 2026, "game_date": "2026-06-10", "game_pk": 1000, "pitcher": 592155}
+      ],
+      "frame_row_count": 328,
+      "pitch_types": [
+        {"pitch_name": "4-Seam Fastball", "window_velo": 95.7, "window_s_plus": 105.0, "window_l_plus": 101.0, "window_usage_pct": 36.2, "n_pitches_window": 140},
+        {"pitch_name": "Cutter", "window_velo": 89.9, "window_s_plus": 95.0, "window_l_plus": 100.0, "window_usage_pct": 24.0, "n_pitches_window": 80},
+        {"pitch_name": "Sweeper", "window_velo": 81.9, "window_s_plus": 92.0, "window_l_plus": 93.0, "window_usage_pct": 30.0, "n_pitches_window": 90},
+        {"pitch_name": "Changeup", "window_velo": 87.5, "window_s_plus": 98.0, "window_l_plus": 99.0, "window_usage_pct": 9.8, "n_pitches_window": 18}
+      ],
+      "release_points": [
+        {"pitch_name": "4-Seam Fastball", "window_release_x": 1.65, "window_release_z": 5.99, "window_extension": 6.31},
+        {"pitch_name": "Cutter", "window_release_x": 1.52, "window_release_z": 5.89, "window_extension": 6.15},
+        {"pitch_name": "Sweeper", "window_release_x": 1.42, "window_release_z": 5.76, "window_extension": 6.06}
+      ]
+    }
+  }
+}

@@ -22,7 +22,6 @@ __all__ = [
 ]
 
 
-
 # ── Assembly ────────────────────────────────────────────────────────
 
 
@@ -35,16 +34,14 @@ def render_full_board(board: list[ScoredAppearance]) -> str:
     for label, role in (("### Starters", "SP"), ("### Relievers", "RP")):
         group = sorted(
             (a for a in board if a.role == role),
-            key=lambda a: a.score, reverse=True,
+            key=lambda a: a.score,
+            reverse=True,
         )
         lines.append(label)
         if not group:
             lines.append("*(none scored)*")
         for a in group:
-            lines.append(
-                f"- **{a.pitcher_name}** ({a.score:.1f}) — "
-                f"{a.game_date}, {a.n_pitches} pitches"
-            )
+            lines.append(f"- **{a.pitcher_name}** ({a.score:.1f}) — {a.game_date}, {a.n_pitches} pitches")
             for s in a.signals:
                 lines.append(f"  - `{s.name}`: {s.detail}")
         lines.append("")
@@ -71,10 +68,7 @@ def render_full_board_json(board: list[ScoredAppearance]) -> str:
                 "game_pk": a.game_pk,
                 "n_pitches": a.n_pitches,
                 "score": a.score,
-                "signals": [
-                    {"name": s.name, "weight": s.weight, "detail": s.detail}
-                    for s in a.signals
-                ],
+                "signals": [{"name": s.name, "weight": s.weight, "detail": s.detail} for s in a.signals],
             }
             for a in ranked
         ],
@@ -82,20 +76,15 @@ def render_full_board_json(board: list[ScoredAppearance]) -> str:
     return json.dumps(payload, indent=2, default=str)
 
 
-
-def render_full_board_table(
-    board: list[ScoredAppearance], *, verbose: bool = False
-) -> str:
+def render_full_board_table(board: list[ScoredAppearance], *, verbose: bool = False) -> str:
     """Fixed-width table of scored appearances, flat-sorted by score descending.
 
     ``verbose`` appends an indented detail row per signal (name, weight, detail).
     """
     ranked = sorted(board, key=lambda a: a.score, reverse=True)
     lines = [
-        f"{'Score':>5}  {'Pitcher':<25} {'T':>1} {'Role':<4}  "
-        f"{'Date':<10}  {'#P':>3}  Signals",
-        f"{'─' * 5}  {'─' * 25} {'─':>1} {'─' * 4}  "
-        f"{'─' * 10}  {'─' * 3}  {'─' * 40}",
+        f"{'Score':>5}  {'Pitcher':<25} {'T':>1} {'Role':<4}  {'Date':<10}  {'#P':>3}  Signals",
+        f"{'─' * 5}  {'─' * 25} {'─':>1} {'─' * 4}  {'─' * 10}  {'─' * 3}  {'─' * 40}",
     ]
     for a in ranked:
         signal_names = ", ".join(s.name for s in a.signals)

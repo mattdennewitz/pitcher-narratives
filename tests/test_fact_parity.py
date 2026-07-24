@@ -45,19 +45,19 @@ def test_scout_and_engine_import_successfully() -> None:
 
 # ── Synthetic fixture constants ───────────────────────────────────────
 
-_SEASON_DATE = date(2026, 5, 10)   # non-window game
-_WINDOW_DATE = date(2026, 6, 10)   # single-game window
+_SEASON_DATE = date(2026, 5, 10)  # non-window game
+_WINDOW_DATE = date(2026, 6, 10)  # single-game window
 
 # Velocity scenario
 _SEASON_FC_VELO: float = 93.0
 _WINDOW_FC_VELO: float = 97.0
-_N_SEASON_FC = 10   # non-window FC pitches
-_N_WINDOW_FC = 5    # window FC pitches
+_N_SEASON_FC = 10  # non-window FC pitches
+_N_WINDOW_FC = 5  # window FC pitches
 # season_velo = mean over ALL statcast FC pitches (includes window):
 # (10 * 93 + 5 * 97) / 15 = 94.333...
-_SEASON_VELO_EXPECTED = (
-    _N_SEASON_FC * _SEASON_FC_VELO + _N_WINDOW_FC * _WINDOW_FC_VELO
-) / (_N_SEASON_FC + _N_WINDOW_FC)
+_SEASON_VELO_EXPECTED = (_N_SEASON_FC * _SEASON_FC_VELO + _N_WINDOW_FC * _WINDOW_FC_VELO) / (
+    _N_SEASON_FC + _N_WINDOW_FC
+)
 _VELO_DELTA_EXPECTED = _WINDOW_FC_VELO - _SEASON_VELO_EXPECTED  # ≈ +2.667 mph
 
 # P+ scenario
@@ -68,18 +68,18 @@ _PPLUS_DELTA_EXPECTED: float = _WINDOW_FC_PPLUS - _SEASON_FC_PPLUS  # 13.0
 # S+/L+ divergence scenario (used in single-type fixture)
 _SEASON_FC_SPLUS: float = 100.0
 _SEASON_FC_LPLUS: float = 100.0
-_WINDOW_FC_SPLUS: float = 115.0   # up 15 pts
-_WINDOW_FC_LPLUS: float = 82.0    # down 18 pts → divergence
+_WINDOW_FC_SPLUS: float = 115.0  # up 15 pts
+_WINDOW_FC_LPLUS: float = 82.0  # down 18 pts → divergence
 
 # Usage scenario (two-type fixture only)
 # Statcast totals: FC 28/40 = 70%, SL 12/40 = 30%.  Window: FC 8/10 = 80%.
-_N_PRE_FC, _N_PRE_SL = 20, 10      # non-window pitches
-_N_WIN_FC, _N_WIN_SL = 8, 2        # window pitches
+_N_PRE_FC, _N_PRE_SL = 20, 10  # non-window pitches
+_N_WIN_FC, _N_WIN_SL = 8, 2  # window pitches
 _N_TOTAL_TWO_TYPE = _N_PRE_FC + _N_PRE_SL + _N_WIN_FC + _N_WIN_SL  # 40
 _FC_SEASON_USAGE_PCT = (_N_PRE_FC + _N_WIN_FC) / _N_TOTAL_TWO_TYPE * 100.0  # 70.0
 _SL_SEASON_USAGE_PCT = (_N_PRE_SL + _N_WIN_SL) / _N_TOTAL_TWO_TYPE * 100.0  # 30.0
 _WINDOW_TOTAL = _N_WIN_FC + _N_WIN_SL  # 10
-_FC_WINDOW_USAGE_PCT = _N_WIN_FC / _WINDOW_TOTAL * 100.0   # 80.0
+_FC_WINDOW_USAGE_PCT = _N_WIN_FC / _WINDOW_TOTAL * 100.0  # 80.0
 _FC_USAGE_DELTA_EXPECTED = _FC_WINDOW_USAGE_PCT - _FC_SEASON_USAGE_PCT  # +10.0 pp
 
 
@@ -94,63 +94,80 @@ def _make_single_type_data() -> PitcherData:
     """
     n = _N_SEASON_FC + _N_WINDOW_FC
 
-    statcast = pl.DataFrame({
-        "game_pk":       [1] * _N_SEASON_FC + [2] * _N_WINDOW_FC,
-        "game_date":     [_SEASON_DATE] * _N_SEASON_FC + [_WINDOW_DATE] * _N_WINDOW_FC,
-        "pitch_type":    ["FC"] * n,
-        "pitch_name":    ["Cutter"] * n,
-        "release_speed": [_SEASON_FC_VELO] * _N_SEASON_FC + [_WINDOW_FC_VELO] * _N_WINDOW_FC,
-        "pfx_x":         [0.5] * n,
-        "pfx_z":         [1.0] * n,
-        "stand":         ["R"] * n,
-        "p_throws":      ["R"] * n,
-        "inning":        [1] * n,
-        "pitch_number":  list(range(1, n + 1)),
-    })
+    statcast = pl.DataFrame(
+        {
+            "season": [2026] * n,
+            "pitcher": [42] * n,
+            "game_pk": [1] * _N_SEASON_FC + [2] * _N_WINDOW_FC,
+            "game_date": [_SEASON_DATE] * _N_SEASON_FC + [_WINDOW_DATE] * _N_WINDOW_FC,
+            "pitch_type": ["FC"] * n,
+            "pitch_name": ["Cutter"] * n,
+            "release_speed": [_SEASON_FC_VELO] * _N_SEASON_FC + [_WINDOW_FC_VELO] * _N_WINDOW_FC,
+            "pfx_x": [0.5] * n,
+            "pfx_z": [1.0] * n,
+            "stand": ["R"] * n,
+            "p_throws": ["R"] * n,
+            "inning": [1] * n,
+            "pitch_number": list(range(1, n + 1)),
+        }
+    )
 
     # 10 window appearances (all on _WINDOW_DATE) clear the G8 thin-frame
     # floor (>= _THIN_APPEARANCES) while staying below the season total, so
     # frame_sufficiency == "sufficient" and window-vs-season deltas compute.
     # All window pitch data still lives on _WINDOW_DATE, so the arithmetic is
     # unchanged from the single-appearance fixture.
-    appearances = pl.DataFrame({
-        "game_pk":   [1] + list(range(2, 12)),
-        "game_date": [_SEASON_DATE] + [_WINDOW_DATE] * 10,
-    })
-    window_appearances = pl.DataFrame({
-        "game_pk":   list(range(2, 12)),
-        "game_date": [_WINDOW_DATE] * 10,
-    })
+    appearances = pl.DataFrame(
+        {
+            "season": [2026] * 11,
+            "game_pk": [1, *list(range(2, 12))],
+            "game_date": [_SEASON_DATE] + [_WINDOW_DATE] * 10,
+        }
+    )
+    window_appearances = pl.DataFrame(
+        {
+            "season": [2026] * 10,
+            "game_pk": list(range(2, 12)),
+            "game_date": [_WINDOW_DATE] * 10,
+        }
+    )
 
-    pitch_type_baseline = pl.DataFrame({
-        "pitch_type": ["FC"],
-        "n_pitches":  [n],
-        "P+":         [_SEASON_FC_PPLUS],
-        "S+":         [_SEASON_FC_SPLUS],
-        "L+":         [_SEASON_FC_LPLUS],
-        "usage_pct":  [100.0],
-        "season":     [2026],
-    })
+    pitch_type_baseline = pl.DataFrame(
+        {
+            "pitch_type": ["FC"],
+            "n_pitches": [n],
+            "P+": [_SEASON_FC_PPLUS],
+            "S+": [_SEASON_FC_SPLUS],
+            "L+": [_SEASON_FC_LPLUS],
+            "usage_pct": [100.0],
+            "season": [2026],
+        }
+    )
 
-    pitcher_type_appearance = pl.DataFrame({
-        "game_date":  [_WINDOW_DATE],
-        "pitch_type": ["FC"],
-        "n_pitches":  [_N_WINDOW_FC],
-        "P+":         [_WINDOW_FC_PPLUS],
-        "S+":         [_WINDOW_FC_SPLUS],
-        "L+":         [_WINDOW_FC_LPLUS],
-    })
+    pitcher_type_appearance = pl.DataFrame(
+        {
+            "season": [2026],
+            "game_pk": [2],
+            "pitcher": [42],
+            "game_date": [_WINDOW_DATE],
+            "pitch_type": ["FC"],
+            "n_pitches": [_N_WINDOW_FC],
+            "P+": [_WINDOW_FC_PPLUS],
+            "S+": [_WINDOW_FC_SPLUS],
+            "L+": [_WINDOW_FC_LPLUS],
+        }
+    )
 
     empty = pl.DataFrame()
     return PitcherData(
-        statcast=statcast,
+        pitches=statcast,
         appearances=appearances,
         window_appearances=window_appearances,
         season_baseline=empty,
         pitch_type_baseline=pitch_type_baseline,
         prior_season_baseline=empty,
         prior_pitch_type_baseline=empty,
-        agg_csvs={"pitcher_type_appearance": pitcher_type_appearance},
+        aggregates={"pitcher_type_appearance": pitcher_type_appearance},
         pitcher_id=42,
         pitcher_name="Test",
         throws="R",
@@ -167,71 +184,88 @@ def _make_two_type_data() -> PitcherData:
     n_win = _N_WIN_FC + _N_WIN_SL
     n = n_pre + n_win
 
-    pre_types  = ["FC"] * _N_PRE_FC + ["SL"] * _N_PRE_SL
-    win_types  = ["FC"] * _N_WIN_FC  + ["SL"] * _N_WIN_SL
-    all_types  = pre_types + win_types
-    all_names  = ["Cutter" if t == "FC" else "Slider" for t in all_types]
-    all_dates  = [_SEASON_DATE] * n_pre + [_WINDOW_DATE] * n_win
-    all_gp     = [1] * n_pre + [2] * n_win
+    pre_types = ["FC"] * _N_PRE_FC + ["SL"] * _N_PRE_SL
+    win_types = ["FC"] * _N_WIN_FC + ["SL"] * _N_WIN_SL
+    all_types = pre_types + win_types
+    all_names = ["Cutter" if t == "FC" else "Slider" for t in all_types]
+    all_dates = [_SEASON_DATE] * n_pre + [_WINDOW_DATE] * n_win
+    all_gp = [1] * n_pre + [2] * n_win
 
-    statcast = pl.DataFrame({
-        "game_pk":       all_gp,
-        "game_date":     all_dates,
-        "pitch_type":    all_types,
-        "pitch_name":    all_names,
-        "release_speed": [93.0] * n,
-        "pfx_x":         [0.5] * n,
-        "pfx_z":         [1.0] * n,
-        "stand":         ["R"] * n,
-        "p_throws":      ["R"] * n,
-        "inning":        [1] * n,
-        "pitch_number":  list(range(1, n + 1)),
-    })
+    statcast = pl.DataFrame(
+        {
+            "season": [2026] * n,
+            "pitcher": [42] * n,
+            "game_pk": all_gp,
+            "game_date": all_dates,
+            "pitch_type": all_types,
+            "pitch_name": all_names,
+            "release_speed": [93.0] * n,
+            "pfx_x": [0.5] * n,
+            "pfx_z": [1.0] * n,
+            "stand": ["R"] * n,
+            "p_throws": ["R"] * n,
+            "inning": [1] * n,
+            "pitch_number": list(range(1, n + 1)),
+        }
+    )
 
     # 10 window appearances (all on _WINDOW_DATE) clear the G8 thin-frame
     # floor (>= _THIN_APPEARANCES) while staying below the season total, so
     # frame_sufficiency == "sufficient" and window-vs-season deltas compute.
     # All window pitch data still lives on _WINDOW_DATE, so the arithmetic is
     # unchanged from the single-appearance fixture.
-    appearances = pl.DataFrame({
-        "game_pk":   [1] + list(range(2, 12)),
-        "game_date": [_SEASON_DATE] + [_WINDOW_DATE] * 10,
-    })
-    window_appearances = pl.DataFrame({
-        "game_pk":   list(range(2, 12)),
-        "game_date": [_WINDOW_DATE] * 10,
-    })
+    appearances = pl.DataFrame(
+        {
+            "season": [2026] * 11,
+            "game_pk": [1, *list(range(2, 12))],
+            "game_date": [_SEASON_DATE] + [_WINDOW_DATE] * 10,
+        }
+    )
+    window_appearances = pl.DataFrame(
+        {
+            "season": [2026] * 10,
+            "game_pk": list(range(2, 12)),
+            "game_date": [_WINDOW_DATE] * 10,
+        }
+    )
 
     # usage_pct matches what compute_arsenal_summary derives from statcast above
-    pitch_type_baseline = pl.DataFrame({
-        "pitch_type": ["FC", "SL"],
-        "n_pitches":  [_N_PRE_FC + _N_WIN_FC, _N_PRE_SL + _N_WIN_SL],
-        "P+":         [_SEASON_FC_PPLUS, 100.0],
-        "S+":         [_SEASON_FC_SPLUS, 100.0],
-        "L+":         [_SEASON_FC_LPLUS, 100.0],
-        "usage_pct":  [_FC_SEASON_USAGE_PCT, _SL_SEASON_USAGE_PCT],
-        "season":     [2026, 2026],
-    })
+    pitch_type_baseline = pl.DataFrame(
+        {
+            "pitch_type": ["FC", "SL"],
+            "n_pitches": [_N_PRE_FC + _N_WIN_FC, _N_PRE_SL + _N_WIN_SL],
+            "P+": [_SEASON_FC_PPLUS, 100.0],
+            "S+": [_SEASON_FC_SPLUS, 100.0],
+            "L+": [_SEASON_FC_LPLUS, 100.0],
+            "usage_pct": [_FC_SEASON_USAGE_PCT, _SL_SEASON_USAGE_PCT],
+            "season": [2026, 2026],
+        }
+    )
 
-    pitcher_type_appearance = pl.DataFrame({
-        "game_date":  [_WINDOW_DATE, _WINDOW_DATE],
-        "pitch_type": ["FC", "SL"],
-        "n_pitches":  [_N_WIN_FC, _N_WIN_SL],
-        "P+":         [_WINDOW_FC_PPLUS, 100.0],
-        "S+":         [_WINDOW_FC_SPLUS, 100.0],
-        "L+":         [_WINDOW_FC_LPLUS, 100.0],
-    })
+    pitcher_type_appearance = pl.DataFrame(
+        {
+            "season": [2026, 2026],
+            "game_pk": [2, 2],
+            "pitcher": [42, 42],
+            "game_date": [_WINDOW_DATE, _WINDOW_DATE],
+            "pitch_type": ["FC", "SL"],
+            "n_pitches": [_N_WIN_FC, _N_WIN_SL],
+            "P+": [_WINDOW_FC_PPLUS, 100.0],
+            "S+": [_WINDOW_FC_SPLUS, 100.0],
+            "L+": [_WINDOW_FC_LPLUS, 100.0],
+        }
+    )
 
     empty = pl.DataFrame()
     return PitcherData(
-        statcast=statcast,
+        pitches=statcast,
         appearances=appearances,
         window_appearances=window_appearances,
         season_baseline=empty,
         pitch_type_baseline=pitch_type_baseline,
         prior_season_baseline=empty,
         prior_pitch_type_baseline=empty,
-        agg_csvs={"pitcher_type_appearance": pitcher_type_appearance},
+        aggregates={"pitcher_type_appearance": pitcher_type_appearance},
         pitcher_id=42,
         pitcher_name="Test",
         throws="R",
@@ -256,13 +290,11 @@ def test_velo_delta_parity_arithmetic() -> None:
 
     # Reconstruct what compute_velo_baselines produces for this pitcher/game:
     # season_velo = mean of ALL fastballs (engine includes window pitches in season)
-    all_fc = data.statcast.filter(pl.col("pitch_type") == "FC")
+    all_fc = data.pitches.filter(pl.col("pitch_type") == "FC")
     season_velo = float(all_fc["release_speed"].mean())
 
     window_dates = data.window_appearances["game_date"].unique().to_list()
-    game_velo = float(
-        all_fc.filter(pl.col("game_date").is_in(window_dates))["release_speed"].mean()
-    )
+    game_velo = float(all_fc.filter(pl.col("game_date").is_in(window_dates))["release_speed"].mean())
 
     scout_delta = game_velo - season_velo
 
@@ -279,13 +311,15 @@ def test_velo_delta_parity_signal_fires() -> None:
     season_velo = sum(all_fc_velos) / len(all_fc_velos)
     game_velo = _WINDOW_FC_VELO
 
-    velo_df = pl.DataFrame({
-        "pitcher":     [42],
-        "game_pk":     [2],
-        "game_date":   [_WINDOW_DATE],
-        "game_velo":   [game_velo],
-        "season_velo": [season_velo],
-    })
+    velo_df = pl.DataFrame(
+        {
+            "pitcher": [42],
+            "game_pk": [2],
+            "game_date": [_WINDOW_DATE],
+            "game_velo": [game_velo],
+            "season_velo": [season_velo],
+        }
+    )
     signals = _check_velo_delta(42, 2, _WINDOW_DATE, velo_df)
 
     assert len(signals) == 1
@@ -355,9 +389,9 @@ def test_usage_shift_parity_arithmetic() -> None:
 
     # Scout formula: game_usage = (n_pitches / total_pitches) * 100
     #                delta = game_usage - float(season_usage)
-    scout_game_usage = (_N_WIN_FC / _WINDOW_TOTAL) * 100.0   # 80.0
-    scout_season_usage = _FC_SEASON_USAGE_PCT                  # 70.0
-    scout_delta = scout_game_usage - scout_season_usage        # +10.0
+    scout_game_usage = (_N_WIN_FC / _WINDOW_TOTAL) * 100.0  # 80.0
+    scout_season_usage = _FC_SEASON_USAGE_PCT  # 70.0
+    scout_delta = scout_game_usage - scout_season_usage  # +10.0
 
     assert engine_usage_delta == pytest.approx(scout_delta, abs=0.1)
     assert engine_usage_delta == pytest.approx(_FC_USAGE_DELTA_EXPECTED, abs=0.1)
@@ -368,14 +402,18 @@ def test_usage_shift_parity_signal_fires() -> None:
 
     10 pp exceeds scout's 8 pp threshold → signal fires for FC.
     """
-    game_types = pl.DataFrame({
-        "pitch_type": ["FC", "SL"],
-        "n_pitches":  [_N_WIN_FC, _N_WIN_SL],
-    })
-    pitcher_type_bl = pl.DataFrame({
-        "pitch_type": ["FC", "SL"],
-        "usage_pct":  [_FC_SEASON_USAGE_PCT, _SL_SEASON_USAGE_PCT],
-    })
+    game_types = pl.DataFrame(
+        {
+            "pitch_type": ["FC", "SL"],
+            "n_pitches": [_N_WIN_FC, _N_WIN_SL],
+        }
+    )
+    pitcher_type_bl = pl.DataFrame(
+        {
+            "pitch_type": ["FC", "SL"],
+            "usage_pct": [_FC_SEASON_USAGE_PCT, _SL_SEASON_USAGE_PCT],
+        }
+    )
 
     signals = _check_usage_shifts(game_types, pitcher_type_bl, _WINDOW_TOTAL)
 
@@ -406,8 +444,8 @@ def test_splus_lplus_divergence_parity_arithmetic() -> None:
     engine_l_delta = fc_summary.l_plus_delta_pts
 
     # Scout formula: s_delta = float(game_s) - float(season_s)
-    scout_s_delta = _WINDOW_FC_SPLUS - _SEASON_FC_SPLUS   # +15.0
-    scout_l_delta = _WINDOW_FC_LPLUS - _SEASON_FC_LPLUS   # -18.0
+    scout_s_delta = _WINDOW_FC_SPLUS - _SEASON_FC_SPLUS  # +15.0
+    scout_l_delta = _WINDOW_FC_LPLUS - _SEASON_FC_LPLUS  # -18.0
 
     assert engine_s_delta == pytest.approx(scout_s_delta, abs=0.01)
     assert engine_l_delta == pytest.approx(scout_l_delta, abs=0.01)
@@ -419,17 +457,21 @@ def test_splus_lplus_divergence_parity_signal_fires() -> None:
     S+ up 15 and L+ down 18 both exceed the 10-point divergence threshold and
     move in opposite directions → divergence signal fires for FC.
     """
-    game_types = pl.DataFrame({
-        "pitch_type": ["FC"],
-        "n_pitches":  [_N_WINDOW_FC],
-        "S+":         [_WINDOW_FC_SPLUS],
-        "L+":         [_WINDOW_FC_LPLUS],
-    })
-    pitcher_type_bl = pl.DataFrame({
-        "pitch_type": ["FC"],
-        "S+":         [_SEASON_FC_SPLUS],
-        "L+":         [_SEASON_FC_LPLUS],
-    })
+    game_types = pl.DataFrame(
+        {
+            "pitch_type": ["FC"],
+            "n_pitches": [_N_WINDOW_FC],
+            "S+": [_WINDOW_FC_SPLUS],
+            "L+": [_WINDOW_FC_LPLUS],
+        }
+    )
+    pitcher_type_bl = pl.DataFrame(
+        {
+            "pitch_type": ["FC"],
+            "S+": [_SEASON_FC_SPLUS],
+            "L+": [_SEASON_FC_LPLUS],
+        }
+    )
 
     signals = _check_splus_lplus_divergence(game_types, pitcher_type_bl)
 
@@ -478,17 +520,21 @@ def test_cross_path_recap_and_report_share_grounding() -> None:
     """
     from pitcher_narratives.context import assemble_pitcher_context
     from pitcher_narratives.data import load_pitcher_data
-    from pitcher_narratives.models import SpecialistOutputs
+    from pitcher_narratives.models import SpecialistOutputs, empty_specialist_analysis
     from pitcher_narratives.pipeline import _build_parity_union
 
     data = load_pitcher_data(_IDENTITY_PITCHER, recent_appearances=10)
     ctx = assemble_pitcher_context(data)
 
-    # Empty specialist text isolates the deterministic ctx-derived ground
-    # truth (_build_capsule_ground_truth) inside the union — the part both
-    # morning and report build identically from the same ctx.
+    # Empty typed analyses isolate the deterministic ctx-derived ground truth
+    # (_build_capsule_ground_truth) inside the union — the part both morning
+    # and report build identically from the same ctx.
+    empty_analysis = empty_specialist_analysis()
     specialists = SpecialistOutputs(
-        stuff="", location="", runvalue="", trends="",
+        stuff=empty_analysis,
+        location=empty_analysis,
+        runvalue=empty_analysis,
+        trends=empty_analysis,
     )
 
     grounding = _build_parity_union(ctx, specialists, key_signals=None)
@@ -504,8 +550,7 @@ def test_cross_path_recap_and_report_share_grounding() -> None:
     # (render_arsenal_section, included in the trends specialist input).
     for pt in ctx.arsenal[:3]:
         assert f"{pt.window_usage_pct:.1f}%" in grounding, (
-            f"Expected {pt.pitch_type} window_usage_pct={pt.window_usage_pct:.1f}% "
-            "in shared grounding"
+            f"Expected {pt.pitch_type} window_usage_pct={pt.window_usage_pct:.1f}% in shared grounding"
         )
 
     # Per-pitch plus grades (S+/L+) are embedded verbatim (render_fastball_section)

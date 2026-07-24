@@ -63,7 +63,6 @@ class TestCheckValueParity:
         assert not report.is_clean  # (velo,95) must NOT match (pct,95)
 
     def test_out_of_tolerance_grade_flagged(self):
-        union = "S+ 130"
         assert not check_value_parity("a 124 S+ slider", "S+ 130").is_clean
 
     def test_within_tolerance_grade_clean(self):
