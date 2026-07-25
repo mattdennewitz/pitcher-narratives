@@ -1,5 +1,4 @@
-"""Contact quality: hard-hit rate over batted balls in the window vs season.
-"""
+"""Contact quality: hard-hit rate over batted balls in the window vs season."""
 
 from __future__ import annotations
 
@@ -10,7 +9,8 @@ import polars as pl
 from pitcher_narratives.data import PitcherData
 from pitcher_narratives.engine._common import (
     _MIN_PITCHES,
-    _get_window_game_dates,
+    _get_frame_rows,
+    _get_season_rows,
     _sufficiency_delta_string,
     _usage_delta_string,
     frame_sufficiency,
@@ -43,7 +43,6 @@ class HardHitRate:
     """True when window covers full season."""
 
 
-
 def compute_hard_hit_rate(data: PitcherData) -> HardHitRate:
     """Compute hard-hit rate (% of batted balls with exit velo >= 95 mph).
 
@@ -58,10 +57,9 @@ def compute_hard_hit_rate(data: PitcherData) -> HardHitRate:
     """
     sufficiency = frame_sufficiency(data)
     cold_start = sufficiency != "sufficient"
-    window_dates = _get_window_game_dates(data)
 
     # Window batted balls
-    window_sc = data.statcast.filter(pl.col("game_date").is_in(window_dates))
+    window_sc = _get_frame_rows(data)
     window_bip = window_sc.filter(
         (pl.col("description") == "hit_into_play") & pl.col("launch_speed").is_not_null()
     )
@@ -70,16 +68,14 @@ def compute_hard_hit_rate(data: PitcherData) -> HardHitRate:
     hard_hit_pct = n_hard_hit / n_batted_balls * 100.0 if n_batted_balls > 0 else 0.0
 
     # Season batted balls
-    season_bip = data.statcast.filter(
+    season_bip = _get_season_rows(data).filter(
         (pl.col("description") == "hit_into_play") & pl.col("launch_speed").is_not_null()
     )
     season_n = season_bip.height
     season_hard = season_bip.filter(pl.col("launch_speed") >= 95.0).height
     season_hard_hit_pct = season_hard / season_n * 100.0 if season_n > 0 else 0.0
 
-    delta = _sufficiency_delta_string(
-        sufficiency, _usage_delta_string(hard_hit_pct - season_hard_hit_pct)
-    )
+    delta = _sufficiency_delta_string(sufficiency, _usage_delta_string(hard_hit_pct - season_hard_hit_pct))
 
     return HardHitRate(
         hard_hit_pct=hard_hit_pct,
@@ -90,5 +86,3 @@ def compute_hard_hit_rate(data: PitcherData) -> HardHitRate:
         small_sample=n_batted_balls < _MIN_PITCHES,
         cold_start=cold_start,
     )
-
-

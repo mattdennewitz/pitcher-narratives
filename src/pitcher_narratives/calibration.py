@@ -61,11 +61,7 @@ def _records_from_obj(obj: object) -> list[dict]:
 
 def _records_from_file(path: Path) -> list[dict]:
     if path.suffix == ".jsonl":
-        return [
-            json.loads(line)
-            for line in path.read_text().splitlines()
-            if line.strip()
-        ]
+        return [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
     return _records_from_obj(json.loads(path.read_text()))
 
 
@@ -104,30 +100,20 @@ def aggregate(records: list[dict]) -> dict[str, ModeStats]:
         n = len(rs)
         revs = [r["revision_count"] for r in rs]
         anchor_hits = sum(
-            1 for r in rs
-            if r["anchor_depth_cap"] > 0
-            and r["revision_count"] >= r["anchor_depth_cap"]
+            1 for r in rs if r["anchor_depth_cap"] > 0 and r["revision_count"] >= r["anchor_depth_cap"]
         )
-        fact_hits = sum(
-            1 for r in rs
-            if r["fact_depth_cap"] > 0 and r["n_capsule_audit_flags"] > 0
-        )
+        fact_hits = sum(1 for r in rs if r["fact_depth_cap"] > 0 and r["n_capsule_audit_flags"] > 0)
         stats[mode] = ModeStats(
             n=n,
             mean_revision_count=statistics.fmean(revs),
             median_revision_count=statistics.median(revs),
-            capsule_revised_rate=_rate(
-                sum(1 for r in rs if r["capsule_revised"]), n),
-            mean_capsule_audit_flags=statistics.fmean(
-                [r["n_capsule_audit_flags"] for r in rs]),
-            mean_anchor_warnings=statistics.fmean(
-                [r["n_anchor_warnings"] for r in rs]),
-            mean_value_parity_warnings=statistics.fmean(
-                [r["n_value_parity_warnings"] for r in rs]),
+            capsule_revised_rate=_rate(sum(1 for r in rs if r["capsule_revised"]), n),
+            mean_capsule_audit_flags=statistics.fmean([r["n_capsule_audit_flags"] for r in rs]),
+            mean_anchor_warnings=statistics.fmean([r["n_anchor_warnings"] for r in rs]),
+            mean_value_parity_warnings=statistics.fmean([r["n_value_parity_warnings"] for r in rs]),
             anchor_hit_cap_rate=_rate(anchor_hits, n),
             fact_hit_cap_rate=_rate(fact_hits, n),
-            mean_secondary_signals=statistics.fmean(
-                [r.get("n_secondary_signals", 0) for r in rs]),
+            mean_secondary_signals=statistics.fmean([r.get("n_secondary_signals", 0) for r in rs]),
         )
     return stats
 
@@ -154,8 +140,7 @@ def format_table(stats: dict[str, ModeStats]) -> str:
 def main(argv: list[str] | None = None) -> int:
     args = sys.argv[1:] if argv is None else argv
     if not args:
-        print("usage: python -m pitcher_narratives.calibration PATH [PATH ...]",
-              file=sys.stderr)
+        print("usage: python -m pitcher_narratives.calibration PATH [PATH ...]", file=sys.stderr)
         return 2
     records = load_records(args)
     if not records:

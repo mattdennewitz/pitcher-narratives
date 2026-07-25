@@ -24,8 +24,8 @@ Core principle: the engine does arithmetic, the LLM does narration. A new insigh
 |---------|-------------|
 | Context field without `= None` default | Manually-constructed `PitcherContext` tests break |
 | Editing `SHARED_WRITER_BASE` without regenerating fixtures | 4+ byte-identical tests fail |
-| Test assertions probed from one parquet | `data.statcast` is multi-year; counts differ |
+| Test assertions probed outside the bundle | Production uses manifest-covered `data.pitches`; the frames can differ |
 | Literal `None` reaching `to_prompt()` output | Guard test fails |
 | Skipping the specialist prompt rule | Data present but narrative ignores it |
 
-Data conventions (units, signs, coverage): **REQUIRED BACKGROUND:** statcast-data-conventions skill.
+Data conventions (units, signs, coverage): **REQUIRED BACKGROUND:** statcast-data-conventions builder skill.

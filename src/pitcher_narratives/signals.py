@@ -9,125 +9,110 @@ validation targets.
 
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from enum import StrEnum
+
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 __all__ = [
-    "KeySignals",
     "SIGNAL_EXTRACTOR_PROMPT",
+    "KeySignals",
+    "Signal",
+    "SignalState",
     "count_secondary_signals",
     "render_key_signals",
 ]
 
 
+class SignalState(StrEnum):
+    """Evidence state for the cross-specialist signal stage."""
+
+    MATERIAL = "material"
+    NO_MATERIAL_SIGNAL = "no_material_signal"
+    INSUFFICIENT_EVIDENCE = "insufficient_evidence"
+    CONFLICTING_EVIDENCE = "conflicting_evidence"
+
+
+class Signal(BaseModel):
+    """One evidence-bound cross-specialist finding."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    text: str = Field(min_length=1)
+    fact_ids: tuple[str, ...] = Field(min_length=1)
+    source_claim_ids: tuple[str, ...] = Field(min_length=1)
+    sample_size: int = Field(ge=0)
+    comparison_population: str = Field(min_length=1)
+
+
 class KeySignals(BaseModel):
-    """Cross-specialist narrative signals extracted from clean specialist outputs.
+    """Nullable, evidence-bound cross-specialist findings."""
 
-    Primary signals (required) are anchor-enforced via MISSED_SIGNAL.
-    Secondary signals (optional) are advisory via UNDERWEIGHTED.
-    """
+    state: SignalState
+    top_improvement: Signal | None = None
+    top_concern: Signal | None = None
+    secondary: tuple[Signal, ...] = ()
 
-    # Primary signals (required, must be non-empty)
-    top_improvement: str = Field(min_length=1)
-    top_concern: str = Field(min_length=1)
-
-    # Secondary signals (optional)
-    development_pitch: str | None = None
-    specialist_tension: str | None = None
-    arsenal_dependency: str | None = None
-    connected_changes: str | None = None
-    platoon_vulnerability: str | None = None
-    sample_size_caution: str | None = None
-
-
-_FIELD_LABELS: dict[str, str] = {
-    "top_improvement": "Top Improvement",
-    "top_concern": "Top Concern",
-    "development_pitch": "Development Pitch",
-    "specialist_tension": "Specialist Tension",
-    "arsenal_dependency": "Arsenal Dependency",
-    "connected_changes": "Connected Changes",
-    "platoon_vulnerability": "Platoon Vulnerability",
-    "sample_size_caution": "Sample Size Caution",
-}
-
-_SECONDARY_FIELDS: tuple[str, ...] = (
-    "development_pitch",
-    "specialist_tension",
-    "arsenal_dependency",
-    "connected_changes",
-    "platoon_vulnerability",
-    "sample_size_caution",
-)
+    @model_validator(mode="after")
+    def validate_state(self) -> KeySignals:
+        has_signal = self.top_improvement is not None or self.top_concern is not None or bool(self.secondary)
+        if self.state is SignalState.MATERIAL and not has_signal:
+            raise ValueError("material signal state requires at least one signal")
+        if (
+            self.state
+            in {
+                SignalState.NO_MATERIAL_SIGNAL,
+                SignalState.INSUFFICIENT_EVIDENCE,
+            }
+            and has_signal
+        ):
+            raise ValueError(f"{self.state.value} signal state cannot contain signals")
+        return self
 
 
 def count_secondary_signals(signals: KeySignals | None) -> int:
-    """Count populated (non-None) secondary KeySignals fields.
+    """Count evidence-bound secondary signals."""
+    return 0 if signals is None else len(signals.secondary)
 
-    Secondary signals are the cross-specialist insight engine; if they
-    fire rarely, narratives fall back to a thin top_improvement/top_concern
-    lead. Persisted via flag_record so calibration.py can measure the
-    real hit-rate instead of assuming these are populated.
-    """
-    if signals is None:
-        return 0
-    return sum(1 for f in _SECONDARY_FIELDS if getattr(signals, f) is not None)
+
+def _render_signal(label: str, signal: Signal) -> str:
+    facts = " ".join(f"[{fact_id}]" for fact_id in signal.fact_ids)
+    claims = " ".join(f"[claim:{claim_id}]" for claim_id in signal.source_claim_ids)
+    return (
+        f"- {label}: {signal.text} {facts} {claims} "
+        f"(n={signal.sample_size}; population={signal.comparison_population})"
+    )
 
 
 def render_key_signals(signals: KeySignals) -> str:
-    """Render populated key signals as a labeled bullet list.
-
-    Omits None fields entirely so the writer and anchor checker
-    only see signals that are present.
-    """
-    lines = ["## Key Signals"]
-    for field_name, label in _FIELD_LABELS.items():
-        value = getattr(signals, field_name)
-        if value is not None:
-            lines.append(f"- {label}: {value}")
+    """Render the explicit state and only the signals that exist."""
+    lines = ["## Key Signals", f"- State: {signals.state.value}"]
+    if signals.top_improvement is not None:
+        lines.append(_render_signal("Top Improvement", signals.top_improvement))
+    if signals.top_concern is not None:
+        lines.append(_render_signal("Top Concern", signals.top_concern))
+    lines.extend(_render_signal("Secondary", signal) for signal in signals.secondary)
     return "\n".join(lines)
 
 
 SIGNAL_EXTRACTOR_PROMPT = """\
-You are a cross-specialist pattern detector for a baseball analytics \
-pipeline. You receive four specialist analyses of a pitcher's recent \
-window (stuff, location, run value, trends). Your job is \
-to identify patterns that span multiple specialists.
+You are a cross-specialist pattern detector. You receive only verified \
+specialist claims and the exact same-frame fact registry behind them.
 
-Extract these signals:
+Return:
+- state: material when at least one fully evidence-bound cross-specialist \
+finding is present; no_material_signal when none is present; insufficient_evidence \
+when samples are too thin; conflicting_evidence when verified claims conflict.
+- top_improvement and top_concern: either may be null.
+- secondary: zero or more non-duplicative supported signals.
 
-PRIMARY (always provide — there is always a best and worst signal):
-- top_improvement: The single most important positive finding across \
-all specialists. Cite the pitch type and metric.
-- top_concern: The single most important negative finding across \
-all specialists. Cite the pitch type and metric.
+Every populated signal must contain:
+- one concise sentence;
+- exact fact_ids copied from the registry;
+- exact source_claim_ids copied from the specialist claims;
+- sample_size equal to the smallest cited fact sample;
+- comparison_population copied exactly from a cited fact;
 
-SECONDARY (provide ONLY when the pattern is genuinely present, \
-otherwise leave as null):
-- development_pitch: A pitch with high S+ (110 or above) but low L+ (80 or below) \
-that would solve a documented platoon weakness. Name the pitch, \
-cite S+ and L+, and identify which platoon gap it addresses. \
-If nothing fits, null.
-- specialist_tension: Where two specialists disagree about the same \
-pitch. Example: stuff grades the curveball highly (S+ 128) but run \
-value shows it bleeding runs (+1.2 xRV100). Name both specialists \
-and their conflicting assessments. If all specialists agree, null.
-- arsenal_dependency: If one pitch is carrying the entire profile \
-while the rest is replacement-level. Cite the pitch and the evidence \
-(e.g., xRV100 gap, xWhiff contrast across pitches). If the arsenal is balanced, null.
-- connected_changes: When multiple specialists are reporting different \
-facets of the same underlying shift. Example: trend sees velo drop, \
-stuff sees S+ drop, run value sees more hard contact — all one \
-pattern. Name the thread. If changes are independent, null.
-- platoon_vulnerability: A clear weakness against one handedness \
-that the data suggests is not being addressed. Cite P+ or pitch mix \
-splits. If platoon splits are balanced, null.
-- sample_size_caution: When the single strongest finding (whether \
-improvement or concern) rests on thin data. Cite the sample size. \
-If the key findings have adequate samples, null.
-
-RULES:
-- Cite specific pitch types and metrics in every field.
-- Do not invent patterns — only surface what the specialists \
-explicitly reported.
-- Each field is ONE sentence. Be specific, not vague.
-- Do not duplicate the same finding across multiple fields."""
+Never manufacture a positive or negative finding to fill a field. Never use a \
+universal whiff threshold, unsupplied pitch-class ordering, absolute rarity tag, \
+or generated prose as evidence. Thin evidence is insufficient, not a material \
+directional signal. Only cite facts already cited by the named source claims."""

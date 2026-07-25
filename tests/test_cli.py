@@ -17,8 +17,14 @@ def _scored(pid, name, role, score, throws="R"):
     from pitcher_narratives.scout import ScoredAppearance
 
     return ScoredAppearance(
-        pitcher_id=pid, pitcher_name=name, throws=throws,
-        game_date=date(2026, 7, 4), game_pk=pid, n_pitches=90, score=score, role=role,
+        pitcher_id=pid,
+        pitcher_name=name,
+        throws=throws,
+        game_date=date(2026, 7, 4),
+        game_pk=pid,
+        n_pitches=90,
+        score=score,
+        role=role,
     )
 
 
@@ -111,9 +117,7 @@ def test_pitcher_required(monkeypatch):
 def test_persona_flag_no_longer_recognized(monkeypatch):
     """--persona/--list-personas were removed (Task 4, single-voice refactor);
     argparse now rejects both as unrecognized arguments."""
-    monkeypatch.setattr(
-        sys, "argv", ["main.py", "report", "-p", "592155", "--persona", "scout"]
-    )
+    monkeypatch.setattr(sys, "argv", ["main.py", "report", "-p", "592155", "--persona", "scout"])
     with pytest.raises(SystemExit) as exc_info:
         parse_args()
     assert exc_info.value.code == 2
@@ -141,7 +145,7 @@ def test_cli_valid_pitcher_exit_0():
         [sys.executable, "-m", "pitcher_narratives.cli", "report", "-p", "592155"],
         capture_output=True,
         text=True,
-        timeout=60,
+        timeout=120,
         env=_test_env(PITCHER_NARRATIVES_TEST_MODEL="1"),
     )
     assert result.returncode == 0
@@ -155,7 +159,7 @@ def test_cli_report_runs_with_no_persona_flag():
         [sys.executable, "-m", "pitcher_narratives.cli", "report", "-p", "592155"],
         capture_output=True,
         text=True,
-        timeout=60,
+        timeout=120,
         env=_test_env(PITCHER_NARRATIVES_TEST_MODEL="1"),
     )
     assert result.returncode == 0, f"stderr: {result.stderr}"
@@ -169,7 +173,7 @@ def test_cli_invalid_pitcher_exit_1():
         [sys.executable, "-m", "pitcher_narratives.cli", "report", "-p", "9999999"],
         capture_output=True,
         text=True,
-        timeout=60,
+        timeout=120,
         env=_test_env(PITCHER_NARRATIVES_TEST_MODEL="1"),
     )
     assert result.returncode == 1
@@ -182,7 +186,7 @@ def test_cli_custom_recent():
         [sys.executable, "-m", "pitcher_narratives.cli", "report", "-p", "592155", "-n", "7"],
         capture_output=True,
         text=True,
-        timeout=60,
+        timeout=120,
         env=_test_env(PITCHER_NARRATIVES_TEST_MODEL="1"),
     )
     assert result.returncode == 0
@@ -198,7 +202,7 @@ def test_cli_no_args_shows_help():
         [sys.executable, "-m", "pitcher_narratives.cli"],
         capture_output=True,
         text=True,
-        timeout=60,
+        timeout=120,
     )
     assert result.returncode == 2
     # argparse emits a usage error when the required subcommand is absent.
@@ -211,44 +215,39 @@ def test_cli_produces_report():
         [sys.executable, "-m", "pitcher_narratives.cli", "report", "-p", "592155"],
         capture_output=True,
         text=True,
-        timeout=60,
+        timeout=120,
         env=_test_env(PITCHER_NARRATIVES_TEST_MODEL="1"),
     )
     assert result.returncode == 0
     assert len(result.stdout.strip()) > 0
 
 
-def test_cli_unverified_banner_on_residual_flags():
-    """Under TestModel the capsule auditor emits synthetic flags every pass, so
-    the fact-check loop exhausts with residual flags; the UNVERIFIED banner
-    prints to stderr. (The hard exit is suppressed in test mode, so returncode
-    stays 0 — the banner is the observable soft-block signal here.)"""
+def test_cli_grounded_test_model_is_verified():
+    """The deterministic model publishes only its provenance-valid capsule."""
     result = subprocess.run(
         [sys.executable, "-m", "pitcher_narratives.cli", "report", "-p", "592155"],
         capture_output=True,
         text=True,
-        timeout=60,
+        timeout=120,
         env=_test_env(PITCHER_NARRATIVES_TEST_MODEL="1"),
     )
     assert result.returncode == 0
-    assert "REPORT UNVERIFIED" in result.stderr
+    assert "UNVERIFIED" not in result.stdout
+    assert "UNVERIFIED" not in result.stderr
 
 
 def test_cli_duplicate_mode_emits_sections_once():
-    """A repeated mode id is deduped: `--mode report,report` runs the LLM once
-    (run_narration_modes collapses by mode.id) and the emit loop must not
-    double-print sections or the UNVERIFIED banner for the single result."""
+    """A repeated mode id is deduped and emitted once."""
     result = subprocess.run(
-        [sys.executable, "-m", "pitcher_narratives.cli",
-         "report", "-p", "592155", "--mode", "report,report"],
+        [sys.executable, "-m", "pitcher_narratives.cli", "report", "-p", "592155", "--mode", "report,report"],
         capture_output=True,
         text=True,
-        timeout=60,
+        timeout=120,
         env=_test_env(PITCHER_NARRATIVES_TEST_MODEL="1"),
     )
     assert result.returncode == 0, f"stderr: {result.stderr}"
     assert result.stdout.count("# Executive Summary") == 1
-    assert result.stderr.count("REPORT UNVERIFIED") == 1
+    assert "REPORT UNVERIFIED" not in result.stderr
 
 
 def test_cli_verbose_shows_pitcher_info():
@@ -257,7 +256,7 @@ def test_cli_verbose_shows_pitcher_info():
         [sys.executable, "-m", "pitcher_narratives.cli", "report", "-p", "592155", "-v"],
         capture_output=True,
         text=True,
-        timeout=60,
+        timeout=120,
         env=_test_env(PITCHER_NARRATIVES_TEST_MODEL="1"),
     )
     assert result.returncode == 0
@@ -273,7 +272,7 @@ def test_cli_no_verbose_no_pitcher_info():
         [sys.executable, "-m", "pitcher_narratives.cli", "report", "-p", "592155"],
         capture_output=True,
         text=True,
-        timeout=60,
+        timeout=120,
         env=_test_env(PITCHER_NARRATIVES_TEST_MODEL="1"),
     )
     assert result.returncode == 0
@@ -286,7 +285,7 @@ def test_cli_missing_api_key():
         [sys.executable, "-m", "pitcher_narratives.cli", "report", "-p", "592155"],
         capture_output=True,
         text=True,
-        timeout=60,
+        timeout=120,
         env=_test_env(),
     )
     assert result.returncode == 1
@@ -302,7 +301,7 @@ def test_cli_anchor_check_in_output():
         [sys.executable, "-m", "pitcher_narratives.cli", "report", "-p", "592155", "-v"],
         capture_output=True,
         text=True,
-        timeout=60,
+        timeout=120,
         env=_test_env(PITCHER_NARRATIVES_TEST_MODEL="1"),
     )
     assert result.returncode == 0
@@ -313,16 +312,18 @@ def test_cli_anchor_check_in_output():
 def test_cli_narrative_output_has_required_sections():
     """Locks in the reader-first report format:
 
-      1. # Scouting Report        (mode title H1, buffered capsule)
-      2. **Verification:** line   (in-document verification stamp)
-      3. ## Executive Summary     (distilled bullets)
-      4. ## Diagnostics (stderr, under -v)
-      5. ### Stuff Analysis / ### Data Audit / ### Capsule Fact-Check /
-         ### Anchor Check         (demoted to appendix subsections)
+    1. # Scouting Report        (mode title H1, buffered capsule)
+    2. **Verification:** line   (in-document verification stamp)
+    3. ## Executive Summary     (distilled bullets)
+    4. ## Diagnostics (stderr, under -v)
+    5. ### Stuff Analysis / ### Data Audit / ### Capsule Fact-Check /
+       ### Anchor Check         (demoted to appendix subsections)
     """
     result = subprocess.run(
         [sys.executable, "-m", "pitcher_narratives.cli", "report", "-p", "592155", "-v"],
-        capture_output=True, text=True, timeout=60,
+        capture_output=True,
+        text=True,
+        timeout=120,
         env=_test_env(PITCHER_NARRATIVES_TEST_MODEL="1"),
     )
     assert result.returncode == 0, f"stderr: {result.stderr}"
@@ -332,9 +333,9 @@ def test_cli_narrative_output_has_required_sections():
     assert "\n# Scouting Report\n" in stdout
     assert "\n**Verification:**" in stdout
     assert "\n## Executive Summary\n" in stdout
-    assert "\n## Brief\n" not in stdout             # the separate brief was removed
-    assert "\n## Diagnostics\n" not in stdout       # off the reader stream
-    assert "\n## Diagnostics\n" in stderr            # -v surfaces it
+    assert "\n## Brief\n" not in stdout  # the separate brief was removed
+    assert "\n## Diagnostics\n" not in stdout  # off the reader stream
+    assert "\n## Diagnostics\n" in stderr  # -v surfaces it
     assert "\n### Stuff Analysis\n" in stderr
     assert "\n### Data Audit\n" in stderr
     assert "\n### Capsule Fact-Check\n" in stderr
@@ -345,9 +346,20 @@ def test_cli_mode_blocks_are_labeled_and_contiguous():
     """Multi-mode runs emit one labeled contiguous block per mode: each mode's
     H1 title is followed by ITS diagnostics before the next mode's H1."""
     result = subprocess.run(
-        [sys.executable, "-m", "pitcher_narratives.cli", "report", "-p", "592155",
-         "--mode", "report,changes", "-v"],
-        capture_output=True, text=True, timeout=120,
+        [
+            sys.executable,
+            "-m",
+            "pitcher_narratives.cli",
+            "report",
+            "-p",
+            "592155",
+            "--mode",
+            "report,changes",
+            "-v",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=300,
         env=_test_env(PITCHER_NARRATIVES_TEST_MODEL="1"),
     )
     assert result.returncode == 0, f"stderr: {result.stderr}"
@@ -363,9 +375,10 @@ def test_cli_mode_blocks_are_labeled_and_contiguous():
 def test_cli_recap_mode_has_no_summary_or_brief_sections():
     """Recap's capsule IS the brief — no Executive Summary / Brief sections."""
     result = subprocess.run(
-        [sys.executable, "-m", "pitcher_narratives.cli", "report", "-p", "592155",
-         "--mode", "recap"],
-        capture_output=True, text=True, timeout=60,
+        [sys.executable, "-m", "pitcher_narratives.cli", "report", "-p", "592155", "--mode", "recap"],
+        capture_output=True,
+        text=True,
+        timeout=120,
         env=_test_env(PITCHER_NARRATIVES_TEST_MODEL="1"),
     )
     assert result.returncode == 0, f"stderr: {result.stderr}"
@@ -397,7 +410,7 @@ def test_cli_print_prompts_dumps_prompts_and_bypasses_api_key(tmp_path):
         ],
         capture_output=True,
         text=True,
-        timeout=60,
+        timeout=120,
         cwd=tmp_path,  # keep the data file out of the repo root
         env=_test_env(),  # No API key, no test model
     )
@@ -433,7 +446,7 @@ def test_cli_print_prompts_changes_mode_includes_trend_comparison(tmp_path):
         ],
         capture_output=True,
         text=True,
-        timeout=60,
+        timeout=120,
         cwd=tmp_path,
         env=_test_env(),
     )
@@ -455,7 +468,7 @@ def test_cli_print_prompts_report_mode_omits_trend_comparison(tmp_path):
         ],
         capture_output=True,
         text=True,
-        timeout=60,
+        timeout=120,
         cwd=tmp_path,
         env=_test_env(),
     )
@@ -482,7 +495,7 @@ def test_cli_print_prompts_dump_is_single_voice(tmp_path):
         ],
         capture_output=True,
         text=True,
-        timeout=60,
+        timeout=120,
         cwd=tmp_path,
         env=_test_env(),
     )
@@ -576,9 +589,7 @@ def _pipe_result_with_flags(n: int):
     ]
     return PipelineResult(
         narrative="x",
-        specialists=SpecialistOutputs(
-            stuff="", location="", runvalue="", trends=""
-        ),
+        specialists=SpecialistOutputs(),
         capsule_audit_flags=flags,
     )
 
@@ -604,9 +615,7 @@ def test_emit_prints_capsule_once_and_no_corrected_section(capsys):
 
     result = PipelineResult(
         narrative="THE FINAL CAPSULE BODY",
-        specialists=SpecialistOutputs(
-            stuff="s", location="", runvalue="", trends=""
-        ),
+        specialists=SpecialistOutputs(),
         capsule_revised=True,  # previously triggered a second '## Corrected Capsule'
     )
     _emit_mode_result(result, mode=REPORT)
@@ -615,13 +624,8 @@ def test_emit_prints_capsule_once_and_no_corrected_section(capsys):
     assert "Corrected Capsule" not in out
 
 
-def test_emit_mode_result_empty_narrative_is_not_unverified(capsys):
-    """Empty narrative always returns False, even with residual audit flags.
-
-    Pins the pre-Phase-7 behavior: an empty narrative means the pipeline
-    produced nothing to verify, so the REPORT command exits 0 with no
-    UNVERIFIED banner — regardless of leftover capsule_audit_flags.
-    """
+def test_emit_mode_result_empty_narrative_fails_closed(capsys):
+    """An unavailable capsule is never treated as a successful mode result."""
     from pitcher_narratives.cli import _emit_mode_result
     from pitcher_narratives.personas import REPORT
     from pitcher_narratives.pipeline import AuditFlag, PipelineResult, SpecialistOutputs
@@ -632,58 +636,54 @@ def test_emit_mode_result_empty_narrative_is_not_unverified(capsys):
     ]
     result = PipelineResult(
         narrative="",
-        specialists=SpecialistOutputs.model_construct(
-            stuff="", location="", runvalue="", trends=""
-        ),
+        specialists=SpecialistOutputs(),
         capsule_audit_flags=flags,
     )
 
-    assert _emit_mode_result(result, mode=REPORT)[0] is False
+    assert _emit_mode_result(result, mode=REPORT)[0] is True
     capsys.readouterr()
 
 
-def test_emit_mode_result_runs_hallucination_guard_for_any_mode(capsys, monkeypatch):
-    """_emit_mode_result invokes check_hallucinated_metrics unconditionally.
+def test_emit_mode_result_checks_only_generated_artifact(capsys, monkeypatch):
+    """Diagnostics validate generated prose, not the separately validated
+    deterministic model explanation appended for display."""
+    from types import SimpleNamespace
 
-    The guard runs regardless of the mode passed, so the single call site at
-    cli.py's report-command dispatch loop already covers every selected
-    narration mode (report, changes, recap) identically — there is no per-mode
-    gate to bypass the guard.
-    """
     import pitcher_narratives.cli as cli_module
-
     from pitcher_narratives.personas import REPORT
 
     calls = []
     from pitcher_narratives import pipeline as pipeline_module
 
-    def _spy(text):
-        calls.append(text)
+    def _spy(text, **kwargs):
+        calls.append((text, kwargs))
         return pipeline_module.HallucinationReport(unknown_metrics=[], outcome_stat_warnings=[])
 
     monkeypatch.setattr(pipeline_module, "check_hallucinated_metrics", _spy)
 
     clean = _pipe_result_with_flags(0)
+    clean.narrative = "GENERATED CAPSULE\n\nDETERMINISTIC EXPLANATION"
+    clean.narrative_artifact = SimpleNamespace(content="GENERATED CAPSULE")
     cli_module._emit_mode_result(clean, mode=REPORT)
     capsys.readouterr()
 
     assert len(calls) == 1
-    assert calls[0] == clean.narrative
+    text, kwargs = calls[0]
+    assert text == clean.narrative_artifact.content
+    assert kwargs["capabilities"] == clean.analysis_capabilities
+    assert kwargs["cited_fact_ids"] == clean.narrative_fact_ids
 
 
 def _diag_pipe_result(*, narrative="cap", revised=False, fact_flags=0):
     from pitcher_narratives.pipeline import AuditFlag, PipelineResult, SpecialistOutputs
 
     flags = [
-        AuditFlag(category="velocity", specialist="stuff", claim=f"c{i}",
-                  data_shows="d", suggested_fix="")
+        AuditFlag(category="velocity", specialist="stuff", claim=f"c{i}", data_shows="d", suggested_fix="")
         for i in range(fact_flags)
     ]
     return PipelineResult(
         narrative=narrative,
-        specialists=SpecialistOutputs(
-            stuff="STUFF-TEXT", location="", runvalue="", trends=""
-        ),
+        specialists=SpecialistOutputs(),
         capsule_revised=revised,
         capsule_audit_flags=flags,
     )
@@ -695,9 +695,37 @@ def test_build_diagnostics_dict_shape():
     diag = build_diagnostics_dict(_diag_pipe_result(fact_flags=2, revised=True))
     assert diag["verified"] is False  # residual fact flags -> unverified
     assert diag["capsule_revised"] is True
-    assert diag["stuff_analysis"] == "STUFF-TEXT"
+    assert diag["stuff_analysis"] == (
+        "### Observations\n- None.\n### Supported Interpretations\n- None.\n### Limitations\n- None."
+    )
     assert len(diag["capsule_fact_check"]) == 2
-    assert diag["hallucination"] == {"unknown_metrics": [], "outcome_stat_warnings": []}
+    assert diag["hallucination"] == {
+        "unknown_metrics": [],
+        "outcome_stat_warnings": [],
+        "unsupported_claim_warnings": [],
+    }
+
+
+def test_summary_reader_warning_is_counted_and_summary_is_withheld(capsys):
+    import pitcher_narratives.cli as cli_module
+    from pitcher_narratives.personas import REPORT
+
+    result = _diag_pipe_result()
+    result.reader_claim_warnings = [
+        "[summary] Unknown metric: xMagic",
+        "[summary] unsupported model-driver attribution",
+    ]
+    result.executive_summary = ["xMagic rose because velocity drove success."]
+
+    unverified, diag = cli_module._emit_mode_result(result, mode=REPORT)
+    output = capsys.readouterr().out
+
+    assert unverified is True
+    assert diag["verified"] is False
+    assert diag["reader_claim_warnings"] == result.reader_claim_warnings
+    assert "2 reader claim/metric warning(s)" in output
+    assert "Summary withheld" in output
+    assert result.executive_summary[0] not in output
 
 
 def test_build_diagnostics_dict_skips_guard_on_empty_narrative(monkeypatch):
@@ -707,9 +735,12 @@ def test_build_diagnostics_dict_skips_guard_on_empty_narrative(monkeypatch):
 
     calls = []
     monkeypatch.setattr(
-        pipeline_module, "check_hallucinated_metrics",
-        lambda text: calls.append(text)
-        or pipeline_module.HallucinationReport(unknown_metrics=[], outcome_stat_warnings=[]),
+        pipeline_module,
+        "check_hallucinated_metrics",
+        lambda text: (
+            calls.append(text)
+            or pipeline_module.HallucinationReport(unknown_metrics=[], outcome_stat_warnings=[])
+        ),
     )
     build_diagnostics_dict(_diag_pipe_result(narrative=""))
     assert calls == []
@@ -751,9 +782,7 @@ def test_emit_returns_unverified_and_diag_dict(capsys):
     from pitcher_narratives.cli import _emit_mode_result
     from pitcher_narratives.personas import REPORT
 
-    unverified, diag = _emit_mode_result(
-        _diag_pipe_result(fact_flags=2), mode=REPORT
-    )
+    unverified, diag = _emit_mode_result(_diag_pipe_result(fact_flags=2), mode=REPORT)
     capsys.readouterr()
     assert unverified is True
     assert isinstance(diag, dict) and "verified" in diag
@@ -781,11 +810,10 @@ def test_cli_recap_mode_runs_and_produces_output():
     """`report --mode recap` renders a recap through the full validation stack
     and exits cleanly under TestModel."""
     result = subprocess.run(
-        [sys.executable, "-m", "pitcher_narratives.cli",
-         "report", "-p", "592155", "--mode", "recap"],
+        [sys.executable, "-m", "pitcher_narratives.cli", "report", "-p", "592155", "--mode", "recap"],
         capture_output=True,
         text=True,
-        timeout=60,
+        timeout=120,
         env=_test_env(PITCHER_NARRATIVES_TEST_MODEL="1"),
     )
     assert result.returncode == 0, f"stderr: {result.stderr}"
@@ -801,11 +829,10 @@ def test_cli_changes_mode_runs_and_produces_output():
     """`report --mode changes` renders through the full validation stack and
     exits cleanly under TestModel."""
     result = subprocess.run(
-        [sys.executable, "-m", "pitcher_narratives.cli",
-         "report", "-p", "592155", "--mode", "changes"],
+        [sys.executable, "-m", "pitcher_narratives.cli", "report", "-p", "592155", "--mode", "changes"],
         capture_output=True,
         text=True,
-        timeout=60,
+        timeout=120,
         env=_test_env(PITCHER_NARRATIVES_TEST_MODEL="1"),
     )
     assert result.returncode == 0, f"stderr: {result.stderr}"
@@ -817,12 +844,23 @@ def test_cli_changes_two_frame_runs():
     """`report --mode changes --recent N --prior M` runs the two-frame
     CHANGES engine end-to-end and exits cleanly under TestModel."""
     result = subprocess.run(
-        [sys.executable, "-m", "pitcher_narratives.cli",
-         "report", "-p", "592155", "--mode", "changes",
-         "--recent", "10", "--prior", "10"],
+        [
+            sys.executable,
+            "-m",
+            "pitcher_narratives.cli",
+            "report",
+            "-p",
+            "592155",
+            "--mode",
+            "changes",
+            "--recent",
+            "10",
+            "--prior",
+            "10",
+        ],
         capture_output=True,
         text=True,
-        timeout=60,
+        timeout=120,
         env=_test_env(PITCHER_NARRATIVES_TEST_MODEL="1"),
     )
     assert result.returncode == 0, f"stderr: {result.stderr}"
@@ -833,11 +871,10 @@ def test_cli_changes_two_frame_runs():
 def test_cli_report_and_recap_both_run():
     """`--mode report,recap` runs both modes; the process completes."""
     result = subprocess.run(
-        [sys.executable, "-m", "pitcher_narratives.cli",
-         "report", "-p", "592155", "--mode", "report,recap"],
+        [sys.executable, "-m", "pitcher_narratives.cli", "report", "-p", "592155", "--mode", "report,recap"],
         capture_output=True,
         text=True,
-        timeout=90,
+        timeout=300,
         env=_test_env(PITCHER_NARRATIVES_TEST_MODEL="1"),
     )
     assert result.returncode == 0, f"stderr: {result.stderr}"
@@ -849,11 +886,19 @@ def test_cli_report_changes_recap_all_run():
     completes. Only the distilling modes (report, changes) emit an Executive
     Summary section — recap's capsule is already a brief, so it skips it."""
     result = subprocess.run(
-        [sys.executable, "-m", "pitcher_narratives.cli",
-         "report", "-p", "592155", "--mode", "report,changes,recap"],
+        [
+            sys.executable,
+            "-m",
+            "pitcher_narratives.cli",
+            "report",
+            "-p",
+            "592155",
+            "--mode",
+            "report,changes,recap",
+        ],
         capture_output=True,
         text=True,
-        timeout=120,
+        timeout=300,
         env=_test_env(PITCHER_NARRATIVES_TEST_MODEL="1"),
     )
     assert result.returncode == 0, f"stderr: {result.stderr}"
@@ -865,13 +910,24 @@ def test_cli_report_changes_recap_all_run():
 def test_report_writes_diagnostics_json_file(tmp_path):
     out = tmp_path / "diag.json"
     result = subprocess.run(
-        [sys.executable, "-m", "pitcher_narratives.cli", "report", "-p", "592155",
-         "--diagnostics-file", str(out)],
-        capture_output=True, text=True, timeout=60,
+        [
+            sys.executable,
+            "-m",
+            "pitcher_narratives.cli",
+            "report",
+            "-p",
+            "592155",
+            "--diagnostics-file",
+            str(out),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=240,
         env=_test_env(PITCHER_NARRATIVES_TEST_MODEL="1"),
     )
     assert result.returncode == 0, f"stderr: {result.stderr}"
     import json
+
     payload = json.loads(out.read_text())
     assert "report" in payload
     assert "verified" in payload["report"]
@@ -909,9 +965,7 @@ def test_append_metrics_records_writes_jsonl(tmp_path):
     def _r(rev):
         return PipelineResult(
             narrative="x",
-            specialists=SpecialistOutputs(
-                stuff="", location="", runvalue="", trends=""
-            ),
+            specialists=SpecialistOutputs(),
             revision_count=rev,
         )
 
@@ -960,8 +1014,15 @@ def _scoreboard_args(**over):
     import argparse
 
     base = dict(
-        window=1, min_pitches=20, starters_only=False, format="md",
-        top=0, min_score=0.0, verbose=False, curate=False, provider="gemini",
+        window=1,
+        min_pitches=20,
+        starters_only=False,
+        format="md",
+        top=0,
+        min_score=0.0,
+        verbose=False,
+        curate=False,
+        provider="gemini",
     )
     base.update(over)
     return argparse.Namespace(**base)
@@ -984,7 +1045,8 @@ def test_scoreboard_parse_defaults(monkeypatch):
 
 def test_scoreboard_parse_flags(monkeypatch):
     monkeypatch.setattr(
-        sys, "argv",
+        sys,
+        "argv",
         ["main.py", "scoreboard", "-w", "3", "--min-pitches", "10", "--starters-only"],
     )
     args = parse_args()
@@ -1059,9 +1121,22 @@ def test_scoreboard_json_empty_is_valid(monkeypatch, capsys):
 
 def test_scoreboard_parse_format_and_curate_flags(monkeypatch):
     monkeypatch.setattr(
-        sys, "argv",
-        ["main.py", "scoreboard", "--format", "table", "-n", "5",
-         "--min-score", "4.0", "-v", "--curate", "--provider", "claude"],
+        sys,
+        "argv",
+        [
+            "main.py",
+            "scoreboard",
+            "--format",
+            "table",
+            "-n",
+            "5",
+            "--min-score",
+            "4.0",
+            "-v",
+            "--curate",
+            "--provider",
+            "claude",
+        ],
     )
     args = parse_args()
     assert args.format == "table"
@@ -1104,10 +1179,17 @@ def test_scoreboard_curate_prints_slate(monkeypatch, capsys):
 
     board = [_scored(1, "Ace SP", "SP", 12.0)]
     monkeypatch.setattr(scout_mod, "scout_appearances", lambda **kw: list(board))
-    slate = CurationSlate(picks=[CurationPick(
-        pitcher_id=1, category="clean_breakout", angle="velo up",
-        conviction="high", conviction_reason="shape agrees",
-    )])
+    slate = CurationSlate(
+        picks=[
+            CurationPick(
+                pitcher_id=1,
+                category="clean_breakout",
+                angle="velo up",
+                conviction="high",
+                conviction_reason="shape agrees",
+            )
+        ]
+    )
     monkeypatch.setattr(curator_mod, "select_slate", lambda *a, **k: slate)
     monkeypatch.setenv("GEMINI_API_KEY", "x")
     _run_scoreboard_command(_scoreboard_args(curate=True))
@@ -1149,13 +1231,14 @@ def test_emit_hallucination_pointer_on_stdout(capsys, monkeypatch):
     monkeypatch.setattr(
         pipeline_module,
         "check_hallucinated_metrics",
-        lambda text: pipeline_module.HallucinationReport(
+        lambda text, **_: pipeline_module.HallucinationReport(
             unknown_metrics=["FIP"], outcome_stat_warnings=[]
         ),
     )
-    _emit_mode_result(_diag_pipe_result(narrative="cap"), mode=REPORT)
+    unverified, _ = _emit_mode_result(_diag_pipe_result(narrative="cap"), mode=REPORT)
     out = capsys.readouterr().out
-    assert "hallucinated-metric flag" in out
+    assert unverified is True
+    assert "reader claim/metric flag" in out
 
 
 def test_emit_no_hallucination_pointer_when_clean(capsys):
@@ -1165,7 +1248,7 @@ def test_emit_no_hallucination_pointer_when_clean(capsys):
 
     _emit_mode_result(_diag_pipe_result(narrative="cap"), mode=REPORT)
     out = capsys.readouterr().out
-    assert "hallucinated-metric flag" not in out
+    assert "reader claim/metric flag" not in out
 
 
 def test_scoreboard_curate_json_conflict_exits_2():

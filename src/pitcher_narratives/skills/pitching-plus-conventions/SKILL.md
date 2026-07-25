@@ -1,39 +1,80 @@
 ---
 name: pitching-plus-conventions
-description: Use when interpreting or narrating Pitching+ model metrics for a pitcher — S+/P+/L+ grades, xRV100, xSwing/xWhiff/xSwSt, P-vs-S location impact, NORMAL/OUTLIER tags, or reconciling a grade with its physical inputs.
+description: Use when interpreting or narrating Pitching+ model metrics for a pitcher — formal S+/P+/L+ grades, xRV100, xSwing/xWhiff/xSwSt, diagnostic P/S contrasts, NORMAL/OUTLIER tags, or reconciling a grade with supported evidence.
 audience: runtime
 ---
 
 # Pitching+ Metric Conventions
 
-The model grades each pitch by predicting 13 outcome probabilities from its physical characteristics, then pricing each outcome in runs. Read every grade as the end of a chain: physical pitch -> model prediction -> grade. These conventions are absolute; they override intuition.
+Pitching+ grades are predictive model outputs, not causal explanations or
+observed hitter behavior. Use only the typed facts and capability block in the
+current handoff. Every factual claim cites exact same-frame fact IDs.
 
-## The grade family (100 = league average)
+Do not improvise a model explainer inside agent prose. Report, changes, and
+ask surfaces append the versioned deterministic explanation after the
+provenance-bound generated artifact; recap intentionally omits it.
 
-- **S+ (Stuff+)** — raw stuff only: velocity + movement, location ignored.
-- **L+ (Location+)** — what command adds or subtracts.
-- **P+ (Pitching+)** — the combined grade (stuff + location).
-- Above 100 helps the pitcher; below 100 hurts. A pitch can have strong S+ and weak P+ (good stuff, bad location) or the reverse.
+## Grade family
 
-## Sign conventions (the rules that trip people up)
+- **S+ (Stuff+)** uses the producer's S variant. It omits realized plate x/z,
+  but includes release traits, arm angle, handedness/platoon context, fastball
+  velocity context, coarse repertoire shares, and count processing. It is not
+  pure velocity and movement, a tunneling model, or count-neutral.
+- **L+ (Location+)** is the independently centered formal L variant emitted by
+  the producer from P minus count-matched S. It is realized-location evidence,
+  not target, intent, command, feel, or execution.
+- **P+ (Pitching+)** is the producer's combined P-model grade.
+- A plus grade is centered so higher is better. A grade alone does not identify
+  feature importance, a model driver, or a physical cause.
 
-- **xRV100** (expected run value / 100 pitches): **more negative = better** for the pitcher. Positive = costing runs.
-- **Probabilities** (xSwing, xWhiff, xSwSt): higher = more of that event.
-- **P vs S** isolates location: `P − S` is the location impact. For probabilities, `P > S` means location *increases* the rate. For xRV100, `P < S` (more negative) means location is *helping*.
-- **Component attribution** (per-outcome xRV breakdown): negative = pitcher benefits; positive = costs runs.
+## Canonical model and scale contract
 
-## Directional consistency (flag, don't force)
+- PitchingPlus predicts 13 outcome probabilities and converts them to expected
+  run value with count-specific run values.
+- P includes realized plate location. S removes realized `plate_x`/`plate_z`
+  but retains release position/extension, arm angle, derived acceleration/spin
+  coordinates, handedness/platoon, fastball-velocity context, coarse repertoire
+  shares, and count processing.
+- Exported S marginalizes standard outcome probabilities with the
+  training-sample `P(count | broad pitch class, same_side)` distribution, then
+  scores run value with the actual count. Formal L uses hidden same-count S.
+- P, S, and L are independently centered on each variant's same-scoring-season
+  MLB regular-season pitch-weighted mean. A plus grade of 100 is average and
+  higher is better.
+- The displayed 20–80 value is the uncapped plus grade minus 50, not an
+  SD-scaled score. Conditional expected rates are means of per-pitch ratios.
+  Group grades have no model-level minimum sample or shrinkage.
+- Direct predictor inputs exclude explicit pitch or player identity, sequence
+  or tunnel geometry, target, park/weather, game state, observed batted-ball
+  result, raw spin rate, and raw pfx fields.
+- Raw Statcast enters PitchingPlus. PitchingPlus emits the versioned
+  manifest-covered bundle; Pitcher Narratives reads only that bundle.
+  Deterministic Narrative code may select, aggregate, compare, and label
+  emitted facts. Agents may interpret only cited facts.
 
-- S+ below 100 should pair with positive xRV100_S (costly); S+ above 100 with negative xRV100_S (saves runs). If the signs disagree, **report the discrepancy honestly** rather than inventing a story to reconcile them.
-- L+ above 0 should make P-variant xRV100 more negative than S-variant. If not, note it.
+## Sign and semantic conventions
 
-## NORMAL vs OUTLIER
+- **xRV100**: more negative is better for the pitcher; positive costs runs.
+- **Modeled probabilities** such as xSwing and xWhiff estimate event
+  probabilities. Do not present them as observed hitter behavior.
+- **P minus count-marginalized S** is a diagnostic contrast, not formal L+.
+- **Outcome attribution** is an additive value component. It does not establish
+  the physical, location, intent, or hitter-behavior mechanism for an outcome.
+- Preserve supplied signs. If a grade and displayed aggregate do not reconcile,
+  report the discrepancy. Without feature attribution, say: "The supplied
+  aggregate profile does not identify the model driver."
 
-- A metric within ±1.5 SD of the league average for that pitch type is **NORMAL** — do not cite it as a driver of a good or bad grade. When velocity is NORMAL, look to movement shape, movement interaction (horizontal × vertical), spin, tunneling, or arm-slot fit instead.
-- xWhiff_S ≥ 25% is a meaningful whiff rate; reconcile that strength before calling a pitch "poor."
+## Rarity, capability, and citation
 
-## Mandatory reconciliations
-
-- Every behavioral claim cites the metric behind it: "hitters take it" -> xSwing_S; "misses bats" -> xWhiff_S; "hittable" -> xRV100_S or batted-ball data.
-- Secondary pitches (breaking/offspeed) derive value from movement and deception, not velocity — don't default to a velocity explanation for them.
-- No hallucinated causation: if the physical profile looks average but the grade is extreme, say the model sees something the raw averages don't capture rather than inventing a velocity story.
+- NORMAL and OUTLIER describe physical rarity against the emitted pitch-class
+  reference only. Neither label means irrelevant, important, good, or bad.
+- Compare rates only with the emitted pitch-class baseline and cite both facts.
+  There is no universal xWhiff cutoff.
+- Model-driver claims require AVAILABLE feature attribution plus its cited fact.
+- Spatial regions require AVAILABLE location regions plus same-frame cited
+  facts.
+- Platoon claims require AVAILABLE split evidence with exact sides, variant,
+  frame, population, and adequate samples.
+- Tunneling, deception, intent, command, target execution, and biomechanics
+  remain unavailable unless their matching capability and cited facts are
+  supplied. Do not substitute raw-equivalent data, prose, or intuition.

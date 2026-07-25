@@ -22,33 +22,45 @@ class TestPipelinePersonaWiring:
     def test_backward_compat_two_arg(self):
         """make_pipeline_agents('gemini', 'high') still works."""
         from pitcher_narratives.pipeline import make_pipeline_agents
+
         agents = make_pipeline_agents("gemini", "high")
         assert agents.writer is not None
 
     def test_make_pipeline_agents_has_no_persona_param(self):
         """The single voice is fixed; no persona knob on the factory."""
         import inspect
+
         from pitcher_narratives.pipeline import make_pipeline_agents
+
         assert "persona" not in inspect.signature(make_pipeline_agents).parameters
 
     def test_writer_prompt_is_mode_composed(self):
-        """Writer agent's system prompt is the mode-composed writer prompt."""
-        from pitcher_narratives.pipeline import make_pipeline_agents
+        """The mode prompt and structured provenance contract reach the writer."""
         from pitcher_narratives.personas import REPORT, build_writer_system_prompt
+        from pitcher_narratives.pipeline import (
+            _NARRATIVE_ARTIFACT_PROMPT,
+            make_pipeline_agents,
+        )
+
         agents = make_pipeline_agents("gemini", "high", REPORT)
-        assert agents.writer._system_prompts == (build_writer_system_prompt(REPORT),)
+        assert agents.writer._system_prompts == (
+            f"{build_writer_system_prompt(REPORT)}\n\n{_NARRATIVE_ARTIFACT_PROMPT}",
+        )
 
     def test_pipeline_agents_has_no_brief(self):
         """The separate brief agent is gone from PipelineAgents."""
-        from pitcher_narratives.pipeline import make_pipeline_agents
         from pitcher_narratives.personas import REPORT
+        from pitcher_narratives.pipeline import make_pipeline_agents
+
         agents = make_pipeline_agents("gemini", "high", REPORT)
         assert not hasattr(agents, "brief")
 
     def test_generate_pipeline_streaming_accepts_mode(self):
         """generate_pipeline_streaming accepts a mode keyword."""
         import inspect
+
         from pitcher_narratives.pipeline import generate_pipeline_streaming
+
         assert "mode" in inspect.signature(generate_pipeline_streaming).parameters
 
     def test_anchor_prompt_carries_changes_guidance(self):
@@ -71,8 +83,12 @@ class TestPipelinePersonaWiring:
 
 def test_entry_points_have_no_persona():
     import inspect
+
     from pitcher_narratives.pipeline import (
-        generate_pipeline_streaming, run_narration_modes, write_pipeline_data_file,
+        generate_pipeline_streaming,
+        run_narration_modes,
+        write_pipeline_data_file,
     )
+
     for fn in (generate_pipeline_streaming, run_narration_modes, write_pipeline_data_file):
         assert "persona" not in inspect.signature(fn).parameters, fn.__name__

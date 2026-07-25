@@ -62,9 +62,7 @@ def test_gemini_disable_thinking_sets_zero_budget():
 
 def test_gemini_thinking_enabled_uses_level_not_budget():
     """Without disable_thinking, Gemini uses thinking_level (the default path)."""
-    settings = make_model_settings(
-        "gemini", "high", 0.3, max_tokens=TOKEN_BUDGET_MEDIUM
-    )
+    settings = make_model_settings("gemini", "high", 0.3, max_tokens=TOKEN_BUDGET_MEDIUM)
     assert "thinking_level" in settings["google_thinking_config"]
     assert "thinking_budget" not in settings["google_thinking_config"]
 

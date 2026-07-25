@@ -15,6 +15,7 @@ __all__ = [
     "build_pitcher_prompt",
     "render_appearances_section",
     "render_arsenal_section",
+    "render_calibration_section",
     "render_execution_section",
     "render_executive_summary",
     "render_fastball_section",
@@ -41,6 +42,7 @@ def build_pitcher_prompt(ctx: PitcherContext) -> str:
     sections.append(render_arsenal_section(ctx))
     sections.append(render_execution_section(ctx))
     sections.append(render_intermediates_section(ctx))
+    sections.append(render_calibration_section(ctx))
     sections.append(render_release_point_section(ctx))
     sections.append(render_pitch_shape_section(ctx))
     sections.append(render_hard_hit_section(ctx))
@@ -51,33 +53,79 @@ def build_pitcher_prompt(ctx: PitcherContext) -> str:
     return "\n\n".join(s for s in sections if s)
 
 
-def render_temporal_section(ctx: PitcherContext) -> str:
-    """Render temporal grounding section for LLM context."""
-    t = ctx.temporal
-    # Season phase annotation
-    if t.current_season_appearances < 10:
-        phase = "early season"
-    elif t.current_season_appearances <= 60:
-        phase = "mid season"
-    else:
-        phase = "full season"
-
-    lines = ["## Temporal Context"]
-    lines.append(f"- Analysis date: {t.analysis_date}")
-    lines.append(
-        f"- {t.current_season} season: {t.current_season_appearances} appearances, "
-        f"{t.current_season_ip} IP since {t.current_season_first_date} ({phase})"
-    )
-    if t.prior_season_appearances > 0:
-        lines.append(
-            f"- {t.prior_season} season: {t.prior_season_appearances} appearances, "
-            f"{t.prior_season_ip} IP (completed)"
+def render_calibration_section(
+    ctx: PitcherContext,
+    *,
+    variants: tuple[str, ...] | None = None,
+    families: tuple[str, ...] | None = None,
+    include_table: bool = True,
+) -> str:
+    """Render held-out reliability evidence or explicit unavailability."""
+    lines = ["## Model Validation and Uncertainty"]
+    report = getattr(ctx, "calibration", None)
+    if report is None:
+        reason = (
+            getattr(ctx, "calibration_unavailable_reason", None) or "no manifest-covered calibration artifact"
         )
+        lines.append(f"- Calibration unavailable: {reason}.")
+        lines.append(
+            "- Treat predictive reliability as unknown; do not describe "
+            "model grades as validated or confident."
+        )
+        return "\n".join(lines)
+
+    metadata = report.metadata
     lines.append(
-        f"- Prior-year workload relevance: {t.prior_year_relevance} -- "
-        f"{t.prior_year_relevance_reason}"
+        f"- Held-out population: {metadata.scoring_population}; "
+        f"temporal holdout {metadata.split_policy.temporal_holdout_year}; "
+        f"as of {metadata.as_of}."
     )
+    lines.append(
+        f"- Split policy: {metadata.split_policy.validation}; learned "
+        f"artifacts fit on {metadata.split_policy.learned_artifacts_fit_on}."
+    )
+    lines.append(
+        "- These are population-level held-out diagnostics, not confidence intervals for this pitcher."
+    )
+    if not include_table:
+        return "\n".join(lines)
+    selected_models = {
+        key: model_report
+        for key, model_report in report.models.items()
+        if (variants is None or key.split(".", maxsplit=1)[0] in variants)
+        and (families is None or key.split(".", maxsplit=1)[1] in families)
+    }
+    lines.append("| Model | N | Log loss | Prior | Brier | ECE |")
+    lines.append("|-------|---:|---------:|------:|------:|----:|")
+    for model_key, model_report in sorted(selected_models.items()):
+        metrics = model_report.overall
+        lines.append(
+            f"| {model_key} | {metrics.n_observations} | "
+            f"{metrics.log_loss:.4f} | "
+            f"{metrics.empirical_prior_log_loss:.4f} | "
+            f"{metrics.brier_score:.4f} | "
+            f"{metrics.expected_calibration_error:.4f} |"
+        )
     return "\n".join(lines)
+
+
+def render_temporal_section(ctx: PitcherContext) -> str:
+    """Render only the exact recent canonical frame."""
+    temporal = ctx.temporal
+    return "\n".join(
+        (
+            "## Temporal Context",
+            f"- Analysis date: {temporal.analysis_date}",
+            (
+                f"- Recent canonical frame ({temporal.scoring_season}): "
+                f"{temporal.recent_frame_appearances} appearances, "
+                f"{temporal.recent_frame_ip} IP from "
+                f"{temporal.recent_frame_first_date} through "
+                f"{temporal.analysis_date}"
+            ),
+        )
+    )
+
 
 def render_executive_summary(ctx: PitcherContext) -> str:
     """Build a bullet-point executive summary of key observations."""
@@ -148,6 +196,7 @@ def render_executive_summary(ctx: PitcherContext) -> str:
         lines.append(f"- {b}")
     return "\n".join(lines)
 
+
 def render_role_section(ctx: PitcherContext) -> str:
     lines = ["## Role"]
     lines.append(f"- Most recent: {ctx.role}")
@@ -158,6 +207,7 @@ def render_role_section(ctx: PitcherContext) -> str:
     if wl.workload_concern:
         lines.append("- **Workload concern: 3+ consecutive days**")
     return "\n".join(lines)
+
 
 def render_fastball_section(ctx: PitcherContext) -> str:
     fb = ctx.fastball
@@ -204,6 +254,7 @@ def render_fastball_section(ctx: PitcherContext) -> str:
         lines.append("- *Small sample*")
     return "\n".join(lines)
 
+
 def render_arsenal_section(ctx: PitcherContext) -> str:
     lines = ["## Arsenal"]
     lines.append("| Pitch | Velo | H-mov | V-mov | Usage | P+ | S+ | L+ | Deltas |")
@@ -225,6 +276,7 @@ def render_arsenal_section(ctx: PitcherContext) -> str:
         )
     return "\n".join(lines)
 
+
 def render_execution_section(ctx: PitcherContext) -> str:
     lines = ["## Execution"]
     lines.append("| Pitch | CSW% | Zone% | Chase% | xWhiff | xSwing | xRV100 pctl |")
@@ -244,12 +296,12 @@ def render_execution_section(ctx: PitcherContext) -> str:
         )
     return "\n".join(lines)
 
-def render_intermediates_section(ctx: PitcherContext) -> str:
-    """Render S-variant probabilities and P-vs-S location impact deltas.
 
-    Shows 4 key diagnostic metrics (xSwing, xWhiff, xSwSt, xRV100).
-    P-variants are already in the Execution section above -- this
-    section adds the S (stuff-only) variants and the location delta.
+def render_intermediates_section(ctx: PitcherContext) -> str:
+    """Render count-marginalized S values and non-formal P/S diagnostics.
+
+    P and S are preserved as producer-emitted values. Their displayed
+    difference is not formal Location+, which is independently emitted as L.
     """
     if not ctx.intermediates:
         return ""
@@ -270,15 +322,13 @@ def render_intermediates_section(ctx: PitcherContext) -> str:
             return f"{(p - s):+.2f}"
         return "--"
 
-    lines = ["## Model Internals: Location Impact"]
+    lines = ["## Model Internals: P vs Count-Marginalized S (Not Location+)"]
+    lines.append("Displayed deltas are diagnostics only; they are not formal Location+.")
     lines.append(
-        "| Pitch | xSwing S | delta | xWhiff S | delta "
-        "| xSwSt S | delta | xRV100 S | delta |"
+        "| Pitch | xSwing S | diagnostic delta | xWhiff S | diagnostic delta "
+        "| xSwSt S | diagnostic delta | xRV100 S | diagnostic delta |"
     )
-    lines.append(
-        "|-------|----------|-------|----------|-------"
-        "|---------|-------|----------|-------|"
-    )
+    lines.append("|-------|----------|-------|----------|-------|---------|-------|----------|-------|")
 
     for im in ctx.intermediates[:_MAX_PITCH_TYPES]:
         lines.append(
@@ -294,6 +344,7 @@ def render_intermediates_section(ctx: PitcherContext) -> str:
         )
 
     return "\n".join(lines)
+
 
 def render_release_point_section(ctx: PitcherContext) -> str:
     """Render release point table with per-pitch-type x/z/extension."""
@@ -321,9 +372,7 @@ def render_release_point_section(ctx: PitcherContext) -> str:
                 f"| {pt.window_extension:.2f} |"
             )
         lines.append("*(season = window -- no baseline)*")
-        lines.append(
-            "*Note: window is underpowered -- treat trend comparisons as directional only.*"
-        )
+        lines.append("*Note: window is underpowered -- treat trend comparisons as directional only.*")
     else:
         lines.append("| Pitch | Horiz (ft) | Delta | Vert (ft) | Delta | Ext (ft) | Delta |")
         lines.append("|-------|------------|-------|-----------|-------|----------|-------|")
@@ -343,9 +392,11 @@ def render_release_point_section(ctx: PitcherContext) -> str:
 
     return "\n".join(lines)
 
+
 def render_pitch_shape_section(ctx: PitcherContext) -> str:
     """Render movement-vs-arm-slot residuals with shape classification."""
     return render_pitch_shape(ctx.pitch_shape)
+
 
 def render_hard_hit_section(ctx: PitcherContext) -> str:
     """Render contact quality section with hard-hit rate."""
@@ -354,13 +405,13 @@ def render_hard_hit_section(ctx: PitcherContext) -> str:
         return ""
     lines = ["## Contact Quality"]
     lines.append(
-        f"- Hard-hit rate: {hhr.hard_hit_pct:.1f}% "
-        f"({hhr.n_hard_hit}/{hhr.n_batted_balls} BIP) -- {hhr.delta}"
+        f"- Hard-hit rate: {hhr.hard_hit_pct:.1f}% ({hhr.n_hard_hit}/{hhr.n_batted_balls} BIP) -- {hhr.delta}"
     )
     lines.append(f"- Season: {hhr.season_hard_hit_pct:.1f}%")
     if hhr.small_sample:
         lines.append(f"- *Small sample ({hhr.n_batted_balls} BIP)*")
     return "\n".join(lines)
+
 
 def render_platoon_section(ctx: PitcherContext) -> str:
     lines = ["## Platoon Shifts"]
@@ -377,6 +428,7 @@ def render_platoon_section(ctx: PitcherContext) -> str:
         )
     return "\n".join(lines)
 
+
 def render_first_pitch_section(ctx: PitcherContext) -> str:
     lines = ["## First-Pitch Tendencies"]
     top = ctx.first_pitch.entries[:3]
@@ -390,6 +442,7 @@ def render_first_pitch_section(ctx: PitcherContext) -> str:
             f"{fp.season_pct:.1f}% season -- {fp.delta}"
         )
     return "\n".join(lines)
+
 
 def render_appearances_section(ctx: PitcherContext) -> str:
     lines = ["## Recent Appearances"]
@@ -406,6 +459,7 @@ def render_appearances_section(ctx: PitcherContext) -> str:
         lines.append(f"| {a.game_date} | {a.ip} | {a.pitch_count} | {rest} |")
     return "\n".join(lines)
 
+
 def render_yoy_section(ctx: PitcherContext) -> str:
     """Render year-over-year section with top-level deltas and arsenal changes.
 
@@ -419,9 +473,7 @@ def render_yoy_section(ctx: PitcherContext) -> str:
     lines: list[str] = ["## Year-over-Year"]
 
     if css is not None:
-        lines.append(
-            f"Comparing {css.current_season} vs {css.prior_season}:"
-        )
+        lines.append(f"Comparing {css.current_season} vs {css.prior_season}:")
         lines.append(f"- Velocity: {css.velo_delta}")
         lines.append(f"- Pitching+ (P+): {css.p_plus_delta}")
         lines.append(f"- Stuff+ (S+): {css.s_plus_delta}")

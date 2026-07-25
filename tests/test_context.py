@@ -7,6 +7,7 @@ from pitcher_narratives.context import assemble_pitcher_context
 from pitcher_narratives.data import load_pitcher_data
 from pitcher_narratives.engine import HardHitRate, ReleasePointMetrics
 from pitcher_narratives.shape import PitchShapeProfile
+from pitcher_narratives.temporal import TemporalFrame
 
 TEST_PITCHER = 592155  # Booser, Cam
 
@@ -19,8 +20,8 @@ def ctx():
 
 
 def test_assemble_prior_context_differs_from_recent():
-    from pitcher_narratives.data import load_pitcher_data
     from pitcher_narratives.context import assemble_pitcher_context, assemble_prior_context
+    from pitcher_narratives.data import load_pitcher_data
 
     data = load_pitcher_data(592155, recent_appearances=5)
     recent = assemble_pitcher_context(data)
@@ -34,8 +35,8 @@ def test_assemble_prior_context_differs_from_recent():
 
 
 def test_assemble_prior_context_empty_prior_is_shaped():
-    from pitcher_narratives.data import load_pitcher_data
     from pitcher_narratives.context import assemble_prior_context
+    from pitcher_narratives.data import load_pitcher_data
 
     data = load_pitcher_data(592155, recent_appearances=5)
     # recent_n far beyond available -> prior slice empty -> still a valid ctx
@@ -79,6 +80,37 @@ def test_execution_present(ctx):
     """Execution is a non-empty list of execution metric entries."""
     assert isinstance(ctx.execution, list)
     assert len(ctx.execution) > 0
+
+
+def test_platoon_fact_preserves_split_population_and_sample(ctx):
+    platoon_facts = tuple(fact for fact in ctx.facts.facts() if fact.metric.startswith("context.platoon."))
+
+    assert platoon_facts
+    assert all("batter_side:" in fact.entity for fact in platoon_facts)
+    assert all(fact.sample_size is not None and fact.sample_size >= 0 for fact in platoon_facts)
+    assert all("platoon_matchup=" in fact.population for fact in platoon_facts)
+    assert all("batter_side=" in fact.population for fact in platoon_facts)
+    for split in ctx.platoon_mix.splits:
+        entity_markers = (
+            f"pitch_type:{split.pitch_type}",
+            f"batter_side:{split.batter_side}",
+        )
+        window_count = next(
+            fact
+            for fact in platoon_facts
+            if fact.metric == "context.platoon.n_pitches_window"
+            and all(marker in fact.entity for marker in entity_markers)
+        )
+        season_count = next(
+            fact
+            for fact in platoon_facts
+            if fact.metric == "context.platoon.n_pitches_season"
+            and all(marker in fact.entity for marker in entity_markers)
+        )
+        assert window_count.sample_size == split.n_pitches_window
+        assert season_count.sample_size == split.n_pitches_season
+    assert all(fact.source_fact_ids for fact in platoon_facts)
+    assert all(ctx.facts.base_lineage(fact.id) for fact in platoon_facts)
 
 
 # ── Rendering tests ───────────────────────────────────────────────────
@@ -243,39 +275,52 @@ def test_yoy_section_omitted_for_single_season():
         pitcher_id=0,
         throws="R",
         role="SP",
+        frame_id="recent:test",
+        frame_type=TemporalFrame.RECENT,
+        as_of="2026-04-08",
+        source_population="test:2026",
+        frame_row_count=0,
+        scoring_season=2026,
         fastball=None,
         velocity_arc=None,
         arsenal=[],
         platoon_mix=PlatoonMix(splits=[], cold_start=True),
         first_pitch=FirstPitchWeaponry(
-            entries=[], total_first_pitches_season=0,
-            total_first_pitches_window=0, cold_start=True,
+            entries=[],
+            total_first_pitches_season=0,
+            total_first_pitches_window=0,
+            cold_start=True,
         ),
         execution=[],
         intermediates=[],
         attributions=[],
         hard_hit_rate=HardHitRate(
-            hard_hit_pct=0, season_hard_hit_pct=0, delta="Steady",
-            n_batted_balls=0, n_hard_hit=0, small_sample=True, cold_start=True,
+            hard_hit_pct=0,
+            season_hard_hit_pct=0,
+            delta="Steady",
+            n_batted_balls=0,
+            n_hard_hit=0,
+            small_sample=True,
+            cold_start=True,
         ),
         release_point=ReleasePointMetrics(pitch_types=[], cold_start=True),
         workload=WorkloadContext(
-            appearances=[], max_consecutive_days=0, workload_concern=False,
+            appearances=[],
+            max_consecutive_days=0,
+            workload_concern=False,
+            frame_id="recent:test",
         ),
         temporal=TemporalContext(
             analysis_date=date(2026, 4, 8),
-            current_season=2026,
-            current_season_appearances=10,
-            current_season_ip="20.0",
-            current_season_first_date="2026-03-28",
-            prior_season=2025,
-            prior_season_appearances=0,
-            prior_season_ip="0.0",
-            prior_year_relevance="LOW",
-            prior_year_relevance_reason="No prior season data",
+            scoring_season=2026,
+            recent_frame_appearances=10,
+            recent_frame_ip="20.0",
+            recent_frame_first_date="2026-03-28",
+            frame_id="recent:test",
         ),
         cross_season_summary=None,
         arsenal_trend=None,
+        league_baselines=[],
     )
     from pitcher_narratives.prompt_builder import render_yoy_section
 
@@ -301,50 +346,72 @@ def test_yoy_section_renders_cross_season_summary():
     )
 
     css = CrossSeasonSummary(
-        current_season=2026, prior_season=2025,
-        current_velo=93.5, prior_velo=92.0, velo_delta="Up 1.5 mph",
-        current_p_plus=110, prior_p_plus=100, p_plus_delta="Up 10 pts",
-        current_s_plus=115, prior_s_plus=105, s_plus_delta="Up 10 pts",
-        current_l_plus=95, prior_l_plus=100, l_plus_delta="Down 5 pts",
+        current_season=2026,
+        prior_season=2025,
+        current_velo=93.5,
+        prior_velo=92.0,
+        velo_delta="Up 1.5 mph",
+        current_p_plus=110,
+        prior_p_plus=100,
+        p_plus_delta="Up 10 pts",
+        current_s_plus=115,
+        prior_s_plus=105,
+        s_plus_delta="Up 10 pts",
+        current_l_plus=95,
+        prior_l_plus=100,
+        l_plus_delta="Down 5 pts",
     )
     ctx = PitcherContext(
         pitcher_name="Test Pitcher",
         pitcher_id=0,
         throws="R",
         role="SP",
+        frame_id="recent:test",
+        frame_type=TemporalFrame.RECENT,
+        as_of="2026-04-08",
+        source_population="test:2026",
+        frame_row_count=0,
+        scoring_season=2026,
         fastball=None,
         velocity_arc=None,
         arsenal=[],
         platoon_mix=PlatoonMix(splits=[], cold_start=True),
         first_pitch=FirstPitchWeaponry(
-            entries=[], total_first_pitches_season=0,
-            total_first_pitches_window=0, cold_start=True,
+            entries=[],
+            total_first_pitches_season=0,
+            total_first_pitches_window=0,
+            cold_start=True,
         ),
         execution=[],
         intermediates=[],
         attributions=[],
         hard_hit_rate=HardHitRate(
-            hard_hit_pct=0, season_hard_hit_pct=0, delta="Steady",
-            n_batted_balls=0, n_hard_hit=0, small_sample=True, cold_start=True,
+            hard_hit_pct=0,
+            season_hard_hit_pct=0,
+            delta="Steady",
+            n_batted_balls=0,
+            n_hard_hit=0,
+            small_sample=True,
+            cold_start=True,
         ),
         release_point=ReleasePointMetrics(pitch_types=[], cold_start=True),
         workload=WorkloadContext(
-            appearances=[], max_consecutive_days=0, workload_concern=False,
+            appearances=[],
+            max_consecutive_days=0,
+            workload_concern=False,
+            frame_id="recent:test",
         ),
         temporal=TemporalContext(
             analysis_date=date(2026, 4, 8),
-            current_season=2026,
-            current_season_appearances=10,
-            current_season_ip="20.0",
-            current_season_first_date="2026-03-28",
-            prior_season=2025,
-            prior_season_appearances=30,
-            prior_season_ip="180.0",
-            prior_year_relevance="HIGH",
-            prior_year_relevance_reason="Full prior season",
+            scoring_season=2026,
+            recent_frame_appearances=10,
+            recent_frame_ip="20.0",
+            recent_frame_first_date="2026-03-28",
+            frame_id="recent:test",
         ),
         cross_season_summary=css,
         arsenal_trend=None,
+        league_baselines=[],
     )
     from pitcher_narratives.prompt_builder import render_yoy_section
 
@@ -398,6 +465,7 @@ def test_multi_frame_context_primary_and_for_frame(ctx):
     assert mfc.for_frame(TemporalFrame.RECENT) is ctx
 
     import pytest
+
     with pytest.raises(ValueError, match="season"):
         mfc.for_frame(TemporalFrame.SEASON)
 

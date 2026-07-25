@@ -11,7 +11,6 @@ import sys
 from typing import Any
 
 import logfire
-
 from pydantic_ai.models.google import GoogleModelSettings
 from pydantic_ai.settings import ModelSettings, ThinkingEffort
 

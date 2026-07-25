@@ -14,7 +14,7 @@ from typing import Any, Literal, cast
 
 import polars as pl
 
-from pitcher_narratives.data import PitcherData
+from pitcher_narratives.data import PitcherData, filter_to_frame
 
 _log = logging.getLogger(__name__)
 
@@ -22,6 +22,8 @@ _log = logging.getLogger(__name__)
 def _float(val: Any) -> float:
     """Cast a Polars scalar to float, satisfying mypy."""
     return float(cast(float, val))
+
+
 # ── Constants ─────────────────────────────────────────────────────────
 
 _FASTBALL_TYPES = frozenset({"FF", "SI", "FC"})
@@ -207,25 +209,15 @@ def _safe_metric(df: pl.DataFrame, col: str, default: float = 0.0) -> float:
 
 
 def _per_season_velo(statcast: pl.DataFrame) -> dict[int, float]:
-    """Compute mean release_speed per season from statcast pitch-level data.
-
-    Derives season from game_date year. Filters to non-null release_speed rows.
-
-    Args:
-        statcast: Pitch-level Statcast DataFrame with game_date and release_speed columns.
-
-    Returns:
-        Dict mapping season year (int) to mean velocity (float).
-    """
-    df = statcast.filter(pl.col("release_speed").is_not_null())
-    if df.is_empty() or "game_date" not in df.columns:
+    """Compute mean velocity by authoritative emitted scoring season."""
+    season_column = "season" if "season" in statcast.columns else "game_year"
+    if season_column not in statcast.columns:
         return {}
-    agg = df.with_columns(
-        pl.col("game_date").dt.year().alias("_season")
-    ).group_by("_season").agg(
-        pl.col("release_speed").mean().alias("mean_velo")
-    )
-    return {int(row["_season"]): float(row["mean_velo"]) for row in agg.iter_rows(named=True)}
+    df = statcast.filter(pl.col("release_speed").is_not_null())
+    if df.is_empty():
+        return {}
+    agg = df.group_by(season_column).agg(pl.col("release_speed").mean().alias("mean_velo"))
+    return {int(row[season_column]): float(row["mean_velo"]) for row in agg.iter_rows(named=True)}
 
 
 def _pplus_delta_strings(
@@ -275,16 +267,41 @@ def _identify_primary_fastball(pitch_type_baseline: pl.DataFrame) -> str | None:
     return str(fb_rows.sort("n_pitches", descending=True)["pitch_type"][0])
 
 
-def _get_window_game_dates(data: PitcherData) -> list[Any]:
-    """Extract unique game_date values from window_appearances.
+def _get_frame_rows(data: PitcherData, rows: pl.DataFrame | None = None) -> pl.DataFrame:
+    """Filter emitted pitch or appearance rows through the canonical frame."""
+    if data.frame is None:
+        raise ValueError("PitcherData has no canonical frame")
+    selected_rows = data.pitches if rows is None else rows
+    if (
+        data.frame.source_population == "legacy-test-fixture"
+        and "season" not in selected_rows.columns
+        and "game_year" not in selected_rows.columns
+    ):
+        selected_rows = selected_rows.with_columns(pl.col("game_date").dt.year().alias("game_year"))
+    return filter_to_frame(selected_rows, data.frame)
 
-    Args:
-        data: PitcherData bundle.
 
-    Returns:
-        List of game dates within the lookback window.
-    """
-    return data.window_appearances["game_date"].unique().to_list()
+def _get_season_rows(data: PitcherData, rows: pl.DataFrame | None = None) -> pl.DataFrame:
+    """Select the authoritative scoring season at the frame's as-of boundary."""
+    if data.frame is None:
+        raise ValueError("PitcherData has no canonical frame")
+    seasons = (
+        {data.frame.scoring_season}
+        if data.frame.scoring_season is not None
+        else {game.season for game in data.frame.games}
+    )
+    selected_rows = data.pitches if rows is None else rows
+    if not seasons:
+        return selected_rows.clear()
+    season_column = "season" if "season" in selected_rows.columns else "game_year"
+    if season_column not in selected_rows.columns:
+        if data.frame.source_population != "legacy-test-fixture":
+            raise ValueError("season population requires season or game_year")
+        selected_rows = selected_rows.with_columns(pl.col("game_date").dt.year().alias("game_year"))
+        season_column = "game_year"
+    return selected_rows.filter(
+        pl.col(season_column).is_in(sorted(seasons)) & (pl.col("game_date") <= data.frame.as_of)
+    )
 
 
 def _most_recent_row(appearances: pl.DataFrame) -> dict[str, Any]:
@@ -299,11 +316,7 @@ def _most_recent_row(appearances: pl.DataFrame) -> dict[str, Any]:
     Returns:
         Row 0 after the deterministic sort, as a column->value dict.
     """
-    return (
-        appearances.sort(
-            ["game_date", "game_pk"], descending=True, nulls_last=True
-        ).row(0, named=True)
-    )
+    return appearances.sort(["game_date", "game_pk"], descending=True, nulls_last=True).row(0, named=True)
 
 
 def frame_sufficiency(data: PitcherData) -> FrameSufficiency:
@@ -442,14 +455,26 @@ _XMETRICS = ("xWhiff_P", "xSwing_P", "xRV100_P")
 """Expected-outcome metrics used in execution computations."""
 
 _INTERMEDIATE_P_COLS = (
-    "xSwing_P", "xWhiff_P", "xGOr_P", "xPUr_P", "xHR100_P",
-    "BBE_prob_P", "xSwSt_P", "xRV100_P",
+    "xSwing_P",
+    "xWhiff_P",
+    "xGOr_P",
+    "xPUr_P",
+    "xHR100_P",
+    "BBE_prob_P",
+    "xSwSt_P",
+    "xRV100_P",
 )
 """P-variant intermediate probability columns (includes location)."""
 
 _INTERMEDIATE_S_COLS = (
-    "xSwing_S", "xWhiff_S", "xGOr_S", "xPUr_S", "xHR100_S",
-    "BBE_prob_S", "xSwSt_S", "xRV100_S",
+    "xSwing_S",
+    "xWhiff_S",
+    "xGOr_S",
+    "xPUr_S",
+    "xHR100_S",
+    "BBE_prob_S",
+    "xSwSt_S",
+    "xRV100_S",
 )
 """S-variant intermediate probability columns (stuff-only)."""
 
@@ -457,18 +482,40 @@ _INTERMEDIATE_COLS = _INTERMEDIATE_P_COLS + _INTERMEDIATE_S_COLS
 """All intermediate probability columns (P and S variants)."""
 
 _OUTCOME_COLS_P = (
-    "HBP_P", "called_ball_P", "called_strike_P", "whiff_P", "foul_P",
-    "double_P", "ground_out_P", "home_run_P", "line_out_P",
-    "low_line_out_P", "pop_out_P", "single_P", "triple_P",
+    "HBP_P",
+    "called_ball_P",
+    "called_strike_P",
+    "whiff_P",
+    "foul_P",
+    "double_P",
+    "ground_out_P",
+    "home_run_P",
+    "line_out_P",
+    "low_line_out_P",
+    "pop_out_P",
+    "single_P",
+    "triple_P",
 )
 """P-variant raw probability columns for the 13 model outcomes."""
 
 _OUTCOME_NAMES = (
-    "HBP", "called_ball", "called_strike", "whiff", "foul",
-    "double", "ground_out", "home_run", "line_out",
-    "low_line_out", "pop_out", "single", "triple",
+    "HBP",
+    "called_ball",
+    "called_strike",
+    "whiff",
+    "foul",
+    "double",
+    "ground_out",
+    "home_run",
+    "line_out",
+    "low_line_out",
+    "pop_out",
+    "single",
+    "triple",
 )
 """Canonical outcome names matching model_classes in RV_df.csv."""
-def _window_date_type_filter(window_dates: list[Any], pitch_type: str) -> pl.Expr:
-    """Build a standard filter for window dates + pitch type."""
-    return (pl.col("game_date").is_in(window_dates)) & (pl.col("pitch_type") == pitch_type)
+
+
+def _frame_pitch_type_filter(pitch_type: str) -> pl.Expr:
+    """Build a pitch-type filter for rows already selected by frame identity."""
+    return pl.col("pitch_type") == pitch_type

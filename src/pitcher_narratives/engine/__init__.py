@@ -71,6 +71,13 @@ from pitcher_narratives.engine.execution import (
     compute_execution_metrics,
     compute_intermediate_probabilities,
 )
+from pitcher_narratives.engine.location import (
+    FormalLocationValue,
+    LocationDistribution,
+    compute_formal_location_values,
+    compute_location_distributions,
+    render_location_evidence,
+)
 from pitcher_narratives.engine.mechanics import (
     ReleasePointMetrics,
     ReleasePointPitchType,
@@ -96,9 +103,11 @@ __all__ = [
     "FastballSummary",
     "FirstPitchEntry",
     "FirstPitchWeaponry",
+    "FormalLocationValue",
     "HardHitRate",
     "IntermediateProbabilities",
     "LeagueBaseline",
+    "LocationDistribution",
     "OutcomeContribution",
     "PitchTypeSummary",
     "PlatoonMix",
@@ -115,9 +124,11 @@ __all__ = [
     "compute_execution_metrics",
     "compute_fastball_summary",
     "compute_first_pitch_weaponry",
+    "compute_formal_location_values",
     "compute_hard_hit_rate",
     "compute_intermediate_probabilities",
     "compute_league_baselines",
+    "compute_location_distributions",
     "compute_platoon_mix",
     "compute_release_point_metrics",
     "compute_temporal_context",
@@ -126,5 +137,5 @@ __all__ = [
     "format_s_variant_comparisons",
     "outlier_tag",
     "render_league_baselines",
+    "render_location_evidence",
 ]
-

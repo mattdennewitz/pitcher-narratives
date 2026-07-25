@@ -1,1 +1,1 @@
-"""Pitcher Narratives — LLM-powered MLB scouting reports from Statcast data."""
+"""MLB scouting narratives from versioned PitchingPlus output bundles."""

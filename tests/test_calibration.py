@@ -10,11 +10,17 @@ from pitcher_narratives.calibration import (
 
 def _rec(mode, rev, *, anchor_cap, fact_cap, capsule_revised=False):
     return {
-        "mode": mode, "pitcher_id": 1, "span": 10,
-        "anchor_depth_cap": anchor_cap, "fact_depth_cap": fact_cap,
-        "revision_count": rev, "capsule_revised": capsule_revised,
-        "n_capsule_audit_flags": 0, "n_anchor_warnings": 0,
-        "n_value_parity_warnings": 0, "n_audit_flags": 0,
+        "mode": mode,
+        "pitcher_id": 1,
+        "span": 10,
+        "anchor_depth_cap": anchor_cap,
+        "fact_depth_cap": fact_cap,
+        "revision_count": rev,
+        "capsule_revised": capsule_revised,
+        "n_capsule_audit_flags": 0,
+        "n_anchor_warnings": 0,
+        "n_value_parity_warnings": 0,
+        "n_audit_flags": 0,
     }
 
 
@@ -39,14 +45,20 @@ def test_aggregate_groups_by_mode_and_computes_rates():
 def test_load_records_from_jsonl_and_validation_json(tmp_path):
     jl = tmp_path / "metrics.jsonl"
     jl.write_text(
-        json.dumps(_rec("report", 2, anchor_cap=5, fact_cap=2)) + "\n"
-        + json.dumps(_rec("recap", 1, anchor_cap=1, fact_cap=2)) + "\n"
+        json.dumps(_rec("report", 2, anchor_cap=5, fact_cap=2))
+        + "\n"
+        + json.dumps(_rec("recap", 1, anchor_cap=1, fact_cap=2))
+        + "\n"
     )
     vj = tmp_path / "validation.json"
-    vj.write_text(json.dumps({
-        "game_date": "2026-07-03",
-        "picks": {"592155": _rec("recap", 0, anchor_cap=1, fact_cap=2)},
-    }))
+    vj.write_text(
+        json.dumps(
+            {
+                "game_date": "2026-07-03",
+                "picks": {"592155": _rec("recap", 0, anchor_cap=1, fact_cap=2)},
+            }
+        )
+    )
     records = load_records([str(jl), str(vj)])
     assert len(records) == 3
     assert sum(r["mode"] == "recap" for r in records) == 2
@@ -54,10 +66,14 @@ def test_load_records_from_jsonl_and_validation_json(tmp_path):
 
 def test_load_records_walks_directory(tmp_path):
     (tmp_path / "2026-07-03").mkdir()
-    (tmp_path / "2026-07-03" / "validation.json").write_text(json.dumps({
-        "game_date": "2026-07-03",
-        "picks": {"1": _rec("recap", 1, anchor_cap=1, fact_cap=2)},
-    }))
+    (tmp_path / "2026-07-03" / "validation.json").write_text(
+        json.dumps(
+            {
+                "game_date": "2026-07-03",
+                "picks": {"1": _rec("recap", 1, anchor_cap=1, fact_cap=2)},
+            }
+        )
+    )
     records = load_records([str(tmp_path)])
     assert len(records) == 1
 

@@ -46,16 +46,19 @@ the most recent date(s), and scores each appearance as a weighted sum of
 
 | Signal | Weight | Fires when |
 |--------|-------:|-----------|
-| `new_pitch` | 4.0 | a pitch ≥5% of the game that was <1% of the season |
-| `development_opportunity` | 3.5 | a pitch with S+ ≥110 but L+ ≤80 (stuff, no command) |
-| `velo_delta` | 3.0 | fastball velo ≥1.5 mph off season |
-| `splus_lplus_divergence` | 3.0 | S+ and L+ move opposite, each ≥10 |
-| `dropped_pitch` | 3.0 | an established pitch (≥10% of season) absent |
-| `pplus_swing` | 2.5 | overall P+ ≥15 points off season |
-| `walk_rate_pplus_contradiction` | 2.5 | P+ ≥105 but L+ <85 |
-| `usage_shift` | 2.0 | a pitch's usage ≥8 pp off season |
-| `hard_hit_spike` | 1.5 | *(defined but never computed — see below)* |
-| `workload_flag` | 1.0 | 3+ consecutive days pitched |
+| `new_pitch` | 4.0 | a pitch is ≥5% of the game and <1% of the season |
+| `velo_decline` | 3.5 | fastball velocity falls ≥1.5 mph from first to last outing third, with ≥9 fastballs |
+| `splus_lplus_level_gap` | 3.5 | a sufficiently sampled pitch has S+ ≥110 and L+ ≤80 |
+| `location_grade_surge` | 3.5 | season L+ is <90 and appearance L+ is ≥110 |
+| `velo_delta` | 3.0 | fastball velocity is ≥1.5 mph off season |
+| `splus_lplus_divergence` | 3.0 | S+ and L+ change in opposite directions, each ≥10 |
+| `dropped_pitch` | 3.0 | an established pitch (≥10% of season) is absent |
+| `pplus_swing` | 2.5 | overall P+ is ≥15 points off season |
+| `pplus_lplus_split` | 2.5 | appearance P+ is ≥105 while L+ is <85 |
+| `spin_drop` | 2.0 | fastball spin is at least 1.5 robust standard deviations below its leave-one-game-out reference |
+| `usage_shift` | 2.0 | a pitch's usage is ≥8 percentage points off season |
+| `hard_hit_spike` | 1.5 | reserved; no current emitter |
+| `workload_flag` | 1.0 | the pitcher has worked 3+ consecutive days |
 
 The crucial design choice is correct: it scores **changes, not
 results**. ERA, strikeouts, and win/loss never enter. A pitcher who got
@@ -103,11 +106,11 @@ specific, fixable weaknesses that degrade it from "ranked watchlist" to
 
 2. **Correlated signals are multi-counted.** Usage percentages must sum
    to 100%, so one mix change manufactures several `usage_shift` signals
-   (one pitcher: SI −17 pp *forces* FF +19, CH +9, SL −12 — four
-   "signals" for one decision). `pplus_swing`, `splus_lplus_divergence`,
-   and `development_opportunity` frequently describe the *same*
-   stuff/command event. The sum triple-counts one story and inflates
-   that pitcher's rank.
+   (one pitcher: SI −17 pp necessarily coincides with FF +19, CH +9,
+   and SL −12). `pplus_swing`, `splus_lplus_divergence`, and
+   `splus_lplus_level_gap` can also describe the same grade pattern.
+   The sum can therefore count one appearance-level pattern several
+   times and inflate that pitcher's rank.
 
 3. **Small samples dominate the ranking.** `min_pitches=20` admits
    20–29-pitch relief outings whose single-game P+/S+/L+ are wildly
@@ -174,7 +177,7 @@ dispersion was replaced with a z-score against the real spread:
    factor (e.g. shrink toward zero below ~50 pitches) so a 22-pitch
    reliever's loud-but-noisy line cannot outrank a 95-pitch start.
 3. **Collapse correlated signals.** Count "mix change" once, not once
-   per pitch; treat the stuff/command cluster as one event.
+   per pitch; treat correlated S+/L+ grade signals as one event.
 4. **Gate on baseline maturity.** Suppress or discount vs-season signals
    until the baseline has enough prior outings; lean on prior-year or
    league baselines early in the season.

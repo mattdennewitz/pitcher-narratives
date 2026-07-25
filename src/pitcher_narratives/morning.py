@@ -60,8 +60,8 @@ def _load_pitcher_context(pitcher_id: int) -> PitcherContext:
 
 def _build_validation_payload(
     game_date: str,
-    recap_results: dict[int, "PipelineResult"],
-    hallucination: dict[int, "HallucinationReport"] | None = None,
+    recap_results: dict[int, PipelineResult],
+    hallucination: dict[int, HallucinationReport] | None = None,
 ) -> dict[str, object]:
     """Per-pick calibration records for validation.json.
 
@@ -71,13 +71,14 @@ def _build_validation_payload(
     """
     hallucination = hallucination or {}
 
-    def _record(pid: int, result: "PipelineResult") -> dict[str, object]:
+    def _record(pid: int, result: PipelineResult) -> dict[str, object]:
         rec = flag_record(RECAP, pid, result, span=_DEFAULT_RECENT_APPEARANCES)
         hr = hallucination.get(pid)
         if hr is not None:
             rec["hallucination"] = {
                 "unknown_metrics": hr.unknown_metrics,
                 "outcome_stat_warnings": hr.outcome_stat_warnings,
+                "unsupported_claim_warnings": hr.unsupported_claim_warnings,
                 "is_clean": hr.is_clean,
             }
         return rec
@@ -145,7 +146,10 @@ def run_morning(
         spine_sem = asyncio.Semaphore(min(max_concurrency, 2))
 
         slate = await select_slate_async(
-            candidates, provider=provider, tracker=tracker, briefing=briefing,
+            candidates,
+            provider=provider,
+            tracker=tracker,
+            briefing=briefing,
             _model_override=_selector_override,
         )
         picks = slate.picks
@@ -158,18 +162,26 @@ def run_morning(
                 try:
                     ctx = _load_pitcher_context(p.pitcher_id)
                     analyzed = await run_analysis_spine(
-                        ctx, agents=agents, _model_override=_writer_override,
+                        ctx,
+                        agents=agents,
+                        _model_override=_writer_override,
                         tracker=tracker,
                     )
                     recap_result = await render_recap(
-                        ctx, analyzed, agents=agents, pick=p,
-                        _model_override=_writer_override, tracker=tracker,
+                        ctx,
+                        analyzed,
+                        agents=agents,
+                        pick=p,
+                        _model_override=_writer_override,
+                        tracker=tracker,
                     )
                     return p.pitcher_id, recap_result
                 except Exception:
                     log.error(
                         "Spine failed for pitcher_id=%d (%s); skipping pick.",
-                        p.pitcher_id, pitcher_name, exc_info=True,
+                        p.pitcher_id,
+                        pitcher_name,
+                        exc_info=True,
                     )
                     return None
 
@@ -178,7 +190,7 @@ def run_morning(
 
         summaries: dict[int, str] = {}
         recap_results: dict[int, PipelineResult] = {}
-        hallucination_by_pid: dict[int, "HallucinationReport"] = {}
+        hallucination_by_pid: dict[int, HallucinationReport] = {}
         n_unverified = 0
         for result in build_results:
             if result is None:
@@ -186,28 +198,26 @@ def run_morning(
             pid, recap_result = result
             text = recap_result.narrative
             banner = residual_banner(recap_result, label="RECAP")
-            # Deliberately louder than is_unverified(): value-parity warnings also mark an item UNVERIFIED so no ungrounded number ships silently.
+            # Value-parity warnings also mark an item UNVERIFIED so no
+            # ungrounded number ships silently.
             if banner is None and recap_result.value_parity_warnings:
-                banner = (
-                    "⚠️  RECAP UNVERIFIED — value-parity flags present; "
-                    "review before use."
-                )
+                banner = "⚠️  RECAP UNVERIFIED — value-parity flags present; review before use."
             if strict:
-                hr = check_hallucinated_metrics(recap_result.narrative)
+                hr = check_hallucinated_metrics(
+                    recap_result.narrative,
+                    capabilities=recap_result.analysis_capabilities,
+                    cited_fact_ids=recap_result.narrative_fact_ids,
+                )
                 hallucination_by_pid[pid] = hr
                 if banner is None and not hr.is_clean:
-                    banner = (
-                        "⚠️  RECAP UNVERIFIED — hallucinated-metric flags present; "
-                        "review before use."
-                    )
+                    banner = "RECAP UNVERIFIED — reader claim/metric flags present; review before use."
             if banner:
                 text = f"{banner}\n\n{text}"
                 n_unverified += 1
             summaries[pid] = text
             recap_results[pid] = recap_result
         dropped_names = [
-            appearances[p.pitcher_id].pitcher_name
-            for p in picks if p.pitcher_id not in summaries
+            appearances[p.pitcher_id].pitcher_name for p in picks if p.pitcher_id not in summaries
         ]
         picks = [p for p in picks if p.pitcher_id in summaries]
 
@@ -216,24 +226,23 @@ def run_morning(
 
         return slate, picks, summaries, dropped_names, n_unverified, recap_results, hallucination_by_pid
 
-    slate, picks, summaries, dropped_names, n_unverified, recap_results, hallucination_by_pid = asyncio.run(_llm_stages())
+    slate, picks, summaries, dropped_names, n_unverified, recap_results, hallucination_by_pid = asyncio.run(
+        _llm_stages()
+    )
 
     # ── Assemble + persist ────────────────────────────────────────
     wall_s = time.monotonic() - started
     cost_block = tracker.render_cost_block(wall_s=wall_s)
     if n_unverified:
-        cost_block += (
-            f"\nnote: {n_unverified} recap item(s) shipped UNVERIFIED "
-            f"(residual validation flags)"
-        )
-    cost_block += (
-        "\nvalidation: strict"
-        if strict
-        else "\nvalidation: fast (hallucination check skipped)"
-    )
+        cost_block += f"\nnote: {n_unverified} recap item(s) shipped UNVERIFIED (residual validation flags)"
+    cost_block += "\nvalidation: strict" if strict else "\nvalidation: fast (hallucination check skipped)"
     digest = assemble_digest(
-        slate=slate, summaries=summaries, appearances=appearances,
-        board=all_scored, game_date=game_date, cost_block=cost_block,
+        slate=slate,
+        summaries=summaries,
+        appearances=appearances,
+        board=all_scored,
+        game_date=game_date,
+        cost_block=cost_block,
         dropped_picks=dropped_names or None,
     )
 
@@ -241,22 +250,23 @@ def run_morning(
     run_dir.mkdir(parents=True, exist_ok=True)
     (run_dir / "digest.md").write_text(digest)
     (run_dir / "briefing.md").write_text(briefing)
-    (run_dir / "slate.json").write_text(json.dumps(
-        {
-            "game_date": str(game_date),
-            "picks": slate.model_dump()["picks"],
-            "names": {
-                str(p.pitcher_id): appearances[p.pitcher_id].pitcher_name
-                for p in picks
+    (run_dir / "slate.json").write_text(
+        json.dumps(
+            {
+                "game_date": str(game_date),
+                "picks": slate.model_dump()["picks"],
+                "names": {str(p.pitcher_id): appearances[p.pitcher_id].pitcher_name for p in picks},
             },
-        },
-        indent=2,
-    ))
+            indent=2,
+        )
+    )
     (run_dir / "usage.json").write_text(json.dumps(tracker.to_json(), indent=2))
-    (run_dir / "validation.json").write_text(json.dumps(
-        _build_validation_payload(str(game_date), recap_results, hallucination_by_pid),
-        indent=2,
-    ))
+    (run_dir / "validation.json").write_text(
+        json.dumps(
+            _build_validation_payload(str(game_date), recap_results, hallucination_by_pid),
+            indent=2,
+        )
+    )
 
     print(digest)
     return run_dir

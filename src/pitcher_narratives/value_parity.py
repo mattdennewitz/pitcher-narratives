@@ -8,7 +8,7 @@ import re
 
 from pydantic import BaseModel
 
-__all__ = ["MetricValue", "ValueParityReport", "extract_metric_values", "check_value_parity"]
+__all__ = ["MetricValue", "ValueParityReport", "check_value_parity", "extract_metric_values"]
 
 MetricValue = tuple[str, float]
 """(metric_class, value). Cross-class values never match; within-class match by tolerance."""

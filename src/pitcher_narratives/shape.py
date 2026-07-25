@@ -1,14 +1,9 @@
-"""Arm-slot movement interaction (pitch shape) analysis.
+"""Arm-slot movement interaction analysis from emitted PitchingPlus facts.
 
-Computes a league expectation table of pitch movement conditional on
-arm angle, then classifies each pitcher's pitch shapes against that
-expectation. A four-seamer whose movement matches what hitters expect
-from the release slot is a "dead zone" pitch; movement well above or
-below slot expectation is a distinctive trait worth narrating.
-
-All movement values are converted from Statcast feet to inches, and
-horizontal movement is mirrored to arm-side-positive so left- and
-right-handed samples pool into one expectation table.
+Pitcher movement uses the producer's handedness-normalized
+``arm_side_pfx_x`` value. Slot means and pitch-level spreads come from the
+manifest-covered reference artifact; Narratives never scans a local population
+or mirrors catcher-view values.
 """
 
 from __future__ import annotations
@@ -18,7 +13,8 @@ from dataclasses import dataclass
 
 import polars as pl
 
-from pitcher_narratives.data import PitcherData, load_all_statcast
+from pitcher_narratives.data import PitcherData
+from pitcher_narratives.engine._common import _get_season_rows
 
 __all__ = [
     "PitchShapeEntry",
@@ -38,14 +34,12 @@ _MIN_BUCKET_PITCHES = 200
 _MIN_PITCHER_PITCHES = 10
 """Minimum pitcher pitches with arm-angle data per pitch type."""
 
-_MIN_PITCHER_PITCHES_FOR_SD = 5
-"""Minimum pitches for a pitcher's mean to count toward between-pitcher SD."""
 
 _DEAD_ZONE_Z = 0.5
-"""Residual within this many between-pitcher SDs on both axes = slot-typical."""
+"""Residual within this many pitch-level SDs on both axes = slot-typical."""
 
 _FLAG_Z = 1.5
-"""Residual beyond this many between-pitcher SDs on an axis = a deceptive trait."""
+"""Residual beyond this many pitch-level SDs on an axis = a rare trait."""
 
 _FASTBALL_TYPES = frozenset({"FF", "SI", "FC"})
 """Standard Statcast fastball classification codes."""
@@ -69,10 +63,10 @@ class SlotExpectation:
     """League mean induced vertical movement (inches)."""
 
     std_arm_side_run_in: float
-    """Between-pitcher SD of mean arm-side run in this slot (z-score denominator)."""
+    """Pitch-level SD of arm-side movement within this emitted slot."""
 
     std_ride_in: float
-    """Between-pitcher SD of mean ride in this slot (z-score denominator)."""
+    """Pitch-level SD of ride within this emitted slot."""
 
 
 @dataclass
@@ -104,10 +98,10 @@ class PitchShapeEntry:
     """Observed minus expected ride (inches)."""
 
     run_residual_z: float
-    """Run residual in between-pitcher SD units for the slot."""
+    """Run residual in pitch-level SD units for the emitted slot."""
 
     ride_residual_z: float
-    """Ride residual in between-pitcher SD units for the slot."""
+    """Ride residual in pitch-level SD units for the emitted slot."""
 
     shape_tag: str
     """Deterministic classification, e.g. 'DEAD ZONE ...' or ride/run flags."""
@@ -128,6 +122,9 @@ class PitchShapeProfile:
     entries: list[PitchShapeEntry]
     """Ordered by arm-angle pitch count descending."""
 
+    unavailable_reason: str | None = None
+    reference_population: str | None = None
+
 
 def _arm_angle_bucket(arm_angle: float) -> int:
     """Floor an arm angle to its bucket lower bound in degrees."""
@@ -141,14 +138,13 @@ def _classify_shape(
     ride_z: float,
     is_fastball: bool,
 ) -> str:
-    """Classify a pitch's movement residuals vs slot expectation.
+    """Classify movement residual rarity against the emitted slot reference.
 
-    Decisions use z-scores (residual / between-pitcher SD for the slot) so
-    the bands scale with how much pitchers actually vary at that arm angle:
-    a fastball within _DEAD_ZONE_Z SD on BOTH axes is slot-typical (DEAD
-    ZONE); a residual beyond _FLAG_Z SD on an axis is a notable deceptive
-    trait. The displayed magnitudes stay in inches (scout-readable) with the
-    SD appended so the reader can weight it.
+    Decisions use z-scores (residual / emitted pitch-level SD for the slot) so
+    the bands scale with pitch-level variation at that arm angle. A fastball
+    within _DEAD_ZONE_Z SD on both axes is slot-typical; a residual beyond
+    _FLAG_Z SD on an axis is rare. These labels do not establish importance,
+    hitter behavior, deception, or a model mechanism.
     """
     flags: list[str] = []
     if ride_z >= _FLAG_Z:
@@ -164,12 +160,12 @@ def _classify_shape(
         joined = "; ".join(flags)
         return joined[:1].upper() + joined[1:]
     if is_fastball and abs(run_z) < _DEAD_ZONE_Z and abs(ride_z) < _DEAD_ZONE_Z:
-        return "DEAD ZONE -- movement matches slot expectation; hitters see what the arm angle predicts"
+        return "DEAD ZONE -- movement matches slot expectation on both axes"
     return "In line with slot expectation"
 
 
 def _z(residual: float, sd: float) -> float:
-    """Standardize a residual by a between-pitcher SD; 0.0 when SD is unusable."""
+    """Standardize a residual by emitted pitch-level SD; 0.0 when unusable."""
     return residual / sd if sd > 0 else 0.0
 
 
@@ -183,7 +179,7 @@ def _interpolate_expectation(
     Bucket values are anchored at bucket centers (bucket + 5 deg) and the
     expectation blends the two buckets whose centers straddle the angle,
     so expectations vary continuously instead of stepping at bucket
-    edges. The between-pitcher SDs are interpolated the same way. When one
+    edges. The pitch-level SDs are interpolated the same way. When one
     neighbor is missing (edge of the league table) the nearest available
     bucket's values are used unchanged.
 
@@ -218,122 +214,99 @@ def _interpolate_expectation(
     )
 
 
-_slot_expectations_cache: dict[tuple[str, int], SlotExpectation] | None = None
-
-
-def compute_slot_expectations() -> dict[tuple[str, int], SlotExpectation]:
-    """Compute the league movement expectation table conditional on arm angle.
-
-    Pools both handedness samples by mirroring horizontal movement to
-    arm-side positive (pfx_x for LHP, -pfx_x for RHP), buckets arm angle
-    into 10-degree bins, and keeps (pitch_type, bucket) cells with at
-    least _MIN_BUCKET_PITCHES league pitches. Cached after first call.
-
-    Returns:
-        Dict keyed by (pitch_type, bucket lower bound in degrees).
-    """
-    global _slot_expectations_cache
-    if _slot_expectations_cache is not None:
-        return _slot_expectations_cache
-
-    df = load_all_statcast(
-        columns=["pitcher", "pitch_type", "p_throws", "arm_angle", "pfx_x", "pfx_z", "level"],
-    )
-    # MLB-only league norm: minor-league (A/AAA) and WBC pitches must not skew
-    # the slot-expectation means or the between-pitcher SD denominator.
-    df = df.filter(pl.col("level") == "MLB")
-    df = df.filter(
-        pl.col("arm_angle").is_not_null()
-        & pl.col("pfx_x").is_not_null()
-        & pl.col("pfx_z").is_not_null()
-        & pl.col("pitch_type").is_not_null()
-    )
-
-    arm_side_sign = pl.when(pl.col("p_throws") == "L").then(1.0).otherwise(-1.0)
-    df = df.with_columns(
-        ((pl.col("arm_angle") / _BUCKET_DEGREES).floor() * _BUCKET_DEGREES)
-        .cast(pl.Int32)
-        .alias("bucket"),
-        (pl.col("pfx_x") * arm_side_sign * _FEET_TO_INCHES).alias("arm_side_run_in"),
-        (pl.col("pfx_z") * _FEET_TO_INCHES).alias("ride_in"),
-    )
-
-    # Expectation = pitch-weighted league mean shape from this slot.
-    agg = (
-        df.group_by("pitch_type", "bucket")
-        .agg(
-            pl.len().alias("n"),
-            pl.col("arm_side_run_in").mean().alias("exp_run"),
-            pl.col("ride_in").mean().alias("exp_ride"),
-        )
-        .filter(pl.col("n") >= _MIN_BUCKET_PITCHES)
-    )
-
-    # Dispersion = SD of per-pitcher mean shapes within the slot. This is the
-    # right z-score denominator for a per-pitcher residual: "how unusual is
-    # this pitcher's shape among pitchers from the same slot?" Pitch-level SD
-    # would conflate within-pitcher noise and overstate the spread.
-    pitcher_means = df.group_by("pitcher", "pitch_type", "bucket").agg(
-        pl.len().alias("n_p"),
-        pl.col("arm_side_run_in").mean().alias("p_run"),
-        pl.col("ride_in").mean().alias("p_ride"),
-    ).filter(pl.col("n_p") >= _MIN_PITCHER_PITCHES_FOR_SD)
-    bp_std = pitcher_means.group_by("pitch_type", "bucket").agg(
-        pl.col("p_run").std().alias("std_run"),
-        pl.col("p_ride").std().alias("std_ride"),
-    )
-    std_lookup = {
-        (str(r["pitch_type"]), int(r["bucket"])): r
-        for r in bp_std.iter_rows(named=True)
+def compute_slot_expectations(
+    reference_rows: pl.DataFrame | None = None,
+) -> dict[tuple[str, int], SlotExpectation]:
+    """Parse a manifest-covered, pitch-weighted slot reference artifact."""
+    if reference_rows is None or reference_rows.is_empty():
+        return {}
+    required = {
+        "manifest_id",
+        "seasons",
+        "level",
+        "game_types",
+        "pitch_type",
+        "arm_angle_bucket",
+        "metric",
+        "mean",
+        "std",
+        "n_pitches",
+        "unit",
+        "pitcher_handling",
+        "statistical_unit",
+        "weighting",
     }
-
+    if missing := required - set(reference_rows.columns):
+        raise ValueError(f"pitch_type_slot_reference is missing columns: {sorted(missing)}")
+    rows = reference_rows.filter(
+        (pl.col("level") == "MLB")
+        & (pl.col("game_types") == "R")
+        & (pl.col("unit") == "inches")
+        & (pl.col("pitcher_handling") == "handedness_normalized")
+        & (pl.col("statistical_unit") == "pitch")
+        & (pl.col("weighting") == "pitch_weighted")
+    )
     table: dict[tuple[str, int], SlotExpectation] = {}
-    for row in agg.iter_rows(named=True):
-        key = (str(row["pitch_type"]), int(row["bucket"]))
-        std = std_lookup.get(key, {})
-        std_run = std.get("std_run")
-        std_ride = std.get("std_ride")
-        table[key] = SlotExpectation(
-            pitch_type=key[0],
-            bucket=key[1],
-            n_pitches=int(row["n"]),
-            exp_arm_side_run_in=float(row["exp_run"]),
-            exp_ride_in=float(row["exp_ride"]),
-            std_arm_side_run_in=float(std_run) if std_run is not None else 0.0,
-            std_ride_in=float(std_ride) if std_ride is not None else 0.0,
+    for key_rows in rows.partition_by(["pitch_type", "arm_angle_bucket"], maintain_order=True):
+        metrics = {str(row["metric"]): row for row in key_rows.iter_rows(named=True)}
+        run = metrics.get("arm_side_pfx_x")
+        ride = metrics.get("pfx_z")
+        if run is None or ride is None:
+            continue
+        if run["unit"] != "inches" or ride["unit"] != "inches":
+            raise ValueError("pitch_type_slot_reference movement metrics must use inches")
+        population_fields = (
+            "manifest_id",
+            "seasons",
+            "level",
+            "game_types",
+            "pitcher_handling",
+            "statistical_unit",
+            "weighting",
         )
-
-    _slot_expectations_cache = table
+        if any(run[field] != ride[field] for field in population_fields):
+            raise ValueError("pitch_type_slot_reference metrics disagree on reference population")
+        n_pitches = min(int(run["n_pitches"]), int(ride["n_pitches"]))
+        run_std = run["std"]
+        ride_std = ride["std"]
+        if (
+            n_pitches < _MIN_BUCKET_PITCHES
+            or run_std is None
+            or ride_std is None
+            or float(run_std) <= 0
+            or float(ride_std) <= 0
+        ):
+            continue
+        pitch_type = str(run["pitch_type"])
+        bucket = int(run["arm_angle_bucket"])
+        table[(pitch_type, bucket)] = SlotExpectation(
+            pitch_type=pitch_type,
+            bucket=bucket,
+            n_pitches=n_pitches,
+            exp_arm_side_run_in=float(run["mean"]),
+            exp_ride_in=float(ride["mean"]),
+            std_arm_side_run_in=float(run_std),
+            std_ride_in=float(ride_std),
+        )
     return table
 
 
 def compute_pitch_shape(data: PitcherData) -> PitchShapeProfile | None:
-    """Compute the pitcher's movement-vs-arm-slot profile.
-
-    Uses full-season Statcast rows with arm-angle data (shape is a
-    physical trait, not a window trend). Expectations are interpolated
-    between league bucket centers at the pitcher's exact mean arm angle.
-    Pitch types below _MIN_PITCHER_PITCHES arm-angle pitches are
-    skipped, as are types with no league bucket near the slot.
-
-    Args:
-        data: PitcherData bundle from data.load_pitcher_data.
-
-    Returns:
-        PitchShapeProfile or None when no pitch type has enough data.
-    """
-    df = data.statcast.filter(
+    """Compare season shape with the emitted absolute slot reference."""
+    df = _get_season_rows(data).filter(
         pl.col("arm_angle").is_not_null()
-        & pl.col("pfx_x").is_not_null()
+        & pl.col("arm_side_pfx_x").is_not_null()
         & pl.col("pfx_z").is_not_null()
     )
     if df.is_empty():
-        return None
+        return PitchShapeProfile(
+            entries=[],
+            unavailable_reason="no known-hand season pitches with movement and arm angle",
+        )
 
-    arm_side_sign = pl.when(pl.col("p_throws") == "L").then(1.0).otherwise(-1.0)
     agg = (
         df.with_columns(
-            (pl.col("pfx_x") * arm_side_sign * _FEET_TO_INCHES).alias("arm_side_run_in"),
+            (pl.col("arm_side_pfx_x") * _FEET_TO_INCHES).alias("arm_side_run_in"),
             (pl.col("pfx_z") * _FEET_TO_INCHES).alias("ride_in"),
         )
         .group_by("pitch_type", "pitch_name")
@@ -347,7 +320,37 @@ def compute_pitch_shape(data: PitcherData) -> PitchShapeProfile | None:
         .sort("n", descending=True)
     )
 
-    expectations = compute_slot_expectations()
+    reference_rows = data.aggregates.get("pitch_type_slot_reference")
+    if (
+        reference_rows is not None
+        and data.frame is not None
+        and data.frame.scoring_season is not None
+        and "season" in reference_rows.columns
+    ):
+        reference_rows = reference_rows.filter(pl.col("season") == data.frame.scoring_season)
+    expectations = compute_slot_expectations(reference_rows)
+    if not expectations:
+        return PitchShapeProfile(
+            entries=[],
+            unavailable_reason="compatible emitted slot reference unavailable",
+        )
+    assert reference_rows is not None
+    compatible_reference = reference_rows.filter(
+        (pl.col("level") == "MLB")
+        & (pl.col("game_types") == "R")
+        & (pl.col("unit") == "inches")
+        & (pl.col("pitcher_handling") == "handedness_normalized")
+        & (pl.col("statistical_unit") == "pitch")
+        & (pl.col("weighting") == "pitch_weighted")
+    )
+    first_reference = compatible_reference.row(0, named=True)
+    reference_population = (
+        f"manifest `{first_reference['manifest_id']}`; seasons "
+        f"{first_reference['seasons']}; {first_reference['level']} regular season; "
+        f"{str(first_reference['weighting']).replace('_', '-')} pitches; "
+        f"{str(first_reference['pitcher_handling']).replace('_', '-')}; "
+        f"statistical unit `{first_reference['statistical_unit']}`"
+    )
 
     entries: list[PitchShapeEntry] = []
     for row in agg.iter_rows(named=True):
@@ -383,8 +386,15 @@ def compute_pitch_shape(data: PitcherData) -> PitchShapeProfile | None:
         )
 
     if not entries:
-        return None
-    return PitchShapeProfile(entries=entries)
+        return PitchShapeProfile(
+            entries=[],
+            unavailable_reason="pitch samples are thin or reference variance is unavailable",
+            reference_population=reference_population,
+        )
+    return PitchShapeProfile(
+        entries=entries,
+        reference_population=reference_population,
+    )
 
 
 _MAX_RENDER_ENTRIES = 4
@@ -392,25 +402,23 @@ _MAX_RENDER_ENTRIES = 4
 
 
 def render_pitch_shape(profile: PitchShapeProfile | None) -> str:
-    """Render the shape profile as a self-documenting markdown section.
-
-    Explains the DEAD ZONE concept inline so LLM consumers can interpret
-    the tags without outside knowledge. Returns an empty string when no
-    profile is available so callers can skip the section.
-    """
-    if profile is None or not profile.entries:
+    """Render computed unavailability while preserving an intentionally omitted profile."""
+    if profile is None:
         return ""
+    if not profile.entries:
+        return (
+            f"## Pitch Shape vs Arm Slot\n\nUnavailable: {profile.unavailable_reason or 'insufficient data'}."
+        )
 
     lines = ["## Pitch Shape vs Arm Slot"]
     lines.append(
-        "Season movement vs league expectation for the same arm angle, "
-        "standardized against how much pitchers actually vary at that slot "
-        "(SD = between-pitcher spread). A fastball whose ride and run both "
-        "sit within 0.5 SD of slot expectation is a DEAD ZONE pitch -- "
-        "statistically the shape hitters' eyes predict from the release "
-        "slot. Residuals past 1.5 SD (shown in the tag) are deceptive "
-        "traits that play up or down relative to the slot."
+        "Season movement vs the emitted reference for the same arm-angle slot. "
+        "SD is the pitch-level spread and describes absolute physical rarity "
+        "only; it is not recent-vs-season change significance, a role "
+        "comparison, or model feature importance."
     )
+    if profile.reference_population:
+        lines.append(f"Population: {profile.reference_population}.")
     for e in profile.entries[:_MAX_RENDER_ENTRIES]:
         lines.append(
             f"- {e.pitch_name} ({e.pitch_type}): {e.arm_angle:.0f} deg slot; "

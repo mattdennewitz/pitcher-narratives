@@ -90,7 +90,8 @@ def build_anchor_message(synthesis: str, capsule: str) -> UserPrompt:
         f"## Synthesis (Data Analyst's Briefing)\n{synthesis}",
         CachePoint(),
         f"## Capsule (Editor's Narrative)\n{capsule}\n\n"
-        "Check the capsule against the synthesis. Report any issues, or return an empty warnings list if everything checks out.",
+        "Check the capsule against the synthesis. Report any issues, or return "
+        "an empty warnings list if everything checks out.",
     ]
 
 
@@ -124,9 +125,7 @@ def build_revision_message(
     ]
 
 
-def build_reconcile_message(
-    synthesis: str, capsule: str, warnings: list[AnchorWarning]
-) -> str:
+def build_reconcile_message(synthesis: str, capsule: str, warnings: list[AnchorWarning]) -> str:
     """Revision message for anchor warnings raised AFTER a data fact-revision.
 
     The capsule's numbers were just corrected against source data, so this

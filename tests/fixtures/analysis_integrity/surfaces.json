@@ -1,0 +1,8 @@
+[
+  {"surface": "report", "mode": "report", "explains_model": true},
+  {"surface": "changes", "mode": "changes", "explains_model": true},
+  {"surface": "recap", "mode": "recap", "explains_model": false},
+  {"surface": "morning", "mode": "recap", "explains_model": false},
+  {"surface": "ask", "mode": "ask", "explains_model": true},
+  {"surface": "diagnostics", "mode": null, "explains_model": false}
+]

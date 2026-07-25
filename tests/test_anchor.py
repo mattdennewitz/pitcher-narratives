@@ -18,7 +18,6 @@ from pitcher_narratives.anchor import (
     build_revision_message,
 )
 
-
 # ── AnchorWarning ─────────────────────────────────────────────────────────
 
 
@@ -80,7 +79,9 @@ def test_anchor_result_preserves_multiple_warnings():
 
 def _sample_warnings() -> list[AnchorWarning]:
     return [
-        AnchorWarning(category="MISSED_SIGNAL", description="Top concern about velocity drop was not addressed"),
+        AnchorWarning(
+            category="MISSED_SIGNAL", description="Top concern about velocity drop was not addressed"
+        ),
         AnchorWarning(category="DIRECTION_ERROR", description="Said S+ went up but it went down"),
     ]
 
@@ -186,10 +187,7 @@ def test_anchor_prompt_contains_summary_table_addendum():
     """
     from pitcher_narratives.anchor import ANCHOR_PROMPT
 
-    addendum = (
-        "Summary tables in a fixed section format are intentional "
-        "structure, not narrative violations."
-    )
+    addendum = "Summary tables in a fixed section format are intentional structure, not narrative violations."
     assert addendum in ANCHOR_PROMPT, (
         "ANCHOR_PROMPT is missing the summary-table tolerance addendum. "
         "This sentence prevents the anchor from flagging the generic "

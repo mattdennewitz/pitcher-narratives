@@ -19,3 +19,4 @@ morning-runs/
 
 # Wrangler local state
 .wrangler/
+.worktrees/

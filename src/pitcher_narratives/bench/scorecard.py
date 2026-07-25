@@ -96,11 +96,7 @@ def render_report(agg: dict, *, meta: dict) -> str:
     for tier in tiers:
         lines.append(f"## {tier}")
         lines.append("")
-        dims = sorted({
-            d
-            for p in providers
-            for d in agg.get(p, {}).get(tier, {}).get("dimensions", {})
-        })
+        dims = sorted({d for p in providers for d in agg.get(p, {}).get(tier, {}).get("dimensions", {})})
         lines.append("| Dimension | " + " | ".join(providers) + " |")
         lines.append("|-----------|" + "|".join(["------"] * len(providers)) + "|")
         for dim in dims:

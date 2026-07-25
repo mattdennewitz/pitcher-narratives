@@ -17,8 +17,13 @@ from pitcher_narratives.scout import ScoredAppearance, Signal
 
 def _app(pid: int, role: str, name: str | None = None) -> ScoredAppearance:
     return ScoredAppearance(
-        pitcher_id=pid, pitcher_name=name or f"Pitcher {pid}", throws="R",
-        game_date=date(2026, 6, 10), game_pk=1, n_pitches=80, score=5.0,
+        pitcher_id=pid,
+        pitcher_name=name or f"Pitcher {pid}",
+        throws="R",
+        game_date=date(2026, 6, 10),
+        game_pk=1,
+        n_pitches=80,
+        score=5.0,
         role=role,
         signals=[Signal("velo_delta", 3.0, "+2.1 mph vs season")],
     )
@@ -44,9 +49,7 @@ def _pick_cat(pid: int, category: str) -> dict:
 def test_slate_caps_each_category_at_five():
     """At most 5 picks per category; a 6th in one category is rejected."""
     with pytest.raises(ValidationError):
-        CurationSlate(
-            picks=[CurationPick(**_pick_cat(i, "lab_project")) for i in range(6)]
-        )
+        CurationSlate(picks=[CurationPick(**_pick_cat(i, "lab_project")) for i in range(6)])
 
 
 def test_slate_allows_five_per_category_across_categories():
@@ -130,13 +133,15 @@ def test_select_slate_rejects_duplicate_picks():
         select_slate(candidates, provider="gemini", _model_override=model)
 
 
-def test_slate_accepts_command_breakout_and_velo_drop():
+def test_slate_accepts_location_breakout_and_velo_drop():
     """The two new categories validate as picks."""
-    slate = CurationSlate(picks=[
-        CurationPick(**_pick_cat(1, "command_breakout")),
-        CurationPick(**_pick_cat(2, "velo_drop")),
-    ])
-    assert {p.category for p in slate.picks} == {"command_breakout", "velo_drop"}
+    slate = CurationSlate(
+        picks=[
+            CurationPick(**_pick_cat(1, "location_breakout")),
+            CurationPick(**_pick_cat(2, "velo_drop")),
+        ]
+    )
+    assert {p.category for p in slate.picks} == {"location_breakout", "velo_drop"}
 
 
 def test_pick_rejects_unknown_category():
@@ -162,12 +167,19 @@ def test_category_registry_order_and_labels():
     from pitcher_narratives.curator import CATEGORIES
 
     assert [c.id for c in CATEGORIES] == [
-        "clean_breakout", "command_breakout", "lab_project",
-        "identity_crisis", "velo_drop", "red_flag",
+        "clean_breakout",
+        "location_breakout",
+        "lab_project",
+        "identity_crisis",
+        "velo_drop",
+        "red_flag",
     ]
     assert [c.order for c in CATEGORIES] == [0, 1, 2, 3, 4, 5]
     labels = {c.id: (c.section_title, c.badge) for c in CATEGORIES}
     assert labels["clean_breakout"] == ("Clean Breakouts", "CLEAN BREAKOUT")
+    assert labels["location_breakout"] == (
+        "Location+ Breakouts",
+        "LOCATION+ BREAKOUT",
+    )
     assert labels["velo_drop"] == ("Velocity Drops", "VELO DROP")
     assert all(c.section_title and c.badge for c in CATEGORIES)
-

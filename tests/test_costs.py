@@ -57,7 +57,7 @@ def test_render_cost_block_contents():
     t.record("google-gla:gemini-3.1-pro-preview", 3_000, 500, stage="writer:Jones")
     block = t.render_cost_block(wall_s=94.0)
     assert "selector" in block
-    assert "writers" in block          # writer:* stages are grouped
+    assert "writers" in block  # writer:* stages are grouped
     assert "gemini-3.1-pro-preview" in block
     assert "94s" in block
     assert "$" in block

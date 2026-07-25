@@ -1,10 +1,9 @@
 # Pitcher Narratives — Methodology
 
-This document describes how `pitcher-narratives` turns static Statcast
-and Pitching+ data into a scout-voice scouting capsule. It is intended
-for people who want to understand the data transformations, the
-multi-agent pipeline, and the guardrails — not just how to run the CLI.
-For installation and CLI usage, see `README.md`.
+This document describes how `pitcher-narratives` turns a versioned
+PitchingPlus output bundle into scouting reports. It covers deterministic
+transformations, the multi-agent pipeline, and guardrails. For installation
+and CLI usage, see `README.md`.
 
 ## Overview
 
@@ -15,50 +14,53 @@ outlier tag the downstream stages need, so specialists receive inputs
 that already say "FB velo is DOWN 1.8 mph (OUTLIER, z=-2.1)" rather
 than two numbers that the model has to subtract and evaluate.
 
-The inputs are entirely static: a pair of Statcast parquet files in
-`var/statcast/` and a folder of pre-computed Pitching+ CSVs in `var/aggs/`.
-The output is a streamed scouting capsule plus a set of structured
-side artifacts — executive summary bullets, stuff analysis, data-audit
-flags, anchor-check results, and an optional hallucination-guard
-report. Everything is grounded against the same pitcher context built
-once per run.
+The sole runtime input is a static, versioned PitchingPlus bundle under
+`var/aggs/`. The generated capsule is buffered, converted to a typed
+provenance-bound artifact, and validated before it reaches stdout. Reports may
+then append a separate deterministic model-and-data-boundary explanation.
 
-## Data sources
+## Producer and data boundary
 
-### Statcast parquet (`var/statcast/`)
+Raw Statcast enters **PitchingPlus**. PitchingPlus performs feature processing,
+prediction, run-value conversion, centering, aggregation, and artifact
+publication. It emits a versioned bundle whose season manifests cover:
 
-- `var/statcast/2025.parquet`, `var/statcast/2026.parquet` — pitch-level
-  Statcast data for the 2025 and 2026 seasons. Loaded by `data.py` via
-  `load_all_statcast` / `load_pitcher_data`.
+- `all_pitches` rows used for exact game/frame selection;
+- pitcher, pitch-type, appearance, platoon, and team aggregates;
+- league and pitch-class reference populations;
+- formal Location+ and any emitted spatial evidence;
+- any emitted 13-outcome component-attribution artifact;
+- any registered model-evaluation/calibration artifact; and
+- semantic manifests with checksums, grains, natural keys, frames, variants,
+  populations, statistical units, weighting, and metric definitions.
 
-### Pitching+ CSVs (`var/aggs/`)
+`data.load_pitchingplus_bundle` validates the manifests and every required
+artifact before returning rows. Pitcher Narratives never opens raw Statcast,
+run-value tables, model files, count-weight artifacts, or unmanifested
+auxiliary data. Deterministic Narrative code may select, aggregate, compare,
+and label emitted facts. Agents may interpret only exact cited facts.
 
-Eight CSVs per season. The 2026 set is the current season; the 2025
-set provides cross-season baselines for year-over-year deltas.
-
-- `2026-pitcher.csv` — one row per pitcher per season.
-- `2026-pitcher_type.csv` — per pitcher per pitch type (P+/S+/L+,
-  usage, movement).
-- `2026-pitcher_appearance.csv` — one row per game per pitcher.
-- `2026-pitcher_type_appearance.csv` — per game per pitcher per pitch
-  type.
-- `2026-pitcher_type_platoon.csv` — season splits per pitcher per pitch
-  type against L and R hitters.
-- `2026-pitcher_type_platoon_appearance.csv` — per-game platoon splits.
-- `2026-all_pitches.csv` — individual pitches with P+/S+/L+.
-- `2026-team.csv` — team-level season rows.
-
-The 2025 analogues live alongside. `data.py` joins the year-aware files
-into year-over-year cross-season views.
+The canonical model contract is deterministic: PitchingPlus converts 13
+predicted outcome probabilities to expected run value with count-specific run
+values. P includes realized location. S omits realized `plate_x`/`plate_z` but
+retains release position/extension, arm angle, derived acceleration/spin
+coordinates, handedness/platoon, fastball-velocity context, coarse repertoire
+shares, and count processing. Exported S uses training-sample
+`P(count | broad pitch class, same_side)` outcome marginalization followed by
+actual-count run-value scoring; formal L uses hidden same-count S. P, S, and L
+have independent same-scoring-season MLB regular-season pitch-weighted 100
+anchors. The current 20–80 display is uncapped `plus - 50`, not SD-scaled.
+Conditional expected rates are means of per-pitch ratios, and group grades have
+no model-level minimum or shrinkage. Location+ is associative realized-location
+evidence, not command, intent, target execution, or causal attribution.
 
 ### Behavioral choices in `data.py`
 
 - **Lookback window is relative to the dataset**, not wall clock. The
   `-w/--window` value is subtracted from the most recent `game_date`
   present in the loaded appearance data, not from "today." This keeps
-  behaviour stable against frozen parquet/CSV snapshots — running the
-  CLI a month later still produces the same result as long as the
-  files on disk are the same.
+  behavior stable against frozen bundle snapshots — rerunning later produces
+  the same result while the bundle is unchanged.
 - **Starter vs reliever is classified per appearance** from the first
   inning pitched. First inning of the outing == 1 → `SP`, otherwise
   `RP`. Openers (who throw the first inning before handing off) end up
@@ -71,10 +73,9 @@ into year-over-year cross-season views.
 
 ## Engine (`engine.py`)
 
-`engine.py` is the large computation module. It owns every metric,
-delta, baseline, and outlier flag that the downstream stages consume.
-Specialists and the writer never recompute anything from raw data —
-they just read pre-annotated inputs from the engine.
+`engine/` contains deterministic selection, aggregation, comparison, and
+labeling over producer-emitted facts. Specialists and the writer never
+recompute PitchingPlus predictions or reconstruct data from raw sources.
 
 ### Delta vocabulary
 
@@ -104,64 +105,46 @@ know whether "FB velo down 0.8 mph" is noise or a real shift.
 
 ## Context assembly (`context.py`)
 
-`PitcherContext` is a Pydantic model that bundles everything the
-pipeline needs for a single pitcher: role info, fastball detail, TTO
-splits, arsenal table, execution metrics, location-impact model
-internals, release-point drift, contact quality, platoon splits,
-first-pitch tendencies, recent appearances, year-over-year snapshot,
-and a detached `attributions` field.
+`PitcherContext` is a Pydantic model assembled from one canonical frame. It
+carries pitcher identity and role, fastball and arsenal summaries, modeled
+execution metrics, P/S intermediate probabilities, formal Location+, emitted
+spatial distributions, 13-outcome attribution, release and arm-slot shape,
+contact/platoon/first-pitch/workload summaries, cross-season comparisons,
+calibration evidence, a closed capability block, and the manifest-backed fact
+registry.
 
-### `to_prompt()` — up to 15 rendered sections
+### `to_prompt()` — 16 ordered sections
 
-`PitcherContext.to_prompt()` renders up to **15 sections** in the order
-below. Empty sections are skipped (for example, single-season pitchers
-get no `Year-over-Year` block). The fifteen sections are:
+`PitcherContext.to_prompt()` delegates to `prompt_builder.py`. Empty sections
+are skipped. The order is:
 
-1. **Title** — `# {pitcher_name} ({L/R}HP) -- Scouting Context`
-2. **`## Temporal Context`** — analysis date, season phase
-   (early / mid / full), prior-year workload relevance line.
-3. **`## Executive Summary`** — last outing; fastball velo delta;
-   fastball P+/S+/L+ triad deltas; biggest arsenal usage shift; TTO
-   summary; hard-hit delta; workload flag.
-4. **`## Role`** — most recent role (SP/RP), appearance count,
-   consecutive days pitched, workload concern flag.
-5. **`## Primary Fastball: {pitch_name} ({type})`** — velocity,
-   P+/S+/L+ triad + deltas, movement deltas, within-game velocity arc
-   from the last outing. Falls back to
-   `## Primary Fastball\n- No standard fastball identified` when no
-   standard fastball is found.
-6. **`## Times Through Order`** — fastball vs secondary P+ split per
-   pass; per-pitch-type usage + P+ across passes with mix-shift flags;
-   platoon-within-TTO breakdowns. Skipped when there is no TTO data
-   (e.g. pure relievers with one-inning outings).
-7. **`## Arsenal`** — top pitch types by usage with usage delta and
-   P+/S+/L+ columns vs season baseline.
-8. **`## Execution`** — CSW%, Zone%, Chase%, xWhiff, xSwing, and xRV100
-   percentile per pitch type.
-9. **`## Model Internals: Location Impact`** — S-variant (stuff-only)
-   probabilities and P-vs-S deltas per pitch type. This is the
-   location-impact decomposition: how much of each pitch's P+ comes
-   from raw stuff vs location vs command.
-10. **`## Release Point`** — per-pitch-type release x/z/extension vs
-    the pitcher's own season baseline.
-11. **`## Contact Quality`** — hard-hit rate, window vs season, with
-    delta.
-12. **`## Platoon Shifts`** — per-pitch-type usage and P+ by batter
-    handedness.
-13. **`## First-Pitch Tendencies`** — top first-pitch types, recent vs
-    season share.
-14. **`## Recent Appearances`** — date, IP, pitch count, rest days.
-15. **`## Year-over-Year`** — cross-season pitcher-level deltas plus
-    added and dropped pitches. Skipped for single-season pitchers.
+1. title;
+2. temporal context;
+3. deterministic executive context summary;
+4. role;
+5. primary fastball;
+6. arsenal;
+7. modeled execution;
+8. P/S intermediate probabilities;
+9. model validation and uncertainty;
+10. release point;
+11. pitch shape versus arm-slot expectation;
+12. contact quality;
+13. platoon shifts;
+14. first-pitch tendencies;
+15. recent appearances; and
+16. year-over-year comparison.
 
-### What `to_prompt()` does NOT render
+The prompt also carries typed fact-registry lineage. Unsupported classes remain
+explicitly unavailable rather than being synthesized from nearby data.
 
-`PitcherContext.attributions` — the 13-outcome xRV100 decomposition per
-pitch type — is **not** rendered by `to_prompt()`. It is consumed
-directly by `_build_runvalue_input` in `pipeline.py`, which formats it
-into the run-value specialist's bespoke input. Keeping it out of the
-shared context render prevents all specialists from seeing the full
-attribution table when only one of them needs it.
+### Specialist-only evidence
+
+The 13-outcome attribution table is not rendered into the shared prompt.
+`_build_runvalue_input` supplies it only to the run-value specialist. Formal
+Location+ and spatial distributions likewise reach the location handoff under
+their exact emitted semantics. Keeping evidence scoped prevents agents from
+turning unrelated aggregates into model drivers.
 
 ## Scout (`scout.py`)
 
@@ -169,22 +152,25 @@ attribution table when only one of them needs it.
 scores each one on a heuristic signal table, so the expensive narrative
 pipeline only runs on appearances that look interesting.
 
-### Ten scored signals
+### Scored signal registry
 
-`_WEIGHTS` defines ten signals, listed here highest weight first:
+`_WEIGHTS` defines the following emitted and reserved signal weights:
 
-| Signal | Weight | Threshold | Intent |
+| Signal | Weight | Threshold | Interpretation |
 |---|---|---|---|
 | `new_pitch` | 4.0 | Season usage `< 1%` and game usage `> 5%` | A new pitch type appeared at meaningful volume |
-| `development_opportunity` | 3.5 | `S+ >= 110` and `L+ <= 80` on the same pitch | High stuff without feel — a pitch worth developing |
-| `velo_delta` | 3.0 | `>= 1.5 mph` from season fastball average | Fastball velocity swing vs season |
-| `splus_lplus_divergence` | 3.0 | `S+` and `L+` deltas each `>= 10 pts`, opposite signs | Stuff/command split on a single pitch |
-| `dropped_pitch` | 3.0 | Season usage `>= 10%` and game usage `0%` | Established pitch was shelved |
-| `pplus_swing` | 2.5 | `>= 15 pts` from season P+ | Overall P+ spike or collapse |
-| `walk_rate_pplus_contradiction` | 2.5 | `P+ >= 105` and `L+ < 85` at appearance level | Good overall stuff without command |
+| `velo_decline` | 3.5 | Fastball velocity falls `>= 1.5 mph` from first to last outing third, with `>= 9` fastballs | Within-outing velocity decline |
+| `splus_lplus_level_gap` | 3.5 | `S+ >= 110` and `L+ <= 80` on the same pitch | A sufficiently sampled S+/L+ grade gap |
+| `location_grade_surge` | 3.5 | Season `L+ < 90`, appearance `L+ >= 110` | Location+ grade change versus season |
+| `velo_delta` | 3.0 | `>= 1.5 mph` from season fastball average | Fastball velocity swing versus season |
+| `splus_lplus_divergence` | 3.0 | `S+` and `L+` deltas each `>= 10 pts`, opposite signs | Opposing S+/L+ grade changes on one pitch |
+| `dropped_pitch` | 3.0 | Season usage `>= 10%` and game usage `0%` | Established pitch was absent |
+| `pplus_swing` | 2.5 | `>= 15 pts` from season P+ | Overall P+ spike or decline |
+| `pplus_lplus_split` | 2.5 | `P+ >= 105` and `L+ < 85` at appearance level | Appearance-level P+/L+ grade split |
+| `spin_drop` | 2.0 | Fastball spin is at least `1.5` robust standard deviations below the leave-one-game-out reference | Fastball spin decline |
 | `usage_shift` | 2.0 | `>= 8 pp` pitch-type usage change from season | Mix shift on any pitch type |
-| `hard_hit_spike` (stub) | 1.5 | (none) | Listed in the weights table but not yet wired into the scanner |
-| `workload_flag` | 1.0 | `>= 3` consecutive calendar days pitched | Reliever workload concern |
+| `hard_hit_spike` (reserved) | 1.5 | none | No current emitter |
+| `workload_flag` | 1.0 | `>= 3` consecutive calendar days pitched | Reliever workload state |
 
 **About `hard_hit_spike`.** The entry exists in the `_WEIGHTS` dict at
 `scout.py:37`, but no code path in `scout.py` emits a `Signal` with
@@ -206,16 +192,16 @@ ranking and writes short framing blurbs.
 ## Pipeline (`pipeline.py`)
 
 `pipeline.py` contains the sole report generation path — there is no
-single-agent fallback. The streaming entry point `generate_pipeline_streaming`
-assembles the agents via `make_pipeline_agents(provider, thinking)` and
-then drives the five phases below in order.
+single-agent or non-bundle fallback. The historically named
+`generate_pipeline_streaming` entry point runs a buffered pipeline; only the
+CLI prints the final result.
 
-### Phase 1 — specialists in parallel
+### Phases 1–1.5 — four typed specialists and audits
 
-Five specialist agents run concurrently via `run_specialists`. Each
-receives a bespoke input built by its `_build_*_input` helper, with
-every metric pre-annotated with a delta from league average and an
-explicit `NORMAL`/`OUTLIER` z-score tag from `engine.outlier_tag`.
+The four specialists are `stuff`, `location`, `runvalue`, and `trends`.
+`run_spine_core` runs the first three concurrently and audits each against its
+exact input. `run_spine_tail` runs trends for the selected temporal frame,
+audits it, and joins it to the reusable core.
 
 | Specialist | Tier | temp | max_tokens | Prompt |
 |---|---|---|---|---|
@@ -223,91 +209,39 @@ explicit `NORMAL`/`OUTLIER` z-score tag from `engine.outlier_tag`.
 | `location` | Mini | 0.3 | LARGE (4096) | `_LOCATION_SPECIALIST_PROMPT` |
 | `runvalue` | Mini | 0.3 | LARGE (4096) | `_RUNVALUE_SPECIALIST_PROMPT` |
 | `trends` | Mini | 0.3 | MEDIUM (2048) | `_TREND_SPECIALIST_PROMPT` |
-| `game_shape` | Mini | 0.3 | MEDIUM (2048) | `_GAME_SHAPE_SPECIALIST_PROMPT` |
 
-Only the stuff specialist runs on the Pro-tier model — it is the one
-output that surfaces in the final narrative as `# Stuff Analysis` so
-it gets the highest-quality model. The other four specialists produce
-inputs that only the writer ever sees, so Mini-tier is sufficient.
-
-### Phase 1.5 — audit + revise
-
-`audit_and_revise_specialists` runs the auditor (Mini tier, `temp=0.1`,
-`retries=5`, SMALL token budget) on each of the five specialist outputs
-in parallel. The auditor's job is to verify every quantitative claim
-against the ground-truth input that was passed to that specialist.
-
-- **Phase 1.5a** — all five audits run concurrently.
-- **Phase 1.5b** — any specialist whose audit fires flags is re-run
-  with its original input plus the audit corrections. Clean
-  specialists pass through untouched.
-
-`AuditFlag` and `AuditResult` are defined in `pipeline.py`. The writer
-never sees flawed specialist prose — if an audit flag survives, the
-specialist is re-run before the writer ever starts composing.
+Specialist agents return `SpecialistAnalysisDraft`; deterministic code resolves
+citations and validates the final `SpecialistAnalysis`. The auditor returns
+typed `AuditResult` flags. Flagged specialists are revised and re-audited. A
+provider failure, invalid draft, leaked internal tag, or residual flag marks
+that specialist unavailable; raw or generated fallback prose is not handed to
+downstream synthesis.
 
 ### Phase 1.75 — signal extractor
 
-A dedicated `signal_extractor` agent (Mini tier, SMALL budget,
-`retries=3`) reads the clean specialist outputs and returns a
-`KeySignals` object from `signals.py`.
+The signal extractor runs only when all four specialist analyses are verified.
+It returns typed, evidence-bound `KeySignals`. Provider failure, schema failure,
+or invalid provenance leaves signals explicitly unavailable; it never promotes
+uncited prose into evidence.
 
-**Primary fields (required, non-empty):**
+### Phases 2–2.5 — buffered narrative validation
 
-- `top_improvement` — the single most important positive finding
-  across all specialists, with pitch type and metric cited.
-- `top_concern` — the single most important negative finding across
-  all specialists, with pitch type and metric cited.
+The Pro-tier writer receives the four verified analyses plus any verified key
+signals and returns `NarrativeArtifactDraft`. No draft is streamed. The shared
+renderer then:
 
-**Secondary fields (optional, may be `null`):**
+1. resolves every claim and fact citation into a deterministic
+   `NarrativeArtifact`;
+2. runs the anchor revision loop against specialist synthesis;
+3. runs the capsule audit against producer-backed ground truth;
+4. re-anchors any fact-revised capsule;
+5. performs a detection-only final audit to catch reconciliation regressions;
+   and
+6. fails closed to an unavailable narrative when no clean verdict exists.
 
-- `development_pitch` — a pitch with high `S+` and low `L+` that would
-  solve a documented platoon gap.
-- `specialist_tension` — where two specialists disagree about the same
-  pitch.
-- `arsenal_dependency` — one pitch carrying the profile while the rest
-  is replacement-level.
-- `connected_changes` — multiple specialists reporting facets of the
-  same underlying shift.
-- `platoon_vulnerability` — a clear weakness against one handedness
-  that the data suggests is not being addressed.
-- `sample_size_caution` — when the strongest finding rests on thin
-  data.
-
-**Phase 1.75 is non-critical.** If the signal extractor raises, the
-pipeline continues with `key_signals=None` and the downstream anchor
-check degrades gracefully (primary-signal enforcement just can't fire).
-Failing the signal extractor never fails the whole run.
-
-### Phase 2 — writer + executive summary in parallel
-
-The writer (Pro tier, `temp=0.7`, LARGE budget) runs from
-`build_writer_input(ctx, specialists, key_signals)` and streams to
-stdout — this is what the user sees scrolling past under
-`# Scouting Report`.
-
-Concurrently, the executive summary agent (Mini tier, `temp=0.3`,
-SMALL budget) runs from the same input. Summary failures are
-non-fatal: an empty bullet list renders as
-`_Summary unavailable — no bullets produced._` and the rest of the
-run continues.
-
-### Phase 2.5 — anchor check + revision loop
-
-`_run_anchor_revision_loop` drives the anchor agent (Mini tier,
-`temp=0.1`, SMALL budget) via `anchor.ANCHOR_PROMPT`. The synthesis
-passed to the anchor is `render_key_signals(key_signals)` concatenated
-with the specialist outputs. The anchor's job is to verify that the
-capsule is faithful to that synthesis — not to evaluate stuff quality
-or narrative style, only whether the prose matches the data it was
-built from.
-
-When the anchor is not clean, the writer is asked to revise via
-`anchor.build_revision_message` — a fresh prompt with no message
-history, a `CachePoint` breakpoint after the synthesis, and a targeted
-instruction that says "fix only the listed warnings." Up to
-`MAX_REVISIONS` (5) revision passes run, and then one final anchor
-check captures any surviving warnings.
+Only after the final capsule is verified does `_run_summaries` create the
+executive summary. The summary is itself a typed artifact whose claims must be
+a subset of the final capsule's verified claims.
 
 #### Anchor warning categories
 
@@ -324,39 +258,26 @@ emitted literally by the anchor prompt:
 
 `AnchorResult.is_clean` is `True` when `warnings` is empty.
 
-#### Reconciling the anchor check with fact-revised capsules
+#### Artifact freshness and reconciliation
 
-The anchor check and the fact-check (`run_capsule_audit`, part of the
-capsule audit) validate the capsule against two different references:
-the anchor's reference is the synthesis (does the prose match the
-specialist findings?), while the fact-check's reference is the
-ground-truth data (does the prose match reality?). **When they
-disagree, the data wins** — a fact revision is allowed to invalidate
-an anchor result that was captured before the ground truth was
-applied.
+Anchor checks measure editorial coverage against the verified specialist
+synthesis; capsule audits measure factual and semantic correctness against
+producer-backed evidence. Anchor is never presented as factual verification.
 
-Concretely: if a fact revision rewrites the capsule (`capsule_revised`
-is `True`), the anchor check computed earlier in the pipeline no
-longer describes the final text, so `_reconcile_anchor_warnings`
-re-anchors it. If the re-anchor comes back clean, nothing further
-happens. Otherwise, as long as budget remains
-(`anchor_depth - revision_count`), the pipeline runs reconciling
-revision passes: the writer is asked to fix the listed warnings under
-a prompt that forbids changing any numeric value, since the fact-check
-already verified those numbers and the anchor may simply be looking at
-stale synthesis. Each pass re-anchors and stops early either on a
-clean result or when the warning set stalls (identical warnings two
-passes in a row).
+Every writer or fact-revision mutation invalidates the prior anchor verdict.
+After a fact revision, `_reconcile_anchor_warnings` anchors the rewritten text,
+spends any remaining bounded revision budget, and performs a detection-only
+fact re-audit. A re-anchor exception appends `AUDIT_FAILED` and withholds the
+capsule; it cannot reuse the clean verdict for an older artifact. If a
+reconciliation revision regresses facts, the pipeline reverts to the
+fact-verified text and retains the anchor verdict for that exact text.
 
-Once the loop ends, a detection-only capsule re-audit
-(`max_fact_revisions=0`) guards the outcome: if the reconciled prose
-regressed a verified fact, the pipeline reverts to the fact-revised
-capsule and ships the earlier recheck warnings as advisory rather than
-keeping the regression. A crash anywhere in this reconcile step is
-advisory-plus — it's logged and the pipeline keeps the prior
-`anchor_check` rather than failing the run. Reconcile passes count
-toward `revision_count`, so the CLI's "Revised N time(s)" reflects
-them the same as ordinary anchor revisions.
+`is_unverified` gates empty output, residual fact flags, value-parity failures,
+reader claim/metric failures, and correctness anchor categories
+(`MISSED_SIGNAL`, `DIRECTION_ERROR`, `UNSUPPORTED`, `OVERSTATED`).
+`UNDERWEIGHTED` remains editorial advice. Summary generation runs only from the
+final materialized capsule artifact, and invalid or wrong-shape summaries are
+unavailable rather than recovered from generated residue.
 
 #### Temporal frames
 
@@ -368,24 +289,30 @@ either baseline is grounded — it must never "correct" a number from one frame
 into the other. The anchor receives changes-mode guidance to the same effect,
 and to reserve MISSED_SIGNAL/UNDERWEIGHTED for signals that describe a change.
 
-## Hallucination guard
+## Reader claim guard
 
-After Phase 2.5 completes, `check_hallucinated_metrics` in `pipeline.py`
-regex-scans the final narrative text and returns a `HallucinationReport`
-with two fields:
+`check_hallucinated_metrics` deterministically checks the generated artifact
+for unknown metrics, discouraged outcome-stat language, and claim classes
+whose typed capabilities or citations are unavailable. These warnings gate the
+verification stamp and exit status. CLI diagnostics run against the generated
+artifact only — never against the separately validated deterministic model
+explainer — and stay off the reader stream unless requested with `-v` or
+`--diagnostics-file`.
 
-- `unknown_metrics` — metric-like patterns (xMetric names like xWhiff,
-  acronyms-plus-percent like `CSW%`, and the `P+`/`S+`/`L+` family)
-  that do not appear in a known-safe allowlist. This catches cases
-  where the writer invents a plausible-sounding metric.
-- `outcome_stat_warnings` — traditional outcome stats the writer prompt
-  explicitly warns against (ERA, WHIP, W-L, etc.). These are
-  discouraged because scouting capsules are about process, not
-  outcomes.
+## Release acceptance
 
-The CLI (`cli.py`) emits the `# Hallucination Check` section **only
-when the report is not clean**. A clean narrative never prints a
-hallucination section.
+`make release-acceptance` is the clean-checkout cross-repository integrity gate.
+It runs the deterministic `FunctionModel` surface and manifest-loader contracts,
+then runs PitchingPlus's canonical metric-semantics, evaluation, archive, schema,
+and output-bundle contract tests in the sibling producer checkout.
+
+The acceptance fixture covers report, changes, recap, morning, ask, and
+diagnostics policy; manifest-only data ingress; structured audit output;
+reader-claim rejection; and fail-closed verification banners. Diagnostics
+inspect artifacts but never inject the deterministic model explainer into the
+reader stream. Producer tests remain authoritative for P/S/L formulas and
+manifest publication; consumer tests prove those versioned artifacts survive
+selection, composition, and validation without a raw-data fallback.
 
 ## Caching and prompt cache breakpoints
 
@@ -394,15 +321,11 @@ input and each anchor-flavoured message is a `list[str | CachePoint]`
 rather than a plain string, which lets the pipeline declare cache
 boundaries explicitly.
 
-**Specialist inputs (5 places in `pipeline.py`).** Each of the five
-`_build_*_input` helpers — `_build_stuff_input`, `_build_location_input`,
-`_build_runvalue_input`, `_build_trend_input`, `_build_game_shape_input`
-— emits a list shaped like
-`[header + league baselines, CachePoint(), per-pitch data]`. The
-header prefix (role guidance, league baselines, S-variant tables,
-`NORMAL`/`OUTLIER` legend) is stable across reruns for the same
-pitcher, so the cache-friendly prefix is hoisted in front of the
-breakpoint while the variable pitch-level data trails behind it.
+**Specialist inputs (4 places in `pipeline.py`).** `_build_stuff_input`,
+`_build_location_input`, `_build_runvalue_input`, and `_build_trend_input`
+return a stable manifest-backed prefix, `CachePoint()`, and variable
+pitch/frame evidence. The producer-backed prefix can be reused while the
+pitch-specific tail changes.
 
 **Anchor messages (2 places in `anchor.py`).**
 `build_anchor_message(synthesis, capsule)` and
@@ -426,18 +349,16 @@ and cost meaningfully on retries and same-pitcher reruns.
 
 | Provider key | Pro tier (`PROVIDERS`) | Mini tier (`MINI_PROVIDERS`) |
 |---|---|---|
-| `openai` | `openai:gpt-5.4` | `openai:gpt-5.4-mini` |
 | `claude` | `anthropic:claude-sonnet-4-6` | `anthropic:claude-haiku-4-5` |
-| `gemini` | `google-gla:gemini-3.1-pro-preview` | `google-gla:gemini-flash-latest` |
+| `gemini` | `google-gla:gemini-3.5-flash` | `google-gla:gemini-flash-latest` |
 
 ### Token budgets
 
-- `TOKEN_BUDGET_SMALL = 1024` — anchor, auditor, executive summary,
-  signal extractor (short structured output)
-- `TOKEN_BUDGET_MEDIUM = 2048` — compact specialists (`trends`,
-  `game_shape`)
-- `TOKEN_BUDGET_LARGE = 4096` — writer plus the `stuff`, `location`,
-  and `runvalue` specialists (long-form prose)
+- `TOKEN_BUDGET_SMALL = 1024` — specialist auditor and anchor
+- `TOKEN_BUDGET_MEDIUM = 2048` — trends specialist, capsule auditor, summary,
+  signal extractor
+- `TOKEN_BUDGET_LARGE = 4096` — writer, answerer, stuff/location/run-value
+  specialists
 
 ### Role → tier / temp / max_tokens / thinking cap
 
@@ -448,12 +369,13 @@ clamps the user-supplied `--thinking` level to a per-role ceiling.
 |---|---|---|---|---|
 | Stuff specialist | Pro | 0.3 | LARGE | `medium` |
 | Location / RunValue | Mini | 0.3 | LARGE | `medium` |
-| Trends / Game Shape | Mini | 0.3 | MEDIUM | `medium` |
+| Trends | Mini | 0.3 | MEDIUM | `medium` |
 | Writer | Pro | 0.7 | LARGE | *(user level, uncapped)* |
-| Auditor | Mini | 0.1 | SMALL | `low` |
+| Specialist Auditor | Mini | 0.1 | SMALL | `low` |
+| Capsule Auditor | Mini | 0.1 | MEDIUM | `medium` |
 | Anchor | Mini | 0.1 | SMALL | `low` |
-| Executive Summary | Mini | 0.3 | SMALL | `medium` |
-| Signal Extractor | Mini | 0.3 | SMALL | `medium` |
+| Executive Summary | Mini | 0.3 | MEDIUM | disabled |
+| Signal Extractor | Mini | 0.3 | MEDIUM | `medium` |
 
 The writer is intentionally uncapped — it's the one place where the
 user's `--thinking high` or `--thinking xhigh` actually matters for
@@ -462,127 +384,73 @@ short structured outputs mostly just burns tokens.
 
 ### Provider quirks (`make_model_settings`)
 
-- **Gemini** always uses `GoogleModelSettings` with
-  `google_thinking_config={"thinking_level": "high" | "low"}`. CLI
-  levels `high` and `xhigh` map to `"high"`; everything else maps to
-  `"low"`. `temperature` and `max_tokens` pass through unchanged.
-- **Claude** disables thinking entirely when `mini=True` or when
-  `max_tokens <= TOKEN_BUDGET_MEDIUM` — otherwise Claude's thinking
-  budget would exceed the output budget and the request would fail.
-  When thinking is on, temperature is forced to `1` (Claude refuses
-  non-1 temperature with thinking enabled).
-- **OpenAI** disables `reasoning_effort` for mini-tier models —
-  `gpt-5.4-mini` doesn't support it via chat completions — and omits
-  `max_tokens` entirely when the budget is `<= TOKEN_BUDGET_MEDIUM`.
-  Reasoning tokens count against `max_tokens`, so small caps choke
-  the model before it produces visible output.
+- **Gemini** uses `GoogleModelSettings`; `high`/`xhigh` request high thinking,
+  lower CLI levels request low thinking, and pure distillation can disable it.
+- **Claude** disables thinking for mini models and small output budgets.
+  Supported effort aliases are normalized before the request.
 
-## Q&A analyst (`analyst.py`)
+## Grade Q&A (`qa.py`)
 
-`pitcher-ask` is a separate entry point that answers natural-language
-questions about a pitcher. It is **not** a wrapper around the narrative
-pipeline — it is a single tool-calling agent that owns its own context.
+`pitcher-narratives ask` is a first-class output surface for focused questions
+of the form “why does [pitcher]'s [pitch] grade [value] [P+/S+/L+]?” The parser
+resolves pitcher and pitch identity, then `build_grade_input` supplies only the
+named grade family's typed same-frame facts, capability block, model
+probabilities, emitted references, formal Location+ evidence, and bounded
+calibration provenance.
 
-- **Tier / temp:** Pro tier, `temp=0.3`, LARGE token budget.
-- **Default provider:** `pitcher-ask` defaults to `gemini` (not openai — this is intentional and different from `pitcher-narratives`, which defaults to openai).
-- **System prompt:** `ANALYST_INSTRUCTIONS`.
-- **Entry point:** `ask_question_streaming(question, context, data,
-  provider, thinking, ...)`.
+The Pro-tier answer agent returns generated prose only. It may interpret cited
+evidence, but cannot invent feature weights, decision traces, model drivers,
+command, intent, target execution, tunneling, biomechanics, or observed hitter
+behavior. The answer is audited against the exact grade input. Flagged answers
+are revised and re-audited; a residual flag fails closed.
 
-### Tools (exactly two)
-
-The agent is constructed at `analyst.py:464` with exactly two tools:
-
-- **`get_pitcher_summary(ctx)`** — returns league baselines (per pitch
-  type, including stddev) plus the full `PitcherContext.to_prompt()`
-  output. This is the broad-view tool: whenever the agent needs the
-  whole picture, it calls this.
-- **`get_pitch_detail(ctx, pitch_type)`** — returns focused arsenal,
-  execution, platoon, model-internals, and 13-outcome attribution data
-  for one specific pitch type. Accepts human pitch type names
-  ("slider", "four-seam") or Statcast codes ("SL", "FF") via the
-  `PITCH_TYPE_MAP` synonym table.
-
-These two tools are the entire tool set — there are no others.
-Everything the agent needs is covered by summary-plus-detail, and the
-agent is free to call `get_pitch_detail` multiple times to assemble a
-multi-pitch answer.
-
-### Resolver and input plumbing
-
-`resolver.py` uses `rapidfuzz` to fuzzy-match the pitcher name out of
-the question text (`extract_pitcher_from_question`). If no pitcher is
-found, or if multiple pitchers match ambiguously, the CLI exits with
-an error listing the candidates. Once the pitcher is resolved,
-`data.load_pitcher_data` and `context.assemble_pitcher_context` build
-the same `PitcherContext` the narrative pipeline uses, and it is
-injected into the agent as part of `QADeps`.
-
-### `ask_question_pipeline` / `PipelineAnswer`
-
-`analyst.py` also defines `ask_question_pipeline` and `PipelineAnswer`
-— a multi-agent Q&A path that reuses the specialist → audit → signal
-extractor flow from `pipeline.py` before calling a final answerer
-agent. The `pitcher-ask` CLI currently uses the simpler single-agent
-tool-calling path (`ask_question_streaming`); the pipeline path exists
-as an alternate implementation for future use.
+After a clean answer, `qa.answer_question` appends the same versioned
+deterministic model-and-data-boundary explanation used by report and changes.
+That section is composed outside the audited generated answer. Calibration
+language reports only the manifest-covered evaluation artifact's schema/model/
+feature versions, population, as-of date, holdout year, and row count; absent
+evidence yields an explicit no-confidence statement.
 
 ## End-to-end diagram
 
 ```
-load_pitcher_data (data.py)
+PitchingPlus versioned bundle
         |
         v
-assemble_pitcher_context (context.py)
-        |
-        v
-+---------------------------------------------------+
-|  Phase 1 — five specialists in parallel           |
-|    stuff | location | runvalue | trends | game_shape
-+---------------------------------------------------+
+load_pitchingplus_bundle -> canonical frame -> PitcherContext + FactRegistry
         |
         v
 +---------------------------------------------------+
-|  Phase 1.5 — per-specialist audit + re-run        |
-|    (auditor x 5 in parallel, then revise flagged) |
+|  Four specialists + per-specialist audit         |
+|    core: stuff | location | runvalue              |
+|    tail: trends (mode-specific frame)             |
 +---------------------------------------------------+
         |
         v
 +---------------------------------------------------+
-|  Phase 1.75 — signal extractor (non-critical)     |
-|    -> KeySignals(top_improvement, top_concern,    |
-|       + 6 optional secondary fields) or None      |
+|  Verified signal extraction                      |
+|    unavailable when specialist handoff is partial |
 +---------------------------------------------------+
         |
         v
 +---------------------------------------------------+
-|  Phase 2 — writer (streamed) + exec summary       |
-|    (parallel, same input)                         |
+|  Buffered typed writer artifact                   |
+|    anchor -> fact audit -> re-anchor -> guard     |
 +---------------------------------------------------+
         |
         v
 +---------------------------------------------------+
-|  Phase 2.5 — anchor check + revision loop         |
-|    (up to MAX_REVISIONS = 5 passes)               |
-|    warnings: MISSED_SIGNAL / UNDERWEIGHTED /      |
-|              UNSUPPORTED / DIRECTION_ERROR /      |
-|              OVERSTATED                           |
+|  Final verified capsule -> typed summary          |
+|  diagnostics inspect generated artifacts only     |
 +---------------------------------------------------+
         |
         v
-check_hallucinated_metrics (pipeline.py)
+deterministic model explanation (report/changes; optional)
         |
         v
-stdout:
-  # Scouting Report
-  # Executive Summary
-  # Stuff Analysis
-  # Data Audit
-  # Anchor Check
-  # Hallucination Check   (only when not clean)
+CLI reader output + separate diagnostics
 ```
 
-All five phases share the same `PitcherContext`, and every specialist
-input is built from that single source. The anchor check and the
-hallucination guard are the two structural guardrails that keep the
-LLM honest against the data it was given.
+Every generated factual statement traces to a manifest-covered row and exact
+frame. Validation failure removes the narrative rather than relabeling
+unverified generated prose as evidence.

@@ -6,10 +6,13 @@ for the full orchestration using pydantic-ai's TestModel.
 """
 
 import asyncio
+from types import SimpleNamespace
 
+import polars as pl
 import pytest
 from pydantic_ai.models.test import TestModel
 
+from pitcher_narratives.claims import SpecialistAnalysis
 from pitcher_narratives.context import assemble_pitcher_context
 from pitcher_narratives.data import load_pitcher_data
 from pitcher_narratives.engine import (
@@ -21,6 +24,21 @@ from pitcher_narratives.engine import (
     outlier_tag,
     render_league_baselines,
 )
+from pitcher_narratives.facts import (
+    AnalysisClaim,
+    ClaimType,
+    NarrativeArtifact,
+    NarrativeClaim,
+)
+from pitcher_narratives.models import (
+    ClaimDraft,
+    NarrativeArtifactDraft,
+    NarrativeClaimDraft,
+    SpecialistAnalysisDraft,
+    VerificationState,
+    empty_specialist_analysis,
+)
+from pitcher_narratives.personas import CHANGES, REPORT
 from pitcher_narratives.pipeline import (
     _STUFF_SPECIALIST_PROMPT,
     AnalyzedContext,
@@ -33,7 +51,6 @@ from pitcher_narratives.pipeline import (
     _build_trend_input,
     _flatten_prompt,
     audit_and_revise_specialists,
-    check_explainer_present,
     generate_pipeline_streaming,
     make_pipeline_agents,
     run_analysis_spine,
@@ -49,6 +66,88 @@ def ctx():
     """Load data once per module (read-only test data)."""
     data = load_pitcher_data(TEST_PITCHER, recent_appearances=10)
     return assemble_pitcher_context(data)
+
+
+def _evidence_fact_id(ctx) -> str:
+    return next(
+        fact.id
+        for fact in ctx.facts.facts()
+        if fact.frame_id == ctx.frame_id
+        and fact.value is not None
+        and (fact.sample_size is None or fact.sample_size > 0)
+        and fact.sufficiency in {"available", "adequate", "held_out", "full"}
+    )
+
+
+def _analysis(ctx, text: str = "Supported observation.") -> SpecialistAnalysis:
+    claim = AnalysisClaim.create(
+        text=text,
+        fact_ids=(_evidence_fact_id(ctx),),
+        frame_id=ctx.frame_id,
+        manifest_version=ctx.facts.manifest_version or "",
+        fact_registry_version=ctx.facts.version,
+        claim_type=ClaimType.OBSERVATION,
+        confidence="high",
+    ).validate(ctx.facts)
+    return SpecialistAnalysis(
+        observations=(claim,),
+        supported_interpretations=(),
+        limitations=(),
+    )
+
+
+def _analysis_draft(ctx, text: str = "Supported observation.") -> SpecialistAnalysisDraft:
+    return SpecialistAnalysisDraft(
+        observations=(
+            ClaimDraft(
+                text=text,
+                fact_ids=(_evidence_fact_id(ctx),),
+                claim_type=ClaimType.OBSERVATION,
+                confidence="high",
+            ),
+        ),
+    )
+
+
+def _narrative_artifact(ctx, text: str = "The pitch prevented runs.") -> NarrativeArtifact:
+    source = _analysis(ctx, text).observations[0]
+    claim = NarrativeClaim.create(
+        text=text,
+        fact_ids=source.fact_ids,
+        source_claim_ids=(source.id,),
+        frame_id=ctx.frame_id,
+        manifest_version=ctx.facts.manifest_version or "",
+        fact_registry_version=ctx.facts.version,
+        claim_type=source.claim_type,
+    )
+    return NarrativeArtifact.create(
+        content=text,
+        claims=(claim,),
+        frame_id=ctx.frame_id,
+        manifest_version=ctx.facts.manifest_version or "",
+        fact_registry_version=ctx.facts.version,
+    ).validate(ctx.facts, source_claims=(source,))
+
+
+def _narrative_draft(
+    text: str,
+    source: AnalysisClaim | NarrativeClaim,
+) -> NarrativeArtifactDraft:
+    return NarrativeArtifactDraft(
+        content=text,
+        claims=(
+            NarrativeClaimDraft(
+                text=text.removeprefix("- "),
+                fact_ids=source.fact_ids,
+                source_claim_ids=(source.id,),
+                claim_type=source.claim_type,
+            ),
+        ),
+    )
+
+
+def _draft(text: str) -> NarrativeArtifactDraft:
+    return NarrativeArtifactDraft(content=text, claims=())
 
 
 # ── Unit tests: outlier_tag ──────────────────────────────────────────
@@ -74,8 +173,8 @@ class TestOutlierTag:
         assert "OUTLIER" in result
         assert "above" in result
 
-    def test_zero_std_returns_normal(self):
-        assert outlier_tag(81.0, 81.0, 0.0, n=10) == "NORMAL"
+    def test_zero_std_is_unavailable(self):
+        assert "UNAVAILABLE" in outlier_tag(81.0, 81.0, 0.0, n=10)
 
     def test_includes_z_score(self):
         result = outlier_tag(81.3, 82.9, 3.9, n=10)
@@ -85,11 +184,44 @@ class TestOutlierTag:
 # ── Unit tests: format_s_variant_comparisons ─────────────────────────
 
 
+def _emitted_kc_baseline_rows() -> pl.DataFrame:
+    specs = {
+        "release_speed": (82.0, 2.0, "mph"),
+        "arm_side_pfx_x": (8.0, 3.0, "inches"),
+        "pfx_z": (10.0, 3.0, "inches"),
+        "zone_pct": (50.0, 10.0, "percent"),
+        "chase_pct": (30.0, 8.0, "percent"),
+        "S+": (100.0, 10.0, "plus_grade"),
+        "xSwing_S": (0.40, 0.05, "probability"),
+        "xWhiff_S": (0.25, 0.05, "probability"),
+        "xRV100_S": (0.0, 0.5, "runs_per_100_pitches"),
+    }
+    return pl.DataFrame(
+        [
+            {
+                "manifest_id": "test:physical-reference:v1",
+                "seasons": "2026",
+                "level": "MLB",
+                "game_types": "R",
+                "pitch_type": "KC",
+                "pitcher_handling": "handedness_normalized",
+                "statistical_unit": "pitch",
+                "weighting": "pitch_weighted",
+                "metric": metric,
+                "unit": unit,
+                "n_pitches": 1000,
+                "mean": mean,
+                "std": std,
+            }
+            for metric, (mean, std, unit) in specs.items()
+        ]
+    )
+
+
 class TestFormatSVariantComparisons:
     @pytest.fixture
     def kc_baseline(self):
-        baselines = compute_league_baselines()
-        return next(b for b in baselines if b.pitch_type == "KC")
+        return compute_league_baselines(_emitted_kc_baseline_rows())[0]
 
     def test_returns_three_parts(self, kc_baseline):
         parts = format_s_variant_comparisons(kc_baseline, 0.37, 0.31, 0.69)
@@ -120,21 +252,10 @@ class TestFormatSVariantComparisons:
 
 
 class TestRenderLeagueBaselines:
-    def test_includes_pitch_types(self):
-        output = render_league_baselines(["FF", "KC"])
-        assert "4-Seam Fastball" in output or "Four-Seam" in output
-        assert "Knuckle Curve" in output
-
-    def test_includes_normal_range(self):
+    def test_missing_reference_is_explicit(self):
         output = render_league_baselines(["FF"])
-        assert "normal range" in output
-        assert "stddev" in output
-
-    def test_includes_s_variant_benchmarks(self):
-        output = render_league_baselines(["FF"])
-        assert "S-variant league avg" in output
-        assert "xSwing_S" in output
-        assert "xWhiff_S" in output
+        assert "Physical Reference Baselines" in output
+        assert "Unavailable" in output
 
     def test_skips_unknown_pitch_type(self):
         output = render_league_baselines(["ZZ"])
@@ -142,7 +263,7 @@ class TestRenderLeagueBaselines:
 
     def test_empty_input(self):
         output = render_league_baselines([])
-        assert "League Baselines" in output
+        assert "Physical Reference Baselines" in output
 
 
 # ── Unit tests: summary bullet parsing ───────────────────────────────
@@ -153,6 +274,7 @@ class TestSummaryBulletParsing:
 
     def _parse(self, raw: str) -> list[str]:
         from pitcher_narratives.pipeline import _parse_summary_bullets
+
         return _parse_summary_bullets(raw)
 
     def test_standard_bullets(self):
@@ -185,41 +307,84 @@ class TestSummaryBulletParsing:
 class TestRunSummaries:
     class _BoomAgent:
         """Stand-in agent that records invocation and raises if ever called."""
+
         def __init__(self):
             self.called = False
+
         async def run(self, **kwargs):
             self.called = True
             raise RuntimeError("boom")
 
-    def test_empty_capsule_skips_summary_agent(self):
+    class _DraftAgent:
+        def __init__(self, output):
+            self.output = output
+
+        async def run(self, **kwargs):
+            return SimpleNamespace(output=self.output)
+
+    def test_empty_capsule_skips_summary_agent(self, ctx):
         from pitcher_narratives.pipeline import _run_summaries
+
         boom = self._BoomAgent()
-        bullets = asyncio.run(_run_summaries(
-            summary_agent=boom,
-            capsule="   \n  ", writer_input="ignored",
-        ))
-        assert bullets == []
-        assert boom.called is False  # the guard must skip the agent, not just swallow its error
+        summary = asyncio.run(
+            _run_summaries(
+                summary_agent=boom,
+                capsule=None,
+                writer_input="ignored",
+                registry=ctx.facts,
+                frame_id=ctx.frame_id,
+            )
+        )
+        assert summary is None
+        assert boom.called is False
 
-    def test_populated_capsule_runs_summary(self):
-        from pitcher_narratives.pipeline import _run_summaries
-        agents = make_pipeline_agents("gemini", "high")
-        tm = TestModel(call_tools=[], custom_output_text="- one\n- two")
-        bullets = asyncio.run(_run_summaries(
-            summary_agent=agents.summary,
-            capsule="A real capsule.", writer_input="grounding",
-            _model_override=tm,
-        ))
-        assert bullets == ["one", "two"]
+    def test_populated_capsule_runs_summary(self, ctx):
+        from pitcher_narratives.pipeline import _parse_summary_bullets, _run_summaries
 
-    def test_summary_failure_degrades_to_empty(self):
+        capsule = _narrative_artifact(ctx)
+        source = capsule.claims[0]
+        draft = NarrativeArtifactDraft(
+            content="- one\n- two",
+            claims=(
+                NarrativeClaimDraft(
+                    text="one",
+                    fact_ids=source.fact_ids,
+                    source_claim_ids=(source.id,),
+                    claim_type=source.claim_type,
+                ),
+                NarrativeClaimDraft(
+                    text="two",
+                    fact_ids=source.fact_ids,
+                    source_claim_ids=(source.id,),
+                    claim_type=source.claim_type,
+                ),
+            ),
+        )
+        summary = asyncio.run(
+            _run_summaries(
+                summary_agent=self._DraftAgent(draft),
+                capsule=capsule,
+                writer_input="grounding",
+                registry=ctx.facts,
+                frame_id=ctx.frame_id,
+            )
+        )
+        assert summary is not None
+        assert _parse_summary_bullets(summary.content) == ["one", "two"]
+
+    def test_summary_failure_degrades_to_empty(self, ctx):
         from pitcher_narratives.pipeline import _run_summaries
-        # Summary agent booms; the helper must degrade to [] rather than crash.
-        bullets = asyncio.run(_run_summaries(
-            summary_agent=self._BoomAgent(),
-            capsule="A real capsule.", writer_input="grounding",
-        ))
-        assert bullets == []
+
+        summary = asyncio.run(
+            _run_summaries(
+                summary_agent=self._BoomAgent(),
+                capsule=_narrative_artifact(ctx),
+                writer_input="grounding",
+                registry=ctx.facts,
+                frame_id=ctx.frame_id,
+            )
+        )
+        assert summary is None
 
 
 # ── Data builder tests ───────────────────────────────────────────────
@@ -247,7 +412,7 @@ class TestBuildStuffInput:
 
     def test_contains_league_baselines(self, ctx):
         output = _flatten(_build_stuff_input(ctx))
-        assert "League Baselines" in output
+        assert "Physical Reference Baselines" in output
 
     def test_contains_pitcher_name(self, ctx):
         output = _flatten(_build_stuff_input(ctx))
@@ -295,12 +460,12 @@ class TestMakePipelineAgents:
 
 class TestAuditAndReviseSpecialists:
     @pytest.fixture
-    def specialists(self):
+    def specialists(self, ctx):
         return SpecialistOutputs(
-            stuff="The four-seam is elite.",
-            location="Location is average.",
-            runvalue="Run value is neutral.",
-            trends="No changes.",
+            stuff=_analysis(ctx, "The four-seam is elite."),
+            location=_analysis(ctx, "Location is average."),
+            runvalue=_analysis(ctx, "Run value is neutral."),
+            trends=_analysis(ctx, "No changes."),
         )
 
     @pytest.fixture
@@ -315,18 +480,24 @@ class TestAuditAndReviseSpecialists:
             # TestModel with AuditResult will generate a flag by default,
             # so we need to override the auditor agent directly
             from pydantic_ai import Agent
+
             clean_auditor = Agent("test", output_type=AuditResult)
 
             specialist_agents = {
-                "stuff": agents.stuff, "location": agents.location,
-                "runvalue": agents.runvalue, "trends": agents.trends,
+                "stuff": agents.stuff,
+                "location": agents.location,
+                "runvalue": agents.runvalue,
+                "trends": agents.trends,
             }
             # Use a context with minimal data
             data = load_pitcher_data(TEST_PITCHER, recent_appearances=10)
             ctx = assemble_pitcher_context(data)
 
             result, flags, _residual = await audit_and_revise_specialists(
-                specialists, specialist_agents, clean_auditor, ctx,
+                specialists,
+                specialist_agents,
+                clean_auditor,
+                ctx,
                 _model_override=clean_model,
             )
             return result, flags
@@ -345,17 +516,23 @@ class TestAuditAndReviseSpecialists:
 
         async def _run():
             from pydantic_ai import Agent
+
             auditor = Agent("test", output_type=AuditResult)
 
             specialist_agents = {
-                "stuff": agents.stuff, "location": agents.location,
-                "runvalue": agents.runvalue, "trends": agents.trends,
+                "stuff": agents.stuff,
+                "location": agents.location,
+                "runvalue": agents.runvalue,
+                "trends": agents.trends,
             }
             data = load_pitcher_data(TEST_PITCHER, recent_appearances=10)
             ctx = assemble_pitcher_context(data)
 
             result, flags, _residual = await audit_and_revise_specialists(
-                specialists, specialist_agents, auditor, ctx,
+                specialists,
+                specialist_agents,
+                auditor,
+                ctx,
                 _model_override=test_model,
             )
             return result, flags
@@ -365,11 +542,10 @@ class TestAuditAndReviseSpecialists:
         assert all(isinstance(f, AuditFlag) for f in flags)
 
     def test_auditor_crash_fails_closed_no_revision(self, specialists, agents):
-        """When the auditor RAISES, fail closed: the specialist's text is
-        unchanged, a single AUDIT_FAILED flag tagged with the specialist name
-        is surfaced (so it lands in audit_flags / n_audit_flags), and the
-        revision path is NOT invoked for that specialist (a revision against a
-        nonexistent flag is wasted work)."""
+        """When the auditor raises, the affected specialist is unavailable,
+        excluded from downstream evidence, and surfaced as PROVIDER_FAILED.
+        No revision runs because there is no factual verdict to revise.
+        """
         from unittest.mock import AsyncMock, MagicMock
 
         class _BoomAuditor:
@@ -388,17 +564,20 @@ class TestAuditAndReviseSpecialists:
             ctx = assemble_pitcher_context(data)
 
             return await audit_and_revise_specialists(
-                specialists, specialist_agents, _BoomAuditor(), ctx,
+                specialists,
+                specialist_agents,
+                _BoomAuditor(),
+                ctx,
                 names=["stuff"],
             )
 
-        result, flags, _residual = asyncio.run(_run())
-        # Original text passes through unchanged.
-        assert result.stuff == specialists.stuff
-        # Exactly one AUDIT_FAILED flag, tagged with the specialist name.
+        result, flags, residual = asyncio.run(_run())
+        assert result.stuff == empty_specialist_analysis()
+        assert residual == {"stuff"}
         assert len(flags) == 1
         assert flags[0].category == "AUDIT_FAILED"
         assert flags[0].specialist == "stuff"
+        assert flags[0].state.value == "provider_failed"
 
 
 # ── End-to-end pipeline smoke test ───────────────────────────────────
@@ -406,15 +585,21 @@ class TestAuditAndReviseSpecialists:
 
 class TestGeneratePipelineStreaming:
     def test_returns_pipeline_result(self, ctx, capsys):
-        """Full pipeline runs with TestModel and returns valid PipelineResult."""
+        """A synthetic unresolved auditor verdict makes the full pipeline
+        unavailable rather than publishing generated prose as verified."""
         test_model = TestModel(call_tools=[])
         result = generate_pipeline_streaming(
-            ctx, provider="gemini", thinking="high", _model_override=test_model,
+            ctx,
+            provider="gemini",
+            thinking="high",
+            _model_override=test_model,
         )
 
         assert isinstance(result, PipelineResult)
         assert isinstance(result.narrative, str)
-        assert len(result.narrative) > 0
+        assert result.narrative == ""
+        assert result.narrative_artifact is None
+        assert result.capsule_audit_flags
         assert isinstance(result.executive_summary, list)
         assert isinstance(result.specialists, SpecialistOutputs)
         assert isinstance(result.audit_flags, list)
@@ -424,6 +609,7 @@ class TestGeneratePipelineStreaming:
         # to prevent runaway passes. Anything outside [0, MAX_REVISIONS]
         # means the loop logic is broken.
         from pitcher_narratives.config import MAX_REVISIONS
+
         assert 0 <= result.revision_count <= MAX_REVISIONS, (
             f"revision_count {result.revision_count} outside [0, {MAX_REVISIONS}] — "
             "revision loop logic is broken"
@@ -431,8 +617,9 @@ class TestGeneratePipelineStreaming:
 
     def test_run_narration_modes_returns_dict_keyed_by_mode_id(self, ctx):
         """run_narration_modes returns {mode.id: PipelineResult}; default is REPORT only."""
-        from pitcher_narratives.pipeline import run_narration_modes, PipelineResult
         from pydantic_ai.models.test import TestModel
+
+        from pitcher_narratives.pipeline import PipelineResult, run_narration_modes
 
         model = TestModel(call_tools=[])
         results = run_narration_modes(ctx, _model_override=model)
@@ -442,9 +629,10 @@ class TestGeneratePipelineStreaming:
 
     def test_run_narration_modes_explicit_report_matches_single_entry(self, ctx):
         """Explicitly passing [REPORT] yields the same single 'report' key."""
-        from pitcher_narratives.pipeline import run_narration_modes
-        from pitcher_narratives.personas import REPORT
         from pydantic_ai.models.test import TestModel
+
+        from pitcher_narratives.personas import REPORT
+        from pitcher_narratives.pipeline import run_narration_modes
 
         model = TestModel(call_tools=[])
         results = run_narration_modes(ctx, modes=[REPORT], _model_override=model)
@@ -460,9 +648,8 @@ class TestGeneratePipelineStreaming:
         def _fake_stream(_ctx, *, mode, **_kw):
             calls.append(mode.id)
             return pl.PipelineResult(
-                narrative="x", specialists=SpecialistOutputs(
-                    stuff="", location="", runvalue="", trends=""
-                ),
+                narrative="x",
+                specialists=SpecialistOutputs(),
             )
 
         monkeypatch.setattr(pl, "generate_pipeline_streaming", _fake_stream)
@@ -499,7 +686,9 @@ class TestGeneratePipelineStreaming:
 
         model = TestModel(call_tools=[])
         results = pl.run_narration_modes(
-            ctx, modes=[CHANGES, REPORT], prior_ctx=prior_ctx,
+            ctx,
+            modes=[CHANGES, REPORT],
+            prior_ctx=prior_ctx,
             _model_override=model,
         )
 
@@ -514,6 +703,7 @@ class TestGeneratePipelineStreaming:
     def test_recap_mode_skips_distillation(self, ctx):
         """RECAP mode must not run the exec-summary agent: capsule IS the brief."""
         from pydantic_ai.models.test import TestModel
+
         from pitcher_narratives.personas import RECAP
         from pitcher_narratives.pipeline import run_narration_modes
 
@@ -527,6 +717,7 @@ class TestGeneratePipelineStreaming:
     def test_report_mode_still_distills(self, ctx):
         """REPORT mode must still run the exec-summary agent (mode.distill)."""
         from pydantic_ai.models.test import TestModel
+
         from pitcher_narratives.personas import REPORT
         from pitcher_narratives.pipeline import run_narration_modes
 
@@ -541,11 +732,13 @@ class TestGeneratePipelineStreaming:
     def test_max_revisions_constant_is_nonzero(self):
         """MAX_REVISIONS must allow at least one revision pass."""
         from pitcher_narratives.config import MAX_REVISIONS
+
         assert MAX_REVISIONS >= 1, "MAX_REVISIONS must allow at least one revision"
 
     def test_max_revisions_is_five(self):
         """The report anchor loop allows up to 5 revision passes."""
         from pitcher_narratives.config import MAX_REVISIONS
+
         assert MAX_REVISIONS == 5
 
     def test_pipeline_result_includes_executive_summary(self, ctx):
@@ -553,14 +746,20 @@ class TestGeneratePipelineStreaming:
         capsule and returns parsed bullets."""
         test_model = TestModel(call_tools=[])
         result = generate_pipeline_streaming(
-            ctx, provider="gemini", thinking="high", _model_override=test_model,
+            ctx,
+            provider="gemini",
+            thinking="high",
+            _model_override=test_model,
         )
         assert isinstance(result.executive_summary, list)
 
     def test_pipeline_result_has_fact_check_fields(self, ctx):
         test_model = TestModel(call_tools=[])
         result = generate_pipeline_streaming(
-            ctx, provider="gemini", thinking="high", _model_override=test_model,
+            ctx,
+            provider="gemini",
+            thinking="high",
+            _model_override=test_model,
         )
         assert isinstance(result.capsule_audit_flags, list)
         assert isinstance(result.capsule_revised, bool)
@@ -608,7 +807,7 @@ class TestAnchorRevisionLoop:
         """Build an AsyncMock writer whose .run() yields the given texts in order."""
         from unittest.mock import AsyncMock, MagicMock
 
-        wrapped = [MagicMock(output=t) for t in revision_texts]
+        wrapped = [MagicMock(output=_draft(t)) for t in revision_texts]
         mock = MagicMock()
         mock.run = AsyncMock(side_effect=wrapped)
         return mock
@@ -628,13 +827,13 @@ class TestAnchorRevisionLoop:
                 anchor_agent=anchor,
                 writer_agent=writer,
                 synthesis="synth",
-                capsule="ORIGINAL_CAPSULE",
+                capsule=_draft("ORIGINAL_CAPSULE"),
                 max_revisions=2,
                 _model_override=None,
             )
         )
 
-        assert capsule == "ORIGINAL_CAPSULE"
+        assert capsule.content == "ORIGINAL_CAPSULE"
         assert count == 0
         assert final.is_clean
         assert anchor.run.call_count == 1
@@ -670,7 +869,7 @@ class TestAnchorRevisionLoop:
                 anchor_agent=anchor,
                 writer_agent=writer,
                 synthesis="synth",
-                capsule="ORIGINAL_CAPSULE",
+                capsule=_draft("ORIGINAL_CAPSULE"),
                 max_revisions=2,
                 _model_override=None,
             )
@@ -679,8 +878,8 @@ class TestAnchorRevisionLoop:
         # The loop ran once
         assert count == 1
         # The REVISED capsule is what's returned, not the original
-        assert capsule == "REVISED_CAPSULE"
-        assert capsule != "ORIGINAL_CAPSULE"
+        assert capsule.content == "REVISED_CAPSULE"
+        assert capsule.content != "ORIGINAL_CAPSULE"
         # The final anchor check was clean
         assert final.is_clean
         # Exactly 2 anchor calls (dirty + clean) and 1 writer call (the revision)
@@ -703,14 +902,10 @@ class TestAnchorRevisionLoop:
         # Each pass surfaces a DISTINCT warning so the stall-break (identical
         # warnings) does NOT fire — this isolates genuine cap exhaustion.
         def _dirty(desc: str) -> AnchorResult:
-            return AnchorResult(
-                warnings=[AnchorWarning(category="UNSUPPORTED", description=desc)]
-            )
+            return AnchorResult(warnings=[AnchorWarning(category="UNSUPPORTED", description=desc)])
 
         # 2 revisions allowed → 3 anchor calls (2 in-loop + 1 final exhaustion check)
-        anchor = self._fake_anchor(
-            _dirty("metric one"), _dirty("metric two"), _dirty("metric three")
-        )
+        anchor = self._fake_anchor(_dirty("metric one"), _dirty("metric two"), _dirty("metric three"))
         writer = self._fake_writer("REV_1", "REV_2")
 
         capsule, final, count = asyncio.run(
@@ -718,7 +913,7 @@ class TestAnchorRevisionLoop:
                 anchor_agent=anchor,
                 writer_agent=writer,
                 synthesis="synth",
-                capsule="ORIGINAL",
+                capsule=_draft("ORIGINAL"),
                 max_revisions=2,
                 _model_override=None,
             )
@@ -727,7 +922,7 @@ class TestAnchorRevisionLoop:
         # Both revisions ran
         assert count == 2
         # Final capsule is the second revision
-        assert capsule == "REV_2"
+        assert capsule.content == "REV_2"
         # Surviving warnings are on the final anchor result
         assert not final.is_clean
         assert len(final.warnings) == 1
@@ -777,19 +972,19 @@ class TestAnchorRevisionLoop:
         anchor.run = AsyncMock(side_effect=anchor_side_effect)
         writer = self._fake_writer("REVISED_CAPSULE_TEXT")
 
-        capsule, final, count = asyncio.run(
+        capsule, _final, count = asyncio.run(
             run_anchor_revision_loop(
                 anchor_agent=anchor,
                 writer_agent=writer,
                 synthesis="synth",
-                capsule="ORIGINAL_CAPSULE_TEXT",
+                capsule=_draft("ORIGINAL_CAPSULE_TEXT"),
                 max_revisions=2,
                 _model_override=None,
             )
         )
 
         assert count == 1
-        assert capsule == "REVISED_CAPSULE_TEXT"
+        assert capsule.content == "REVISED_CAPSULE_TEXT"
         # First anchor call saw the original, second saw the revision.
         assert "ORIGINAL_CAPSULE_TEXT" in capsules_seen[0]
         assert "REVISED_CAPSULE_TEXT" in capsules_seen[1]
@@ -809,28 +1004,32 @@ class TestAnchorRevisionLoop:
         def _wrap(output, tin, tout):
             return MagicMock(
                 output=output,
-                usage=MagicMock(return_value=SimpleNamespace(
-                    input_tokens=tin, output_tokens=tout)),
+                usage=MagicMock(return_value=SimpleNamespace(input_tokens=tin, output_tokens=tout)),
             )
 
-        dirty = AnchorResult(warnings=[AnchorWarning(
-            category="MISSED_SIGNAL", description="x")])
+        dirty = AnchorResult(warnings=[AnchorWarning(category="MISSED_SIGNAL", description="x")])
         clean = AnchorResult(warnings=[])
         anchor = MagicMock()
         anchor.run = AsyncMock(side_effect=[_wrap(dirty, 10, 5), _wrap(clean, 10, 5)])
         writer = MagicMock()
-        writer.run = AsyncMock(side_effect=[_wrap("REVISED", 20, 8)])
+        writer.run = AsyncMock(side_effect=[_wrap(_draft("REVISED"), 20, 8)])
 
         tracker = UsageTracker()
-        asyncio.run(run_anchor_revision_loop(
-            anchor_agent=anchor, writer_agent=writer,
-            synthesis="synth", capsule="ORIG", max_revisions=2,
-            tracker=tracker, tracker_model="m",
-        ))
+        asyncio.run(
+            run_anchor_revision_loop(
+                anchor_agent=anchor,
+                writer_agent=writer,
+                synthesis="synth",
+                capsule=_draft("ORIG"),
+                max_revisions=2,
+                tracker=tracker,
+                tracker_model="m",
+            )
+        )
 
         stages = [r.stage for r in tracker.records]
         assert stages == ["anchor", "anchor_revision", "anchor"]
-        assert tracker.total_input() == 40   # 10 + 20 + 10
+        assert tracker.total_input() == 40  # 10 + 20 + 10
         assert tracker.total_output() == 18  # 5 + 8 + 5
 
     def test_stall_break_on_identical_warnings(self):
@@ -844,9 +1043,7 @@ class TestAnchorRevisionLoop:
 
         def _dirty():
             return AnchorResult(
-                warnings=[
-                    AnchorWarning(category="MISSED_SIGNAL", description="same concern")
-                ]
+                warnings=[AnchorWarning(category="MISSED_SIGNAL", description="same concern")]
             )
 
         # Same warnings every pass. With a generous cap (5), the stall break must
@@ -859,7 +1056,7 @@ class TestAnchorRevisionLoop:
                 anchor_agent=anchor,
                 writer_agent=writer,
                 synthesis="synth",
-                capsule="ORIGINAL",
+                capsule=_draft("ORIGINAL"),
                 max_revisions=5,
                 _model_override=None,
             )
@@ -867,7 +1064,7 @@ class TestAnchorRevisionLoop:
 
         # Pass 1: dirty → revise. Pass 2: identical → stall break.
         assert count == 1
-        assert capsule == "REV_1"
+        assert capsule.content == "REV_1"
         assert not final.is_clean
         assert final.warnings[0].category == "MISSED_SIGNAL"
         # Exactly 2 anchor checks and 1 writer revision — no post-cap final check.
@@ -875,16 +1072,17 @@ class TestAnchorRevisionLoop:
         assert writer.run.call_count == 1
 
     def test_specialist_outputs_populated(self, ctx):
-        """All 5 specialist slots are non-empty strings."""
+        """All specialist slots use the closed typed analysis contract."""
         test_model = TestModel(call_tools=[])
         result = generate_pipeline_streaming(
-            ctx, provider="gemini", thinking="high", _model_override=test_model,
+            ctx,
+            provider="gemini",
+            thinking="high",
+            _model_override=test_model,
         )
 
         for name in SpecialistOutputs.model_fields:
-            value = getattr(result.specialists, name)
-            assert isinstance(value, str)
-            assert len(value) > 0
+            assert isinstance(getattr(result.specialists, name), SpecialistAnalysis)
 
 
 class TestReconcileAnchorWarnings:
@@ -912,7 +1110,10 @@ class TestReconcileAnchorWarnings:
         """AsyncMock writer whose .run() yields the given texts in order."""
         from unittest.mock import AsyncMock, MagicMock
 
-        wrapped = [MagicMock(output=t) for t in revision_texts]
+        wrapped = [
+            MagicMock(output=t if isinstance(t, NarrativeArtifactDraft) else _draft(t))
+            for t in revision_texts
+        ]
         mock = MagicMock()
         mock.run = AsyncMock(side_effect=wrapped)
         return mock
@@ -935,9 +1136,7 @@ class TestReconcileAnchorWarnings:
     def _flag(self, claim="c"):
         from pitcher_narratives.models import AuditFlag
 
-        return AuditFlag(
-            category="FABRICATION", claim=claim, data_shows="d", suggested_fix="f"
-        )
+        return AuditFlag(category="FABRICATION", claim=claim, data_shows="d", suggested_fix="f")
 
     def test_clean_recheck_returns_unchanged(self):
         """Re-anchor clean → capsule + prior_anchor returned unchanged, 0 passes.
@@ -950,9 +1149,7 @@ class TestReconcileAnchorWarnings:
         from pitcher_narratives.anchor import AnchorResult, AnchorWarning
         from pitcher_narratives.pipeline import _reconcile_anchor_warnings
 
-        prior = AnchorResult(
-            warnings=[AnchorWarning(category="OVERSTATED", description="prior")]
-        )
+        prior = AnchorResult(warnings=[AnchorWarning(category="OVERSTATED", description="prior")])
         anchor = self._fake_anchor(AnchorResult(warnings=[]))
         writer = self._fake_writer()
         auditor = self._fake_auditor()
@@ -963,7 +1160,7 @@ class TestReconcileAnchorWarnings:
                 writer_agent=writer,
                 capsule_auditor=auditor,
                 synthesis="synth",
-                capsule="CAP",
+                capsule=_draft("CAP"),
                 fact_check_source="GT",
                 prior_anchor=prior,
                 remaining=5,
@@ -971,7 +1168,7 @@ class TestReconcileAnchorWarnings:
             )
         )
 
-        assert capsule == "CAP"
+        assert capsule.content == "CAP"
         assert result is prior
         assert passes == 0
         assert anchor.run.call_count == 1
@@ -1006,7 +1203,7 @@ class TestReconcileAnchorWarnings:
                 writer_agent=writer,
                 capsule_auditor=auditor,
                 synthesis="synth",
-                capsule="CAP",
+                capsule=_draft("CAP"),
                 fact_check_source="GT",
                 prior_anchor=prior,
                 remaining=0,
@@ -1014,7 +1211,7 @@ class TestReconcileAnchorWarnings:
             )
         )
 
-        assert capsule == "CAP"
+        assert capsule.content == "CAP"
         assert passes == 0
         sigs = {(w.category, w.description) for w in result.warnings}
         assert sigs == {("OVERSTATED", "prior"), ("UNSUPPORTED", "new")}
@@ -1037,9 +1234,7 @@ class TestReconcileAnchorWarnings:
         from pitcher_narratives.pipeline import _reconcile_anchor_warnings
 
         w1 = AnchorWarning(category="UNSUPPORTED", description="new")
-        anchor = self._fake_anchor(
-            AnchorResult(warnings=[w1]), AnchorResult(warnings=[])
-        )
+        anchor = self._fake_anchor(AnchorResult(warnings=[w1]), AnchorResult(warnings=[]))
         writer = self._fake_writer("revised capsule")
         auditor = self._fake_auditor([])  # guard clean
 
@@ -1049,7 +1244,7 @@ class TestReconcileAnchorWarnings:
                 writer_agent=writer,
                 capsule_auditor=auditor,
                 synthesis="synth",
-                capsule="CAP",
+                capsule=_draft("CAP"),
                 fact_check_source="GT",
                 prior_anchor=AnchorResult(warnings=[]),
                 remaining=5,
@@ -1057,7 +1252,7 @@ class TestReconcileAnchorWarnings:
             )
         )
 
-        assert capsule == "revised capsule"
+        assert capsule.content == "revised capsule"
         assert result.warnings == []
         assert passes == 1
         assert anchor.run.call_count == 2
@@ -1078,9 +1273,7 @@ class TestReconcileAnchorWarnings:
         from pitcher_narratives.pipeline import _reconcile_anchor_warnings
 
         w1 = AnchorWarning(category="UNSUPPORTED", description="new")
-        anchor = self._fake_anchor(
-            AnchorResult(warnings=[w1]), AnchorResult(warnings=[])
-        )
+        anchor = self._fake_anchor(AnchorResult(warnings=[w1]), AnchorResult(warnings=[]))
         writer = self._fake_writer("bad revision")
         auditor = self._fake_auditor([self._flag()])  # guard flags regression
 
@@ -1090,7 +1283,7 @@ class TestReconcileAnchorWarnings:
                 writer_agent=writer,
                 capsule_auditor=auditor,
                 synthesis="synth",
-                capsule="ORIGINAL_CAP",
+                capsule=_draft("ORIGINAL_CAP"),
                 fact_check_source="GT",
                 prior_anchor=AnchorResult(warnings=[]),
                 remaining=5,
@@ -1098,7 +1291,7 @@ class TestReconcileAnchorWarnings:
             )
         )
 
-        assert capsule == "ORIGINAL_CAP"
+        assert capsule.content == "ORIGINAL_CAP"
         assert passes == 1
         sigs = {(w.category, w.description) for w in result.warnings}
         assert ("UNSUPPORTED", "new") in sigs
@@ -1119,9 +1312,7 @@ class TestReconcileAnchorWarnings:
         from pitcher_narratives.pipeline import _reconcile_anchor_warnings
 
         def _dirty():
-            return AnchorResult(
-                warnings=[AnchorWarning(category="MISSED_SIGNAL", description="same")]
-            )
+            return AnchorResult(warnings=[AnchorWarning(category="MISSED_SIGNAL", description="same")])
 
         anchor = self._fake_anchor(_dirty(), _dirty())
         writer = self._fake_writer("r1")
@@ -1133,7 +1324,7 @@ class TestReconcileAnchorWarnings:
                 writer_agent=writer,
                 capsule_auditor=auditor,
                 synthesis="synth",
-                capsule="CAP",
+                capsule=_draft("CAP"),
                 fact_check_source="GT",
                 prior_anchor=AnchorResult(warnings=[]),
                 remaining=5,
@@ -1142,7 +1333,7 @@ class TestReconcileAnchorWarnings:
         )
 
         assert passes == 1
-        assert capsule == "r1"
+        assert capsule.content == "r1"
         sigs = {(w.category, w.description) for w in result.warnings}
         assert ("MISSED_SIGNAL", "same") in sigs
         # 2 anchor checks (pre-loop + one in-loop), 1 revision, 1 guard audit.
@@ -1167,8 +1358,14 @@ class TestReconcileAnchorWarnings:
         from pitcher_narratives.models import AnalyzedContext, SpecialistOutputs
         from pitcher_narratives.pipeline import PipelineAgents, _render_capsule
 
+        source_analysis = _analysis(ctx, "Producer-backed source.")
+        source_claim = source_analysis.observations[0]
         # Writer: initial capsule, fact revision, reconcile revision.
-        writer = self._fake_writer("cap0", "cap1", "cap2")
+        writer = self._fake_writer(
+            _narrative_draft("cap0", source_claim),
+            _narrative_draft("cap1", source_claim),
+            _narrative_draft("cap2", source_claim),
+        )
         # Anchor: loop check clean (0 loop revisions) → reconcile recheck
         # dirty(w1) → post-reconcile clean.
         w1 = AnchorWarning(category="UNSUPPORTED", description="post-fact drift")
@@ -1183,16 +1380,24 @@ class TestReconcileAnchorWarnings:
 
         sentinel = object()  # unused agent slots must never be touched
         agents = PipelineAgents(
-            stuff=sentinel, location=sentinel, runvalue=sentinel,
+            stuff=sentinel,
+            location=sentinel,
+            runvalue=sentinel,
             trends=sentinel,
-            writer=writer, auditor=sentinel, capsule_auditor=auditor,
-            anchor=anchor, summary=sentinel, signal_extractor=sentinel,
+            writer=writer,
+            auditor=sentinel,
+            capsule_auditor=auditor,
+            anchor=anchor,
+            summary=sentinel,
+            signal_extractor=sentinel,
             mini_model_name="test-mini",
         )
         analyzed = AnalyzedContext(
             specialists=SpecialistOutputs(
-                stuff="s", location="l", runvalue="r",
-                trends="t",
+                stuff=source_analysis,
+                location=empty_specialist_analysis(),
+                runvalue=empty_specialist_analysis(),
+                trends=empty_specialist_analysis(),
             ),
         )
 
@@ -1203,7 +1408,6 @@ class TestReconcileAnchorWarnings:
                 agents=agents,
                 anchor_depth=5,
                 fact_depth=1,
-                check_explainer=False,
             )
         )
 
@@ -1213,9 +1417,7 @@ class TestReconcileAnchorWarnings:
         # 0 anchor-loop revisions + 1 reconcile pass.
         assert rc.revision_count == 1
 
-    def test_render_capsule_threads_frame_block_into_fact_check(
-        self, ctx, monkeypatch
-    ):
+    def test_render_capsule_threads_frame_block_into_fact_check(self, ctx, monkeypatch):
         """Wiring: _render_capsule passes analyzed.trend_frame_comparison
         through to _build_parity_union, so the capsule fact-check sees the
         same recent-vs-prior frame the writer narrated from."""
@@ -1230,31 +1432,36 @@ class TestReconcileAnchorWarnings:
         real_union = pipeline_mod._build_parity_union
 
         def _recording_union(*args, **kwargs):
-            recorded["trend_frame_comparison"] = kwargs.get(
-                "trend_frame_comparison"
-            )
+            recorded["trend_frame_comparison"] = kwargs.get("trend_frame_comparison")
             return real_union(*args, **kwargs)
 
-        monkeypatch.setattr(
-            pipeline_mod, "_build_parity_union", _recording_union
-        )
+        monkeypatch.setattr(pipeline_mod, "_build_parity_union", _recording_union)
 
-        writer = self._fake_writer("cap0")
+        source_analysis = _analysis(ctx, "Producer-backed source.")
+        writer = self._fake_writer(_narrative_draft("cap0", source_analysis.observations[0]))
         anchor = self._fake_anchor(AnchorResult(warnings=[]))
         auditor = self._fake_auditor([])  # clean audit, no revision
 
         sentinel = object()
         agents = PipelineAgents(
-            stuff=sentinel, location=sentinel, runvalue=sentinel,
+            stuff=sentinel,
+            location=sentinel,
+            runvalue=sentinel,
             trends=sentinel,
-            writer=writer, auditor=sentinel, capsule_auditor=auditor,
-            anchor=anchor, summary=sentinel, signal_extractor=sentinel,
+            writer=writer,
+            auditor=sentinel,
+            capsule_auditor=auditor,
+            anchor=anchor,
+            summary=sentinel,
+            signal_extractor=sentinel,
             mini_model_name="test-mini",
         )
         analyzed = AnalyzedContext(
             specialists=SpecialistOutputs(
-                stuff="s", location="l", runvalue="r",
-                trends="t",
+                stuff=source_analysis,
+                location=empty_specialist_analysis(),
+                runvalue=empty_specialist_analysis(),
+                trends=empty_specialist_analysis(),
             ),
             trend_frame_comparison="SENTINEL_FRAME",
         )
@@ -1266,7 +1473,6 @@ class TestReconcileAnchorWarnings:
                 agents=agents,
                 anchor_depth=5,
                 fact_depth=1,
-                check_explainer=False,
             )
         )
 
@@ -1288,9 +1494,7 @@ class TestFrameAwareCapsuleAudit:
     def test_capsule_ground_truth_includes_frame_block(self, ctx):
         from pitcher_narratives.pipeline import _build_capsule_ground_truth
 
-        gt = _build_capsule_ground_truth(
-            ctx, trend_frame_comparison="## Recent vs Prior Window SENTINEL"
-        )
+        gt = _build_capsule_ground_truth(ctx, trend_frame_comparison="## Recent vs Prior Window SENTINEL")
         assert "## Recent vs Prior Window SENTINEL" in gt
 
     def test_capsule_ground_truth_unchanged_without_frame_block(self, ctx):
@@ -1301,14 +1505,19 @@ class TestFrameAwareCapsuleAudit:
         )
 
     def test_parity_union_threads_frame_block(self, ctx):
-        from pitcher_narratives.pipeline import _build_parity_union
         from pitcher_narratives.models import SpecialistOutputs
+        from pitcher_narratives.pipeline import _build_parity_union
 
         specialists = SpecialistOutputs(
-            stuff="s", location="l", runvalue="r", trends="t"
+            stuff=_analysis(ctx),
+            location=_analysis(ctx),
+            runvalue=_analysis(ctx),
+            trends=_analysis(ctx),
         )
         union = _build_parity_union(
-            ctx, specialists, None,
+            ctx,
+            specialists,
+            None,
             trend_frame_comparison="## Recent vs Prior Window SENTINEL",
         )
         assert "## Recent vs Prior Window SENTINEL" in union
@@ -1327,16 +1536,52 @@ class TestFrameAwareCapsuleAudit:
 
 
 class TestPipelineKeySignals:
-    def test_pipeline_result_includes_key_signals(self, ctx):
-        """Full pipeline produces key_signals in result."""
-        test_model = TestModel(call_tools=[])
-        result = generate_pipeline_streaming(
-            ctx, provider="gemini", thinking="high", _model_override=test_model,
+    def test_pipeline_rejects_ungrounded_key_signals(self, ctx, monkeypatch):
+        """An explicit signal with bogus evidence is rejected, never published."""
+        from pitcher_narratives import pipeline
+        from pitcher_narratives.models import CoreContext
+        from pitcher_narratives.signals import Signal, SignalState
+
+        analysis = _analysis(ctx)
+        core = CoreContext(stuff=analysis, location=analysis, runvalue=analysis)
+        specialists = SpecialistOutputs(
+            stuff=analysis,
+            location=analysis,
+            runvalue=analysis,
+            trends=analysis,
         )
-        assert result.key_signals is not None
-        assert isinstance(result.key_signals, KeySignals)
-        assert result.key_signals.top_improvement is not None
-        assert result.key_signals.top_concern is not None
+
+        async def _run_specialists(*args, **kwargs):
+            return specialists
+
+        async def _audit(analyses, *args, **kwargs):
+            return analyses, [], set()
+
+        monkeypatch.setattr(pipeline, "run_specialists", _run_specialists)
+        monkeypatch.setattr(pipeline, "audit_and_revise_specialists", _audit)
+        ungrounded = KeySignals(
+            state=SignalState.MATERIAL,
+            top_improvement=Signal(
+                text="Unsupported synthetic signal.",
+                fact_ids=("fact:unknown",),
+                source_claim_ids=("analysis-claim:unknown",),
+                sample_size=1,
+                comparison_population="unknown",
+            ),
+        )
+        agents = make_pipeline_agents("gemini", "high")
+
+        result = asyncio.run(
+            pipeline.run_spine_tail(
+                core,
+                ctx,
+                agents=agents,
+                _model_override=TestModel(call_tools=[], custom_output_args=ungrounded),
+            )
+        )
+
+        assert result.key_signals is None
+        assert result.signals_state is VerificationState.REJECTED
 
 
 # ── Cross-season data flow tests ────────────────────────────────────
@@ -1441,17 +1686,22 @@ def _make_mock_ctx():
     mock.intermediates = []
     mock.cross_season_summary = _make_cross_season_summary()
     mock.arsenal_trend = _make_arsenal_trends()
+    mock.calibration = None
+    mock.calibration_unavailable_reason = "manifest calibration missing"
+    registry, _, frame_id = _specialist_reader_registry()
+    mock.facts = registry
+    mock.frame_id = frame_id
 
     # The trend builder renders sections via the prompt_builder
     # render_*_section(ctx) free functions; those are patched per-test by the
     # _patch_render_sections fixture, not on the mock ctx.
 
     # TemporalContext for workload rendering
-    mock.temporal.current_season_appearances = 8
-    mock.temporal.current_season_ip = 48.0
-    mock.temporal.prior_season = 2025
-    mock.temporal.prior_season_appearances = 32
-    mock.temporal.prior_season_ip = 195.0
+    mock.temporal.recent_frame_appearances = 8
+    mock.temporal.recent_frame_ip = "48.0"
+    mock.temporal.scoring_season = 2026
+    mock.temporal.recent_frame_first_date = "2026-06-01"
+    mock.temporal.analysis_date = "2026-07-03"
 
     return mock
 
@@ -1460,12 +1710,8 @@ def _make_mock_ctx():
 def _patch_baselines(monkeypatch):
     """Patch compute_league_baselines and render_league_baselines for unit tests."""
     monkeypatch.setattr(
-        "pitcher_narratives.pipeline.compute_league_baselines",
-        lambda: [],
-    )
-    monkeypatch.setattr(
         "pitcher_narratives.pipeline.render_league_baselines",
-        lambda _types: "## League Baselines (mocked)",
+        lambda _types, _baselines=None: "## Physical Reference Baselines (mocked)",
     )
 
 
@@ -1485,6 +1731,9 @@ def _patch_render_sections(monkeypatch):
         "render_arsenal_section": "## Arsenal\nSL, CH",
         "render_release_point_section": "## Release Point\nConsistent",
         "render_hard_hit_section": "## Hard Hit\n35%",
+        "render_calibration_section": (
+            "## Model Validation and Uncertainty\n- Calibration unavailable: manifest calibration missing."
+        ),
         "render_yoy_section": (
             "## Year-over-Year\n"
             "Comparing 2026 vs 2025:\n"
@@ -1499,9 +1748,7 @@ def _patch_render_sections(monkeypatch):
         ),
     }
     for name, value in canned.items():
-        monkeypatch.setattr(
-            f"pitcher_narratives.pipeline.{name}", MagicMock(return_value=value)
-        )
+        monkeypatch.setattr(f"pitcher_narratives.pipeline.{name}", MagicMock(return_value=value))
 
 
 @pytest.mark.usefixtures("_patch_baselines")
@@ -1510,31 +1757,37 @@ class TestStuffSpecialistReceivesYoyData:
 
     def test_contains_yoy_header(self):
         ctx = _make_mock_ctx()
-        output = _flatten_prompt(_build_stuff_input(ctx))
+        output = _flatten_prompt(_build_stuff_input(ctx, include_evidence=False))
         assert "Year-over-Year" in output
 
     def test_contains_velocity_delta(self):
         ctx = _make_mock_ctx()
-        output = _flatten_prompt(_build_stuff_input(ctx))
+        output = _flatten_prompt(_build_stuff_input(ctx, include_evidence=False))
         assert "Up 1.5 mph" in output
 
     def test_contains_added_pitch(self):
         ctx = _make_mock_ctx()
-        output = _flatten_prompt(_build_stuff_input(ctx))
+        output = _flatten_prompt(_build_stuff_input(ctx, include_evidence=False))
         assert "Sweeper" in output
         assert "Added pitches" in output
 
     def test_contains_continued_pitch_with_usage_delta(self):
         ctx = _make_mock_ctx()
-        output = _flatten_prompt(_build_stuff_input(ctx))
+        output = _flatten_prompt(_build_stuff_input(ctx, include_evidence=False))
         assert "Slider" in output
         assert "usage Up 5.0 pp" in output
 
     def test_no_pfx_references(self):
         ctx = _make_mock_ctx()
-        output = _flatten_prompt(_build_stuff_input(ctx))
+        output = _flatten_prompt(_build_stuff_input(ctx, include_evidence=False))
         assert "pfx_x_delta" not in output
         assert "H-mov" not in output
+
+    def test_calibration_unavailability_is_in_specialist_ground_truth(self):
+        ctx = _make_mock_ctx()
+        output = _flatten_prompt(_build_stuff_input(ctx, include_evidence=False))
+        assert "Model Validation and Uncertainty" in output
+        assert "manifest calibration missing" in output
 
 
 @pytest.mark.usefixtures("_patch_baselines", "_patch_render_sections")
@@ -1587,46 +1840,15 @@ class TestTrendSpecialistReceivesYoySection:
         assert "velo +2.0 mph" in joined
 
 
-# ── check_explainer_present unit tests (Phase 08: PERSONA-11) ──
+# ── Deterministic model explainer cutover ─────────────────────────────
 
 
-class TestCheckExplainerPresent:
-    """Unit tests for the Pitching+ explainer post-processor."""
+def test_keyword_explainer_gate_is_removed():
+    """A grade token is never accepted as proof of a model explanation."""
+    from pitcher_narratives import pipeline
 
-    def test_check_explainer_present_detects_plus_family(self):
-        """PERSONA-11: Each Pitching+ family keyword individually returns True."""
-        for keyword in ("S+", "L+", "P+", "Pitching+", "Stuff+", "Location+"):
-            text = f"The model graded this pitch {keyword} 112 above average."
-            assert check_explainer_present(text) is True, (
-                f"Expected keyword {keyword!r} to be detected in capsule"
-            )
-
-    def test_check_explainer_present_absent(self):
-        """PERSONA-11: Capsule with no explainer keywords returns False."""
-        text = (
-            "The slider has been sharp lately. The curveball is giving "
-            "him trouble, particularly against right-handers."
-        )
-        assert check_explainer_present(text) is False
-
-    def test_check_explainer_present_rejects_empty(self):
-        """PERSONA-11: Empty capsule raises ValueError."""
-        with pytest.raises(ValueError, match="empty"):
-            check_explainer_present("")
-
-    def test_check_explainer_present_rejects_non_string(self):
-        """PERSONA-11: Non-string input raises TypeError."""
-        with pytest.raises(TypeError, match="must be str"):
-            check_explainer_present(None)  # type: ignore[arg-type]
-        with pytest.raises(TypeError, match="must be str"):
-            check_explainer_present(42)  # type: ignore[arg-type]
-        with pytest.raises(TypeError, match="must be str"):
-            check_explainer_present(b"bytes")  # type: ignore[arg-type]
-
-    def test_check_explainer_present_exported(self):
-        """PERSONA-11: Function is in pipeline.__all__."""
-        import pitcher_narratives.pipeline as p
-        assert "check_explainer_present" in p.__all__
+    assert not hasattr(pipeline, "check_explainer_present")
+    assert "check_explainer_present" not in pipeline.__all__
 
 
 def test_validation_loops_are_public():
@@ -1650,98 +1872,98 @@ def test_validation_loops_are_public():
         assert not hasattr(pipeline, old), f"stale private alias {old} remains"
 
 
-# ── Pipeline explainer-check integration (Phase 08: PERSONA-11) ──
+@pytest.mark.parametrize("mode", [REPORT, CHANGES])
+def test_pipeline_composes_model_explanation_outside_artifact(ctx, monkeypatch, mode):
+    """Full modes append the deterministic section without mutating the
+    provenance-bound generated artifact."""
+    from dataclasses import replace
 
+    from pitcher_narratives import pipeline
+    from pitcher_narratives.anchor import AnchorResult
 
-def test_run_pipeline_logs_warning_when_capsule_missing_explainer(caplog):
-    """PERSONA-11: _run_pipeline logs a warning when check_explainer_present returns False.
+    generated = _narrative_artifact(ctx, "The pitch prevented runs.")
+    analyzed = AnalyzedContext(specialists=SpecialistOutputs())
+    rendered = pipeline._RenderedCapsule(
+        draft=NarrativeArtifactDraft(content=generated.content, claims=()),
+        artifact=generated,
+        writer_input="grounded writer input",
+        fact_check_source="grounded fact source",
+        anchor_check=AnchorResult(warnings=[]),
+        revision_count=0,
+        capsule_audit_flags=[],
+        capsule_revised=False,
+    )
 
-    TestModel produces a canned placeholder capsule that does NOT
-    contain any Pitching+ keywords, so the explainer check returns
-    False and a warning is logged at WARNING level.
-    """
-    import logging
+    monkeypatch.setattr(pipeline, "make_pipeline_agents", lambda *args, **kwargs: object())
 
-    from pydantic_ai.models.test import TestModel
+    async def _analyze(*args, **kwargs):
+        return analyzed
 
-    from pitcher_narratives.context import assemble_pitcher_context
-    from pitcher_narratives.data import load_pitcher_data
-    from pitcher_narratives.pipeline import generate_pipeline_streaming
+    async def _render(*args, **kwargs):
+        return rendered
 
-    data = load_pitcher_data(592155, recent_appearances=10)
-    ctx = assemble_pitcher_context(data)
+    monkeypatch.setattr(pipeline, "run_analysis_spine", _analyze)
+    monkeypatch.setattr(pipeline, "_render_capsule", _render)
+    no_distillation = replace(mode, distill=False)
 
-    with caplog.at_level(logging.WARNING, logger="pitcher_narratives.pipeline"):
-        generate_pipeline_streaming(
+    result = asyncio.run(
+        pipeline._run_pipeline(
             ctx,
-            provider="gemini",
-            thinking="high",
-            _model_override=TestModel(call_tools=[]),
+            mode=no_distillation,
+            explain_model=True,
         )
-
-    # Find the explainer-missing warning in caplog
-    explainer_warnings = [
-        r for r in caplog.records
-        if "capsule is missing model explanation content" in r.getMessage()
-    ]
-    assert len(explainer_warnings) >= 1, (
-        f"Expected at least one explainer-missing warning, "
-        f"got records: {[r.getMessage() for r in caplog.records]}"
-    )
-    # The warning's formatted message includes the mode id in brackets
-    warning_msg = explainer_warnings[0].getMessage()
-    assert "[report]" in warning_msg, (
-        f"Expected '[report]' in warning message, got: {warning_msg!r}"
     )
 
+    assert result.model_explanation is not None
+    assert result.narrative == (f"{generated.content}\n\n{result.model_explanation.content}")
+    assert result.narrative_artifact is generated
+    assert result.narrative_artifact.content == generated.content
 
-def test_check_explainer_present_happy_path_is_silent(caplog, monkeypatch):
-    """PERSONA-11 positive path: no warning when capsule contains explainer keywords.
 
-    Guards against a bug that always-logs the warning (which would pass
-    the negative test above but silently inform every run).
-    """
-    import logging
+def test_pipeline_no_explain_model_leaves_narrative_unmodified(ctx, monkeypatch):
+    from dataclasses import replace
 
-    from pitcher_narratives import pipeline as pipeline_mod
+    from pitcher_narratives import pipeline
+    from pitcher_narratives.anchor import AnchorResult
 
-    # Direct unit-level check: happy path returns True.
-    assert check_explainer_present(
-        "The slider graded S+ 112 on the Pitching+ model."
+    generated = _narrative_artifact(ctx, "The pitch prevented runs.")
+    analyzed = AnalyzedContext(specialists=SpecialistOutputs())
+    rendered = pipeline._RenderedCapsule(
+        draft=NarrativeArtifactDraft(content=generated.content, claims=()),
+        artifact=generated,
+        writer_input="grounded writer input",
+        fact_check_source="grounded fact source",
+        anchor_check=AnchorResult(warnings=[]),
+        revision_count=0,
+        capsule_audit_flags=[],
+        capsule_revised=False,
     )
+    monkeypatch.setattr(pipeline, "make_pipeline_agents", lambda *args, **kwargs: object())
 
-    # And at the integration level: patch check_explainer_present at its
-    # call site in _run_pipeline so the pipeline sees it as always-True.
-    # That isolates us from TestModel output content.
-    monkeypatch.setattr(
-        pipeline_mod, "check_explainer_present", lambda capsule: True
-    )
+    async def _analyze(*args, **kwargs):
+        return analyzed
 
-    from pydantic_ai.models.test import TestModel
+    async def _render(*args, **kwargs):
+        return rendered
 
-    from pitcher_narratives.context import assemble_pitcher_context
-    from pitcher_narratives.data import load_pitcher_data
+    monkeypatch.setattr(pipeline, "run_analysis_spine", _analyze)
+    monkeypatch.setattr(pipeline, "_render_capsule", _render)
 
-    data = load_pitcher_data(592155, recent_appearances=10)
-    ctx = assemble_pitcher_context(data)
-
-    with caplog.at_level(logging.WARNING, logger="pitcher_narratives.pipeline"):
-        pipeline_mod.generate_pipeline_streaming(
+    result = asyncio.run(
+        pipeline._run_pipeline(
             ctx,
-            provider="gemini",
-            thinking="high",
-            _model_override=TestModel(call_tools=[]),
+            mode=replace(REPORT, distill=False),
+            explain_model=False,
         )
-
-    explainer_warnings = [
-        r for r in caplog.records
-        if "capsule is missing model explanation content" in r.getMessage()
-    ]
-    assert not explainer_warnings, (
-        f"Expected zero explainer-missing warnings on happy path, "
-        f"got {len(explainer_warnings)}: "
-        f"{[r.getMessage() for r in explainer_warnings]}"
     )
+
+    assert result.model_explanation is None
+    assert result.narrative == generated.content
+
+
+# The canonical explainer itself is tested in test_model_explainer.py. Capsule
+# validation tests here intentionally cover only generated, provenance-bound
+# narrative artifacts.
 
 
 # ── Pitch shape in stuff specialist input ─────────────────────────────
@@ -1778,11 +2000,12 @@ class TestStuffPromptArmSlotRule:
         """Prompt ties pitch shape to the arm angle."""
         assert "arm angle" in _STUFF_SPECIALIST_PROMPT
 
-    def test_prompt_does_not_force_causal_attribution(self):
-        """Dead-zone is framed as a risk factor, not a mandatory explanation."""
-        p = _STUFF_SPECIALIST_PROMPT
-        assert "MUST reference its slot context" not in p
-        assert "not a verdict" in p.lower() or "risk factor" in p.lower()
+    def test_prompt_forbids_causal_attribution(self):
+        """Shape rarity is not behavioral or causal evidence."""
+        prompt = _STUFF_SPECIALIST_PROMPT.lower()
+        assert "describe physical rarity only" in prompt
+        assert "without inventing model drivers or causal mechanisms" in prompt
+        assert "matching available capability plus its cited fact ids" in prompt
 
 
 # ── Provider concurrency limiting ─────────────────────────────────────
@@ -1791,8 +2014,9 @@ class TestStuffPromptArmSlotRule:
 class _CountingAgent:
     """Stub agent recording peak concurrent .run() calls."""
 
-    def __init__(self, tracker: dict):
+    def __init__(self, tracker: dict, ctx):
         self._t = tracker
+        self._ctx = ctx
 
     async def run(self, **kwargs):
         import asyncio as _aio
@@ -1802,54 +2026,55 @@ class _CountingAgent:
         await _aio.sleep(0.01)
         self._t["live"] -= 1
 
-        class _R:
-            output = "text"
-
-        return _R()
+        return SimpleNamespace(output=_analysis_draft(self._ctx, "text"))
 
 
 def test_run_specialists_fan_out_concurrently(ctx):
     """Specialists fan out concurrently rather than running serially."""
     tracker = {"live": 0, "peak": 0}
-    agent = _CountingAgent(tracker)
+    agent = _CountingAgent(tracker, ctx)
     asyncio.run(run_specialists(agent, agent, agent, agent, ctx))
     assert tracker["peak"] > 1
 
 
 def test_run_specialists_names_runs_only_selected(ctx):
-    """With names=['trends'], only the trends agent is invoked and the other
-    SpecialistOutputs fields default to empty strings."""
+    """With names=['trends'], only the trends agent is invoked; unselected
+    fields are explicit typed unavailable analyses."""
     import asyncio
 
     class _MarkAgent:
         def __init__(self, mark):
             self.mark = mark
             self.calls = 0
+
         async def run(self, **kwargs):
             self.calls += 1
-            class _R:
-                pass
-            r = _R()
-            r.output = self.mark
-            return r
+
+            return SimpleNamespace(output=_analysis_draft(ctx, self.mark))
 
     stuff = _MarkAgent("STUFF")
     location = _MarkAgent("LOC")
     runvalue = _MarkAgent("RV")
     trends = _MarkAgent("TRENDS")
 
-    out = asyncio.run(run_specialists(
-        stuff, location, runvalue, trends, ctx,
-        names=["trends"],
-    ))
+    out = asyncio.run(
+        run_specialists(
+            stuff,
+            location,
+            runvalue,
+            trends,
+            ctx,
+            names=["trends"],
+        )
+    )
     assert trends.calls == 1
     assert stuff.calls == 0
     assert location.calls == 0
     assert runvalue.calls == 0
-    assert out.trends == "TRENDS"
-    assert out.stuff == ""
-    assert out.location == ""
-    assert out.runvalue == ""
+    assert out.trends == _analysis(ctx, "TRENDS")
+    assert out.stuff == empty_specialist_analysis()
+    assert out.location == empty_specialist_analysis()
+    assert out.runvalue == empty_specialist_analysis()
 
 
 class _ExplodingAuditor:
@@ -1860,21 +2085,33 @@ class _ExplodingAuditor:
 
 
 def test_audit_failure_fails_closed(ctx):
-    """A failing auditor must not kill the pipeline, but it must fail CLOSED:
-    each specialist's original text passes through un-audited, and one
-    AUDIT_FAILED sentinel flag per audited specialist is surfaced (visible in
-    audit_flags) rather than silently returning zero flags."""
-    outputs = SpecialistOutputs(stuff="s", location="l", runvalue="r",
-                                trends="t")
-    clean, flags, _residual = asyncio.run(audit_and_revise_specialists(
-        outputs, {}, _ExplodingAuditor(), ctx,
-    ))
-    assert clean == outputs
-    # One sentinel per audited specialist (all four by default).
+    """A failing auditor excludes every affected specialist and reports one
+    explicit provider-failed sentinel per specialist.
+    """
+    analysis = _analysis(ctx)
+    outputs = SpecialistOutputs(
+        stuff=analysis,
+        location=analysis,
+        runvalue=analysis,
+        trends=analysis,
+    )
+    clean, flags, residual = asyncio.run(
+        audit_and_revise_specialists(
+            outputs,
+            {},
+            _ExplodingAuditor(),
+            ctx,
+        )
+    )
+    assert clean == SpecialistOutputs()
+    assert residual == {"stuff", "location", "runvalue", "trends"}
     assert len(flags) == 4
     assert all(f.category == "AUDIT_FAILED" for f in flags)
     assert {f.specialist for f in flags} == {
-        "stuff", "location", "runvalue", "trends",
+        "stuff",
+        "location",
+        "runvalue",
+        "trends",
     }
 
 
@@ -1882,73 +2119,105 @@ def test_audit_names_audits_only_selected(ctx):
     """With names=['trends'], only trends is audited; other specialists
     pass through unchanged and no flags are raised for them."""
     import asyncio
-    from pitcher_narratives.models import SpecialistOutputs, AuditResult
+
+    from pitcher_narratives.models import AuditResult, SpecialistOutputs
     from pitcher_narratives.pipeline import audit_and_revise_specialists
 
-    outputs = SpecialistOutputs(stuff="s", location="l", runvalue="r",
-                                trends="t")
+    analysis = _analysis(ctx)
+    outputs = SpecialistOutputs(
+        stuff=analysis,
+        location=analysis,
+        runvalue=analysis,
+        trends=analysis,
+    )
 
     class _CountingAuditor:
         def __init__(self):
             self.calls = 0
+
         async def run(self, **kwargs):
             self.calls += 1
+
             class _R:
                 output = AuditResult(flags=[])
+
             return _R()
 
     auditor = _CountingAuditor()
-    clean, flags, _residual = asyncio.run(audit_and_revise_specialists(
-        outputs, {}, auditor, ctx, names=["trends"],
-    ))
-    assert auditor.calls == 1          # only one specialist audited
-    assert clean == outputs            # all four fields preserved, unchanged
+    clean, flags, _residual = asyncio.run(
+        audit_and_revise_specialists(
+            outputs,
+            {},
+            auditor,
+            ctx,
+            names=["trends"],
+        )
+    )
+    assert auditor.calls == 1  # only one specialist audited
+    assert clean == outputs  # all four fields preserved, unchanged
     assert flags == []
 
 
 class _ReviseSpecialist:
-    """Stub specialist agent returning a fixed revision string."""
+    """Stub specialist agent returning a typed revision draft."""
 
-    def __init__(self, text="revised prose"):
-        self.text = text
+    def __init__(self, ctx, text="revised prose"):
+        self.output = _analysis_draft(ctx, text)
 
     async def run(self, **kwargs):
-        class _R:
-            pass
-        r = _R()
-        r.output = self.text
-        return r
+        return SimpleNamespace(output=self.output)
 
 
 def test_reaudit_flags_revision_marks_specialist_residual(ctx):
     """A specialist that is flagged, revised, and STILL flagged on re-audit is
     reported as residual, and its re-audit flags are appended (specialist-tagged)
     to the returned flags."""
-    from pitcher_narratives.models import AuditResult, AuditFlag
+    from pitcher_narratives.models import AuditFlag, AuditResult
 
     class _AlwaysFlags:
         def __init__(self):
             self.calls = 0
+
         async def run(self, **kwargs):
             self.calls += 1
+
             class _R:
-                output = AuditResult(flags=[AuditFlag(
-                    category="FABRICATED_DATA", claim="98 mph",
-                    data_shows="95.9", suggested_fix="use 95.9")])
+                output = AuditResult(
+                    flags=[
+                        AuditFlag(
+                            category="FABRICATED_DATA",
+                            claim="98 mph",
+                            data_shows="95.9",
+                            suggested_fix="use 95.9",
+                        )
+                    ]
+                )
+
             return _R()
 
-    outputs = SpecialistOutputs(stuff="s", location="l", runvalue="r",
-                                trends="t")
-    specialist_agents = {"trends": _ReviseSpecialist()}
+    analysis = _analysis(ctx)
+    outputs = SpecialistOutputs(
+        stuff=analysis,
+        location=analysis,
+        runvalue=analysis,
+        trends=analysis,
+    )
+    specialist_agents = {"trends": _ReviseSpecialist(ctx)}
     auditor = _AlwaysFlags()
 
-    clean, flags, residual = asyncio.run(audit_and_revise_specialists(
-        outputs, specialist_agents, auditor, ctx, names=["trends"],
-    ))
+    clean, flags, residual = asyncio.run(
+        audit_and_revise_specialists(
+            outputs,
+            specialist_agents,
+            auditor,
+            ctx,
+            names=["trends"],
+        )
+    )
     # Audited once, revised once, re-audited once.
     assert auditor.calls == 2
-    assert clean.trends == "revised prose"      # revision applied
-    assert residual == {"trends"}               # still flagged on re-audit
+    assert clean.trends == empty_specialist_analysis()
+    assert residual == {"trends"}  # still flagged on re-audit
     # Both the original flag and the re-audit flag are present, tagged trends.
     assert len(flags) == 2
     assert all(f.specialist == "trends" for f in flags)
@@ -1956,31 +2225,54 @@ def test_reaudit_flags_revision_marks_specialist_residual(ctx):
 
 def test_reaudit_clean_revision_leaves_residual_empty(ctx):
     """A specialist flagged then revised clean on re-audit is NOT residual."""
-    from pitcher_narratives.models import AuditResult, AuditFlag
+    from pitcher_narratives.models import AuditFlag, AuditResult
 
     class _FlagThenClean:
         def __init__(self):
             self.calls = 0
+
         async def run(self, **kwargs):
             self.calls += 1
-            flags = [] if self.calls > 1 else [AuditFlag(
-                category="FABRICATED_DATA", claim="98 mph",
-                data_shows="95.9", suggested_fix="use 95.9")]
+            flags = (
+                []
+                if self.calls > 1
+                else [
+                    AuditFlag(
+                        category="FABRICATED_DATA",
+                        claim="98 mph",
+                        data_shows="95.9",
+                        suggested_fix="use 95.9",
+                    )
+                ]
+            )
+
             class _R:
                 output = AuditResult(flags=flags)
+
             return _R()
 
-    outputs = SpecialistOutputs(stuff="s", location="l", runvalue="r",
-                                trends="t")
+    analysis = _analysis(ctx)
+    outputs = SpecialistOutputs(
+        stuff=analysis,
+        location=analysis,
+        runvalue=analysis,
+        trends=analysis,
+    )
     auditor = _FlagThenClean()
 
-    clean, flags, residual = asyncio.run(audit_and_revise_specialists(
-        outputs, {"trends": _ReviseSpecialist()}, auditor, ctx, names=["trends"],
-    ))
+    clean, flags, residual = asyncio.run(
+        audit_and_revise_specialists(
+            outputs,
+            {"trends": _ReviseSpecialist(ctx)},
+            auditor,
+            ctx,
+            names=["trends"],
+        )
+    )
     assert auditor.calls == 2
-    assert clean.trends == "revised prose"
-    assert residual == set()          # re-audit came back clean
-    assert len(flags) == 1            # only the original flag
+    assert clean.trends == _analysis(ctx, "revised prose")
+    assert residual == set()  # re-audit came back clean
+    assert len(flags) == 1  # only the original flag
 
 
 def test_strip_tag_tokens_removes_leaked_tags():
@@ -1988,12 +2280,14 @@ def test_strip_tag_tokens_removes_leaked_tags():
     leaving tag-free prose untouched."""
     from pitcher_narratives.pipeline import _strip_tag_tokens
 
-    assert _strip_tag_tokens(
-        "extreme velocity [OUTLIER] at 93.0 mph, both [NORMAL]."
-    ) == "extreme velocity at 93.0 mph, both."
-    assert _strip_tag_tokens(
-        "spin [OUTLIER (above avg, z=+3.2)] and [SMALL SAMPLE, N=3 -- untagged] here."
-    ) == "spin and here."
+    assert (
+        _strip_tag_tokens("extreme velocity [OUTLIER] at 93.0 mph, both [NORMAL].")
+        == "extreme velocity at 93.0 mph, both."
+    )
+    assert (
+        _strip_tag_tokens("spin [OUTLIER (above avg, z=+3.2)] and [SMALL SAMPLE, N=3 -- untagged] here.")
+        == "spin and here."
+    )
     # No tags -> returned verbatim.
     assert _strip_tag_tokens("clean scout prose.") == "clean scout prose."
 
@@ -2007,67 +2301,92 @@ def test_tag_leak_folds_into_revision(ctx):
         async def run(self, **kwargs):
             class _R:
                 output = AuditResult(flags=[])
+
             return _R()
 
     outputs = SpecialistOutputs(
-        stuff="velocity [OUTLIER] at 93.0 mph.", location="l", runvalue="r",
-        trends="t",
+        stuff=_analysis(ctx, "velocity [OUTLIER] at 93.0 mph."),
+        location=_analysis(ctx),
+        runvalue=_analysis(ctx),
+        trends=_analysis(ctx),
     )
-    clean, flags, residual = asyncio.run(audit_and_revise_specialists(
-        outputs, {"stuff": _ReviseSpecialist("velocity is unusually high.")},
-        _CleanAuditor(), ctx, names=["stuff"],
-    ))
-    assert clean.stuff == "velocity is unusually high."   # revised, token gone
+    clean, flags, residual = asyncio.run(
+        audit_and_revise_specialists(
+            outputs,
+            {"stuff": _ReviseSpecialist(ctx, "velocity is unusually high.")},
+            _CleanAuditor(),
+            ctx,
+            names=["stuff"],
+        )
+    )
+    assert clean.stuff == _analysis(ctx, "velocity is unusually high.")
     assert any(f.category == "TAG_LEAK" and f.specialist == "stuff" for f in flags)
-    assert residual == set()                              # re-audit came back clean
+    assert residual == set()  # re-audit came back clean
 
 
 def test_reaudit_crash_marks_residual_and_surfaces_sentinel(ctx):
     """A re-audit that RAISES counts the specialist as residual and appends an
     AUDIT_FAILED sentinel (fail closed)."""
-    from pitcher_narratives.models import AuditResult, AuditFlag
+    from pitcher_narratives.models import AuditFlag, AuditResult
 
     class _FlagThenBoom:
         def __init__(self):
             self.calls = 0
+
         async def run(self, **kwargs):
             self.calls += 1
             if self.calls > 1:
                 raise RuntimeError("re-audit boom")
+
             class _R:
-                output = AuditResult(flags=[AuditFlag(
-                    category="FABRICATED_DATA", claim="98 mph",
-                    data_shows="95.9", suggested_fix="x")])
+                output = AuditResult(
+                    flags=[
+                        AuditFlag(
+                            category="FABRICATED_DATA", claim="98 mph", data_shows="95.9", suggested_fix="x"
+                        )
+                    ]
+                )
+
             return _R()
 
-    outputs = SpecialistOutputs(stuff="s", location="l", runvalue="r",
-                                trends="t")
-    clean, flags, residual = asyncio.run(audit_and_revise_specialists(
-        outputs, {"trends": _ReviseSpecialist()}, _FlagThenBoom(), ctx,
-        names=["trends"],
-    ))
+    outputs = SpecialistOutputs(trends=_analysis(ctx))
+    clean, flags, residual = asyncio.run(
+        audit_and_revise_specialists(
+            outputs,
+            {"trends": _ReviseSpecialist(ctx)},
+            _FlagThenBoom(),
+            ctx,
+            names=["trends"],
+        )
+    )
     assert residual == {"trends"}
-    assert any(f.category == "AUDIT_FAILED" and f.specialist == "trends"
-               for f in flags)
+    assert clean.trends == empty_specialist_analysis()
+    assert any(f.category == "AUDIT_FAILED" and f.specialist == "trends" for f in flags)
 
 
-def test_build_parity_union_exclude_drops_specialist_prose(ctx):
-    """_build_parity_union(exclude=...) omits the excluded specialist's prose
-    but still carries raw ground truth and the other specialists."""
-    from pitcher_narratives.pipeline import _build_parity_union
+def test_specialist_output_is_excluded_from_fact_registry_and_ground_truth(ctx):
+    """Generated specialist claims never become capsule factual authority."""
+    from pitcher_narratives.pipeline import (
+        _build_capsule_ground_truth,
+        _build_parity_union,
+    )
 
+    unsupported = "UNSUPPORTED SPECIALIST SENTENCE MUST NOT BECOME A FACT"
     specialists = SpecialistOutputs(
-        stuff="STUFF_PROSE", location="LOC_PROSE", runvalue="RV_PROSE",
-        trends="TRENDS_PROSE_UNVERIFIED",
+        stuff=_analysis(ctx, unsupported),
+        location=_analysis(ctx, "Location paraphrase."),
+        runvalue=_analysis(ctx, "Run-value paraphrase."),
+        trends=_analysis(ctx, "Trend paraphrase."),
     )
-    union = _build_parity_union(
-        ctx, specialists, None, exclude=frozenset({"trends"}),
-    )
-    assert "TRENDS_PROSE_UNVERIFIED" not in union   # excluded prose dropped
-    assert "STUFF_PROSE" in union                    # other specialists kept
-    # Raw ground truth (independent of specialist prose) still present.
-    from pitcher_narratives.pipeline import _build_capsule_ground_truth
-    assert _build_capsule_ground_truth(ctx) in union
+    registered_before = ctx.facts.facts()
+    ground_truth = _build_parity_union(ctx, specialists, None)
+
+    assert unsupported not in ground_truth
+    assert "Location paraphrase." not in ground_truth
+    assert "Run-value paraphrase." not in ground_truth
+    assert "Trend paraphrase." not in ground_truth
+    assert _build_capsule_ground_truth(ctx) == ground_truth
+    assert ctx.facts.facts() == registered_before
 
 
 def test_trend_audit_ground_truth_includes_frame_comparison(ctx):
@@ -2083,16 +2402,29 @@ def test_trend_audit_ground_truth_includes_frame_comparison(ctx):
         async def run(self, **kwargs):
             # agent_kwargs stores the prompt under 'user_prompt'.
             captured["input"] = kwargs.get("user_prompt", "")
+
             class _R:
                 output = AuditResult(flags=[])
+
             return _R()
 
-    outputs = SpecialistOutputs(stuff="s", location="l", runvalue="r",
-                                trends="t")
-    asyncio.run(audit_and_revise_specialists(
-        outputs, {}, _CapturingAuditor(), ctx, names=["trends"],
-        trend_frame_comparison=marker,
-    ))
+    analysis = _analysis(ctx)
+    outputs = SpecialistOutputs(
+        stuff=analysis,
+        location=analysis,
+        runvalue=analysis,
+        trends=analysis,
+    )
+    asyncio.run(
+        audit_and_revise_specialists(
+            outputs,
+            {},
+            _CapturingAuditor(),
+            ctx,
+            names=["trends"],
+            trend_frame_comparison=marker,
+        )
+    )
     assert marker in captured["input"]
 
 
@@ -2101,15 +2433,13 @@ def test_run_analysis_spine_returns_analyzed_context(ctx):
     agents = make_pipeline_agents("gemini", "high")
     # call_tools=[] prevents TestModel from auto-generating tool calls
     # against the skill toolset (which would fail with SkillNotFoundError).
-    model = TestModel(call_tools=[], custom_output_text="Specialist analysis.")
-    result = asyncio.run(
-        run_analysis_spine(ctx, agents=agents, _model_override=model)
-    )
+    model = TestModel(call_tools=[])
+    result = asyncio.run(run_analysis_spine(ctx, agents=agents, _model_override=model))
     assert isinstance(result, AnalyzedContext)
-    assert result.specialists.stuff != ""
-    assert result.specialists.location != ""
-    assert result.specialists.runvalue != ""
-    assert result.specialists.trends != ""
+    assert all(
+        isinstance(getattr(result.specialists, name), SpecialistAnalysis)
+        for name in SpecialistOutputs.model_fields
+    )
     assert isinstance(result.audit_flags, list)
 
 
@@ -2117,14 +2447,20 @@ def test_run_analysis_spine_composes_core_then_tail(ctx, monkeypatch):
     """run_analysis_spine must delegate to run_spine_core then run_spine_tail,
     passing the produced CoreContext and the same ctx into the tail."""
     import asyncio
-    import pitcher_narratives.pipeline as _pl
-    from pitcher_narratives.models import CoreContext, AnalyzedContext, SpecialistOutputs
     from unittest.mock import AsyncMock
 
-    sentinel_core = CoreContext(stuff="s", location="l", runvalue="r")
+    import pitcher_narratives.pipeline as _pl
+    from pitcher_narratives.models import AnalyzedContext, CoreContext, SpecialistOutputs
+
+    analysis = _analysis(ctx)
+    sentinel_core = CoreContext(stuff=analysis, location=analysis, runvalue=analysis)
     sentinel_analyzed = AnalyzedContext(
-        specialists=SpecialistOutputs(stuff="s", location="l", runvalue="r",
-                                      trends="t"),
+        specialists=SpecialistOutputs(
+            stuff=analysis,
+            location=analysis,
+            runvalue=analysis,
+            trends=analysis,
+        ),
     )
     core_mock = AsyncMock(return_value=sentinel_core)
     tail_mock = AsyncMock(return_value=sentinel_analyzed)
@@ -2140,7 +2476,7 @@ def test_run_analysis_spine_composes_core_then_tail(ctx, monkeypatch):
     tail_mock.assert_awaited_once()
     # The CoreContext from core is threaded into the tail as its first arg,
     # and the same ctx is passed through.
-    tail_args, tail_kwargs = tail_mock.call_args
+    tail_args, _tail_kwargs = tail_mock.call_args
     assert tail_args[0] is sentinel_core
     assert tail_args[1] is ctx
 
@@ -2149,17 +2485,18 @@ def test_run_spine_core_returns_four_clean_specialists(ctx):
     """run_spine_core runs only the four core specialists under TestModel and
     returns a CoreContext with all four populated."""
     import asyncio
+
     from pitcher_narratives.models import CoreContext
-    from pitcher_narratives.pipeline import run_spine_core, make_pipeline_agents
+    from pitcher_narratives.pipeline import make_pipeline_agents, run_spine_core
 
     agents = make_pipeline_agents("gemini", "high")
-    model = TestModel(call_tools=[], custom_output_text="Core analysis.")
+    model = TestModel(call_tools=[])
     core = asyncio.run(run_spine_core(ctx, agents=agents, _model_override=model))
 
     assert isinstance(core, CoreContext)
-    assert core.stuff != ""
-    assert core.location != ""
-    assert core.runvalue != ""
+    assert isinstance(core.stuff, SpecialistAnalysis)
+    assert isinstance(core.location, SpecialistAnalysis)
+    assert isinstance(core.runvalue, SpecialistAnalysis)
     assert isinstance(core.audit_flags, list)
 
 
@@ -2167,22 +2504,23 @@ def test_run_spine_tail_assembles_full_analyzed_context(ctx):
     """run_spine_tail runs trends + signal extraction over a CoreContext and
     returns a complete AnalyzedContext preserving the core specialist text."""
     import asyncio
-    from pitcher_narratives.models import CoreContext, AnalyzedContext
-    from pitcher_narratives.pipeline import run_spine_tail, make_pipeline_agents
+
+    from pitcher_narratives.models import AnalyzedContext, CoreContext
+    from pitcher_narratives.pipeline import make_pipeline_agents, run_spine_tail
 
     agents = make_pipeline_agents("gemini", "high")
-    model = TestModel(call_tools=[], custom_output_text="Tail analysis.")
-    core = CoreContext(stuff="CORE_STUFF", location="CORE_LOC",
-                       runvalue="CORE_RV")
-
-    analyzed = asyncio.run(
-        run_spine_tail(core, ctx, agents=agents, _model_override=model)
+    model = TestModel(call_tools=[])
+    core_analysis = _analysis(ctx, "CORE_STUFF")
+    core = CoreContext(
+        stuff=core_analysis,
+        location=_analysis(ctx, "CORE_LOC"),
+        runvalue=_analysis(ctx, "CORE_RV"),
     )
+
+    analyzed = asyncio.run(run_spine_tail(core, ctx, agents=agents, _model_override=model))
     assert isinstance(analyzed, AnalyzedContext)
-    # Core specialist text is carried through verbatim.
-    assert analyzed.specialists.stuff == "CORE_STUFF"
-    # Trends was produced by the tail.
-    assert analyzed.specialists.trends != ""
+    assert analyzed.specialists.stuff == core_analysis
+    assert isinstance(analyzed.specialists.trends, SpecialistAnalysis)
 
 
 def test_run_spine_tail_injects_frame_comparison_with_prior_ctx(ctx, monkeypatch):
@@ -2190,7 +2528,6 @@ def test_run_spine_tail_injects_frame_comparison_with_prior_ctx(ctx, monkeypatch
     passes it into run_specialists as trend_frame_comparison, which lands in
     the trends specialist's prompt."""
     import asyncio
-    from unittest.mock import AsyncMock
 
     import pitcher_narratives.pipeline as _pl
     from pitcher_narratives.context import assemble_prior_context
@@ -2203,19 +2540,22 @@ def test_run_spine_tail_injects_frame_comparison_with_prior_ctx(ctx, monkeypatch
 
     async def _fake_run_specialists(*args, **kwargs):
         captured["trend_frame_comparison"] = kwargs.get("trend_frame_comparison")
-        return SpecialistOutputs(stuff="s", location="l", runvalue="r", trends="TRENDS_OUT")
+        analysis = _analysis(ctx)
+        return SpecialistOutputs(
+            stuff=analysis,
+            location=analysis,
+            runvalue=analysis,
+            trends=analysis,
+        )
 
     monkeypatch.setattr(_pl, "run_specialists", _fake_run_specialists)
 
     agents = make_pipeline_agents("gemini", "high")
-    model = TestModel(call_tools=[], custom_output_text="Tail analysis.")
-    core = CoreContext(stuff="CORE_STUFF", location="CORE_LOC",
-                       runvalue="CORE_RV")
+    model = TestModel(call_tools=[])
+    analysis = _analysis(ctx)
+    core = CoreContext(stuff=analysis, location=analysis, runvalue=analysis)
 
-    asyncio.run(
-        run_spine_tail(core, ctx, agents=agents, _model_override=model,
-                       prior_ctx=prior_ctx)
-    )
+    asyncio.run(run_spine_tail(core, ctx, agents=agents, _model_override=model, prior_ctx=prior_ctx))
 
     assert captured["trend_frame_comparison"] is not None
     assert "Recent vs Prior Window" in captured["trend_frame_comparison"]
@@ -2233,13 +2573,12 @@ def test_spine_tail_stores_frame_comparison_with_prior_ctx(ctx):
     prior_ctx = assemble_prior_context(load_pitcher_data(592155, 10), 10, 10)
 
     agents = make_pipeline_agents("gemini", "high")
-    model = TestModel(call_tools=[], custom_output_text="Tail analysis.")
-    core = CoreContext(stuff="CORE_STUFF", location="CORE_LOC",
-                       runvalue="CORE_RV")
+    model = TestModel(call_tools=[])
+    analysis = _analysis(ctx)
+    core = CoreContext(stuff=analysis, location=analysis, runvalue=analysis)
 
     analyzed = asyncio.run(
-        run_spine_tail(core, ctx, agents=agents, _model_override=model,
-                       prior_ctx=prior_ctx)
+        run_spine_tail(core, ctx, agents=agents, _model_override=model, prior_ctx=prior_ctx)
     )
 
     assert analyzed.trend_frame_comparison is not None
@@ -2255,13 +2594,11 @@ def test_spine_tail_frame_comparison_none_without_prior_ctx(ctx):
     from pitcher_narratives.pipeline import make_pipeline_agents, run_spine_tail
 
     agents = make_pipeline_agents("gemini", "high")
-    model = TestModel(call_tools=[], custom_output_text="Tail analysis.")
-    core = CoreContext(stuff="CORE_STUFF", location="CORE_LOC",
-                       runvalue="CORE_RV")
+    model = TestModel(call_tools=[])
+    analysis = _analysis(ctx)
+    core = CoreContext(stuff=analysis, location=analysis, runvalue=analysis)
 
-    analyzed = asyncio.run(
-        run_spine_tail(core, ctx, agents=agents, _model_override=model)
-    )
+    analyzed = asyncio.run(run_spine_tail(core, ctx, agents=agents, _model_override=model))
 
     assert analyzed.trend_frame_comparison is None
 
@@ -2279,18 +2616,22 @@ def test_run_spine_tail_no_frame_comparison_without_prior_ctx(ctx, monkeypatch):
 
     async def _fake_run_specialists(*args, **kwargs):
         captured["trend_frame_comparison"] = kwargs.get("trend_frame_comparison")
-        return SpecialistOutputs(stuff="s", location="l", runvalue="r", trends="TRENDS_OUT")
+        analysis = _analysis(ctx)
+        return SpecialistOutputs(
+            stuff=analysis,
+            location=analysis,
+            runvalue=analysis,
+            trends=analysis,
+        )
 
     monkeypatch.setattr(_pl, "run_specialists", _fake_run_specialists)
 
     agents = make_pipeline_agents("gemini", "high")
-    model = TestModel(call_tools=[], custom_output_text="Tail analysis.")
-    core = CoreContext(stuff="CORE_STUFF", location="CORE_LOC",
-                       runvalue="CORE_RV")
+    model = TestModel(call_tools=[])
+    analysis = _analysis(ctx)
+    core = CoreContext(stuff=analysis, location=analysis, runvalue=analysis)
 
-    asyncio.run(
-        run_spine_tail(core, ctx, agents=agents, _model_override=model)
-    )
+    asyncio.run(run_spine_tail(core, ctx, agents=agents, _model_override=model))
 
     assert captured["trend_frame_comparison"] is None
 
@@ -2300,8 +2641,7 @@ def test_order_flags_puts_specialists_in_canonical_order():
     from pitcher_narratives.pipeline import _order_flags
 
     def flag(spec):
-        return AuditFlag(category="X", specialist=spec, claim="c",
-                         data_shows="d", suggested_fix="f")
+        return AuditFlag(category="X", specialist=spec, claim="c", data_shows="d", suggested_fix="f")
 
     # Core-first + trends-last input (as run_spine_tail concatenates) must be
     # reordered to the canonical stuff/location/runvalue/trends order.
@@ -2310,16 +2650,22 @@ def test_order_flags_puts_specialists_in_canonical_order():
 
 
 class TestBuildSummaryInput:
-    def test_frames_capsule_as_subject_with_grounding(self):
+    def test_frames_capsule_with_citable_source_claims_and_grounding(self):
         from pitcher_narratives.pipeline import build_summary_input
-        out = build_summary_input("CAPSULE_TEXT", "WRITER_INPUT_TEXT")
-        # Both payloads present.
+
+        out = build_summary_input(
+            "CAPSULE_TEXT",
+            "WRITER_INPUT_TEXT",
+            "- [claim:narrative:123] Supported capsule sentence. [fact:abc]",
+        )
         assert "CAPSULE_TEXT" in out
+        assert "claim:narrative:123" in out
+        assert "fact:abc" in out
         assert "WRITER_INPUT_TEXT" in out
-        # Capsule is the subject and comes first.
-        assert out.index("CAPSULE_TEXT") < out.index("WRITER_INPUT_TEXT")
-        # Contract markers present.
+        assert out.index("CAPSULE_TEXT") < out.index("claim:narrative:123")
+        assert out.index("claim:narrative:123") < out.index("WRITER_INPUT_TEXT")
         assert "FINISHED REPORT" in out
+        assert "VERIFIED CAPSULE CLAIMS" in out
         assert "reference ONLY" in out.replace("reference only", "reference ONLY")
         assert "do NOT add" in out or "do NOT correct" in out
 
@@ -2327,6 +2673,7 @@ class TestBuildSummaryInput:
 class TestExecutiveSummaryPrompt:
     def test_prompt_targets_finished_report_with_recover_only_grounding(self):
         from pitcher_narratives.pipeline import _EXECUTIVE_SUMMARY_PROMPT
+
         p = _EXECUTIVE_SUMMARY_PROMPT
         assert "finished scouting report" in p.lower()
         # Recover-only grounding contract.
@@ -2342,129 +2689,192 @@ class TestRunCapsuleAudit:
     class _CleanAuditor:
         async def run(self, **kwargs):
             from pitcher_narratives.models import AuditResult
+
             class _R:
                 output = AuditResult(flags=[])
+
             return _R()
 
     class _FlaggingAuditor:
         async def run(self, **kwargs):
-            from pitcher_narratives.models import AuditResult, AuditFlag
+            from pitcher_narratives.models import AuditFlag, AuditResult
+
             class _R:
-                output = AuditResult(flags=[AuditFlag(category="FABRICATED_DATA", claim="98 mph", data_shows="95.9", suggested_fix="use 95.9")])
+                output = AuditResult(
+                    flags=[
+                        AuditFlag(
+                            category="FABRICATED_DATA",
+                            claim="98 mph",
+                            data_shows="95.9",
+                            suggested_fix="use 95.9",
+                        )
+                    ]
+                )
+
             return _R()
 
     class _Writer:
         async def run(self, **kwargs):
             class _R:
-                output = "corrected capsule"
+                output = _draft("corrected capsule")
+
             return _R()
 
     class _FlagThenCleanAuditor:
         """Flags on the first audit, clean on the re-audit — the happy path."""
+
         def __init__(self):
             self.calls = 0
+
         async def run(self, **kwargs):
-            from pitcher_narratives.models import AuditResult, AuditFlag
+            from pitcher_narratives.models import AuditFlag, AuditResult
+
             self.calls += 1
-            flags = [] if self.calls > 1 else [
-                AuditFlag(category="FABRICATED_DATA", claim="98 mph", data_shows="95.9", suggested_fix="use 95.9")
-            ]
+            flags = (
+                []
+                if self.calls > 1
+                else [
+                    AuditFlag(
+                        category="FABRICATED_DATA",
+                        claim="98 mph",
+                        data_shows="95.9",
+                        suggested_fix="use 95.9",
+                    )
+                ]
+            )
+
             class _R:
                 output = AuditResult(flags=flags)
+
             return _R()
 
     class _FlagUntilCleanAuditor:
         """Flags for the first ``flag_calls`` audits, then clean — exercises
         convergence on a later loop pass."""
+
         def __init__(self, flag_calls):
             self.flag_calls = flag_calls
             self.calls = 0
+
         async def run(self, **kwargs):
-            from pitcher_narratives.models import AuditResult, AuditFlag
+            from pitcher_narratives.models import AuditFlag, AuditResult
+
             self.calls += 1
-            flags = [
-                AuditFlag(category="FABRICATED_DATA", claim="98 mph", data_shows="95.9", suggested_fix="x")
-            ] if self.calls <= self.flag_calls else []
+            flags = (
+                [AuditFlag(category="FABRICATED_DATA", claim="98 mph", data_shows="95.9", suggested_fix="x")]
+                if self.calls <= self.flag_calls
+                else []
+            )
+
             class _R:
                 output = AuditResult(flags=flags)
+
             return _R()
 
     class _CountingWriter:
         def __init__(self):
             self.calls = 0
+
         async def run(self, **kwargs):
             self.calls += 1
+
             class _R:
-                output = "corrected capsule"
+                output = _draft("corrected capsule")
+
             return _R()
 
     def test_clean_audit_no_revision(self):
         from pitcher_narratives.pipeline import run_capsule_audit
-        cap, flags, revised = asyncio.run(run_capsule_audit(
-            auditor=self._CleanAuditor(), writer_agent=self._Writer(),
-            ground_truth="gt", capsule="original capsule",
-        ))
-        assert cap == "original capsule"
+
+        cap, flags, revised = asyncio.run(
+            run_capsule_audit(
+                auditor=self._CleanAuditor(),
+                writer_agent=self._Writer(),
+                ground_truth="gt",
+                capsule=_draft("original capsule"),
+            )
+        )
+        assert cap.content == "original capsule"
         assert flags == []
         assert revised is False
 
     def test_flagged_audit_triggers_one_revision(self):
         from pitcher_narratives.pipeline import run_capsule_audit
-        cap, flags, revised = asyncio.run(run_capsule_audit(
-            auditor=self._FlaggingAuditor(), writer_agent=self._Writer(),
-            ground_truth="gt", capsule="original capsule",
-        ))
-        assert cap == "corrected capsule"
+
+        cap, flags, revised = asyncio.run(
+            run_capsule_audit(
+                auditor=self._FlaggingAuditor(),
+                writer_agent=self._Writer(),
+                ground_truth="gt",
+                capsule=_draft("original capsule"),
+            )
+        )
+        assert cap == _draft("")
         assert len(flags) == 1
         assert revised is True
 
     def test_auditor_error_fails_closed(self):
-        # A first-audit crash means NOTHING was fact-checked. Fail closed: the
-        # capsule is unchanged but exactly one AUDIT_FAILED residual flag is
-        # surfaced, so is_unverified → True and the UNVERIFIED banner fires
-        # (an empty [] would ship the report silently marked verified).
+        # A first-audit crash means nothing was fact-checked. The draft is
+        # withheld and an explicit provider-failed flag is surfaced.
         from pitcher_narratives.pipeline import run_capsule_audit
+
         class _Boom:
             async def run(self, **kwargs):
                 raise RuntimeError("boom")
-        cap, flags, revised = asyncio.run(run_capsule_audit(
-            auditor=_Boom(), writer_agent=self._Writer(),
-            ground_truth="gt", capsule="original capsule",
-        ))
-        assert cap == "original capsule"
+
+        cap, flags, revised = asyncio.run(
+            run_capsule_audit(
+                auditor=_Boom(),
+                writer_agent=self._Writer(),
+                ground_truth="gt",
+                capsule=_draft("original capsule"),
+            )
+        )
+        assert cap == _draft("")
         assert len(flags) == 1
         assert flags[0].category == "AUDIT_FAILED"
         assert revised is False
 
-    def test_writer_error_keeps_flags_not_revised(self):
-        # Writer-failure branch differs from auditor-failure: flags are
-        # PRESERVED (not []), and revised is False (no correction applied).
+    def test_writer_error_withholds_capsule_and_keeps_flags(self):
+        # A failed correction cannot publish the rejected source draft.
         from pitcher_narratives.pipeline import run_capsule_audit
+
         class _BoomWriter:
             async def run(self, **kwargs):
                 raise RuntimeError("writer boom")
-        cap, flags, revised = asyncio.run(run_capsule_audit(
-            auditor=self._FlaggingAuditor(), writer_agent=_BoomWriter(),
-            ground_truth="gt", capsule="original capsule",
-        ))
-        assert cap == "original capsule"
-        assert len(flags) == 1   # flags preserved, not []
+
+        cap, flags, revised = asyncio.run(
+            run_capsule_audit(
+                auditor=self._FlaggingAuditor(),
+                writer_agent=_BoomWriter(),
+                ground_truth="gt",
+                capsule=_draft("original capsule"),
+            )
+        )
+        assert cap == _draft("")
+        assert len(flags) == 1  # flags preserved, not []
         assert revised is False
 
-    def test_blank_revision_keeps_capsule(self):
-        # A degenerate (whitespace) fact-revision must NOT overwrite the good
-        # capsule — keep the pre-revision text, revised=False.
+    def test_blank_revision_withholds_capsule(self):
+        # A degenerate fact revision is not a verified replacement.
         from pitcher_narratives.pipeline import run_capsule_audit
+
         class _BlankWriter:
             async def run(self, **kwargs):
                 class _R:
-                    output = "   \n  "
+                    output = _draft("   \n  ")
+
                 return _R()
-        cap, flags, revised = asyncio.run(run_capsule_audit(
-            auditor=self._FlaggingAuditor(), writer_agent=_BlankWriter(),
-            ground_truth="gt", capsule="original capsule",
-        ))
-        assert cap == "original capsule"
+
+        cap, flags, revised = asyncio.run(
+            run_capsule_audit(
+                auditor=self._FlaggingAuditor(),
+                writer_agent=_BlankWriter(),
+                ground_truth="gt",
+                capsule=_draft("original capsule"),
+            )
+        )
+        assert cap == _draft("")
         assert len(flags) == 1
         assert revised is False
 
@@ -2472,88 +2882,137 @@ class TestRunCapsuleAudit:
         # Flag -> revise -> re-audit clean: the revised capsule ships with NO
         # residual flags (the revision is verified).
         from pitcher_narratives.pipeline import run_capsule_audit
+
         auditor = self._FlagThenCleanAuditor()
-        cap, flags, revised = asyncio.run(run_capsule_audit(
-            auditor=auditor, writer_agent=self._Writer(),
-            ground_truth="gt", capsule="original capsule",
-        ))
-        assert cap == "corrected capsule"
-        assert flags == []          # re-audit clean -> residual empty
+        cap, flags, revised = asyncio.run(
+            run_capsule_audit(
+                auditor=auditor,
+                writer_agent=self._Writer(),
+                ground_truth="gt",
+                capsule=_draft("original capsule"),
+            )
+        )
+        assert cap.content == "corrected capsule"
+        assert flags == []  # re-audit clean -> residual empty
         assert revised is True
-        assert auditor.calls == 2   # initial audit + one re-audit
+        assert auditor.calls == 2  # initial audit + one re-audit
 
     def test_reaudit_surfaces_residual(self):
         # Auditor keeps flagging after the revision: the residual must be
         # surfaced (not shipped unchecked), and the revised capsule is kept.
         from pitcher_narratives.pipeline import run_capsule_audit
-        cap, flags, revised = asyncio.run(run_capsule_audit(
-            auditor=self._FlaggingAuditor(), writer_agent=self._Writer(),
-            ground_truth="gt", capsule="original capsule",
-        ))
-        assert cap == "corrected capsule"
-        assert len(flags) == 1      # residual from the re-audit
+
+        cap, flags, revised = asyncio.run(
+            run_capsule_audit(
+                auditor=self._FlaggingAuditor(),
+                writer_agent=self._Writer(),
+                ground_truth="gt",
+                capsule=_draft("original capsule"),
+            )
+        )
+        assert cap == _draft("")
+        assert len(flags) == 1  # residual from the re-audit
         assert revised is True
 
     def test_reaudit_error_surfaces_original_flags(self):
         # If the re-audit call raises, degrade by surfacing the original flags
         # (better than silently shipping the revision as clean).
+        from pitcher_narratives.models import AuditFlag, AuditResult
         from pitcher_narratives.pipeline import run_capsule_audit
-        from pitcher_narratives.models import AuditResult, AuditFlag
+
         class _FlagThenBoom:
             def __init__(self):
                 self.calls = 0
+
             async def run(self, **kwargs):
                 self.calls += 1
                 if self.calls > 1:
                     raise RuntimeError("re-audit boom")
+
                 class _R:
-                    output = AuditResult(flags=[AuditFlag(category="FABRICATED_DATA", claim="98 mph", data_shows="95.9", suggested_fix="x")])
+                    output = AuditResult(
+                        flags=[
+                            AuditFlag(
+                                category="FABRICATED_DATA",
+                                claim="98 mph",
+                                data_shows="95.9",
+                                suggested_fix="x",
+                            )
+                        ]
+                    )
+
                 return _R()
-        cap, flags, revised = asyncio.run(run_capsule_audit(
-            auditor=_FlagThenBoom(), writer_agent=self._Writer(),
-            ground_truth="gt", capsule="original capsule",
-        ))
-        assert cap == "corrected capsule"
-        assert len(flags) == 1
+
+        cap, flags, revised = asyncio.run(
+            run_capsule_audit(
+                auditor=_FlagThenBoom(),
+                writer_agent=self._Writer(),
+                ground_truth="gt",
+                capsule=_draft("original capsule"),
+            )
+        )
+        assert cap == _draft("")
+        assert len(flags) == 2
         assert revised is True
 
     def test_loop_converges_on_second_pass(self):
         # Flags audits 1 and 2, clean on audit 3 -> two revisions, then verified
         # clean. Requires the loop (a single revise would still be flagged).
         from pitcher_narratives.pipeline import run_capsule_audit
+
         auditor = self._FlagUntilCleanAuditor(flag_calls=2)
         writer = self._CountingWriter()
-        cap, flags, revised = asyncio.run(run_capsule_audit(
-            auditor=auditor, writer_agent=writer,
-            ground_truth="gt", capsule="original capsule", max_fact_revisions=2,
-        ))
-        assert flags == []          # converged
+        cap, flags, revised = asyncio.run(
+            run_capsule_audit(
+                auditor=auditor,
+                writer_agent=writer,
+                ground_truth="gt",
+                capsule=_draft("original capsule"),
+                max_fact_revisions=2,
+            )
+        )
+        assert cap.content == "corrected capsule"
+        assert flags == []  # converged
         assert revised is True
-        assert writer.calls == 2    # two fact-revisions
-        assert auditor.calls == 3   # initial + 2 re-audits
+        assert writer.calls == 2  # two fact-revisions
+        assert auditor.calls == 3  # initial + 2 re-audits
 
     def test_loop_caps_revisions_and_surfaces_residual(self):
         # Auditor never goes clean: the loop must stop at max_fact_revisions and
         # surface the residual rather than spinning.
         from pitcher_narratives.pipeline import run_capsule_audit
+
         writer = self._CountingWriter()
-        cap, flags, revised = asyncio.run(run_capsule_audit(
-            auditor=self._FlaggingAuditor(), writer_agent=writer,
-            ground_truth="gt", capsule="original capsule", max_fact_revisions=2,
-        ))
-        assert len(flags) == 1      # residual surfaced
+        cap, flags, revised = asyncio.run(
+            run_capsule_audit(
+                auditor=self._FlaggingAuditor(),
+                writer_agent=writer,
+                ground_truth="gt",
+                capsule=_draft("original capsule"),
+                max_fact_revisions=2,
+            )
+        )
+        assert cap == _draft("")
+        assert len(flags) == 1  # residual surfaced
         assert revised is True
-        assert writer.calls == 2    # capped at max_fact_revisions
+        assert writer.calls == 2  # capped at max_fact_revisions
 
     def test_max_fact_revisions_one(self):
         from pitcher_narratives.pipeline import run_capsule_audit
+
         writer = self._CountingWriter()
-        cap, flags, revised = asyncio.run(run_capsule_audit(
-            auditor=self._FlaggingAuditor(), writer_agent=writer,
-            ground_truth="gt", capsule="original capsule", max_fact_revisions=1,
-        ))
+        cap, flags, _revised = asyncio.run(
+            run_capsule_audit(
+                auditor=self._FlaggingAuditor(),
+                writer_agent=writer,
+                ground_truth="gt",
+                capsule=_draft("original capsule"),
+                max_fact_revisions=1,
+            )
+        )
+        assert cap == _draft("")
         assert writer.calls == 1
-        assert len(flags) == 1      # still flagged, surfaced
+        assert len(flags) == 1  # still flagged, surfaced
 
 
 def test_capsule_audit_records_usage():
@@ -2569,25 +3028,29 @@ def test_capsule_audit_records_usage():
     def _wrap(output, tin, tout):
         return MagicMock(
             output=output,
-            usage=MagicMock(return_value=SimpleNamespace(
-                input_tokens=tin, output_tokens=tout)),
+            usage=MagicMock(return_value=SimpleNamespace(input_tokens=tin, output_tokens=tout)),
         )
 
-    flag = AuditFlag(category="FABRICATED_DATA", claim="c",
-                     data_shows="d", suggested_fix="f")
+    flag = AuditFlag(category="FABRICATED_DATA", claim="c", data_shows="d", suggested_fix="f")
     dirty = AuditResult(flags=[flag])
     clean = AuditResult(flags=[])
     auditor = MagicMock()
     auditor.run = AsyncMock(side_effect=[_wrap(dirty, 10, 4), _wrap(clean, 10, 4)])
     writer = MagicMock()
-    writer.run = AsyncMock(side_effect=[_wrap("FIXED CAPSULE", 20, 6)])
+    writer.run = AsyncMock(side_effect=[_wrap(_draft("FIXED CAPSULE"), 20, 6)])
 
     tracker = UsageTracker()
-    asyncio.run(run_capsule_audit(
-        auditor=auditor, writer_agent=writer,
-        ground_truth="gt", capsule="CAP", max_fact_revisions=2,
-        tracker=tracker, tracker_model="m",
-    ))
+    asyncio.run(
+        run_capsule_audit(
+            auditor=auditor,
+            writer_agent=writer,
+            ground_truth="gt",
+            capsule=_draft("CAP"),
+            max_fact_revisions=2,
+            tracker=tracker,
+            tracker_model="m",
+        )
+    )
 
     stages = [r.stage for r in tracker.records]
     assert stages == ["fact_audit", "fact_revision", "fact_audit"]
@@ -2608,19 +3071,26 @@ def test_capsule_audit_usage_error_propagates_not_swallowed_as_auditor_failure()
 
     clean = AuditResult(flags=[])
     auditor = MagicMock()
-    auditor.run = AsyncMock(return_value=MagicMock(
-        output=clean,
-        usage=MagicMock(side_effect=RuntimeError("usage boom")),
-    ))
+    auditor.run = AsyncMock(
+        return_value=MagicMock(
+            output=clean,
+            usage=MagicMock(side_effect=RuntimeError("usage boom")),
+        )
+    )
     writer = MagicMock()
 
     tracker = UsageTracker()
     with pytest.raises(RuntimeError, match="usage boom"):
-        asyncio.run(run_capsule_audit(
-            auditor=auditor, writer_agent=writer,
-            ground_truth="gt", capsule="CAP",
-            tracker=tracker, tracker_model="m",
-        ))
+        asyncio.run(
+            run_capsule_audit(
+                auditor=auditor,
+                writer_agent=writer,
+                ground_truth="gt",
+                capsule=_draft("CAP"),
+                tracker=tracker,
+                tracker_model="m",
+            )
+        )
 
 
 def test_flag_summary_counts_fields():
@@ -2629,8 +3099,7 @@ def test_flag_summary_counts_fields():
 
     result = PipelineResult(
         narrative="n",
-        specialists=SpecialistOutputs(
-            stuff="s", location="l", runvalue="r", trends="t"),
+        specialists=SpecialistOutputs(),
         revision_count=2,
         capsule_revised=True,
         anchor_warnings=[],
@@ -2655,8 +3124,7 @@ def test_pipeline_result_signals_failed_roundtrips_into_flag_summary():
 
     result = PipelineResult(
         narrative="n",
-        specialists=SpecialistOutputs(
-            stuff="s", location="l", runvalue="r", trends="t"),
+        specialists=SpecialistOutputs(),
         signals_failed=True,
     )
     assert result.signals_failed is True
@@ -2671,8 +3139,7 @@ def test_flag_record_stamps_mode_context_onto_summary():
 
     result = PipelineResult(
         narrative="n",
-        specialists=SpecialistOutputs(
-            stuff="s", location="l", runvalue="r", trends="t"),
+        specialists=SpecialistOutputs(),
         revision_count=1,
         capsule_revised=False,
         value_parity_warnings=["[capsule] 1.23"],
@@ -2695,33 +3162,18 @@ def test_flag_record_stamps_mode_context_onto_summary():
     }
 
 
-class TestExplainerDropped:
-    def test_empty_capsule_not_dropped(self):
-        # Must not raise (check_explainer_present raises on empty); empty means
-        # "nothing to drop" -> False.
-        from pitcher_narratives.pipeline import _explainer_dropped
-        assert _explainer_dropped("") is False
-        assert _explainer_dropped("   \n ") is False
-
-    def test_present_not_dropped(self):
-        from pitcher_narratives.pipeline import _explainer_dropped
-        assert _explainer_dropped("the slider's S+ is strong") is False
-
-    def test_absent_is_dropped(self):
-        from pitcher_narratives.pipeline import _explainer_dropped
-        assert _explainer_dropped("the fastball just looks fast") is True
-
-
 class TestCapsuleAuditBuilders:
     def test_capsule_ground_truth_concatenates_all_specialists(self, ctx):
         from pitcher_narratives.pipeline import _build_capsule_ground_truth
+
         gt = _build_capsule_ground_truth(ctx)
         # The stuff specialist's ground truth has the arsenal physical profile.
         assert "Arsenal Physical Profile" in gt
-        assert "P vs S Location Impact" in gt  # location specialist's input
+        assert "Formal Location+ Values" in gt
 
     def test_capsule_audit_input_has_both_sections(self):
         from pitcher_narratives.pipeline import build_capsule_audit_input
+
         out = build_capsule_audit_input("GROUND_TRUTH", "CAPSULE_TEXT")
         assert "GROUND_TRUTH" in out
         assert "CAPSULE_TEXT" in out
@@ -2729,9 +3181,14 @@ class TestCapsuleAuditBuilders:
         assert out.index("GROUND_TRUTH") < out.index("CAPSULE_TEXT")
 
     def test_fact_revision_message_lists_flags(self):
-        from pitcher_narratives.pipeline import CachePoint, build_fact_revision_message
         from pitcher_narratives.models import AuditFlag
-        flags = [AuditFlag(category="FABRICATED_DATA", claim="98 mph", data_shows="95.9 mph", suggested_fix="use 95.9")]
+        from pitcher_narratives.pipeline import CachePoint, build_fact_revision_message
+
+        flags = [
+            AuditFlag(
+                category="FABRICATED_DATA", claim="98 mph", data_shows="95.9 mph", suggested_fix="use 95.9"
+            )
+        ]
         msg = build_fact_revision_message("GROUND_TRUTH_TEXT", "the capsule text", flags)
         assert isinstance(msg, list)
         assert any(isinstance(p, CachePoint) for p in msg)
@@ -2743,18 +3200,28 @@ class TestCapsuleAuditBuilders:
         assert "ONLY" in joined  # instructs to fix only flagged issues
 
     def test_fact_revision_message_ground_truth_before_cache_point(self):
-        from pitcher_narratives.pipeline import CachePoint, build_fact_revision_message
         from pitcher_narratives.models import AuditFlag
-        flags = [AuditFlag(category="FABRICATED_DATA", claim="98 mph", data_shows="95.9 mph", suggested_fix="use 95.9")]
+        from pitcher_narratives.pipeline import CachePoint, build_fact_revision_message
+
+        flags = [
+            AuditFlag(
+                category="FABRICATED_DATA", claim="98 mph", data_shows="95.9 mph", suggested_fix="use 95.9"
+            )
+        ]
         msg = build_fact_revision_message("GROUND_TRUTH_TEXT", "the capsule text", flags)
         cp_index = next(i for i, p in enumerate(msg) if isinstance(p, CachePoint))
         assert "GROUND_TRUTH_TEXT" in msg[0]
         assert cp_index == 1
 
     def test_fact_revision_message_instructs_follow_ground_truth(self):
-        from pitcher_narratives.pipeline import build_fact_revision_message
         from pitcher_narratives.models import AuditFlag
-        flags = [AuditFlag(category="FABRICATED_DATA", claim="98 mph", data_shows="95.9 mph", suggested_fix="use 95.9")]
+        from pitcher_narratives.pipeline import build_fact_revision_message
+
+        flags = [
+            AuditFlag(
+                category="FABRICATED_DATA", claim="98 mph", data_shows="95.9 mph", suggested_fix="use 95.9"
+            )
+        ]
         msg = build_fact_revision_message("GROUND_TRUTH_TEXT", "the capsule text", flags)
         joined = "\n".join(p for p in msg if isinstance(p, str))
         assert "Ground Truth" in joined
@@ -2840,47 +3307,48 @@ def _result_with_anchor_warnings(*categories: str):
         narrative="x",
         specialists=SpecialistOutputs.model_construct(),
         anchor_warnings=[
-            AnchorWarning(category=c, description=f"desc {i}")
-            for i, c in enumerate(categories)
+            AnchorWarning(category=c, description=f"desc {i}") for i, c in enumerate(categories)
         ],
     )
 
 
-def test_is_unverified_gates_on_primary_anchor_warnings():
-    """A surviving MISSED_SIGNAL / DIRECTION_ERROR anchor warning gates shipping,
-    while advisory categories (UNDERWEIGHTED etc.) do not."""
+def test_is_unverified_gates_on_correctness_anchor_warnings():
+    """Coverage-only underweighting is advisory; correctness warnings gate."""
     from pitcher_narratives.pipeline import is_unverified
 
-    assert is_unverified(_result_with_anchor_warnings("MISSED_SIGNAL")) is True
-    assert is_unverified(_result_with_anchor_warnings("DIRECTION_ERROR")) is True
-    # Advisory-only warnings stay non-blocking.
+    for category in (
+        "MISSED_SIGNAL",
+        "DIRECTION_ERROR",
+        "UNSUPPORTED",
+        "OVERSTATED",
+    ):
+        assert is_unverified(_result_with_anchor_warnings(category)) is True
     assert is_unverified(_result_with_anchor_warnings("UNDERWEIGHTED")) is False
-    assert (
-        is_unverified(_result_with_anchor_warnings("UNSUPPORTED", "OVERSTATED"))
-        is False
-    )
-    # Mixed: any gating category flips it to unverified.
-    assert (
-        is_unverified(_result_with_anchor_warnings("UNDERWEIGHTED", "DIRECTION_ERROR"))
-        is True
-    )
 
 
-def test_residual_banner_counts_primary_anchor_warnings():
-    """residual_banner fires and words the anchor-warning count even with zero
-    capsule-audit flags, and stays None when only advisory warnings survive."""
+def test_residual_banner_counts_gating_anchor_warnings():
+    """The banner counts correctness warnings and ignores coverage-only ones."""
     from pitcher_narratives.pipeline import residual_banner
 
     # Advisory-only → no banner.
     assert residual_banner(_result_with_anchor_warnings("UNDERWEIGHTED")) is None
     # One gating warning, zero flags → banner names the anchor-warning count.
-    banner = residual_banner(
-        _result_with_anchor_warnings("MISSED_SIGNAL", "DIRECTION_ERROR")
-    )
+    banner = residual_banner(_result_with_anchor_warnings("MISSED_SIGNAL", "DIRECTION_ERROR"))
     assert banner == (
         "⚠️  REPORT UNVERIFIED — 0 flagged claim(s) and/or 2 unresolved "
-        "primary anchor warning(s) survived validation. Review before use."
+        "gating anchor warning(s) survived validation. Review before use."
     )
+
+
+def test_value_parity_warnings_gate_verification():
+    from pitcher_narratives.pipeline import is_unverified, residual_banner
+
+    result = _result_with_flags(0).model_copy(
+        update={"value_parity_warnings": ["[capsule] unmatched P+ value 117"]}
+    )
+
+    assert is_unverified(result) is True
+    assert "value-parity" in residual_banner(result)
 
 
 def test_residual_banner_matches_report_wording():
@@ -2890,11 +3358,30 @@ def test_residual_banner_matches_report_wording():
     banner = residual_banner(_result_with_flags(2))
     assert banner == (
         "⚠️  REPORT UNVERIFIED — 2 flagged claim(s) and/or 0 unresolved "
-        "primary anchor warning(s) survived validation. Review before use."
+        "gating anchor warning(s) survived validation. Review before use."
     )
     # label parameterizes the surface for RECAP/CHANGES/morning reuse.
     assert residual_banner(_result_with_flags(1), label="RECAP").startswith(
         "⚠️  RECAP UNVERIFIED — 1 flagged claim(s)"
+    )
+
+
+def test_empty_capsule_is_unverified_with_banner():
+    from pitcher_narratives.pipeline import (
+        PipelineResult,
+        SpecialistOutputs,
+        is_unverified,
+        residual_banner,
+    )
+
+    result = PipelineResult(
+        narrative="",
+        specialists=SpecialistOutputs.model_construct(),
+    )
+
+    assert is_unverified(result) is True
+    assert residual_banner(result) == (
+        "⚠️  REPORT UNVERIFIED — no validated capsule was produced. Review diagnostics before retrying."
     )
 
 
@@ -2903,17 +3390,48 @@ def test_render_capsule_non_streaming_returns_capsule(ctx, capsys):
     and runs the anchor + capsule-audit loops."""
     from pitcher_narratives import pipeline
 
-    agents = pipeline.make_pipeline_agents("gemini", "high")
-    tm_spine = TestModel(call_tools=[], custom_output_text="Specialist analysis.")
-    tm = TestModel(call_tools=[])
+    source_analysis = _analysis(ctx, "Supported observation.")
+    analyzed = AnalyzedContext(
+        specialists=SpecialistOutputs(
+            stuff=source_analysis,
+            location=empty_specialist_analysis(),
+            runvalue=empty_specialist_analysis(),
+            trends=empty_specialist_analysis(),
+        ),
+    )
+
+    class _Writer:
+        async def run(self, **kwargs):
+            return SimpleNamespace(
+                output=_narrative_draft(
+                    "The pitch prevented runs.",
+                    source_analysis.observations[0],
+                )
+            )
+
+    class _Anchor:
+        async def run(self, **kwargs):
+            from pitcher_narratives.anchor import AnchorResult
+
+            return SimpleNamespace(output=AnchorResult(warnings=[]))
+
+    class _Auditor:
+        async def run(self, **kwargs):
+            return SimpleNamespace(output=AuditResult(flags=[]))
+
+    agents = pipeline.make_pipeline_agents("gemini", "high")._replace(
+        writer=_Writer(),
+        anchor=_Anchor(),
+        capsule_auditor=_Auditor(),
+    )
 
     async def _go():
-        analyzed = await pipeline.run_analysis_spine(
-            ctx, agents=agents, _model_override=tm_spine
-        )
         return await pipeline._render_capsule(
-            ctx, analyzed, agents=agents, anchor_depth=1, fact_depth=1,
-            check_explainer=False, _model_override=tm,
+            ctx,
+            analyzed,
+            agents=agents,
+            anchor_depth=1,
+            fact_depth=1,
         )
 
     rc = asyncio.run(_go())
@@ -2933,44 +3451,62 @@ def test_render_capsule_reanchors_after_fact_revision(ctx):
     from pitcher_narratives.anchor import AnchorResult, AnchorWarning
     from pitcher_narratives.models import AuditFlag, AuditResult
 
+    source_analysis = _analysis(ctx, "Supported observation.")
+    analyzed = AnalyzedContext(
+        specialists=SpecialistOutputs(
+            stuff=source_analysis,
+            location=empty_specialist_analysis(),
+            runvalue=empty_specialist_analysis(),
+            trends=empty_specialist_analysis(),
+        ),
+    )
     agents = pipeline.make_pipeline_agents("gemini", "high")
-    tm_spine = TestModel(call_tools=[], custom_output_text="Specialist analysis.")
 
     # Anchor loop (depth 0) surfaces warning A; the post-fact re-check surfaces A
     # again (must dedup) plus a new warning B.
     warn_a = AnchorWarning(category="MISSED_SIGNAL", description="a")
     warn_b = AnchorWarning(category="UNSUPPORTED", description="b")
     fake_anchor = MagicMock()
-    fake_anchor.run = AsyncMock(side_effect=[
-        MagicMock(output=AnchorResult(warnings=[warn_a])),
-        MagicMock(output=AnchorResult(warnings=[warn_a, warn_b])),
-    ])
+    fake_anchor.run = AsyncMock(
+        side_effect=[
+            MagicMock(output=AnchorResult(warnings=[warn_a])),
+            MagicMock(output=AnchorResult(warnings=[warn_a, warn_b])),
+        ]
+    )
 
     # Auditor: flag once → (writer revises) → re-audit clean, so capsule_revised.
     class _FlagThenCleanAuditor:
         def __init__(self):
             self.calls = 0
+
         async def run(self, **kwargs):
             self.calls += 1
-            flags = ([AuditFlag(category="FABRICATED_DATA", claim="98", data_shows="95", suggested_fix="x")]
-                     if self.calls == 1 else [])
+            flags = (
+                [AuditFlag(category="FABRICATED_DATA", claim="98", data_shows="95", suggested_fix="x")]
+                if self.calls == 1
+                else []
+            )
             return MagicMock(output=AuditResult(flags=flags))
 
     fake_writer = MagicMock()
-    fake_writer.run = AsyncMock(return_value=MagicMock(output="revised capsule text"))
-
-    agents = agents._replace(
-        anchor=fake_anchor, capsule_auditor=_FlagThenCleanAuditor(), writer=fake_writer
+    fake_writer.run = AsyncMock(
+        return_value=MagicMock(
+            output=_narrative_draft(
+                "Revised capsule text.",
+                source_analysis.observations[0],
+            )
+        )
     )
 
+    agents = agents._replace(anchor=fake_anchor, capsule_auditor=_FlagThenCleanAuditor(), writer=fake_writer)
+
     async def _go():
-        analyzed = await pipeline.run_analysis_spine(
-            ctx, agents=pipeline.make_pipeline_agents("gemini", "high"),
-            _model_override=tm_spine,
-        )
         return await pipeline._render_capsule(
-            ctx, analyzed, agents=agents, anchor_depth=0, fact_depth=1,
-            check_explainer=False,
+            ctx,
+            analyzed,
+            agents=agents,
+            anchor_depth=0,
+            fact_depth=1,
         )
 
     rc = asyncio.run(_go())
@@ -2981,6 +3517,82 @@ def test_render_capsule_reanchors_after_fact_revision(ctx):
     # Merged, deduped, existing-first.
     cats = [(w.category, w.description) for w in rc.anchor_check.warnings]
     assert cats == [("MISSED_SIGNAL", "a"), ("UNSUPPORTED", "b")]
+
+
+def test_post_fact_reanchor_failure_cannot_reuse_prior_clean_hash(ctx):
+    """A clean anchor verdict for the pre-revision text cannot verify rewritten prose."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    from pitcher_narratives import pipeline
+    from pitcher_narratives.anchor import AnchorResult
+    from pitcher_narratives.models import AuditFlag, AuditResult
+
+    source_analysis = _analysis(ctx, "Supported observation.")
+    analyzed = AnalyzedContext(
+        specialists=SpecialistOutputs(
+            stuff=source_analysis,
+            location=empty_specialist_analysis(),
+            runvalue=empty_specialist_analysis(),
+            trends=empty_specialist_analysis(),
+        ),
+    )
+
+    fake_anchor = MagicMock()
+    fake_anchor.run = AsyncMock(
+        side_effect=[
+            MagicMock(output=AnchorResult(warnings=[])),
+            RuntimeError("re-anchor unavailable"),
+        ]
+    )
+
+    class _FlagThenCleanAuditor:
+        def __init__(self):
+            self.calls = 0
+
+        async def run(self, **kwargs):
+            self.calls += 1
+            flags = (
+                [
+                    AuditFlag(
+                        category="FABRICATED_DATA",
+                        claim="98",
+                        data_shows="95",
+                        suggested_fix="correct it",
+                    )
+                ]
+                if self.calls == 1
+                else []
+            )
+            return MagicMock(output=AuditResult(flags=flags))
+
+    fake_writer = MagicMock()
+    fake_writer.run = AsyncMock(
+        return_value=MagicMock(
+            output=_narrative_draft(
+                "Revised capsule text.",
+                source_analysis.observations[0],
+            )
+        )
+    )
+    agents = pipeline.make_pipeline_agents("gemini", "high")._replace(
+        anchor=fake_anchor,
+        capsule_auditor=_FlagThenCleanAuditor(),
+        writer=fake_writer,
+    )
+
+    result = asyncio.run(
+        pipeline._render_capsule(
+            ctx,
+            analyzed,
+            agents=agents,
+            anchor_depth=1,
+            fact_depth=1,
+        )
+    )
+
+    assert result.capsule == ""
+    assert result.artifact is None
+    assert any(flag.category == "AUDIT_FAILED" for flag in result.capsule_audit_flags)
 
 
 # ── render_recap + build_recap_overlay (Phase 8B) ────────────────────
@@ -2998,23 +3610,37 @@ def test_render_recap_produces_validated_pipeline_result(ctx):
     """render_recap renders a recap from a pre-computed AnalyzedContext and runs
     the validation stack (recap depths), returning a PipelineResult."""
     from pitcher_narratives import pipeline
+    from pitcher_narratives.cli import _make_grounded_test_model
     from pitcher_narratives.personas import RECAP
 
     agents = pipeline.make_pipeline_agents("gemini", "medium", RECAP)
-    tm_spine = TestModel(call_tools=[], custom_output_text="Specialist analysis.")
-    tm = TestModel(call_tools=[])
+    analyses = tuple(
+        _analysis(ctx, f"Supported {name} observation.")
+        for name in ("stuff", "location", "run value", "trends")
+    )
+    analyzed = AnalyzedContext(
+        specialists=SpecialistOutputs(
+            stuff=analyses[0],
+            location=analyses[1],
+            runvalue=analyses[2],
+            trends=analyses[3],
+        ),
+        signals_state=VerificationState.UNAVAILABLE,
+    )
+    tm = _make_grounded_test_model()
 
     async def _go():
-        analyzed = await pipeline.run_analysis_spine(ctx, agents=agents, _model_override=tm_spine)
         return await pipeline.render_recap(ctx, analyzed, agents=agents, pick=None, _model_override=tm)
 
     result = asyncio.run(_go())
     from pitcher_narratives.pipeline import PipelineResult
+
     assert isinstance(result, PipelineResult)
-    assert result.narrative                              # recap text present
-    assert result.executive_summary == []                # recap has no exec summary
+    assert result.narrative  # recap text present
+    assert result.executive_summary == []  # recap has no exec summary
     # is_unverified applies to a recap result just like a report result.
     from pitcher_narratives.pipeline import is_unverified
+
     assert isinstance(is_unverified(result), bool)
 
 
@@ -3023,12 +3649,25 @@ def test_render_recap_records_validation_calls_with_model_name(ctx, monkeypatch)
     so morning's recap anchor/fact-check calls are priced. A blank model name
     costs to None and silently undercounts the digest's true spend."""
     from pitcher_narratives import pipeline
+    from pitcher_narratives.cli import _make_grounded_test_model
     from pitcher_narratives.costs import UsageTracker
     from pitcher_narratives.personas import RECAP
 
     agents = pipeline.make_pipeline_agents("gemini", "medium", RECAP)
-    tm_spine = TestModel(call_tools=[], custom_output_text="Specialist analysis.")
-    tm = TestModel(call_tools=[])
+    analyses = tuple(
+        _analysis(ctx, f"Supported {name} observation.")
+        for name in ("stuff", "location", "run value", "trends")
+    )
+    analyzed = AnalyzedContext(
+        specialists=SpecialistOutputs(
+            stuff=analyses[0],
+            location=analyses[1],
+            runvalue=analyses[2],
+            trends=analyses[3],
+        ),
+        signals_state=VerificationState.UNAVAILABLE,
+    )
+    tm = _make_grounded_test_model()
     tracker = UsageTracker()
 
     captured: dict[str, str] = {}
@@ -3041,7 +3680,6 @@ def test_render_recap_records_validation_calls_with_model_name(ctx, monkeypatch)
     monkeypatch.setattr(pipeline, "run_capsule_audit", _spy_audit)
 
     async def _go():
-        analyzed = await pipeline.run_analysis_spine(ctx, agents=agents, _model_override=tm_spine)
         await pipeline.render_recap(
             ctx, analyzed, agents=agents, pick=None, _model_override=tm, tracker=tracker
         )
@@ -3049,3 +3687,284 @@ def test_render_recap_records_validation_calls_with_model_name(ctx, monkeypatch)
     asyncio.run(_go())
     assert captured["tracker_model"], "render_recap passed an empty tracker_model"
     assert captured["tracker_model"] == agents.mini_model_name
+
+
+def _specialist_reader_registry(
+    *,
+    feature_attribution: bool = False,
+    platoon_splits: bool = False,
+):
+    from pitcher_narratives.facts import Fact, FactKind, FactRegistry
+
+    frame_id = "frame:test"
+    manifest_version = "manifest:test"
+    source = "pitchingplus:test"
+    capability_values = {
+        "feature_attribution": feature_attribution,
+        "location_regions": False,
+        "pitch_targets": False,
+        "biomechanical_causality": False,
+        "tunneling_measurement": False,
+        "platoon_splits": platoon_splits,
+    }
+    rows = {
+        *(f"capability:{name}" for name in capability_values),
+        "release-speed",
+        "platoon-usage",
+        "stale-release-speed",
+    }
+    registry = FactRegistry(
+        manifest_version=manifest_version,
+        manifest_rows={source: rows},
+    )
+    facts = {}
+    for name, value in capability_values.items():
+        fact = Fact.create(
+            kind=FactKind.MODEL_SEMANTIC,
+            metric=f"capability.{name}",
+            variant=None,
+            entity="test pitcher",
+            value=value,
+            unit=None,
+            frame_id=frame_id,
+            population="test",
+            sample_size=None,
+            sufficiency="available",
+            source=source,
+            source_row_id=f"capability:{name}",
+            semantic_key=f"capability:{name}",
+            manifest_version=manifest_version,
+        )
+        registry.add(fact)
+        facts[name] = fact
+    facts["release_speed"] = registry.add(
+        Fact.create(
+            kind=FactKind.OBSERVED,
+            metric="release_speed",
+            variant=None,
+            entity="FF",
+            value=96.0,
+            unit="mph",
+            frame_id=frame_id,
+            population="all batters",
+            sample_size=100,
+            sufficiency="available",
+            source=source,
+            source_row_id="release-speed",
+            semantic_key="FF|release_speed",
+            manifest_version=manifest_version,
+        )
+    )
+    facts["platoon_usage"] = registry.add(
+        Fact.create(
+            kind=FactKind.OBSERVED,
+            metric="usage_rate",
+            variant=None,
+            entity="FF",
+            value=0.61,
+            unit="rate",
+            frame_id=frame_id,
+            population="vs_lhb",
+            sample_size=40,
+            sufficiency="available",
+            source=source,
+            source_row_id="platoon-usage",
+            semantic_key="FF|batter_side=L|usage_rate",
+            manifest_version=manifest_version,
+        )
+    )
+    facts["stale_release_speed"] = registry.add(
+        Fact.create(
+            kind=FactKind.OBSERVED,
+            metric="release_speed",
+            variant=None,
+            entity="FF",
+            value=95.0,
+            unit="mph",
+            frame_id="frame:stale",
+            population="all batters",
+            sample_size=100,
+            sufficiency="available",
+            source=source,
+            source_row_id="stale-release-speed",
+            semantic_key="stale|FF|release_speed",
+            manifest_version=manifest_version,
+        )
+    )
+    return registry, facts, frame_id
+
+
+def _read_deterministic_specialist(draft, *, registry, frame_id, specialist):
+    from pydantic_ai import Agent
+
+    from pitcher_narratives.models import SpecialistAnalysisDraft
+    from pitcher_narratives.pipeline import _read_specialist_analysis
+
+    agent = Agent("test", output_type=SpecialistAnalysisDraft)
+    model = TestModel(custom_output_args=draft)
+    return asyncio.run(
+        _read_specialist_analysis(
+            agent,
+            "grounded specialist handoff",
+            specialist=specialist,
+            registry=registry,
+            frame_id=frame_id,
+            _model_override=model,
+        )
+    )
+
+
+def test_stuff_analysis_rejects_driver_claim_without_attribution():
+    registry, facts, frame_id = _specialist_reader_registry()
+    analysis = _read_deterministic_specialist(
+        {
+            "observations": [],
+            "supported_interpretations": [
+                {
+                    "text": "Velocity is the model driver.",
+                    "claim_type": "model_driver",
+                    "confidence": "high",
+                    "fact_ids": [
+                        facts["release_speed"].id,
+                        facts["feature_attribution"].id,
+                    ],
+                }
+            ],
+            "limitations": [],
+        },
+        registry=registry,
+        frame_id=frame_id,
+        specialist="stuff",
+    )
+
+    assert analysis.supported_interpretations == ()
+    assert [claim.text for claim in analysis.limitations] == [
+        "The supplied aggregate profile does not identify the model driver."
+    ]
+    assert analysis.observations == ()
+
+
+def test_stuff_analysis_accepts_driver_claim_with_attribution():
+    registry, facts, frame_id = _specialist_reader_registry(feature_attribution=True)
+    analysis = _read_deterministic_specialist(
+        {
+            "observations": [],
+            "supported_interpretations": [
+                {
+                    "text": "Producer attribution identifies velocity as the model driver.",
+                    "claim_type": "model_driver",
+                    "confidence": "high",
+                    "fact_ids": [
+                        facts["release_speed"].id,
+                        facts["feature_attribution"].id,
+                    ],
+                }
+            ],
+            "limitations": [],
+        },
+        registry=registry,
+        frame_id=frame_id,
+        specialist="stuff",
+    )
+
+    assert [claim.text for claim in analysis.supported_interpretations] == [
+        "Producer attribution identifies velocity as the model driver."
+    ]
+    assert analysis.limitations == ()
+
+
+def test_platoon_claim_requires_split_specific_cited_facts():
+    registry, facts, frame_id = _specialist_reader_registry(platoon_splits=True)
+    unsupported = {
+        "observations": [],
+        "supported_interpretations": [
+            {
+                "text": "The fastball is the preferred pitch against left-handed batters.",
+                "claim_type": "platoon",
+                "confidence": "high",
+                "fact_ids": [
+                    facts["release_speed"].id,
+                    facts["platoon_splits"].id,
+                ],
+            }
+        ],
+        "limitations": [],
+    }
+    with pytest.raises(ValueError, match="split-specific cited fact"):
+        _read_deterministic_specialist(
+            unsupported,
+            registry=registry,
+            frame_id=frame_id,
+            specialist="location",
+        )
+
+    supported = {
+        **unsupported,
+        "supported_interpretations": [
+            {
+                **unsupported["supported_interpretations"][0],
+                "fact_ids": [
+                    facts["platoon_usage"].id,
+                    facts["platoon_splits"].id,
+                ],
+            }
+        ],
+    }
+    analysis = _read_deterministic_specialist(
+        supported,
+        registry=registry,
+        frame_id=frame_id,
+        specialist="location",
+    )
+    assert len(analysis.supported_interpretations) == 1
+    assert facts["platoon_usage"].id in analysis.supported_interpretations[0].fact_ids
+
+
+def test_runvalue_component_cannot_supply_physical_mechanism():
+    registry, facts, frame_id = _specialist_reader_registry()
+    analysis = _read_deterministic_specialist(
+        {
+            "observations": [],
+            "supported_interpretations": [
+                {
+                    "text": "The velocity component causes the modeled run prevention.",
+                    "claim_type": "value_component",
+                    "confidence": "high",
+                    "fact_ids": [facts["release_speed"].id],
+                }
+            ],
+            "limitations": [],
+        },
+        registry=registry,
+        frame_id=frame_id,
+        specialist="runvalue",
+    )
+
+    assert analysis.supported_interpretations == ()
+    assert all("causes the modeled run prevention" not in claim.text for claim in analysis.claims)
+    assert [claim.text for claim in analysis.limitations] == [
+        "Run-value component attribution describes modeled contribution only; "
+        "it does not identify a causal, physical, or location mechanism."
+    ]
+
+
+def test_specialist_reader_rejects_stale_frame_citation():
+    registry, facts, frame_id = _specialist_reader_registry()
+    with pytest.raises(ValueError, match="wrong frame"):
+        _read_deterministic_specialist(
+            {
+                "observations": [
+                    {
+                        "text": "The fastball averaged 95 mph in the stale frame.",
+                        "claim_type": "quantitative",
+                        "confidence": "high",
+                        "fact_ids": [facts["stale_release_speed"].id],
+                    }
+                ],
+                "supported_interpretations": [],
+                "limitations": [],
+            },
+            registry=registry,
+            frame_id=frame_id,
+            specialist="stuff",
+        )
